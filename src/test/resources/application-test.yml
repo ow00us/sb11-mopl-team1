@@ -1,0 +1,15 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+  batch:
+    job:
+      enabled: false
+
+logging:
+  level:
+    root: warn
+    com.mopl: info

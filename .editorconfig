@@ -1,0 +1,21 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# YAML/JSON은 2-space 관례
+[*.{yml,yaml,json}]
+indent_size = 2
+
+# Markdown은 줄 끝 공백이 의미(줄바꿈)를 가질 수 있어 예외
+[*.md]
+trim_trailing_whitespace = false
+
+# Windows 배치 파일은 CRLF
+[*.{bat,cmd}]
+end_of_line = crlf
