@@ -11,7 +11,21 @@ import java.util.UUID;
 
 public interface PlaylistRepository extends JpaRepository<Playlist, UUID> {
 
-    @Query("SELECT p FROM Playlist p ORDER BY p.updatedAt ASC, p.id ASC LIMIT :limit")
+    // ── updatedAt 정렬 ──────────────────────────────────────────────────────
+
+    @Query(value = """
+            SELECT * FROM playlists
+            WHERE  (CAST(:keywordLike AS text) IS NULL
+                    OR LOWER(title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%'))
+              AND  (CAST(:ownerIdEqual AS text) IS NULL
+                    OR owner_id = CAST(:ownerIdEqual AS uuid))
+              AND  (CAST(:cursorTime AS timestamptz) IS NULL
+                    OR updated_at > CAST(:cursorTime AS timestamptz)
+                    OR (updated_at = CAST(:cursorTime AS timestamptz)
+                        AND id > CAST(:idAfter AS uuid)))
+            ORDER BY updated_at ASC, id ASC
+            LIMIT :limit
+            """, nativeQuery = true)
     List<Playlist> findByUpdatedAtAsc(
             @Param("keywordLike") String keywordLike,
             @Param("ownerIdEqual") String ownerIdEqual,
@@ -20,7 +34,19 @@ public interface PlaylistRepository extends JpaRepository<Playlist, UUID> {
             @Param("limit") int limit
     );
 
-    @Query("SELECT p FROM Playlist p ORDER BY p.updatedAt DESC, p.id ASC LIMIT :limit")
+    @Query(value = """
+            SELECT * FROM playlists
+            WHERE  (CAST(:keywordLike AS text) IS NULL
+                    OR LOWER(title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%'))
+              AND  (CAST(:ownerIdEqual AS text) IS NULL
+                    OR owner_id = CAST(:ownerIdEqual AS uuid))
+              AND  (CAST(:cursorTime AS timestamptz) IS NULL
+                    OR updated_at < CAST(:cursorTime AS timestamptz)
+                    OR (updated_at = CAST(:cursorTime AS timestamptz)
+                        AND id > CAST(:idAfter AS uuid)))
+            ORDER BY updated_at DESC, id ASC
+            LIMIT :limit
+            """, nativeQuery = true)
     List<Playlist> findByUpdatedAtDesc(
             @Param("keywordLike") String keywordLike,
             @Param("ownerIdEqual") String ownerIdEqual,
@@ -29,7 +55,21 @@ public interface PlaylistRepository extends JpaRepository<Playlist, UUID> {
             @Param("limit") int limit
     );
 
-    @Query("SELECT p FROM Playlist p ORDER BY p.subscriberCount ASC, p.id ASC LIMIT :limit")
+    // ── subscribeCount 정렬 ─────────────────────────────────────────────────
+
+    @Query(value = """
+            SELECT * FROM playlists
+            WHERE  (CAST(:keywordLike AS text) IS NULL
+                    OR LOWER(title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%'))
+              AND  (CAST(:ownerIdEqual AS text) IS NULL
+                    OR owner_id = CAST(:ownerIdEqual AS uuid))
+              AND  (:cursorCount IS NULL
+                    OR subscriber_count > :cursorCount
+                    OR (subscriber_count = :cursorCount
+                        AND id > CAST(:idAfter AS uuid)))
+            ORDER BY subscriber_count ASC, id ASC
+            LIMIT :limit
+            """, nativeQuery = true)
     List<Playlist> findBySubscriberCountAsc(
             @Param("keywordLike") String keywordLike,
             @Param("ownerIdEqual") String ownerIdEqual,
@@ -38,7 +78,19 @@ public interface PlaylistRepository extends JpaRepository<Playlist, UUID> {
             @Param("limit") int limit
     );
 
-    @Query("SELECT p FROM Playlist p ORDER BY p.subscriberCount DESC, p.id ASC LIMIT :limit")
+    @Query(value = """
+            SELECT * FROM playlists
+            WHERE  (CAST(:keywordLike AS text) IS NULL
+                    OR LOWER(title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%'))
+              AND  (CAST(:ownerIdEqual AS text) IS NULL
+                    OR owner_id = CAST(:ownerIdEqual AS uuid))
+              AND  (:cursorCount IS NULL
+                    OR subscriber_count < :cursorCount
+                    OR (subscriber_count = :cursorCount
+                        AND id > CAST(:idAfter AS uuid)))
+            ORDER BY subscriber_count DESC, id ASC
+            LIMIT :limit
+            """, nativeQuery = true)
     List<Playlist> findBySubscriberCountDesc(
             @Param("keywordLike") String keywordLike,
             @Param("ownerIdEqual") String ownerIdEqual,
