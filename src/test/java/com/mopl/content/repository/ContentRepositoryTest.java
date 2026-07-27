@@ -79,6 +79,15 @@ class ContentRepositoryTest {
     }
 
     @Test
+    @DisplayName("externalId만 있고 source가 없으면 생성 시점에 BusinessException이 발생한다")
+    void constructor_externalId_without_source_throws_business_exception() {
+        assertThatThrownBy(() -> movie().externalId("603").build())
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
     @DisplayName("addTag는 대소문자·공백이 다른 입력을 정규화해서 저장한다")
     void addTag_normalizes_and_persists() {
         // given

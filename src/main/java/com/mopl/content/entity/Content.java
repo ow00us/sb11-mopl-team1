@@ -70,6 +70,9 @@ public class Content extends BaseEntity {
     @Builder
     public Content(ContentType type, ContentSource source, String externalId, String title,
                    String description, String thumbnailUrl) {
+        if (externalId != null && source == null) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT, "externalId가 있으면 source도 함께 지정해야 합니다.");
+        }
         this.type = type;
         this.source = source;
         this.externalId = externalId;
