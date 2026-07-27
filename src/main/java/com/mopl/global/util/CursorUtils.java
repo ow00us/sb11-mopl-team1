@@ -19,14 +19,14 @@ public final class CursorUtils {
         return new String(Base64.getDecoder().decode(cursor), StandardCharsets.UTF_8);
     }
 
-    /** Instant 값을 커서 문자열로 인코딩합니다. */
+    /** Instant 값을 커서 문자열로 인코딩합니다. ISO-8601 형식으로 마이크로초 정밀도를 보존합니다. */
     public static String encodeInstant(Instant value) {
-        return encode(String.valueOf(value.toEpochMilli()));
+        return encode(value.toString());
     }
 
     /** 커서 문자열을 Instant로 디코딩합니다. */
     public static Instant decodeAsInstant(String cursor) {
-        return Instant.ofEpochMilli(Long.parseLong(decode(cursor)));
+        return Instant.parse(decode(cursor));
     }
 
     /** long 값을 커서 문자열로 인코딩합니다. */
