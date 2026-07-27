@@ -20,7 +20,7 @@ public class Playlist extends BaseEntity {
     @Column(nullable = false)
     private UUID ownerId;
 
-    @Column(nullable = false, length = 200)
+    @Column(nullable = false, length = 255)
     private String title;
 
     @Column(nullable = false, columnDefinition = "TEXT")

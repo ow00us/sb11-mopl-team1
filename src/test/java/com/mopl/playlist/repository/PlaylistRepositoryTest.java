@@ -2,6 +2,7 @@ package com.mopl.playlist.repository;
 
 import com.mopl.global.config.JpaConfig;
 import com.mopl.playlist.entity.Playlist;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,6 +42,22 @@ class PlaylistRepositoryTest {
 
     private static final UUID OWNER_A = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
     private static final UUID OWNER_B = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+
+    @BeforeEach
+    void insertTestUsers() {
+        // playlists.owner_id → users.id FK 충족을 위해 테스트 유저 삽입
+        em.getEntityManager().createNativeQuery("""
+                INSERT INTO users (id, created_at, updated_at, email, name, password_hash, role, locked)
+                VALUES
+                  (:idA, NOW(), NOW(), 'a@test.com', 'UserA', 'hash', 'USER', false),
+                  (:idB, NOW(), NOW(), 'b@test.com', 'UserB', 'hash', 'USER', false)
+                ON CONFLICT DO NOTHING
+                """)
+                .setParameter("idA", OWNER_A)
+                .setParameter("idB", OWNER_B)
+                .executeUpdate();
+        em.flush();
+    }
 
     @Test
     @DisplayName("저장한 플레이리스트를 ID로 조회한다")
