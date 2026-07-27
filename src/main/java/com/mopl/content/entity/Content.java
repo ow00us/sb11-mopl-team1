@@ -62,7 +62,7 @@ public class Content extends BaseEntity {
 
     @ElementCollection
     @CollectionTable(name = "content_tags", joinColumns = @JoinColumn(name = "content_id"))
-    @Column(name = "tag")
+    @Column(name = "tag", length = 100, nullable = false)
     private Set<String> tags = new HashSet<>();
 
     @Builder
