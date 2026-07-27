@@ -37,8 +37,8 @@ public class Playlist extends BaseEntity {
     }
 
     public void update(String title, String description) {
-        if (title != null) this.title = title;
-        if (description != null) this.description = description;
+        if (title != null && !title.isBlank()) this.title = title;
+        if (description != null && !description.isBlank()) this.description = description;
     }
 
     public boolean isOwnedBy(UUID userId) {
