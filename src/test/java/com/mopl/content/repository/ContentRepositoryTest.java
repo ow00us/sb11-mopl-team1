@@ -112,6 +112,18 @@ class ContentRepositoryTest {
     }
 
     @Test
+    @DisplayName("getTags()로 얻은 컬렉션은 읽기 전용이라 직접 수정할 수 없다")
+    void getTags_returns_unmodifiable_view() {
+        // given
+        Content content = movie().build();
+        content.addTag("action");
+
+        // when & then
+        assertThatThrownBy(() -> content.getTags().add("우회"))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
     @DisplayName("addTag에 null을 전달하면 BusinessException이 발생한다")
     void addTag_null_throws_business_exception() {
         // given

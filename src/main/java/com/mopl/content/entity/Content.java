@@ -13,6 +13,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 import lombok.AccessLevel;
@@ -63,6 +64,7 @@ public class Content extends BaseEntity {
     @ElementCollection
     @CollectionTable(name = "content_tags", joinColumns = @JoinColumn(name = "content_id"))
     @Column(name = "tag", length = 100, nullable = false)
+    @Getter(AccessLevel.NONE)
     private Set<String> tags = new HashSet<>();
 
     @Builder
@@ -74,6 +76,10 @@ public class Content extends BaseEntity {
         this.title = title;
         this.description = description;
         this.thumbnailUrl = thumbnailUrl;
+    }
+
+    public Set<String> getTags() {
+        return Collections.unmodifiableSet(tags);
     }
 
     public boolean addTag(String rawTag) {
