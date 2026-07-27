@@ -28,6 +28,7 @@ public class PlaylistServiceImpl implements PlaylistService {
 
     private final PlaylistRepository playlistRepository;
 
+    /** 플레이리스트를 생성하고 저장한 결과를 반환합니다. */
     @Override
     @Transactional
     public PlaylistDto create(PlaylistCreateRequest request, UUID ownerId) {
@@ -39,11 +40,13 @@ public class PlaylistServiceImpl implements PlaylistService {
         return PlaylistDto.from(playlistRepository.save(playlist));
     }
 
+    /** 플레이리스트를 단건 조회합니다. 존재하지 않으면 RESOURCE_NOT_FOUND 예외를 발생시킵니다. */
     @Override
     public PlaylistDto get(UUID playlistId) {
         return PlaylistDto.from(findOrThrow(playlistId));
     }
 
+    /** 커서 페이지네이션으로 플레이리스트 목록을 조회합니다. limit+1 조회로 다음 페이지 여부를 판단합니다. */
     @Override
     public CursorResponse<PlaylistDto> getList(
             String keywordLike, UUID ownerIdEqual, String cursor, UUID idAfter,
@@ -71,6 +74,7 @@ public class PlaylistServiceImpl implements PlaylistService {
         return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, total, sortBy, sortDirection);
     }
 
+    /** 소유자 검증 후 플레이리스트를 수정합니다. */
     @Override
     @Transactional
     public PlaylistDto update(UUID playlistId, PlaylistUpdateRequest request, UUID requesterId) {
@@ -80,6 +84,7 @@ public class PlaylistServiceImpl implements PlaylistService {
         return PlaylistDto.from(playlist);
     }
 
+    /** 소유자 검증 후 플레이리스트를 삭제합니다. */
     @Override
     @Transactional
     public void delete(UUID playlistId, UUID requesterId) {

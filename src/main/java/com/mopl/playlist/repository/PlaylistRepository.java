@@ -9,10 +9,12 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+/** 플레이리스트 커서 페이지네이션 및 필터 카운트를 위한 저장소입니다. */
 public interface PlaylistRepository extends JpaRepository<Playlist, UUID> {
 
     // ── updatedAt 정렬 ──────────────────────────────────────────────────────
 
+    /** 커서 기반으로 updatedAt 오름차순 목록을 조회합니다. */
     @Query(value = """
             SELECT * FROM playlists
             WHERE  (CAST(:keywordLike AS text) IS NULL
@@ -57,6 +59,7 @@ public interface PlaylistRepository extends JpaRepository<Playlist, UUID> {
 
     // ── subscribeCount 정렬 ─────────────────────────────────────────────────
 
+    /** 커서 기반으로 subscribeCount 오름차순 목록을 조회합니다. */
     @Query(value = """
             SELECT * FROM playlists
             WHERE  (CAST(:keywordLike AS text) IS NULL
@@ -78,6 +81,7 @@ public interface PlaylistRepository extends JpaRepository<Playlist, UUID> {
             @Param("limit") int limit
     );
 
+    /** 필터 조건에 맞는 플레이리스트 수를 반환합니다. */
     @Query(value = """
             SELECT COUNT(*) FROM playlists
             WHERE  (CAST(:keywordLike AS text) IS NULL
@@ -90,6 +94,7 @@ public interface PlaylistRepository extends JpaRepository<Playlist, UUID> {
             @Param("ownerIdEqual") String ownerIdEqual
     );
 
+    /** 커서 기반으로 subscribeCount 내림차순 목록을 조회합니다. */
     @Query(value = """
             SELECT * FROM playlists
             WHERE  (CAST(:keywordLike AS text) IS NULL

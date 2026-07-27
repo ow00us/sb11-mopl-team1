@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
 
+/** 플레이리스트 CRUD REST 엔드포인트를 제공하는 컨트롤러입니다. */
 @Validated
 @RestController
 @RequestMapping("/api/playlists")
@@ -29,6 +30,7 @@ public class PlaylistController {
 
     private final PlaylistService playlistService;
 
+    /** 플레이리스트를 생성합니다. 인증된 사용자만 호출 가능합니다. */
     @PostMapping
     public ResponseEntity<PlaylistDto> create(
             @Valid @RequestBody PlaylistCreateRequest request) {
@@ -37,6 +39,7 @@ public class PlaylistController {
                 .body(playlistService.create(request, ownerId));
     }
 
+    /** 커서 페이지네이션으로 플레이리스트 목록을 조회합니다. */
     @GetMapping
     public CursorResponse<PlaylistDto> getList(
             @RequestParam(required = false) String keywordLike,
@@ -50,11 +53,13 @@ public class PlaylistController {
                 keywordLike, ownerIdEqual, cursor, idAfter, limit, sortBy, sortDirection);
     }
 
+    /** 플레이리스트를 단건 조회합니다. */
     @GetMapping("/{playlistId}")
     public PlaylistDto get(@PathVariable UUID playlistId) {
         return playlistService.get(playlistId);
     }
 
+    /** 플레이리스트를 수정합니다. 소유자만 호출 가능합니다. */
     @PatchMapping("/{playlistId}")
     public PlaylistDto update(
             @PathVariable UUID playlistId,
@@ -63,6 +68,7 @@ public class PlaylistController {
         return playlistService.update(playlistId, request, requesterId);
     }
 
+    /** 플레이리스트를 삭제합니다. 소유자만 호출 가능합니다. */
     @DeleteMapping("/{playlistId}")
     public ResponseEntity<Void> delete(@PathVariable UUID playlistId) {
         UUID requesterId = resolveUserId();
@@ -70,6 +76,7 @@ public class PlaylistController {
         return ResponseEntity.noContent().build();
     }
 
+    /** SecurityContextHolder에서 현재 사용자 ID를 추출합니다. 미인증 시 UNAUTHORIZED를 발생시킵니다. */
     private UUID resolveUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated()
