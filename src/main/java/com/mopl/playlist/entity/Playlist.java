@@ -37,18 +37,19 @@ public class Playlist extends BaseEntity {
     }
 
     public void update(String title, String description) {
-        throw new UnsupportedOperationException("미구현");
+        if (title != null) this.title = title;
+        if (description != null) this.description = description;
     }
 
     public boolean isOwnedBy(UUID userId) {
-        throw new UnsupportedOperationException("미구현");
+        return this.ownerId.equals(userId);
     }
 
     public void incrementSubscriberCount() {
-        throw new UnsupportedOperationException("미구현");
+        this.subscriberCount++;
     }
 
     public void decrementSubscriberCount() {
-        throw new UnsupportedOperationException("미구현");
+        if (this.subscriberCount > 0) this.subscriberCount--;
     }
 }
