@@ -171,8 +171,9 @@ CREATE TABLE direct_messages (
     read_at         TIMESTAMP(6) WITH TIME ZONE,
     CONSTRAINT fk_direct_messages_conversation
         FOREIGN KEY (conversation_id) REFERENCES conversations (id) ON DELETE CASCADE,
-    CONSTRAINT fk_direct_messages_sender
-        FOREIGN KEY (sender_id) REFERENCES users (id)
+    CONSTRAINT fk_direct_messages_sender_participant
+        FOREIGN KEY (conversation_id, sender_id)
+            REFERENCES conversation_participants (conversation_id, user_id)
 );
 
 CREATE INDEX idx_direct_messages_conversation_created_at
@@ -196,8 +197,8 @@ CREATE TABLE notifications (
     CONSTRAINT ck_notifications_level CHECK (level IN ('INFO', 'WARNING', 'ERROR'))
 );
 
-CREATE UNIQUE INDEX uk_notifications_source_event_id
-    ON notifications (source_event_id)
+CREATE UNIQUE INDEX uk_notifications_source_event_receiver
+    ON notifications (source_event_id, receiver_id)
     WHERE source_event_id IS NOT NULL;
 
 CREATE INDEX idx_notifications_receiver_read_at
