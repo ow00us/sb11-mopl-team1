@@ -161,6 +161,45 @@ class PlaylistRepositoryTest {
         assertThat(result.get(1).getTitle()).isEqualTo("구독낮음");
     }
 
+    @Test
+    @DisplayName("countByFilter — 필터 없이 전체 개수를 반환한다")
+    void countByFilter_noFilter() {
+        em.persistAndFlush(playlist(OWNER_A, "A", "a"));
+        em.persistAndFlush(playlist(OWNER_A, "B", "b"));
+        em.persistAndFlush(playlist(OWNER_B, "C", "c"));
+        em.clear();
+
+        long count = playlistRepository.countByFilter(null, null);
+
+        assertThat(count).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("countByFilter — ownerIdEqual 필터 적용 시 해당 소유자 개수만 반환한다")
+    void countByFilter_filterByOwner() {
+        em.persistAndFlush(playlist(OWNER_A, "A", "a"));
+        em.persistAndFlush(playlist(OWNER_A, "B", "b"));
+        em.persistAndFlush(playlist(OWNER_B, "C", "c"));
+        em.clear();
+
+        long count = playlistRepository.countByFilter(null, OWNER_A.toString());
+
+        assertThat(count).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("countByFilter — keywordLike 필터 적용 시 제목 일치 개수만 반환한다")
+    void countByFilter_filterByKeyword() {
+        em.persistAndFlush(playlist(OWNER_A, "액션 영화", "a"));
+        em.persistAndFlush(playlist(OWNER_A, "로맨스", "b"));
+        em.persistAndFlush(playlist(OWNER_A, "액션 히어로", "c"));
+        em.clear();
+
+        long count = playlistRepository.countByFilter("액션", null);
+
+        assertThat(count).isEqualTo(2);
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
     private Playlist playlist(UUID ownerId, String title, String desc) {

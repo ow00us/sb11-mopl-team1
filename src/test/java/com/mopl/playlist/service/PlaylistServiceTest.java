@@ -91,7 +91,7 @@ class PlaylistServiceTest {
                 savedPlaylist(UUID.randomUUID(), OWNER_ID, "B", "b", Instant.now())
         );
         when(playlistRepository.findByUpdatedAtAsc(null, null, null, null, 3)).thenReturn(rows);
-        when(playlistRepository.count()).thenReturn(2L);
+        when(playlistRepository.countByFilter(null, null)).thenReturn(2L);
 
         CursorResponse<PlaylistDto> result = playlistService.getList(
                 null, null, null, null, 2, "updatedAt", "ASCENDING");
@@ -111,7 +111,7 @@ class PlaylistServiceTest {
                 savedPlaylist(UUID.randomUUID(), OWNER_ID, "C", "c", now)
         );
         when(playlistRepository.findByUpdatedAtAsc(null, null, null, null, 3)).thenReturn(rows);
-        when(playlistRepository.count()).thenReturn(5L);
+        when(playlistRepository.countByFilter(null, null)).thenReturn(5L);
 
         CursorResponse<PlaylistDto> result = playlistService.getList(
                 null, null, null, null, 2, "updatedAt", "ASCENDING");

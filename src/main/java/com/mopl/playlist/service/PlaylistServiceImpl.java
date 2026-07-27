@@ -65,7 +65,8 @@ public class PlaylistServiceImpl implements PlaylistService {
         }
 
         List<PlaylistDto> data  = page.stream().map(PlaylistDto::from).toList();
-        long total = playlistRepository.count();
+        String ownerIdStr = ownerIdEqual != null ? ownerIdEqual.toString() : null;
+        long total = playlistRepository.countByFilter(keywordLike, ownerIdStr);
 
         return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, total, sortBy, sortDirection);
     }

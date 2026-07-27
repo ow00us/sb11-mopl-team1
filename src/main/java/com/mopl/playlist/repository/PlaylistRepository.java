@@ -79,6 +79,18 @@ public interface PlaylistRepository extends JpaRepository<Playlist, UUID> {
     );
 
     @Query(value = """
+            SELECT COUNT(*) FROM playlists
+            WHERE  (CAST(:keywordLike AS text) IS NULL
+                    OR LOWER(title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%'))
+              AND  (CAST(:ownerIdEqual AS text) IS NULL
+                    OR owner_id = CAST(:ownerIdEqual AS uuid))
+            """, nativeQuery = true)
+    long countByFilter(
+            @Param("keywordLike") String keywordLike,
+            @Param("ownerIdEqual") String ownerIdEqual
+    );
+
+    @Query(value = """
             SELECT * FROM playlists
             WHERE  (CAST(:keywordLike AS text) IS NULL
                     OR LOWER(title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%'))
