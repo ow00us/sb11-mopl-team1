@@ -7,6 +7,7 @@ import com.mopl.notification.entity.Notification;
 import com.mopl.notification.entity.NotificationLevel;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,6 +19,8 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -37,6 +40,30 @@ class NotificationRepositoryTest {
         "11111111-1111-1111-1111-111111111111"
     );
 
+    private static final UUID OTHER_RECEIVER_ID = UUID.fromString(
+        "22222222-2222-2222-2222-222222222222"
+    );
+
+    private static final UUID NOTIFICATION_ID_1 = UUID.fromString(
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"
+    );
+
+    private static final UUID NOTIFICATION_ID_2 = UUID.fromString(
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2"
+    );
+
+    private static final UUID NOTIFICATION_ID_3 = UUID.fromString(
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3"
+    );
+
+    private static final UUID NOTIFICATION_ID_4 = UUID.fromString(
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa4"
+    );
+
+    private static final UUID NOTIFICATION_ID_5 = UUID.fromString(
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa5"
+    );
+
     @Container
     @ServiceConnection
     static PostgreSQLContainer<?> postgres =
@@ -53,31 +80,17 @@ class NotificationRepositoryTest {
 
     @BeforeEach
     void setUp() {
-        Instant now = Instant.parse("2026-07-28T00:00:00Z");
 
-        // TODO: User 엔티티가 병합되면 JdbcTemplate을 제거하고,
-        //       TestEntityManager로 테스트용 User 엔티티를 저장하도록 변경한다.
-        //       notifications.receiver_id에 users.id 외래키가 설정되어 있어 알림 저장 전에 사용자 행이 필요하다.
-        jdbcTemplate.update(
-            """
-            INSERT INTO users (
-                id,
-                created_at,
-                updated_at,
-                email,
-                password_hash,
-                name,
-                role
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
+        insertUser(
             RECEIVER_ID,
-            Timestamp.from(now),
-            Timestamp.from(now),
             "receiver@example.com",
-            "password-hash",
-            "receiver",
-            "USER"
+            "receiver"
+        );
+
+        insertUser(
+            OTHER_RECEIVER_ID,
+            "other@example.com",
+            "other"
         );
     }
 
@@ -105,9 +118,12 @@ class NotificationRepositoryTest {
 
         // then
         assertThat(result).isPresent();
-        assertThat(result.get().getReceiverId()).isEqualTo(RECEIVER_ID);
-        assertThat(result.get().getTitle()).isEqualTo("새로운 알림");
-        assertThat(result.get().getContent()).isEqualTo("알림 내용");
+        assertThat(result.get().getReceiverId())
+            .isEqualTo(RECEIVER_ID);
+        assertThat(result.get().getTitle())
+            .isEqualTo("새로운 알림");
+        assertThat(result.get().getContent())
+            .isEqualTo("알림 내용");
         assertThat(result.get().getLevel())
             .isEqualTo(NotificationLevel.INFO);
         assertThat(result.get().getReadAt()).isNull();
@@ -116,8 +132,8 @@ class NotificationRepositoryTest {
     }
 
     @Test
-    @DisplayName("알림 ID와 수신자 ID로 본인의 알림을 조회")
-    void findByIdAndReceiverId_success() {
+    @DisplayName("알림 ID와 수신자 ID가 모두 일치하는 경우에만 조회")
+    void findByIdAndReceiverId_matchesOwner() {
         // given
         Notification saved = notificationRepository.saveAndFlush(
             Notification.create(
@@ -132,43 +148,325 @@ class NotificationRepositoryTest {
         entityManager.clear();
 
         // when
-        Optional<Notification> result =
+        Optional<Notification> ownerResult =
             notificationRepository.findByIdAndReceiverId(
                 saved.getId(),
                 RECEIVER_ID
             );
 
-        // then
-        assertThat(result).isPresent();
-        assertThat(result.get().getReceiverId()).isEqualTo(RECEIVER_ID);
-    }
-
-    @Test
-    @DisplayName("다른 사용자의 알림은 ID와 수신자 조건으로 조회되지 않음")
-    void findByIdAndReceiverId_otherReceiver_returnsEmpty() {
-        // given
-        Notification saved = notificationRepository.saveAndFlush(
-            Notification.create(
-                RECEIVER_ID,
-                null,
-                "알림 제목",
-                "알림 내용",
-                NotificationLevel.INFO
-            )
-        );
-
-        entityManager.clear();
-
-        // when
-        Optional<Notification> result =
+        Optional<Notification> otherResult =
             notificationRepository.findByIdAndReceiverId(
                 saved.getId(),
-                UUID.fromString(
-                    "22222222-2222-2222-2222-222222222222"
-                )
+                OTHER_RECEIVER_ID
             );
 
         // then
-        assertThat(result).isEmpty();
+        assertThat(ownerResult).isPresent();
+        assertThat(otherResult).isEmpty();
+    }
+
+    @Test
+    @DisplayName("수신자의 읽지 않은 알림만 최신순으로 조회")
+    void findUnread_firstPage_descending() {
+        // given
+        insertNotification(
+            NOTIFICATION_ID_1,
+            RECEIVER_ID,
+            "오래된 미읽음 알림",
+            Instant.parse("2026-07-28T01:00:00Z"),
+            null
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_2,
+            RECEIVER_ID,
+            "최신 미읽음 알림",
+            Instant.parse("2026-07-28T03:00:00Z"),
+            null
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_3,
+            RECEIVER_ID,
+            "읽은 알림",
+            Instant.parse("2026-07-28T04:00:00Z"),
+            Instant.parse("2026-07-28T05:00:00Z")
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_4,
+            OTHER_RECEIVER_ID,
+            "다른 사용자의 알림",
+            Instant.parse("2026-07-28T06:00:00Z"),
+            null
+        );
+
+        // when
+        List<Notification> result =
+            notificationRepository.findByReceiverIdAndReadAtIsNull(
+                RECEIVER_ID,
+                firstPage(Sort.Direction.DESC)
+            );
+
+        long totalCount =
+            notificationRepository.countByReceiverIdAndReadAtIsNull(
+                RECEIVER_ID
+            );
+
+        // then
+        assertThat(result)
+            .extracting(Notification::getId)
+            .containsExactly(
+                NOTIFICATION_ID_2,
+                NOTIFICATION_ID_1
+            );
+
+        assertThat(totalCount).isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("수신자의 읽지 않은 알림을 오래된순으로 조회")
+    void findUnread_firstPage_ascending() {
+        // given
+        insertNotification(
+            NOTIFICATION_ID_1,
+            RECEIVER_ID,
+            "오래된 알림",
+            Instant.parse("2026-07-28T01:00:00Z"),
+            null
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_2,
+            RECEIVER_ID,
+            "중간 알림",
+            Instant.parse("2026-07-28T02:00:00Z"),
+            null
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_3,
+            RECEIVER_ID,
+            "최신 알림",
+            Instant.parse("2026-07-28T03:00:00Z"),
+            null
+        );
+
+        // when
+        List<Notification> result =
+            notificationRepository.findByReceiverIdAndReadAtIsNull(
+                RECEIVER_ID,
+                firstPage(Sort.Direction.ASC)
+            );
+
+        // then
+        assertThat(result)
+            .extracting(Notification::getId)
+            .containsExactly(
+                NOTIFICATION_ID_1,
+                NOTIFICATION_ID_2,
+                NOTIFICATION_ID_3
+            );
+    }
+
+    @Test
+    @DisplayName("최신순 조회 시 생성 시간과 ID 커서 이후의 알림만 조회")
+    void findUnread_afterCursor_descending() {
+        // given
+        Instant sameCreatedAt =
+            Instant.parse("2026-07-28T03:00:00Z");
+
+        insertNotification(
+            NOTIFICATION_ID_1,
+            RECEIVER_ID,
+            "동시 생성 알림 1",
+            sameCreatedAt,
+            null
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_2,
+            RECEIVER_ID,
+            "동시 생성 알림 2",
+            sameCreatedAt,
+            null
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_3,
+            RECEIVER_ID,
+            "동시 생성 알림 3",
+            sameCreatedAt,
+            null
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_4,
+            RECEIVER_ID,
+            "더 오래된 알림",
+            Instant.parse("2026-07-28T02:00:00Z"),
+            null
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_5,
+            RECEIVER_ID,
+            "더 최신 알림",
+            Instant.parse("2026-07-28T04:00:00Z"),
+            null
+        );
+
+        // when
+        List<Notification> result =
+            notificationRepository.findUnreadAfterDescending(
+                RECEIVER_ID,
+                sameCreatedAt,
+                NOTIFICATION_ID_2,
+                PageRequest.of(0, 10)
+            );
+
+        // then
+        assertThat(result)
+            .extracting(Notification::getId)
+            .containsExactly(
+                NOTIFICATION_ID_1,
+                NOTIFICATION_ID_4
+            );
+    }
+
+    @Test
+    @DisplayName("오래된순 조회 시 생성 시간과 ID 커서 이후의 알림만 조회")
+    void findUnread_afterCursor_ascending() {
+        // given
+        Instant sameCreatedAt =
+            Instant.parse("2026-07-28T03:00:00Z");
+
+        insertNotification(
+            NOTIFICATION_ID_1,
+            RECEIVER_ID,
+            "동시 생성 알림 1",
+            sameCreatedAt,
+            null
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_2,
+            RECEIVER_ID,
+            "동시 생성 알림 2",
+            sameCreatedAt,
+            null
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_3,
+            RECEIVER_ID,
+            "동시 생성 알림 3",
+            sameCreatedAt,
+            null
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_4,
+            RECEIVER_ID,
+            "더 오래된 알림",
+            Instant.parse("2026-07-28T02:00:00Z"),
+            null
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_5,
+            RECEIVER_ID,
+            "더 최신 알림",
+            Instant.parse("2026-07-28T04:00:00Z"),
+            null
+        );
+
+        // when
+        List<Notification> result =
+            notificationRepository.findUnreadAfterAscending(
+                RECEIVER_ID,
+                sameCreatedAt,
+                NOTIFICATION_ID_2,
+                PageRequest.of(0, 10)
+            );
+
+        // then
+        assertThat(result)
+            .extracting(Notification::getId)
+            .containsExactly(
+                NOTIFICATION_ID_3,
+                NOTIFICATION_ID_5
+            );
+    }
+
+    private PageRequest firstPage(Sort.Direction direction) {
+        Sort sort = Sort.by(direction, "createdAt")
+            .and(Sort.by(direction, "id"));
+
+        return PageRequest.of(0, 10, sort);
+    }
+
+    private void insertUser(
+        UUID userId,
+        String email,
+        String name
+    ) {
+        Instant now = Instant.parse("2026-07-28T00:00:00Z");
+
+        jdbcTemplate.update(
+            """
+            INSERT INTO users (
+                id,
+                created_at,
+                updated_at,
+                email,
+                password_hash,
+                name,
+                role
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            userId,
+            Timestamp.from(now),
+            Timestamp.from(now),
+            email,
+            "password-hash",
+            name,
+            "USER"
+        );
+    }
+
+    private void insertNotification(
+        UUID notificationId,
+        UUID receiverId,
+        String title,
+        Instant createdAt,
+        Instant readAt
+    ) {
+        jdbcTemplate.update(
+            """
+            INSERT INTO notifications (
+                id,
+                created_at,
+                updated_at,
+                receiver_id,
+                title,
+                content,
+                level,
+                read_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            notificationId,
+            Timestamp.from(createdAt),
+            Timestamp.from(createdAt),
+            receiverId,
+            title,
+            title + " 내용",
+            "INFO",
+            readAt == null ? null : Timestamp.from(readAt)
+        );
+
+        entityManager.clear();
     }
 }
