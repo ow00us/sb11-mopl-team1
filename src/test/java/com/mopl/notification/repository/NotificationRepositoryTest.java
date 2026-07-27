@@ -114,4 +114,61 @@ class NotificationRepositoryTest {
         assertThat(result.get().getCreatedAt()).isNotNull();
         assertThat(result.get().getUpdatedAt()).isNotNull();
     }
+
+    @Test
+    @DisplayName("알림 ID와 수신자 ID로 본인의 알림을 조회")
+    void findByIdAndReceiverId_success() {
+        // given
+        Notification saved = notificationRepository.saveAndFlush(
+            Notification.create(
+                RECEIVER_ID,
+                null,
+                "알림 제목",
+                "알림 내용",
+                NotificationLevel.INFO
+            )
+        );
+
+        entityManager.clear();
+
+        // when
+        Optional<Notification> result =
+            notificationRepository.findByIdAndReceiverId(
+                saved.getId(),
+                RECEIVER_ID
+            );
+
+        // then
+        assertThat(result).isPresent();
+        assertThat(result.get().getReceiverId()).isEqualTo(RECEIVER_ID);
+    }
+
+    @Test
+    @DisplayName("다른 사용자의 알림은 ID와 수신자 조건으로 조회되지 않음")
+    void findByIdAndReceiverId_otherReceiver_returnsEmpty() {
+        // given
+        Notification saved = notificationRepository.saveAndFlush(
+            Notification.create(
+                RECEIVER_ID,
+                null,
+                "알림 제목",
+                "알림 내용",
+                NotificationLevel.INFO
+            )
+        );
+
+        entityManager.clear();
+
+        // when
+        Optional<Notification> result =
+            notificationRepository.findByIdAndReceiverId(
+                saved.getId(),
+                UUID.fromString(
+                    "22222222-2222-2222-2222-222222222222"
+                )
+            );
+
+        // then
+        assertThat(result).isEmpty();
+    }
 }
