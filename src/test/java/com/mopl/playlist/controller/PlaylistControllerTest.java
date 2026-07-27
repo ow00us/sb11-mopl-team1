@@ -103,6 +103,46 @@ class PlaylistControllerTest {
                 .andExpect(jsonPath("$.hasNext").value(false));
     }
 
+    @Test
+    @DisplayName("limit 이 0 이하면 400 을 반환한다")
+    void getList_fail_invalidLimit() throws Exception {
+        mockMvc.perform(get("/api/playlists")
+                        .param("limit", "0")
+                        .param("sortBy", "updatedAt")
+                        .param("sortDirection", "ASCENDING"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("limit 이 100 초과면 400 을 반환한다")
+    void getList_fail_limitExceedsMax() throws Exception {
+        mockMvc.perform(get("/api/playlists")
+                        .param("limit", "101")
+                        .param("sortBy", "updatedAt")
+                        .param("sortDirection", "ASCENDING"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("sortBy 가 허용값이 아니면 400 을 반환한다")
+    void getList_fail_invalidSortBy() throws Exception {
+        mockMvc.perform(get("/api/playlists")
+                        .param("limit", "10")
+                        .param("sortBy", "invalidField")
+                        .param("sortDirection", "ASCENDING"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("sortDirection 이 허용값이 아니면 400 을 반환한다")
+    void getList_fail_invalidSortDirection() throws Exception {
+        mockMvc.perform(get("/api/playlists")
+                        .param("limit", "10")
+                        .param("sortBy", "updatedAt")
+                        .param("sortDirection", "WRONG"))
+                .andExpect(status().isBadRequest());
+    }
+
     // ── GET /api/playlists/{playlistId} ───────────────────────────────────────
 
     @Test

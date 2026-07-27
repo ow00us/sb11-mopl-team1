@@ -8,15 +8,20 @@ import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
 import com.mopl.playlist.service.PlaylistService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
 
+@Validated
 @RestController
 @RequestMapping("/api/playlists")
 @RequiredArgsConstructor
@@ -38,9 +43,9 @@ public class PlaylistController {
             @RequestParam(required = false) UUID ownerIdEqual,
             @RequestParam(required = false) String cursor,
             @RequestParam(required = false) UUID idAfter,
-            @RequestParam int limit,
-            @RequestParam String sortBy,
-            @RequestParam String sortDirection) {
+            @RequestParam @Min(1) @Max(100) int limit,
+            @RequestParam @Pattern(regexp = "updatedAt|subscribeCount") String sortBy,
+            @RequestParam @Pattern(regexp = "ASCENDING|DESCENDING") String sortDirection) {
         return playlistService.getList(
                 keywordLike, ownerIdEqual, cursor, idAfter, limit, sortBy, sortDirection);
     }
