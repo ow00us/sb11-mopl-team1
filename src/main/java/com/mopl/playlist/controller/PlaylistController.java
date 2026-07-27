@@ -9,8 +9,10 @@ import com.mopl.playlist.dto.PlaylistUpdateRequest;
 import com.mopl.playlist.service.PlaylistService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
@@ -24,9 +26,10 @@ public class PlaylistController {
 
     @PostMapping
     public ResponseEntity<PlaylistDto> create(
-            @Valid @RequestBody PlaylistCreateRequest request,
-            Authentication auth) {
-        throw new UnsupportedOperationException("미구현");
+            @Valid @RequestBody PlaylistCreateRequest request) {
+        UUID ownerId = resolveUserId();
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(playlistService.create(request, ownerId));
     }
 
     @GetMapping
@@ -38,30 +41,32 @@ public class PlaylistController {
             @RequestParam int limit,
             @RequestParam String sortBy,
             @RequestParam String sortDirection) {
-        throw new UnsupportedOperationException("미구현");
+        return playlistService.getList(
+                keywordLike, ownerIdEqual, cursor, idAfter, limit, sortBy, sortDirection);
     }
 
     @GetMapping("/{playlistId}")
     public PlaylistDto get(@PathVariable UUID playlistId) {
-        throw new UnsupportedOperationException("미구현");
+        return playlistService.get(playlistId);
     }
 
     @PatchMapping("/{playlistId}")
     public PlaylistDto update(
             @PathVariable UUID playlistId,
-            @Valid @RequestBody PlaylistUpdateRequest request,
-            Authentication auth) {
-        throw new UnsupportedOperationException("미구현");
+            @Valid @RequestBody PlaylistUpdateRequest request) {
+        UUID requesterId = resolveUserId();
+        return playlistService.update(playlistId, request, requesterId);
     }
 
     @DeleteMapping("/{playlistId}")
-    public ResponseEntity<Void> delete(
-            @PathVariable UUID playlistId,
-            Authentication auth) {
-        throw new UnsupportedOperationException("미구현");
+    public ResponseEntity<Void> delete(@PathVariable UUID playlistId) {
+        UUID requesterId = resolveUserId();
+        playlistService.delete(playlistId, requesterId);
+        return ResponseEntity.noContent().build();
     }
 
-    private UUID resolveUserId(Authentication auth) {
+    private UUID resolveUserId() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated()
                 || "anonymousUser".equals(auth.getPrincipal())) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);

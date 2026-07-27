@@ -9,13 +9,15 @@ import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
 import com.mopl.playlist.service.PlaylistService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.http.MediaType;
-import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -41,12 +43,17 @@ class PlaylistControllerTest {
     @Autowired ObjectMapper objectMapper;
     @MockitoBean PlaylistService playlistService;
 
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
+    }
+
     // ── POST /api/playlists ───────────────────────────────────────────────────
 
     @Test
-    @WithMockUser(username = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     @DisplayName("플레이리스트 생성 성공 시 201과 PlaylistDto 를 반환한다")
     void create_success() throws Exception {
+        setAuth(OWNER_ID);
         PlaylistDto response = sampleDto("내 플레이리스트", "설명");
         when(playlistService.create(any(), eq(OWNER_ID))).thenReturn(response);
 
@@ -61,9 +68,10 @@ class PlaylistControllerTest {
     }
 
     @Test
-    @WithMockUser
     @DisplayName("title 이 빈 값이면 400 을 반환한다")
     void create_fail_blankTitle() throws Exception {
+        setAuth(OWNER_ID);
+
         mockMvc.perform(post("/api/playlists")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
@@ -122,9 +130,9 @@ class PlaylistControllerTest {
     // ── PATCH /api/playlists/{playlistId} ─────────────────────────────────────
 
     @Test
-    @WithMockUser(username = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     @DisplayName("플레이리스트 수정 성공 시 200과 변경된 PlaylistDto 를 반환한다")
     void update_success() throws Exception {
+        setAuth(OWNER_ID);
         PlaylistDto updated = sampleDto("새 제목", "설명");
         when(playlistService.update(eq(PLAYLIST_ID), any(), eq(OWNER_ID))).thenReturn(updated);
 
@@ -137,9 +145,9 @@ class PlaylistControllerTest {
     }
 
     @Test
-    @WithMockUser(username = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     @DisplayName("소유자가 아닌 사용자가 수정 시 403 을 반환한다")
     void update_fail_forbidden() throws Exception {
+        setAuth(OWNER_ID);
         when(playlistService.update(eq(PLAYLIST_ID), any(), eq(OWNER_ID)))
                 .thenThrow(new BusinessException(ErrorCode.FORBIDDEN));
 
@@ -154,9 +162,9 @@ class PlaylistControllerTest {
     // ── DELETE /api/playlists/{playlistId} ────────────────────────────────────
 
     @Test
-    @WithMockUser(username = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     @DisplayName("플레이리스트 삭제 성공 시 204 를 반환한다")
     void delete_success() throws Exception {
+        setAuth(OWNER_ID);
         doNothing().when(playlistService).delete(eq(PLAYLIST_ID), eq(OWNER_ID));
 
         mockMvc.perform(delete("/api/playlists/{playlistId}", PLAYLIST_ID))
@@ -166,9 +174,9 @@ class PlaylistControllerTest {
     }
 
     @Test
-    @WithMockUser(username = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     @DisplayName("소유자가 아닌 사용자가 삭제 시 403 을 반환한다")
     void delete_fail_forbidden() throws Exception {
+        setAuth(OWNER_ID);
         doThrow(new BusinessException(ErrorCode.FORBIDDEN))
                 .when(playlistService).delete(eq(PLAYLIST_ID), eq(OWNER_ID));
 
@@ -178,6 +186,13 @@ class PlaylistControllerTest {
     }
 
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
+
+    private void setAuth(UUID userId) {
+        var auth = new UsernamePasswordAuthenticationToken(userId.toString(), null, List.of());
+        var context = SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(auth);
+        SecurityContextHolder.setContext(context);
+    }
 
     private PlaylistDto sampleDto(String title, String desc) {
         return new PlaylistDto(PLAYLIST_ID,
