@@ -258,6 +258,84 @@ class PlaylistControllerTest {
         verifyNoInteractions(playlistService);
     }
 
+    // ── POST /api/playlists/{playlistId}/subscription ─────────────────────────
+
+    @Test
+    @DisplayName("구독 성공 시 204 를 반환한다")
+    void subscribe_success() throws Exception {
+        setAuth(OTHER_ID);
+        doNothing().when(playlistService).subscribe(PLAYLIST_ID, OTHER_ID);
+
+        mockMvc.perform(post("/api/playlists/{playlistId}/subscription", PLAYLIST_ID))
+                .andExpect(status().isNoContent());
+
+        verify(playlistService).subscribe(PLAYLIST_ID, OTHER_ID);
+    }
+
+    @Test
+    @DisplayName("소유자 본인이 구독 시도 시 403 을 반환한다")
+    void subscribe_fail_owner() throws Exception {
+        setAuth(OWNER_ID);
+        doThrow(new BusinessException(ErrorCode.FORBIDDEN))
+                .when(playlistService).subscribe(PLAYLIST_ID, OWNER_ID);
+
+        mockMvc.perform(post("/api/playlists/{playlistId}/subscription", PLAYLIST_ID))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_403_1"));
+    }
+
+    @Test
+    @DisplayName("중복 구독 시도 시 409 를 반환한다")
+    void subscribe_fail_duplicate() throws Exception {
+        setAuth(OTHER_ID);
+        doThrow(new BusinessException(ErrorCode.SUBSCRIPTION_DUPLICATE))
+                .when(playlistService).subscribe(PLAYLIST_ID, OTHER_ID);
+
+        mockMvc.perform(post("/api/playlists/{playlistId}/subscription", PLAYLIST_ID))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("PLAYLIST_409_1"));
+    }
+
+    @Test
+    @DisplayName("미인증 상태에서 구독 시도 시 401 을 반환한다")
+    void subscribe_fail_unauthorized() throws Exception {
+        mockMvc.perform(post("/api/playlists/{playlistId}/subscription", PLAYLIST_ID))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // ── DELETE /api/playlists/{playlistId}/subscription ───────────────────────
+
+    @Test
+    @DisplayName("구독 취소 성공 시 204 를 반환한다")
+    void unsubscribe_success() throws Exception {
+        setAuth(OTHER_ID);
+        doNothing().when(playlistService).unsubscribe(PLAYLIST_ID, OTHER_ID);
+
+        mockMvc.perform(delete("/api/playlists/{playlistId}/subscription", PLAYLIST_ID))
+                .andExpect(status().isNoContent());
+
+        verify(playlistService).unsubscribe(PLAYLIST_ID, OTHER_ID);
+    }
+
+    @Test
+    @DisplayName("구독하지 않은 플레이리스트 취소 시 404 를 반환한다")
+    void unsubscribe_fail_notSubscribed() throws Exception {
+        setAuth(OTHER_ID);
+        doThrow(new BusinessException(ErrorCode.RESOURCE_NOT_FOUND))
+                .when(playlistService).unsubscribe(PLAYLIST_ID, OTHER_ID);
+
+        mockMvc.perform(delete("/api/playlists/{playlistId}/subscription", PLAYLIST_ID))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_404_1"));
+    }
+
+    @Test
+    @DisplayName("미인증 상태에서 구독 취소 시도 시 401 을 반환한다")
+    void unsubscribe_fail_unauthorized() throws Exception {
+        mockMvc.perform(delete("/api/playlists/{playlistId}/subscription", PLAYLIST_ID))
+                .andExpect(status().isUnauthorized());
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
     private void setAuth(UUID userId) {
