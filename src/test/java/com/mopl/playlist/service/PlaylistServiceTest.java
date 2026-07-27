@@ -122,6 +122,15 @@ class PlaylistServiceTest {
         assertThat(result.nextIdAfter()).isNotNull();
     }
 
+    @Test
+    @DisplayName("잘못된 cursor 값이 들어오면 INVALID_INPUT 예외가 발생한다")
+    void getList_fail_invalidCursor() {
+        assertThatThrownBy(() -> playlistService.getList(
+                null, null, "invalid-cursor!!", null, 10, "updatedAt", "ASCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
     // ── update ───────────────────────────────────────────────────────────────
 
     @Test

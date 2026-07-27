@@ -106,21 +106,25 @@ public class PlaylistServiceImpl implements PlaylistService {
             String cursor, UUID idAfter,
             int limit, String sortBy, String sortDirection) {
 
-        boolean isAsc     = DIRECTION_ASC.equalsIgnoreCase(sortDirection);
-        String  ownerStr  = ownerIdEqual != null ? ownerIdEqual.toString() : null;
-        String  idAfterStr = idAfter     != null ? idAfter.toString()      : null;
+        boolean isAsc      = DIRECTION_ASC.equalsIgnoreCase(sortDirection);
+        String  ownerStr   = ownerIdEqual != null ? ownerIdEqual.toString() : null;
+        String  idAfterStr = idAfter      != null ? idAfter.toString()      : null;
 
-        if (SORT_SUBSCRIBE_COUNT.equals(sortBy)) {
-            Long cursorCount = (cursor != null) ? CursorUtils.decodeAsLong(cursor) : null;
+        try {
+            if (SORT_SUBSCRIBE_COUNT.equals(sortBy)) {
+                Long cursorCount = (cursor != null) ? CursorUtils.decodeAsLong(cursor) : null;
+                return isAsc
+                        ? playlistRepository.findBySubscriberCountAsc(keywordLike, ownerStr, cursorCount, idAfterStr, limit)
+                        : playlistRepository.findBySubscriberCountDesc(keywordLike, ownerStr, cursorCount, idAfterStr, limit);
+            }
+
+            Instant cursorTime = (cursor != null) ? CursorUtils.decodeAsInstant(cursor) : null;
             return isAsc
-                    ? playlistRepository.findBySubscriberCountAsc(keywordLike, ownerStr, cursorCount, idAfterStr, limit)
-                    : playlistRepository.findBySubscriberCountDesc(keywordLike, ownerStr, cursorCount, idAfterStr, limit);
+                    ? playlistRepository.findByUpdatedAtAsc(keywordLike, ownerStr, cursorTime, idAfterStr, limit)
+                    : playlistRepository.findByUpdatedAtDesc(keywordLike, ownerStr, cursorTime, idAfterStr, limit);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
-
-        Instant cursorTime = (cursor != null) ? CursorUtils.decodeAsInstant(cursor) : null;
-        return isAsc
-                ? playlistRepository.findByUpdatedAtAsc(keywordLike, ownerStr, cursorTime, idAfterStr, limit)
-                : playlistRepository.findByUpdatedAtDesc(keywordLike, ownerStr, cursorTime, idAfterStr, limit);
     }
 
     private String buildNextCursor(Playlist last, String sortBy) {
