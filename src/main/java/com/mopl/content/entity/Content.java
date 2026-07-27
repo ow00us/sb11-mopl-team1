@@ -15,6 +15,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 import lombok.AccessLevel;
 import lombok.Builder;
@@ -94,7 +95,7 @@ public class Content extends BaseEntity {
         if (rawTag == null) {
             throw new BusinessException(ErrorCode.INVALID_INPUT, "태그는 비어 있을 수 없습니다.");
         }
-        String normalized = rawTag.strip().replaceAll("\\s+", " ").toLowerCase();
+        String normalized = rawTag.strip().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
         if (normalized.isEmpty()) {
             throw new BusinessException(ErrorCode.INVALID_INPUT, "태그는 비어 있을 수 없습니다.");
         }
