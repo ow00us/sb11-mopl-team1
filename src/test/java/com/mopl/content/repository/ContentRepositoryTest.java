@@ -7,6 +7,8 @@ import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentSource;
 import com.mopl.content.entity.ContentType;
 import com.mopl.global.config.JpaConfig;
+import com.mopl.global.exception.BusinessException;
+import com.mopl.global.exception.ErrorCode;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
@@ -107,6 +109,33 @@ class ContentRepositoryTest {
         assertThat(first).isTrue();
         assertThat(second).isFalse();
         assertThat(content.getTags()).containsExactly("action");
+    }
+
+    @Test
+    @DisplayName("addTag에 null을 전달하면 BusinessException이 발생한다")
+    void addTag_null_throws_business_exception() {
+        // given
+        Content content = movie().build();
+
+        // when & then
+        assertThatThrownBy(() -> content.addTag(null))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @ParameterizedTest
+    @DisplayName("addTag에 공백뿐인 문자열을 전달하면 BusinessException이 발생한다")
+    @ValueSource(strings = {"", "   ", "\t\n"})
+    void addTag_blank_after_normalization_throws_business_exception(String blankTag) {
+        // given
+        Content content = movie().build();
+
+        // when & then
+        assertThatThrownBy(() -> content.addTag(blankTag))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(ErrorCode.INVALID_INPUT);
     }
 
     @Test
