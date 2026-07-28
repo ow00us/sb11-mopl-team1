@@ -1,6 +1,7 @@
 package com.mopl.watchingsession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.mopl.global.config.JpaConfig;
@@ -134,5 +135,19 @@ public class WatchingSessionSnapshotRepositoryTest {
         // then
         assertThat(repository.findByWatcherId(watcherId)).isEmpty();
     }
+
+    @Test
+    @DisplayName("삭제 대상 세션이 없어도 예외 없이 끝남")
+    void deleteByWatcherId_success_whenNoActiveSession() {
+        // given
+        UUID watcherIdWithoutSession = UUID.randomUUID();
+
+        // when & then
+        assertThatCode(() -> {
+            repository.deleteByWatcherId(watcherIdWithoutSession);
+            entityManager.flush();;
+        }).doesNotThrowAnyException();
+    }
+
 }
 
