@@ -23,6 +23,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -124,6 +125,28 @@ class UserServiceTest {
         // 중복이면 비밀번호를 해시하거나 DB에 저장하면 안된다.
         verify(passwordEncoder, never()).encode(any());
         verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    @DisplayName("동시 가입으로 이메일 유니크 제약에 걸리면 중복 이메일 오류를 반환한다")
+    void signUp_fail_whenDatabaseUniqueConstraintIsViolated() {
+        // given
+        UserCreateRequest request = new UserCreateRequest(
+            "테스트 사용자",
+            "user@example.com",
+            "passwordTest1!"
+        );
+
+        when(userRepository.existsByEmail("user@example.com")).thenReturn(false);
+        when(passwordEncoder.encode("passwordTest1!")).thenReturn("encoded-password");
+        when(userRepository.saveAndFlush(any(User.class)))
+            .thenThrow(new DataIntegrityViolationException("uk_users_email"));
+
+        // when & then
+        assertThatThrownBy(() -> userService.signUp(request))
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.DUPLICATE_EMAIL);
     }
 
 }

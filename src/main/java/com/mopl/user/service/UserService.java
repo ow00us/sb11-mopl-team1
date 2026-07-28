@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.dao.DataIntegrityViolationException;
 
 // 사용자 회원가입과 관련된 비즈니스 규칙 처리
 @Service
@@ -48,6 +49,14 @@ public class UserService {
             .build();
 
         User savedUser = userRepository.save(user);
+
+        try {
+            // saveAndFlush()는 INSERT SQL을 즉시 실행
+            // 동시 요청으로 DB 유니크 제약에 걸리는 경우를 여기서 처리
+            savedUser = userRepository.saveAndFlush(user);
+        } catch (DataIntegrityViolationException exception) {
+            throw new BusinessException(ErrorCode.DUPLICATE_EMAIL);
+        }
 
         return UserDto.from(savedUser);
     }

@@ -23,7 +23,8 @@ public record UserCreateRequest (
     @NotBlank(message = "비밀번호를 입력해주세요.")
     @Size(min = 8, max = 72, message = "비밀번호는 8~72자로 작성 가능합니다.")
     @Pattern(
-        regexp = "^(?=.*[A-Za-z])(?=.*\\d)(?=.*[^A-Za-z0-9\\s])\\S+$",
+        regexp = "^(?=.*[A-Za-z])(?=.*\\d)(?=.*[!@#$%^&*()_+\\-={}\\[\\]|:;\"'<>,.?/~`])"
+            + "[A-Za-z\\d!@#$%^&*()_+\\-={}\\[\\]|:;\"'<>,.?/~`]+$",
         message = "비밀번호는 영문, 숫자, 특수문자를 각각 하나 이상 포함해야 합니다."
     )
     String password
