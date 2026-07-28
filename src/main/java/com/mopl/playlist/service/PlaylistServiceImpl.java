@@ -111,6 +111,10 @@ public class PlaylistServiceImpl implements PlaylistService {
             String cursor, UUID idAfter,
             int limit, String sortBy, String sortDirection) {
 
+        if ((cursor != null) != (idAfter != null)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
         boolean isAsc      = DIRECTION_ASC.equalsIgnoreCase(sortDirection);
         String  ownerStr   = ownerIdEqual != null ? ownerIdEqual.toString() : null;
         String  idAfterStr = idAfter      != null ? idAfter.toString()      : null;
