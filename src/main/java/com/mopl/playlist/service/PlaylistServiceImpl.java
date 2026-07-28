@@ -8,13 +8,17 @@ import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
 import com.mopl.playlist.entity.Playlist;
+import com.mopl.playlist.entity.PlaylistSubscription;
 import com.mopl.playlist.repository.PlaylistRepository;
+import org.springframework.dao.DataIntegrityViolationException;
+import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -27,8 +31,8 @@ public class PlaylistServiceImpl implements PlaylistService {
     private static final String DIRECTION_ASC        = "ASCENDING";
 
     private final PlaylistRepository playlistRepository;
+    private final PlaylistSubscriptionRepository subscriptionRepository;
 
-    /** 플레이리스트를 생성하고 저장한 결과를 반환합니다. */
     @Override
     @Transactional
     public PlaylistDto create(PlaylistCreateRequest request, UUID ownerId) {
@@ -40,21 +44,24 @@ public class PlaylistServiceImpl implements PlaylistService {
         return PlaylistDto.from(playlistRepository.save(playlist));
     }
 
-    /** 플레이리스트를 단건 조회합니다. 존재하지 않으면 RESOURCE_NOT_FOUND 예외를 발생시킵니다. */
     @Override
-    public PlaylistDto get(UUID playlistId) {
-        return PlaylistDto.from(findOrThrow(playlistId));
+    public PlaylistDto get(UUID playlistId, UUID requesterId) {
+        Playlist playlist = findOrThrow(playlistId);
+        boolean subscribedByMe = requesterId != null &&
+                subscriptionRepository.existsByPlaylistIdAndSubscriberId(playlistId, requesterId);
+        return PlaylistDto.from(playlist, subscribedByMe);
     }
 
-    /** 커서 페이지네이션으로 플레이리스트 목록을 조회합니다. limit+1 조회로 다음 페이지 여부를 판단합니다. */
     @Override
     public CursorResponse<PlaylistDto> getList(
-            String keywordLike, UUID ownerIdEqual, String cursor, UUID idAfter,
-            int limit, String sortBy, String sortDirection) {
+            String keywordLike, UUID ownerIdEqual, UUID subscriberIdEqual,
+            String cursor, UUID idAfter,
+            int limit, String sortBy, String sortDirection,
+            UUID requesterId) {
 
         int fetchSize = limit + 1;
         List<Playlist> rows = fetchPage(
-                keywordLike, ownerIdEqual, cursor, idAfter, fetchSize, sortBy, sortDirection);
+                keywordLike, ownerIdEqual, subscriberIdEqual, cursor, idAfter, fetchSize, sortBy, sortDirection);
 
         boolean hasNext = rows.size() == fetchSize;
         List<Playlist> page = hasNext ? rows.subList(0, limit) : rows;
@@ -67,14 +74,23 @@ public class PlaylistServiceImpl implements PlaylistService {
             nextIdAfter = last.getId();
         }
 
-        List<PlaylistDto> data  = page.stream().map(PlaylistDto::from).toList();
-        String ownerIdStr = ownerIdEqual != null ? ownerIdEqual.toString() : null;
-        long total = playlistRepository.countByFilter(keywordLike, ownerIdStr);
+        Set<UUID> subscribedIds = Set.of();
+        if (requesterId != null && !page.isEmpty()) {
+            List<UUID> pageIds = page.stream().map(Playlist::getId).toList();
+            subscribedIds = subscriptionRepository.findSubscribedPlaylistIds(requesterId, pageIds);
+        }
+        final Set<UUID> finalSubscribedIds = subscribedIds;
+        List<PlaylistDto> data = page.stream()
+                .map(p -> PlaylistDto.from(p, finalSubscribedIds.contains(p.getId())))
+                .toList();
+
+        String ownerIdStr      = ownerIdEqual      != null ? ownerIdEqual.toString()      : null;
+        String subscriberIdStr = subscriberIdEqual  != null ? subscriberIdEqual.toString()  : null;
+        long total = playlistRepository.countByFilter(keywordLike, ownerIdStr, subscriberIdStr);
 
         return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, total, sortBy, sortDirection);
     }
 
-    /** 소유자 검증 후 플레이리스트를 수정합니다. */
     @Override
     @Transactional
     public PlaylistDto update(UUID playlistId, PlaylistUpdateRequest request, UUID requesterId) {
@@ -84,13 +100,45 @@ public class PlaylistServiceImpl implements PlaylistService {
         return PlaylistDto.from(playlistRepository.saveAndFlush(playlist));
     }
 
-    /** 소유자 검증 후 플레이리스트를 삭제합니다. */
     @Override
     @Transactional
     public void delete(UUID playlistId, UUID requesterId) {
         Playlist playlist = findOrThrow(playlistId);
         verifyOwner(playlist, requesterId);
         playlistRepository.delete(playlist);
+    }
+
+    @Override
+    @Transactional
+    public void subscribe(UUID playlistId, UUID subscriberId) {
+        Playlist playlist = findOrThrow(playlistId);
+        if (playlist.isOwnedBy(subscriberId)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN);
+        }
+        if (subscriptionRepository.existsByPlaylistIdAndSubscriberId(playlistId, subscriberId)) {
+            throw new BusinessException(ErrorCode.SUBSCRIPTION_DUPLICATE);
+        }
+        try {
+            subscriptionRepository.saveAndFlush(
+                    PlaylistSubscription.builder()
+                            .playlistId(playlistId)
+                            .subscriberId(subscriberId)
+                            .build());
+        } catch (DataIntegrityViolationException e) {
+            throw new BusinessException(ErrorCode.SUBSCRIPTION_DUPLICATE);
+        }
+        playlistRepository.incrementSubscriberCount(playlistId);
+    }
+
+    @Override
+    @Transactional
+    public void unsubscribe(UUID playlistId, UUID subscriberId) {
+        PlaylistSubscription subscription = subscriptionRepository
+                .findByPlaylistIdAndSubscriberId(playlistId, subscriberId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
+        subscriptionRepository.delete(subscription);
+        subscriptionRepository.flush();
+        playlistRepository.decrementSubscriberCount(subscription.getPlaylistId());
     }
 
     // ── 내부 헬퍼 ──────────────────────────────────────────────────────────
@@ -107,7 +155,7 @@ public class PlaylistServiceImpl implements PlaylistService {
     }
 
     private List<Playlist> fetchPage(
-            String keywordLike, UUID ownerIdEqual,
+            String keywordLike, UUID ownerIdEqual, UUID subscriberIdEqual,
             String cursor, UUID idAfter,
             int limit, String sortBy, String sortDirection) {
 
@@ -115,22 +163,23 @@ public class PlaylistServiceImpl implements PlaylistService {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
 
-        boolean isAsc      = DIRECTION_ASC.equalsIgnoreCase(sortDirection);
-        String  ownerStr   = ownerIdEqual != null ? ownerIdEqual.toString() : null;
-        String  idAfterStr = idAfter      != null ? idAfter.toString()      : null;
+        boolean isAsc         = DIRECTION_ASC.equalsIgnoreCase(sortDirection);
+        String  ownerStr      = ownerIdEqual     != null ? ownerIdEqual.toString()     : null;
+        String  subscriberStr = subscriberIdEqual != null ? subscriberIdEqual.toString() : null;
+        String  idAfterStr    = idAfter           != null ? idAfter.toString()           : null;
 
         try {
             if (SORT_SUBSCRIBE_COUNT.equals(sortBy)) {
                 Long cursorCount = (cursor != null) ? CursorUtils.decodeAsLong(cursor) : null;
                 return isAsc
-                        ? playlistRepository.findBySubscriberCountAsc(keywordLike, ownerStr, cursorCount, idAfterStr, limit)
-                        : playlistRepository.findBySubscriberCountDesc(keywordLike, ownerStr, cursorCount, idAfterStr, limit);
+                        ? playlistRepository.findBySubscriberCountAsc(keywordLike, ownerStr, subscriberStr, cursorCount, idAfterStr, limit)
+                        : playlistRepository.findBySubscriberCountDesc(keywordLike, ownerStr, subscriberStr, cursorCount, idAfterStr, limit);
             }
 
             Instant cursorTime = (cursor != null) ? CursorUtils.decodeAsInstant(cursor) : null;
             return isAsc
-                    ? playlistRepository.findByUpdatedAtAsc(keywordLike, ownerStr, cursorTime, idAfterStr, limit)
-                    : playlistRepository.findByUpdatedAtDesc(keywordLike, ownerStr, cursorTime, idAfterStr, limit);
+                    ? playlistRepository.findByUpdatedAtAsc(keywordLike, ownerStr, subscriberStr, cursorTime, idAfterStr, limit)
+                    : playlistRepository.findByUpdatedAtDesc(keywordLike, ownerStr, subscriberStr, cursorTime, idAfterStr, limit);
         } catch (IllegalArgumentException e) {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
