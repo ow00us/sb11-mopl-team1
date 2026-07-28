@@ -21,6 +21,7 @@ public enum ErrorCode {
     SUBSCRIPTION_DUPLICATE(HttpStatus.CONFLICT, "PLAYLIST_409_1", "이미 구독 중인 플레이리스트입니다."),
     FOLLOW_SELF(HttpStatus.BAD_REQUEST, "FOLLOW_400_1", "자기 자신은 팔로우할 수 없습니다."),
     FOLLOW_DUPLICATE(HttpStatus.CONFLICT, "FOLLOW_409_1", "이미 팔로우한 사용자입니다."),
+    EMAIL_DUPLICATE(HttpStatus.CONFLICT, "USER_409_1", "이미 사용 중인 이메일입니다."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "COMMON_500_1", "서버 오류가 발생했습니다.");
 
     private final HttpStatus status;

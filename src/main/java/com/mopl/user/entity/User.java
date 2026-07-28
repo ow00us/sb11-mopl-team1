@@ -1,0 +1,85 @@
+package com.mopl.user.entity;
+
+import com.mopl.global.common.BaseEntity;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+/**
+ * 사용자 계정을 표현하는 JPA 엔티티입니다.
+ *
+ * 이 클래스의 객체는 PostgreSQL의 {@code users} 테이블 행과 연결됩니다. 이메일, 비밀번호 해시, 이름, 프로필 이미지, 권한 및 잠금 상태를 관리합니다.
+ */
+@Entity
+@Getter
+@Table(name = "users")
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+public class User extends BaseEntity {
+
+    // 로그인 ID로 사용하는 사용자의 이메일
+    // 회원가입 서비스에서 앞뒤 공백 제거 후 소문자로 변환한 뒤 이 필드에 저장
+    @Column(nullable = false, length = 255)
+    private String email;
+
+    // 인코딩 된 비밀번호
+    @Column(name = "password_hash", nullable = false, length = 255)
+    private String passwordHash;
+
+    // 서비스 화면에 표시할 사용자 이름
+    @Column(nullable = false, length = 100)
+    private String name;
+
+    // 사용자 프로필 이미지의 URL
+    @Column(name = "profile_image_url", length = 2048)
+    private String profileImageUrl;
+
+    // 사용자의 시스템 권한
+    // enum 순서 번호를 저장하는 ORDINAL 방식 사용 시 enum 선언 순서를 변경했을 때
+    // 기존 데이터의 의미가 바뀔 수 있으므로 권한같은 중요한 값에는 STRING 방식 사용
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private UserRole role;
+
+    // 관리자에 의한 계정 잠금 여부
+    // true면 로그인 불허, false면 허용. 기본값 false
+    @Column(nullable = false)
+    private boolean locked;
+
+    /**
+     * User 엔티티를 명시적인 값으로 생성하기 위한 생성자
+     * <p>
+     * {@link Builder}를 적용하여 필드 순서에 의존하지 않고 의미가 드러나는 방식으로 객체를 만들 수 있습니다.
+     * <p>
+     * User user = User.builder() .email("user@example.com") .passwordHash("encoded-password")
+     * .name("사용자") .role(UserRole.USER) .locked(false) .build();
+     *
+     * @param email           정규화된 이메일
+     * @param passwordHash    인코딩된 비밀번호
+     * @param name            사용자 이름
+     * @param profileImageUrl 프로필 이미지 URL, 없으면 null
+     * @param role            사용자 권한
+     * @param locked          계정 잠금 여부
+     */
+    @Builder
+    public User(
+        String email,
+        String passwordHash,
+        String name,
+        String profileImageUrl,
+        UserRole role,
+        boolean locked
+    ) {
+        this.email = email;
+        this.passwordHash = passwordHash;
+        this.name = name;
+        this.profileImageUrl = profileImageUrl;
+        this.role = role;
+        this.locked = locked;
+    }
+}
