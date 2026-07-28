@@ -4,6 +4,7 @@ import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.util.CursorUtils;
+import org.springframework.dao.DataIntegrityViolationException;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
@@ -301,6 +302,20 @@ class PlaylistServiceTest {
         Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
         when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
         when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> playlistService.subscribe(PLAYLIST_ID, OTHER_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.SUBSCRIPTION_DUPLICATE);
+    }
+
+    @Test
+    @DisplayName("동시 요청으로 DB 유니크 제약 위반 시 SUBSCRIPTION_DUPLICATE 예외가 발생한다")
+    void subscribe_fail_concurrentDuplicate() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID)).thenReturn(false);
+        when(subscriptionRepository.save(any(PlaylistSubscription.class)))
+                .thenThrow(new DataIntegrityViolationException("uk_playlist_subscriptions_playlist_subscriber"));
 
         assertThatThrownBy(() -> playlistService.subscribe(PLAYLIST_ID, OTHER_ID))
                 .isInstanceOf(BusinessException.class)
