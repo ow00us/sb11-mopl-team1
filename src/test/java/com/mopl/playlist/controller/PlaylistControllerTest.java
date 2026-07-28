@@ -82,6 +82,18 @@ class PlaylistControllerTest {
         verifyNoInteractions(playlistService);
     }
 
+    @Test
+    @DisplayName("미인증 사용자가 생성 시도 시 401 을 반환한다")
+    void create_fail_unauthorized() throws Exception {
+        mockMvc.perform(post("/api/playlists")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new PlaylistCreateRequest("제목", "설명"))))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(playlistService);
+    }
+
     // ── GET /api/playlists ────────────────────────────────────────────────────
 
     @Test
@@ -199,6 +211,18 @@ class PlaylistControllerTest {
                 .andExpect(jsonPath("$.errorCode").value("COMMON_403_1"));
     }
 
+    @Test
+    @DisplayName("미인증 사용자가 수정 시도 시 401 을 반환한다")
+    void update_fail_unauthorized() throws Exception {
+        mockMvc.perform(patch("/api/playlists/{playlistId}", PLAYLIST_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new PlaylistUpdateRequest("제목", null))))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(playlistService);
+    }
+
     // ── DELETE /api/playlists/{playlistId} ────────────────────────────────────
 
     @Test
@@ -223,6 +247,15 @@ class PlaylistControllerTest {
         mockMvc.perform(delete("/api/playlists/{playlistId}", PLAYLIST_ID))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value("COMMON_403_1"));
+    }
+
+    @Test
+    @DisplayName("미인증 사용자가 삭제 시도 시 401 을 반환한다")
+    void delete_fail_unauthorized() throws Exception {
+        mockMvc.perform(delete("/api/playlists/{playlistId}", PLAYLIST_ID))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(playlistService);
     }
 
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────

@@ -123,6 +123,23 @@ class PlaylistServiceTest {
     }
 
     @Test
+    @DisplayName("ownerIdEqual 필터 적용 시 total 이 필터된 개수를 반환한다")
+    void getList_filterByOwner_returnsFilteredTotal() {
+        List<Playlist> rows = List.of(
+                savedPlaylist(UUID.randomUUID(), OWNER_ID, "A", "a", Instant.now())
+        );
+        when(playlistRepository.findByUpdatedAtAsc(null, OWNER_ID.toString(), null, null, 2))
+                .thenReturn(rows);
+        when(playlistRepository.countByFilter(null, OWNER_ID.toString())).thenReturn(1L);
+
+        CursorResponse<PlaylistDto> result = playlistService.getList(
+                null, OWNER_ID, null, null, 1, "updatedAt", "ASCENDING");
+
+        assertThat(result.data()).hasSize(1);
+        assertThat(result.totalCount()).isEqualTo(1L);
+    }
+
+    @Test
     @DisplayName("잘못된 cursor 값이 들어오면 INVALID_INPUT 예외가 발생한다")
     void getList_fail_invalidCursor() {
         assertThatThrownBy(() -> playlistService.getList(
@@ -134,16 +151,21 @@ class PlaylistServiceTest {
     // ── update ───────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("소유자가 수정 시 변경된 PlaylistDto 를 반환한다")
+    @DisplayName("소유자가 수정 시 saveAndFlush 를 거쳐 갱신된 updatedAt 의 PlaylistDto 를 반환한다")
     void update_success() {
-        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "원래 제목", "원래 설명", Instant.now());
+        Instant newUpdatedAt = Instant.now();
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "원래 제목", "원래 설명", newUpdatedAt.minusSeconds(60));
+        Playlist flushed  = savedPlaylist(PLAYLIST_ID, OWNER_ID, "새 제목",   "원래 설명", newUpdatedAt);
         when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(playlistRepository.saveAndFlush(any(Playlist.class))).thenReturn(flushed);
 
         PlaylistDto result = playlistService.update(
                 PLAYLIST_ID, new PlaylistUpdateRequest("새 제목", null), OWNER_ID);
 
         assertThat(result.title()).isEqualTo("새 제목");
         assertThat(result.description()).isEqualTo("원래 설명");
+        assertThat(result.updatedAt()).isEqualTo(newUpdatedAt);
+        verify(playlistRepository).saveAndFlush(any(Playlist.class));
     }
 
     @Test
