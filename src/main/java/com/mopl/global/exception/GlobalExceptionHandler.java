@@ -1,5 +1,7 @@
 package com.mopl.global.exception;
 
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -32,6 +34,20 @@ public class GlobalExceptionHandler {
         Map<String, String> details = new HashMap<>();
         for (FieldError fe : e.getBindingResult().getFieldErrors()) {
             details.put(fe.getField(), fe.getDefaultMessage());
+        }
+        ErrorCode code = ErrorCode.INVALID_INPUT;
+        ErrorResponse body = ErrorResponse.of(
+                e.getClass().getSimpleName(), code, code.getMessage(), details);
+        return ResponseEntity.status(code.getStatus()).body(body);
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ErrorResponse> handleConstraintViolation(ConstraintViolationException e) {
+        Map<String, String> details = new HashMap<>();
+        for (ConstraintViolation<?> v : e.getConstraintViolations()) {
+            String path = v.getPropertyPath().toString();
+            String field = path.contains(".") ? path.substring(path.lastIndexOf('.') + 1) : path;
+            details.put(field, v.getMessage());
         }
         ErrorCode code = ErrorCode.INVALID_INPUT;
         ErrorResponse body = ErrorResponse.of(
