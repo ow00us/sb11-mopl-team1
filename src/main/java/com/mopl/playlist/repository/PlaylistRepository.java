@@ -57,9 +57,9 @@ public interface PlaylistRepository extends JpaRepository<Playlist, UUID> {
             @Param("limit") int limit
     );
 
-    // ── subscribeCount 정렬 ─────────────────────────────────────────────────
+    // ── subscriberCount 정렬 ────────────────────────────────────────────────
 
-    /** 커서 기반으로 subscribeCount 오름차순 목록을 조회합니다. */
+    /** 커서 기반으로 subscriberCount 오름차순 목록을 조회합니다. */
     @Query(value = """
             SELECT * FROM playlists
             WHERE  (CAST(:keywordLike AS text) IS NULL
@@ -94,7 +94,7 @@ public interface PlaylistRepository extends JpaRepository<Playlist, UUID> {
             @Param("ownerIdEqual") String ownerIdEqual
     );
 
-    /** 커서 기반으로 subscribeCount 내림차순 목록을 조회합니다. */
+    /** 커서 기반으로 subscriberCount 내림차순 목록을 조회합니다. */
     @Query(value = """
             SELECT * FROM playlists
             WHERE  (CAST(:keywordLike AS text) IS NULL
