@@ -30,7 +30,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 // Repository와 PasswordEncoder는 실제 구현 대신 Mock 사용
 // 도커, PostgreSQL 없이 회원가입 로직만 검증 가능
 
-@Extendwith(MockitoExtension.class)
+@ExtendWith(MockitoExtension.class)
 class UserServiceTest {
 
     @Mock
@@ -47,7 +47,7 @@ class UserServiceTest {
     void signUp_success() {
         // given: 사용자는 대문자와 앞뒤 공백이 포함된 이메일을 입력할 수 있다.
         UserCreateRequest request = new UserCreateRequest(
-            "테스트 사용자"
+            "테스트 사용자",
             " User@Example.CoM ",
             "passwordTest1!"
         );
@@ -100,7 +100,7 @@ class UserServiceTest {
         assertThat(savedUser.isLocked()).isFalse();
 
         verify(userRepository).existsByEmail(normalizedEmail);
-        verify(passwordEncoder).encode("password1!");
+        verify(passwordEncoder).encode("passwordTest1!");
     }
 
     @Test
