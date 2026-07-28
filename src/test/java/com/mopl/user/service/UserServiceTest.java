@@ -59,7 +59,7 @@ class UserServiceTest {
         when(userRepository.existsByEmail(normalizedEmail)).thenReturn(false);
         when(passwordEncoder.encode("passwordTest1!")).thenReturn("encoded-password");
 
-        // save()가 받은 User에 테스트용 ID와 생성 시각을 넣어 반환하도록 설정
+        // saveAndFlush()가 받은 User에 테스트용 ID와 생성 시각을 넣어 반환하도록 설정
         when(userRepository.saveAndFlush(any(User.class))).thenAnswer(invocation -> {
             User user = invocation.getArgument(0);
 
@@ -92,6 +92,9 @@ class UserServiceTest {
         ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
         verify(userRepository).saveAndFlush(userCaptor.capture());
 
+        // 회원가입은 saveAndFlush() 한 번으로만 저장
+        verify(userRepository, never()).save(any(User.class));
+
         User savedUser = userCaptor.getValue();
 
         assertThat(savedUser.getEmail()).isEqualTo(normalizedEmail);
@@ -120,7 +123,7 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.signUp(request))
             .isInstanceOf(BusinessException.class)
             .extracting("errorCode")
-            .isEqualTo(ErrorCode.DUPLICATE_EMAIL);
+            .isEqualTo(ErrorCode.EMAIL_DUPLICATE);
 
         // 중복이면 비밀번호를 해시하거나 DB에 저장하면 안된다.
         verify(passwordEncoder, never()).encode(any());
@@ -146,7 +149,7 @@ class UserServiceTest {
         assertThatThrownBy(() -> userService.signUp(request))
             .isInstanceOf(BusinessException.class)
             .extracting("errorCode")
-            .isEqualTo(ErrorCode.DUPLICATE_EMAIL);
+            .isEqualTo(ErrorCode.EMAIL_DUPLICATE);
     }
 
 }

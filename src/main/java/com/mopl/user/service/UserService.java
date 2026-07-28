@@ -35,7 +35,7 @@ public class UserService {
 
         // 에러코드 공통영역 작업중. 추후 에러코드 확인 및 수정 예정
         if (userRepository.existsByEmail(normalizedEmail)) {
-            throw new BusinessException(ErrorCode.DUPLICATE_EMAIL);
+            throw new BusinessException(ErrorCode.EMAIL_DUPLICATE);
         }
 
         String passwordHash = passwordEncoder.encode(request.password());
@@ -48,14 +48,13 @@ public class UserService {
             .locked(false)
             .build();
 
-        User savedUser = userRepository.save(user);
+        User savedUser;
 
         try {
-            // saveAndFlush()는 INSERT SQL을 즉시 실행
-            // 동시 요청으로 DB 유니크 제약에 걸리는 경우를 여기서 처리
+            // INSERT SQL을 즉시 실행해 동시 가입 시 DB 유니크 제약 오류를 여기서 처리
             savedUser = userRepository.saveAndFlush(user);
         } catch (DataIntegrityViolationException exception) {
-            throw new BusinessException(ErrorCode.DUPLICATE_EMAIL);
+            throw new BusinessException(ErrorCode.EMAIL_DUPLICATE);
         }
 
         return UserDto.from(savedUser);
