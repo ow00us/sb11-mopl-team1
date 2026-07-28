@@ -145,7 +145,7 @@ class PlaylistRepositoryTest {
     }
 
     @Test
-    @DisplayName("subscriberCount DESC — 구독 수 내림차순으로 정렬된다")
+    @DisplayName("subscribeCount DESC — 구독 수 내림차순으로 정렬된다")
     void findBySubscriberCountDesc_sortedDescending() {
         Playlist low  = em.persistAndFlush(playlist(OWNER_A, "구독낮음", "a"));
         Playlist high = em.persistAndFlush(playlist(OWNER_A, "구독높음", "b"));

@@ -47,7 +47,7 @@ public class PlaylistController {
             @RequestParam(required = false) String cursor,
             @RequestParam(required = false) UUID idAfter,
             @RequestParam @Min(1) @Max(100) int limit,
-            @RequestParam @Pattern(regexp = "updatedAt|subscriberCount") String sortBy,
+            @RequestParam @Pattern(regexp = "updatedAt|subscribeCount") String sortBy,
             @RequestParam @Pattern(regexp = "ASCENDING|DESCENDING") String sortDirection) {
         return playlistService.getList(
                 keywordLike, ownerIdEqual, cursor, idAfter, limit, sortBy, sortDirection);

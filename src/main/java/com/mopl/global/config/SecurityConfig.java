@@ -5,7 +5,6 @@ import com.mopl.global.security.JwtProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -37,7 +36,6 @@ public class SecurityConfig {
     private static final String[] PUBLIC_PATHS = {
             "/api/auth/**",
             "/api/auth/csrf-token",
-            "/swagger-ui.html",
             "/swagger-ui/**",
             "/v3/api-docs/**",
             "/actuator/health"
@@ -51,7 +49,6 @@ public class SecurityConfig {
                         .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler()))
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.POST, "/api/users").permitAll()
                         .requestMatchers(PUBLIC_PATHS).permitAll()
                         // TODO(빌드 주차): JWT 구현 완료 후 아래를 .authenticated() 로 전환합니다.
                         .anyRequest().permitAll())

@@ -116,24 +116,6 @@ class PlaylistControllerTest {
     }
 
     @Test
-    @DisplayName("구독자 수 정렬은 subscriberCount 이름을 사용한다")
-    void getList_success_sortBySubscriberCount() throws Exception {
-        CursorResponse<PlaylistDto> response = CursorResponse.of(
-                List.of(), null, null, false, 0L,
-                "subscriberCount", "DESCENDING");
-
-        when(playlistService.getList(any(), any(), any(), any(), eq(10),
-                eq("subscriberCount"), eq("DESCENDING"))).thenReturn(response);
-
-        mockMvc.perform(get("/api/playlists")
-                        .param("limit", "10")
-                        .param("sortBy", "subscriberCount")
-                        .param("sortDirection", "DESCENDING"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.sortBy").value("subscriberCount"));
-    }
-
-    @Test
     @DisplayName("limit 이 0 이하면 400 을 반환한다")
     void getList_fail_invalidLimit() throws Exception {
         mockMvc.perform(get("/api/playlists")

@@ -22,9 +22,9 @@ import java.util.UUID;
 @Transactional(readOnly = true)
 public class PlaylistServiceImpl implements PlaylistService {
 
-    private static final String SORT_UPDATED_AT       = "updatedAt";
-    private static final String SORT_SUBSCRIBER_COUNT = "subscriberCount";
-    private static final String DIRECTION_ASC         = "ASCENDING";
+    private static final String SORT_UPDATED_AT      = "updatedAt";
+    private static final String SORT_SUBSCRIBE_COUNT = "subscribeCount";
+    private static final String DIRECTION_ASC        = "ASCENDING";
 
     private final PlaylistRepository playlistRepository;
 
@@ -120,7 +120,7 @@ public class PlaylistServiceImpl implements PlaylistService {
         String  idAfterStr = idAfter      != null ? idAfter.toString()      : null;
 
         try {
-            if (SORT_SUBSCRIBER_COUNT.equals(sortBy)) {
+            if (SORT_SUBSCRIBE_COUNT.equals(sortBy)) {
                 Long cursorCount = (cursor != null) ? CursorUtils.decodeAsLong(cursor) : null;
                 return isAsc
                         ? playlistRepository.findBySubscriberCountAsc(keywordLike, ownerStr, cursorCount, idAfterStr, limit)
@@ -137,7 +137,7 @@ public class PlaylistServiceImpl implements PlaylistService {
     }
 
     private String buildNextCursor(Playlist last, String sortBy) {
-        if (SORT_SUBSCRIBER_COUNT.equals(sortBy)) {
+        if (SORT_SUBSCRIBE_COUNT.equals(sortBy)) {
             return CursorUtils.encodeLong(last.getSubscriberCount());
         }
         return CursorUtils.encodeInstant(last.getUpdatedAt());
