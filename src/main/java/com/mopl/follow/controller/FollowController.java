@@ -53,6 +53,10 @@ public class FollowController {
                 || "anonymousUser".equals(auth.getPrincipal())) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);
         }
-        return UUID.fromString(auth.getName());
+        try {
+            return UUID.fromString(auth.getName());
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
     }
 }

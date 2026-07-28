@@ -95,7 +95,11 @@ public class PlaylistController {
                 || "anonymousUser".equals(auth.getPrincipal())) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);
         }
-        return UUID.fromString(auth.getName());
+        try {
+            return UUID.fromString(auth.getName());
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
     }
 
     /** 인증된 사용자 ID를 추출합니다. 미인증 시 null 을 반환합니다. */
@@ -105,6 +109,10 @@ public class PlaylistController {
                 || "anonymousUser".equals(auth.getPrincipal())) {
             return null;
         }
-        return UUID.fromString(auth.getName());
+        try {
+            return UUID.fromString(auth.getName());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 }
