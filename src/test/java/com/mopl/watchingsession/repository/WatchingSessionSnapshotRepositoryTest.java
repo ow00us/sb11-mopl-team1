@@ -145,7 +145,7 @@ public class WatchingSessionSnapshotRepositoryTest {
         // when & then
         assertThatCode(() -> {
             repository.deleteByWatcherId(watcherIdWithoutSession);
-            entityManager.flush();;
+            entityManager.flush();
         }).doesNotThrowAnyException();
     }
 
