@@ -25,6 +25,7 @@ public class NotificationService {
     private static final String SORT_BY_CREATED_AT = "createdAt";
     private static final String ASCENDING = "ASCENDING";
     private static final String DESCENDING = "DESCENDING";
+    private static final int MAX_LIMIT = 100;
 
     private final NotificationRepository notificationRepository;
 
@@ -172,7 +173,7 @@ public class NotificationService {
         String sortDirection,
         String sortBy
     ) {
-        if (limit <= 0) {
+        if (limit <= 0 || limit > MAX_LIMIT) {
             throw new BusinessException(
                 ErrorCode.INVALID_INPUT
             );

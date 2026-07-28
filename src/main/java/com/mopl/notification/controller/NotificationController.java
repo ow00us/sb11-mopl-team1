@@ -7,6 +7,9 @@ import com.mopl.notification.dto.NotificationDto;
 import com.mopl.notification.service.NotificationService;
 import java.security.Principal;
 import java.util.UUID;
+
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -28,7 +31,10 @@ public class NotificationController {
     public CursorResponse<NotificationDto> getNotifications(
         @RequestParam(required = false) String cursor,
         @RequestParam(required = false) UUID idAfter,
-        @RequestParam int limit,
+        @RequestParam
+        @Min(value = 1, message = "limit은 1 이상이어야 합니다.")
+        @Max(value = 100, message = "limit은 100 이하여야 합니다.")
+        int limit,
         @RequestParam String sortDirection,
         @RequestParam String sortBy,
         Principal principal

@@ -188,4 +188,52 @@ class NotificationControllerTest {
 
         verifyNoInteractions(notificationService);
     }
+
+    @Test
+    @DisplayName("limit이 1보다 작으면 400을 반환")
+    void getNotifications_limitLessThanOne_returnsBadRequest()
+        throws Exception {
+
+        // when & then
+        mockMvc.perform(
+            get("/api/notifications")
+                .param("limit", "0")
+                .param("sortDirection", "DESCENDING")
+                .param("sortBy", "createdAt")
+                .principal(
+                    () -> RECEIVER_ID.toString()
+                )
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            );
+
+        verifyNoInteractions(notificationService);
+    }
+
+    @Test
+    @DisplayName("limit이 100보다 크면 400을 반환")
+    void getNotifications_limitGreaterThanOneHundred_returnsBadRequest()
+        throws Exception {
+
+        // when & then
+        mockMvc.perform(
+            get("/api/notifications")
+                .param("limit", "101")
+                .param("sortDirection", "DESCENDING")
+                .param("sortBy", "createdAt")
+                .principal(
+                    () -> RECEIVER_ID.toString()
+                )
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            );
+
+        verifyNoInteractions(notificationService);
+    }
 }

@@ -372,4 +372,25 @@ class NotificationServiceTest {
 
         return notification;
     }
+
+    @Test
+    @DisplayName("limit이 100보다 크면 알림 조회에 실패")
+    void getUnreadNotifications_limitTooLarge_throwsException() {
+        // when & then
+        assertThatThrownBy(() ->
+            notificationService.getUnreadNotifications(
+                RECEIVER_ID,
+                null,
+                null,
+                101,
+                "DESCENDING",
+                "createdAt"
+            )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.INVALID_INPUT);
+
+        verifyNoInteractions(notificationRepository);
+    }
 }
