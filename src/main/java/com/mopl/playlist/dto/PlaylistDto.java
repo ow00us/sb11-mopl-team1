@@ -18,10 +18,7 @@ public record PlaylistDto(
         boolean subscribedByMe,
         List<ContentSummary> contents
 ) {
-    /**
-     * 기본 변환 — owner.name·profileImageUrl·contents 는 각 도메인 연동 후 채워집니다.
-     */
-    public static PlaylistDto from(Playlist playlist) {
+    public static PlaylistDto from(Playlist playlist, boolean subscribedByMe) {
         return new PlaylistDto(
                 playlist.getId(),
                 new UserSummary(playlist.getOwnerId(), null, null),
@@ -29,8 +26,13 @@ public record PlaylistDto(
                 playlist.getDescription(),
                 playlist.getUpdatedAt(),
                 playlist.getSubscriberCount(),
-                false,
+                subscribedByMe,
                 List.of()
         );
+    }
+
+    /** owner.name·profileImageUrl·contents 는 각 도메인 연동 후 채워집니다. */
+    public static PlaylistDto from(Playlist playlist) {
+        return from(playlist, false);
     }
 }
