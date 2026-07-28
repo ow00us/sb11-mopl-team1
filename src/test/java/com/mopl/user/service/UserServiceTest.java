@@ -60,7 +60,7 @@ class UserServiceTest {
         when(passwordEncoder.encode("passwordTest1!")).thenReturn("encoded-password");
 
         // save()가 받은 User에 테스트용 ID와 생성 시각을 넣어 반환하도록 설정
-        when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(invocation -> {
             User user = invocation.getArgument(0);
 
             ReflectionTestUtils.setField(
@@ -90,7 +90,7 @@ class UserServiceTest {
 
         // 실제로 저장하려 했던 User 엔티티 값 검증
         ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
-        verify(userRepository).save(userCaptor.capture());
+        verify(userRepository).saveAndFlush(userCaptor.capture());
 
         User savedUser = userCaptor.getValue();
 
@@ -124,7 +124,7 @@ class UserServiceTest {
 
         // 중복이면 비밀번호를 해시하거나 DB에 저장하면 안된다.
         verify(passwordEncoder, never()).encode(any());
-        verify(userRepository, never()).save(any(User.class));
+        verify(userRepository, never()).saveAndFlush(any(User.class));
     }
 
     @Test
