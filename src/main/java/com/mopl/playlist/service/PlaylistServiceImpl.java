@@ -119,7 +119,7 @@ public class PlaylistServiceImpl implements PlaylistService {
             throw new BusinessException(ErrorCode.SUBSCRIPTION_DUPLICATE);
         }
         try {
-            subscriptionRepository.save(
+            subscriptionRepository.saveAndFlush(
                     PlaylistSubscription.builder()
                             .playlistId(playlistId)
                             .subscriberId(subscriberId)
@@ -137,6 +137,7 @@ public class PlaylistServiceImpl implements PlaylistService {
                 .findByPlaylistIdAndSubscriberId(playlistId, subscriberId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
         subscriptionRepository.delete(subscription);
+        subscriptionRepository.flush();
         playlistRepository.decrementSubscriberCount(subscription.getPlaylistId());
     }
 
