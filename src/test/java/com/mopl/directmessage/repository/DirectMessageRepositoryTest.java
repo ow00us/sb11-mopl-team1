@@ -17,6 +17,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -25,6 +26,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 @DataJpaTest
@@ -89,6 +91,34 @@ public class DirectMessageRepositoryTest {
             "password-hash",
             name,
             "USER"
+        );
+    }
+
+    private void insertDirectMessage(
+        UUID messageId,
+        UUID conversationId,
+        UUID senderId,
+        Instant createdAt
+    ) {
+        jdbcTemplate.update(
+            """
+            INSERT INTO direct_messages (
+                id,
+                created_at,
+                updated_at,
+                conversation_id,
+                sender_id,
+                content,
+                read_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, NULL)
+            """,
+            messageId,
+            Timestamp.from(createdAt),
+            Timestamp.from(createdAt),
+            conversationId,
+            senderId,
+            "테스트 메시지"
         );
     }
 
@@ -164,5 +194,96 @@ public class DirectMessageRepositoryTest {
         assertThatThrownBy(
             () -> directMessageRepository.saveAndFlush(message)
         ).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    @DisplayName("DM을 생성 시간과 ID 기준으로 정렬하고 커서 조회")
+    void findAllByCursor() {
+        // given
+        Conversation conversation =
+            conversationRepository.saveAndFlush(Conversation.create());
+
+        Conversation otherConversation =
+            conversationRepository.saveAndFlush(Conversation.create());
+
+        participantRepository.saveAllAndFlush(List.of(
+            ConversationParticipant.create(conversation.getId(), USER_ID_1),
+            ConversationParticipant.create(otherConversation.getId(), USER_ID_1)
+        ));
+
+        Instant firstTime = Instant.parse("2026-07-29T00:00:00Z");
+        Instant secondTime = Instant.parse("2026-07-29T01:00:00Z");
+
+        UUID messageId1 =
+            UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1");
+        UUID messageId2 =
+            UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2");
+        UUID messageId3 =
+            UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3");
+        UUID otherMessageId =
+            UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1");
+
+        insertDirectMessage(
+            messageId1, conversation.getId(), USER_ID_1, firstTime
+        );
+        insertDirectMessage(
+            messageId2, conversation.getId(), USER_ID_1, secondTime
+        );
+        insertDirectMessage(
+            messageId3, conversation.getId(), USER_ID_1, secondTime
+        );
+        insertDirectMessage(
+            otherMessageId, otherConversation.getId(), USER_ID_1, secondTime
+        );
+
+        entityManager.clear();
+
+        // when
+        List<DirectMessage> descending =
+            directMessageRepository
+                .findAllByConversationIdOrderByCreatedAtDescIdDesc(
+                    conversation.getId(),
+                    PageRequest.of(0, 10)
+                );
+
+        List<DirectMessage> afterCursor =
+            directMessageRepository.findAllByCursorDesc(
+                conversation.getId(),
+                secondTime,
+                messageId3,
+                PageRequest.of(0, 10)
+            );
+
+        List<DirectMessage> ascending =
+            directMessageRepository
+                .findAllByConversationIdOrderByCreatedAtAscIdAsc(
+                    conversation.getId(),
+                    PageRequest.of(0, 10)
+                );
+
+        List<DirectMessage> ascendingAfterCursor =
+            directMessageRepository.findAllByCursorAsc(
+                conversation.getId(),
+                secondTime,
+                messageId2,
+                PageRequest.of(0, 10)
+            );
+
+        // then
+        assertThat(descending)
+            .extracting(DirectMessage::getId)
+            .containsExactly(messageId3, messageId2, messageId1);
+
+        assertThat(afterCursor)
+            .extracting(DirectMessage::getId)
+            .containsExactly(messageId2, messageId1);
+
+        assertThat(ascending)
+            .extracting(DirectMessage::getId)
+            .containsExactly(messageId1, messageId2, messageId3);
+
+        assertThat(ascendingAfterCursor)
+            .extracting(DirectMessage::getId)
+            .containsExactly(messageId3);
     }
 }
