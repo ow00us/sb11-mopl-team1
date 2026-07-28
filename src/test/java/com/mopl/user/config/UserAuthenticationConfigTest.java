@@ -12,6 +12,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.authentication.LockedException;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -100,5 +102,65 @@ class UserAuthenticationConfigTest {
             )
         ))
             .isInstanceOf(BadCredentialsException.class);
+    }
+
+    @Test
+    @DisplayName("등록되지 않은 이메일이면 인증에 실패한다")
+    void authenticationManager_failWhenUserIsNotFound() {
+        // given
+        UserAuthenticationConfig config = new UserAuthenticationConfig();
+        PasswordEncoder passwordEncoder = config.passwordEncoder();
+
+        MoplUserDetailsService userDetailsService = mock(MoplUserDetailsService.class);
+
+        // UserDetailsService가 사용자를 찾지 못하면 Spring Security는
+        // 계정 존재 여부 노출 방지를 위해 BadCredentialsException으로 변환합니다.
+        when(userDetailsService.loadUserByUsername("unknown@example.com"))
+            .thenThrow(new UsernameNotFoundException("등록되지 않은 이메일입니다."));
+
+        AuthenticationManager authenticationManager =
+            config.authenticationManager(userDetailsService, passwordEncoder);
+
+        // when & then
+        assertThatThrownBy(() -> authenticationManager.authenticate(
+            UsernamePasswordAuthenticationToken.unauthenticated(
+                "unknown@example.com",
+                "passwordTest1!"
+            )
+        ))
+            .isInstanceOf(BadCredentialsException.class);
+    }
+
+    @Test
+    @DisplayName("잠긴 계정이면 올바른 비밀번호를 입력해도 인증에 실패한다")
+    void authenticationManager_failWhenAccountIsLocked() {
+        // given
+        UserAuthenticationConfig config = new UserAuthenticationConfig();
+        PasswordEncoder passwordEncoder = config.passwordEncoder();
+
+        MoplUserDetailsService userDetailsService = mock(MoplUserDetailsService.class);
+
+        UserDetails lockedUser =
+            org.springframework.security.core.userdetails.User.builder()
+                .username("user@example.com")
+                .password(passwordEncoder.encode("passwordTest1!"))
+                .authorities("ROLE_USER")
+                .accountLocked(true)
+                .build();
+
+        when(userDetailsService.loadUserByUsername("user@example.com"))
+            .thenReturn(lockedUser);
+
+        AuthenticationManager authenticationManager =
+            config.authenticationManager(userDetailsService, passwordEncoder);
+
+        // when & then
+        assertThatThrownBy(() -> authenticationManager.authenticate(
+            UsernamePasswordAuthenticationToken.unauthenticated(
+                "user@example.com",
+                "passwordTest1!"
+            )
+        ))
+            .isInstanceOf(LockedException.class);
     }
 }
