@@ -3350,6 +3350,3 @@ components:
       description: "GET /api/auth/csrf-token 호출 후 XSRF-TOKEN 쿠키로 받은 값을 전달합니다."
       name: "X-XSRF-TOKEN"
       in: "header"
-externalDocs:
-  description: "Swagger 계약 계획 및 합의 기록"
-  url: "https://app.notion.com/p/Mopl-Swagger-API-3abd250dfa26810ca57bc5d184485bfa"
