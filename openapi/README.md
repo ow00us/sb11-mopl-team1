@@ -10,12 +10,6 @@
 프로토타입 원본의 SHA-256은
 `3C9725909B44B3D3FC562F3D4A7551D215F9D0513A13B26143B2E5FAAB2943E1`입니다.
 
-## 관련 문서
-
-- [ADR-001 API 계약 및 상태 코드 규칙](https://app.notion.com/p/ADR-001-API-3abd250dfa2681f0b4cfc7e4ab64168b): 계약을 선택한 이유, 상태 코드와 인증 규칙
-- [Mopl Swagger 및 API 계약 관리 계획](https://app.notion.com/p/Mopl-Swagger-API-3abd250dfa26810ca57bc5d184485bfa): 작업 범위와 진행 방법
-- [프로토타입 Swagger](https://project.sb.sprint.learn.codeit.kr/sb/mopl/api/swagger-ui/index.html): 제공된 원본 동작 확인
-
 백엔드 실행 후에는 `/swagger-ui.html`에서 Swagger UI를,
 `/v3/api-docs`에서 현재 구현의 OpenAPI 문서를 확인할 수 있습니다.
 
