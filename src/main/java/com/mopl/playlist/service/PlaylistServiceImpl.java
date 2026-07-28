@@ -81,7 +81,7 @@ public class PlaylistServiceImpl implements PlaylistService {
         Playlist playlist = findOrThrow(playlistId);
         verifyOwner(playlist, requesterId);
         playlist.update(request.title(), request.description());
-        return PlaylistDto.from(playlist);
+        return PlaylistDto.from(playlistRepository.saveAndFlush(playlist));
     }
 
     /** 소유자 검증 후 플레이리스트를 삭제합니다. */
