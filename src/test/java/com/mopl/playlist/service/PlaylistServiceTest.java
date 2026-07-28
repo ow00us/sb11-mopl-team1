@@ -161,6 +161,23 @@ class PlaylistServiceTest {
     }
 
     @Test
+    @DisplayName("subscriberIdEqual 필터 적용 시 total 이 필터된 개수를 반환한다")
+    void getList_filterBySubscriber_returnsFilteredTotal() {
+        List<Playlist> rows = List.of(
+                savedPlaylist(UUID.randomUUID(), OWNER_ID, "A", "a", Instant.now())
+        );
+        when(playlistRepository.findByUpdatedAtAsc(null, null, OTHER_ID.toString(), null, null, 2))
+                .thenReturn(rows);
+        when(playlistRepository.countByFilter(null, null, OTHER_ID.toString())).thenReturn(1L);
+
+        CursorResponse<PlaylistDto> result = playlistService.getList(
+                null, null, OTHER_ID, null, null, 1, "updatedAt", "ASCENDING", null);
+
+        assertThat(result.data()).hasSize(1);
+        assertThat(result.totalCount()).isEqualTo(1L);
+    }
+
+    @Test
     @DisplayName("잘못된 cursor 값이 들어오면 INVALID_INPUT 예외가 발생한다")
     void getList_fail_invalidCursor() {
         assertThatThrownBy(() -> playlistService.getList(
