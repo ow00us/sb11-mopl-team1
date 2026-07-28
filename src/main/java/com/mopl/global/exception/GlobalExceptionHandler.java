@@ -8,6 +8,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -62,5 +63,33 @@ public class GlobalExceptionHandler {
         ErrorResponse body = ErrorResponse.of(
                 e.getClass().getSimpleName(), code, code.getMessage(), new HashMap<>());
         return ResponseEntity.status(code.getStatus()).body(body);
+    }
+
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ResponseEntity<ErrorResponse> handleMethodValidation(HandlerMethodValidationException e) {
+        Map<String, String> details = new HashMap<>();
+        e.getParameterValidationResults().forEach(result -> {
+            String parameterName = result.getMethodParameter().getParameterName();
+            result.getResolvableErrors().forEach(error -> details.put(
+                parameterName != null
+                    ? parameterName
+                    : "parameter",
+                error.getDefaultMessage()
+                )
+            );
+        });
+
+        ErrorCode code = ErrorCode.INVALID_INPUT;
+
+        ErrorResponse body = ErrorResponse.of(
+            e.getClass().getSimpleName(),
+            code,
+            code.getMessage(),
+            details
+        );
+
+        return ResponseEntity
+            .status(code.getStatus())
+            .body(body);
     }
 }
