@@ -230,4 +230,31 @@ class ContentRepositoryTest {
         assertThat(found).isEmpty();
         assertThat(all).extracting(Content::getId).doesNotContain(contentId);
     }
+
+    @Test
+    @DisplayName("delete 호출 시 실제로는 논리 삭제(deleted_at 갱신)로 처리된다")
+    void delete_performs_logical_delete() {
+        // given
+        Content saved = entityManager.persistAndFlush(movie().build());
+        UUID contentId = saved.getId();
+
+        // when
+        contentRepository.deleteById(contentId);
+        entityManager.flush();
+        entityManager.clear();
+
+        // then
+        // 1) 기본 조회에서는 나오지 않음
+        assertThat(contentRepository.findById(contentId)).isEmpty();
+
+        // 2) 실제 행은 DB에 남아 있음 (네이티브 쿼리로 확인, @SQLRestriction 우회)
+        Object[] row = (Object[]) entityManager.getEntityManager()
+                .createNativeQuery("SELECT id, deleted_at FROM contents WHERE id = :id")
+                .setParameter("id", contentId)
+                .getSingleResult();
+        assertThat(row[0]).isEqualTo(contentId);
+
+        // 3) deleted_at에 삭제 시각이 기록되어 있음
+        assertThat(row[1]).isNotNull();
+    }
 }

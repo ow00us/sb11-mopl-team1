@@ -21,6 +21,7 @@ import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
 
 @Entity
@@ -28,6 +29,7 @@ import org.hibernate.annotations.SQLRestriction;
 @Table(name = "contents")
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @SQLRestriction("deleted_at IS NULL")
+@SQLDelete(sql = "UPDATE contents SET deleted_at = now(), updated_at = now() WHERE id = ?")
 public class Content extends BaseEntity {
 
     @Enumerated(EnumType.STRING)
