@@ -271,15 +271,16 @@ class PlaylistServiceTest {
     // ── subscribe ─────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("구독 성공 시 구독 저장 후 subscriberCount 를 증가시킨다")
+    @DisplayName("구독 성공 시 saveAndFlush 로 즉시 저장 후 subscriberCount 를 증가시킨다")
     void subscribe_success() {
         Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
         when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
         when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID)).thenReturn(false);
+        when(subscriptionRepository.saveAndFlush(any(PlaylistSubscription.class))).thenReturn(any());
 
         playlistService.subscribe(PLAYLIST_ID, OTHER_ID);
 
-        verify(subscriptionRepository).save(any(PlaylistSubscription.class));
+        verify(subscriptionRepository).saveAndFlush(any(PlaylistSubscription.class));
         verify(playlistRepository).incrementSubscriberCount(PLAYLIST_ID);
     }
 
@@ -314,7 +315,7 @@ class PlaylistServiceTest {
         Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
         when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
         when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID)).thenReturn(false);
-        when(subscriptionRepository.save(any(PlaylistSubscription.class)))
+        when(subscriptionRepository.saveAndFlush(any(PlaylistSubscription.class)))
                 .thenThrow(new DataIntegrityViolationException("uk_playlist_subscriptions_playlist_subscriber"));
 
         assertThatThrownBy(() -> playlistService.subscribe(PLAYLIST_ID, OTHER_ID))
@@ -335,7 +336,7 @@ class PlaylistServiceTest {
     // ── unsubscribe ───────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("구독 취소 성공 시 구독 삭제 후 subscriberCount 를 감소시킨다")
+    @DisplayName("구독 취소 성공 시 삭제 flush 후 subscriberCount 를 감소시킨다")
     void unsubscribe_success() {
         PlaylistSubscription sub = savedSubscription(PLAYLIST_ID, OTHER_ID);
         when(subscriptionRepository.findByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
@@ -344,6 +345,7 @@ class PlaylistServiceTest {
         playlistService.unsubscribe(PLAYLIST_ID, OTHER_ID);
 
         verify(subscriptionRepository).delete(sub);
+        verify(subscriptionRepository).flush();
         verify(playlistRepository).decrementSubscriberCount(PLAYLIST_ID);
     }
 
