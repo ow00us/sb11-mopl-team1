@@ -16,6 +16,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import com.mopl.global.util.CursorUtils;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -144,6 +145,26 @@ class PlaylistServiceTest {
     void getList_fail_invalidCursor() {
         assertThatThrownBy(() -> playlistService.getList(
                 null, null, "invalid-cursor!!", null, 10, "updatedAt", "ASCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
+    @DisplayName("cursor만 있고 idAfter가 없으면 INVALID_INPUT 예외가 발생한다")
+    void getList_fail_cursorWithoutIdAfter() {
+        String validCursor = CursorUtils.encodeInstant(Instant.now());
+
+        assertThatThrownBy(() -> playlistService.getList(
+                null, null, validCursor, null, 10, "updatedAt", "ASCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
+    @DisplayName("idAfter만 있고 cursor가 없으면 INVALID_INPUT 예외가 발생한다")
+    void getList_fail_idAfterWithoutCursor() {
+        assertThatThrownBy(() -> playlistService.getList(
+                null, null, null, UUID.randomUUID(), 10, "updatedAt", "ASCENDING"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
     }
