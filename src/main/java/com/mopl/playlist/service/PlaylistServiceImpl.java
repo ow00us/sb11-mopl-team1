@@ -10,6 +10,7 @@ import com.mopl.playlist.dto.PlaylistUpdateRequest;
 import com.mopl.playlist.entity.Playlist;
 import com.mopl.playlist.entity.PlaylistSubscription;
 import com.mopl.playlist.repository.PlaylistRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -117,11 +118,15 @@ public class PlaylistServiceImpl implements PlaylistService {
         if (subscriptionRepository.existsByPlaylistIdAndSubscriberId(playlistId, subscriberId)) {
             throw new BusinessException(ErrorCode.SUBSCRIPTION_DUPLICATE);
         }
-        subscriptionRepository.save(
-                PlaylistSubscription.builder()
-                        .playlistId(playlistId)
-                        .subscriberId(subscriberId)
-                        .build());
+        try {
+            subscriptionRepository.save(
+                    PlaylistSubscription.builder()
+                            .playlistId(playlistId)
+                            .subscriberId(subscriberId)
+                            .build());
+        } catch (DataIntegrityViolationException e) {
+            throw new BusinessException(ErrorCode.SUBSCRIPTION_DUPLICATE);
+        }
         playlistRepository.incrementSubscriberCount(playlistId);
     }
 
