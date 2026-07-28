@@ -37,6 +37,7 @@ class PlaylistControllerTest {
 
     private static final UUID PLAYLIST_ID = UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc");
     private static final UUID OWNER_ID    = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    private static final UUID OTHER_ID    = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
     private static final Instant UPDATED_AT = Instant.parse("2026-07-27T00:00:00Z");
 
     @Autowired MockMvc mockMvc;
@@ -103,8 +104,8 @@ class PlaylistControllerTest {
                 List.of(sampleDto("제목", "설명")),
                 null, null, false, 1L, "updatedAt", "ASCENDING");
 
-        when(playlistService.getList(any(), any(), any(), any(), eq(10),
-                eq("updatedAt"), eq("ASCENDING"))).thenReturn(response);
+        when(playlistService.getList(any(), any(), any(), any(), any(), eq(10),
+                eq("updatedAt"), eq("ASCENDING"), any())).thenReturn(response);
 
         mockMvc.perform(get("/api/playlists")
                         .param("limit", "10")
@@ -160,7 +161,7 @@ class PlaylistControllerTest {
     @Test
     @DisplayName("플레이리스트 단건 조회 성공 시 200과 PlaylistDto 를 반환한다")
     void get_success() throws Exception {
-        when(playlistService.get(PLAYLIST_ID)).thenReturn(sampleDto("제목", "설명"));
+        when(playlistService.get(eq(PLAYLIST_ID), any())).thenReturn(sampleDto("제목", "설명"));
 
         mockMvc.perform(get("/api/playlists/{playlistId}", PLAYLIST_ID))
                 .andExpect(status().isOk())
@@ -171,7 +172,7 @@ class PlaylistControllerTest {
     @Test
     @DisplayName("존재하지 않는 플레이리스트 조회 시 404 를 반환한다")
     void get_fail_notFound() throws Exception {
-        when(playlistService.get(PLAYLIST_ID))
+        when(playlistService.get(eq(PLAYLIST_ID), any()))
                 .thenThrow(new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
 
         mockMvc.perform(get("/api/playlists/{playlistId}", PLAYLIST_ID))

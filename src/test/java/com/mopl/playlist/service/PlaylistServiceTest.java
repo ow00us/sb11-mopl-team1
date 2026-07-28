@@ -3,11 +3,14 @@ package com.mopl.playlist.service;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.util.CursorUtils;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
 import com.mopl.playlist.entity.Playlist;
+import com.mopl.playlist.entity.PlaylistSubscription;
 import com.mopl.playlist.repository.PlaylistRepository;
+import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,7 +19,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import com.mopl.global.util.CursorUtils;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -32,6 +34,9 @@ class PlaylistServiceTest {
 
     @Mock
     PlaylistRepository playlistRepository;
+
+    @Mock
+    PlaylistSubscriptionRepository subscriptionRepository;
 
     @InjectMocks
     PlaylistServiceImpl playlistService;
@@ -65,11 +70,25 @@ class PlaylistServiceTest {
     void get_success() {
         Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
         when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID)).thenReturn(true);
 
-        PlaylistDto result = playlistService.get(PLAYLIST_ID);
+        PlaylistDto result = playlistService.get(PLAYLIST_ID, OTHER_ID);
 
         assertThat(result.id()).isEqualTo(PLAYLIST_ID);
         assertThat(result.title()).isEqualTo("제목");
+        assertThat(result.subscribedByMe()).isTrue();
+    }
+
+    @Test
+    @DisplayName("requesterId 가 null 이면 subscribedByMe 는 false 를 반환한다")
+    void get_success_anonymous() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+
+        PlaylistDto result = playlistService.get(PLAYLIST_ID, null);
+
+        assertThat(result.subscribedByMe()).isFalse();
+        verifyNoInteractions(subscriptionRepository);
     }
 
     @Test
@@ -77,7 +96,7 @@ class PlaylistServiceTest {
     void get_fail_notFound() {
         when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> playlistService.get(PLAYLIST_ID))
+        assertThatThrownBy(() -> playlistService.get(PLAYLIST_ID, null))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
     }
@@ -91,11 +110,11 @@ class PlaylistServiceTest {
                 savedPlaylist(UUID.randomUUID(), OWNER_ID, "A", "a", Instant.now()),
                 savedPlaylist(UUID.randomUUID(), OWNER_ID, "B", "b", Instant.now())
         );
-        when(playlistRepository.findByUpdatedAtAsc(null, null, null, null, 3)).thenReturn(rows);
-        when(playlistRepository.countByFilter(null, null)).thenReturn(2L);
+        when(playlistRepository.findByUpdatedAtAsc(null, null, null, null, null, 3)).thenReturn(rows);
+        when(playlistRepository.countByFilter(null, null, null)).thenReturn(2L);
 
         CursorResponse<PlaylistDto> result = playlistService.getList(
-                null, null, null, null, 2, "updatedAt", "ASCENDING");
+                null, null, null, null, null, 2, "updatedAt", "ASCENDING", null);
 
         assertThat(result.data()).hasSize(2);
         assertThat(result.hasNext()).isFalse();
@@ -111,11 +130,11 @@ class PlaylistServiceTest {
                 savedPlaylist(UUID.randomUUID(), OWNER_ID, "B", "b", now),
                 savedPlaylist(UUID.randomUUID(), OWNER_ID, "C", "c", now)
         );
-        when(playlistRepository.findByUpdatedAtAsc(null, null, null, null, 3)).thenReturn(rows);
-        when(playlistRepository.countByFilter(null, null)).thenReturn(5L);
+        when(playlistRepository.findByUpdatedAtAsc(null, null, null, null, null, 3)).thenReturn(rows);
+        when(playlistRepository.countByFilter(null, null, null)).thenReturn(5L);
 
         CursorResponse<PlaylistDto> result = playlistService.getList(
-                null, null, null, null, 2, "updatedAt", "ASCENDING");
+                null, null, null, null, null, 2, "updatedAt", "ASCENDING", null);
 
         assertThat(result.data()).hasSize(2);
         assertThat(result.hasNext()).isTrue();
@@ -129,12 +148,12 @@ class PlaylistServiceTest {
         List<Playlist> rows = List.of(
                 savedPlaylist(UUID.randomUUID(), OWNER_ID, "A", "a", Instant.now())
         );
-        when(playlistRepository.findByUpdatedAtAsc(null, OWNER_ID.toString(), null, null, 2))
+        when(playlistRepository.findByUpdatedAtAsc(null, OWNER_ID.toString(), null, null, null, 2))
                 .thenReturn(rows);
-        when(playlistRepository.countByFilter(null, OWNER_ID.toString())).thenReturn(1L);
+        when(playlistRepository.countByFilter(null, OWNER_ID.toString(), null)).thenReturn(1L);
 
         CursorResponse<PlaylistDto> result = playlistService.getList(
-                null, OWNER_ID, null, null, 1, "updatedAt", "ASCENDING");
+                null, OWNER_ID, null, null, null, 1, "updatedAt", "ASCENDING", null);
 
         assertThat(result.data()).hasSize(1);
         assertThat(result.totalCount()).isEqualTo(1L);
@@ -144,7 +163,7 @@ class PlaylistServiceTest {
     @DisplayName("잘못된 cursor 값이 들어오면 INVALID_INPUT 예외가 발생한다")
     void getList_fail_invalidCursor() {
         assertThatThrownBy(() -> playlistService.getList(
-                null, null, "invalid-cursor!!", null, 10, "updatedAt", "ASCENDING"))
+                null, null, null, "invalid-cursor!!", null, 10, "updatedAt", "ASCENDING", null))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
     }
@@ -155,7 +174,7 @@ class PlaylistServiceTest {
         String validCursor = CursorUtils.encodeInstant(Instant.now());
 
         assertThatThrownBy(() -> playlistService.getList(
-                null, null, validCursor, null, 10, "updatedAt", "ASCENDING"))
+                null, null, null, validCursor, null, 10, "updatedAt", "ASCENDING", null))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
     }
@@ -164,7 +183,7 @@ class PlaylistServiceTest {
     @DisplayName("idAfter만 있고 cursor가 없으면 INVALID_INPUT 예외가 발생한다")
     void getList_fail_idAfterWithoutCursor() {
         assertThatThrownBy(() -> playlistService.getList(
-                null, null, null, UUID.randomUUID(), 10, "updatedAt", "ASCENDING"))
+                null, null, null, null, UUID.randomUUID(), 10, "updatedAt", "ASCENDING", null))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
     }
@@ -248,6 +267,82 @@ class PlaylistServiceTest {
                 .extracting("errorCode").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
     }
 
+    // ── subscribe ─────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("구독 성공 시 구독 저장 후 subscriberCount 를 증가시킨다")
+    void subscribe_success() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID)).thenReturn(false);
+
+        playlistService.subscribe(PLAYLIST_ID, OTHER_ID);
+
+        verify(subscriptionRepository).save(any(PlaylistSubscription.class));
+        verify(playlistRepository).incrementSubscriberCount(PLAYLIST_ID);
+    }
+
+    @Test
+    @DisplayName("소유자가 본인 플레이리스트를 구독하면 FORBIDDEN 예외가 발생한다")
+    void subscribe_fail_owner() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+
+        assertThatThrownBy(() -> playlistService.subscribe(PLAYLIST_ID, OWNER_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.FORBIDDEN);
+
+        verifyNoInteractions(subscriptionRepository);
+    }
+
+    @Test
+    @DisplayName("중복 구독 시도 시 SUBSCRIPTION_DUPLICATE 예외가 발생한다")
+    void subscribe_fail_duplicate() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> playlistService.subscribe(PLAYLIST_ID, OTHER_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.SUBSCRIPTION_DUPLICATE);
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 플레이리스트 구독 시도 시 RESOURCE_NOT_FOUND 예외가 발생한다")
+    void subscribe_fail_notFound() {
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> playlistService.subscribe(PLAYLIST_ID, OTHER_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+    }
+
+    // ── unsubscribe ───────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("구독 취소 성공 시 구독 삭제 후 subscriberCount 를 감소시킨다")
+    void unsubscribe_success() {
+        PlaylistSubscription sub = savedSubscription(PLAYLIST_ID, OTHER_ID);
+        when(subscriptionRepository.findByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
+                .thenReturn(Optional.of(sub));
+
+        playlistService.unsubscribe(PLAYLIST_ID, OTHER_ID);
+
+        verify(subscriptionRepository).delete(sub);
+        verify(playlistRepository).decrementSubscriberCount(PLAYLIST_ID);
+    }
+
+    @Test
+    @DisplayName("구독하지 않은 상태에서 취소 시도 시 RESOURCE_NOT_FOUND 예외가 발생한다")
+    void unsubscribe_fail_notSubscribed() {
+        when(subscriptionRepository.findByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> playlistService.unsubscribe(PLAYLIST_ID, OTHER_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
     private Playlist savedPlaylist(UUID id, UUID ownerId, String title, String desc, Instant updatedAt) {
@@ -255,5 +350,12 @@ class PlaylistServiceTest {
         ReflectionTestUtils.setField(p, "id", id);
         ReflectionTestUtils.setField(p, "updatedAt", updatedAt);
         return p;
+    }
+
+    private PlaylistSubscription savedSubscription(UUID playlistId, UUID subscriberId) {
+        return PlaylistSubscription.builder()
+                .playlistId(playlistId)
+                .subscriberId(subscriberId)
+                .build();
     }
 }
