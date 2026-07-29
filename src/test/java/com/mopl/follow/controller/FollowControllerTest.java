@@ -158,7 +158,7 @@ class FollowControllerTest {
         mockMvc.perform(get("/api/follows/count")
                         .param("followeeId", FOLLOWEE_ID.toString()))
                 .andExpect(status().isOk())
-                .andExpect(content().string("5"));
+                .andExpect(jsonPath("$.count").value(5));
     }
 
     // ── GET /api/follows/followed-by-me ──────────────────────────────────────

@@ -32,7 +32,10 @@ public class FollowService {
                     Follow.builder().followerId(followerId).followeeId(followeeId).build());
             return FollowDto.from(follow);
         } catch (DataIntegrityViolationException e) {
-            throw new BusinessException(ErrorCode.FOLLOW_DUPLICATE);
+            if (followRepository.existsByFollowerIdAndFolloweeId(followerId, followeeId)) {
+                throw new BusinessException(ErrorCode.FOLLOW_DUPLICATE);
+            }
+            throw e;
         }
     }
 

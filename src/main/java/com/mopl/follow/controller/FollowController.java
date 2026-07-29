@@ -1,6 +1,7 @@
 package com.mopl.follow.controller;
 
 import com.mopl.follow.dto.FollowDto;
+import com.mopl.follow.dto.FollowerCountDto;
 import com.mopl.follow.dto.FollowRequest;
 import com.mopl.follow.service.FollowService;
 import com.mopl.global.exception.BusinessException;
@@ -37,8 +38,8 @@ public class FollowController {
     }
 
     @GetMapping("/count")
-    public long countFollowers(@RequestParam UUID followeeId) {
-        return followService.countFollowers(followeeId);
+    public FollowerCountDto countFollowers(@RequestParam UUID followeeId) {
+        return new FollowerCountDto(followService.countFollowers(followeeId));
     }
 
     @GetMapping("/followed-by-me")
