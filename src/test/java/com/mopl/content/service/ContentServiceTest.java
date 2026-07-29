@@ -127,6 +127,21 @@ class ContentServiceTest {
     }
 
     @Test
+    @DisplayName("대소문자만 다른 중복 태그는 정규화 후 하나로 합쳐져 tagCount에 반영된다")
+    void getList_deduplicatesNormalizedTags() {
+        ArgumentCaptor<Integer> tagCountCaptor = ArgumentCaptor.forClass(Integer.class);
+        when(contentRepository.findByCreatedAtDesc(
+                any(), any(), any(), tagCountCaptor.capture(), any(), any(), anyInt()))
+                .thenReturn(List.of());
+        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(0L);
+
+        contentService.getList(
+                null, null, List.of("Action", "ACTION", "SF"), null, null, 10, "createdAt", "DESCENDING");
+
+        assertThat(tagCountCaptor.getValue()).isEqualTo(2);
+    }
+
+    @Test
     @DisplayName("tagsIn이 없으면 더미 태그와 tagCount 0이 레포지토리에 전달된다")
     void getList_withoutTags_passesDummyTagAndZeroCount() {
         when(contentRepository.findByCreatedAtDesc(any(), any(), any(), anyInt(), any(), any(), anyInt()))
@@ -164,6 +179,33 @@ class ContentServiceTest {
         contentService.getList(null, "50%_off", null, null, null, 10, "createdAt", "DESCENDING");
 
         assertThat(keywordCaptor.getValue()).isEqualTo("50\\%\\_off");
+    }
+
+    @Test
+    @DisplayName("limit이 1 미만이면 INVALID_INPUT 예외가 발생한다")
+    void getList_fail_limitTooSmall() {
+        assertThatThrownBy(() -> contentService.getList(
+                null, null, null, null, null, 0, "createdAt", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
+    @DisplayName("limit이 100을 초과하면 INVALID_INPUT 예외가 발생한다")
+    void getList_fail_limitTooLarge() {
+        assertThatThrownBy(() -> contentService.getList(
+                null, null, null, null, null, 101, "createdAt", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
+    @DisplayName("limit이 Integer.MAX_VALUE에 가까워도 오버플로우 없이 INVALID_INPUT 예외가 발생한다")
+    void getList_fail_limitNearIntegerMax() {
+        assertThatThrownBy(() -> contentService.getList(
+                null, null, null, null, null, Integer.MAX_VALUE, "createdAt", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
     }
 
     @Test

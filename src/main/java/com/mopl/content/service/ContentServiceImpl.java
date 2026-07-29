@@ -60,10 +60,14 @@ public class ContentServiceImpl implements ContentService {
             String typeEqual, String keywordLike, List<String> tagsIn,
             String cursor, UUID idAfter, int limit, String sortBy, String sortDirection) {
 
+        if (limit < 1 || limit > 100) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
         String typeStr = typeEqual != null ? ContentType.fromApiValue(typeEqual).name() : null;
         String escapedKeyword = keywordLike != null ? escapeLikePattern(keywordLike) : null;
         List<String> normalizedTags = tagsIn == null ? List.of()
-                : tagsIn.stream().map(Content::normalize).toList();
+                : tagsIn.stream().map(Content::normalize).distinct().toList();
         int tagCount = normalizedTags.size();
         List<String> tagsForQuery = normalizedTags.isEmpty() ? List.of("") : normalizedTags;
 
