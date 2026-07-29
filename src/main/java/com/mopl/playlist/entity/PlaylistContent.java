@@ -35,6 +35,6 @@ public class PlaylistContent extends BaseEntity {
     }
 
     public static PlaylistContent create(UUID playlistId, UUID contentId) {
-        throw new UnsupportedOperationException();
+        return new PlaylistContent(playlistId, contentId);
     }
 }
