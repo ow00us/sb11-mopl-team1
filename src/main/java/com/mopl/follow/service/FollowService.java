@@ -5,6 +5,7 @@ import com.mopl.follow.entity.Follow;
 import com.mopl.follow.repository.FollowRepository;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -18,11 +19,15 @@ import java.util.UUID;
 public class FollowService {
 
     private final FollowRepository followRepository;
+    private final UserRepository userRepository;
 
     @Transactional
     public FollowDto follow(UUID followerId, UUID followeeId) {
         if (followerId.equals(followeeId)) {
             throw new BusinessException(ErrorCode.FOLLOW_SELF);
+        }
+        if (!userRepository.existsById(followeeId)) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
         }
         if (followRepository.existsByFollowerIdAndFolloweeId(followerId, followeeId)) {
             throw new BusinessException(ErrorCode.FOLLOW_DUPLICATE);

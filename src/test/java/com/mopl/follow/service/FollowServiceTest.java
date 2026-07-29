@@ -5,6 +5,7 @@ import com.mopl.follow.entity.Follow;
 import com.mopl.follow.repository.FollowRepository;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.user.repository.UserRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,6 +27,7 @@ import static org.mockito.Mockito.*;
 class FollowServiceTest {
 
     @Mock FollowRepository followRepository;
+    @Mock UserRepository userRepository;
     @InjectMocks FollowService followService;
 
     private static final UUID FOLLOWER_ID = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
@@ -37,6 +39,7 @@ class FollowServiceTest {
     @Test
     @DisplayName("팔로우 성공 시 FollowDto 를 반환한다")
     void follow_success() {
+        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
         when(followRepository.existsByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID)).thenReturn(false);
         when(followRepository.saveAndFlush(any(Follow.class))).thenAnswer(inv -> {
             Follow f = inv.getArgument(0);
@@ -62,8 +65,21 @@ class FollowServiceTest {
     }
 
     @Test
+    @DisplayName("존재하지 않는 사용자를 팔로우하면 RESOURCE_NOT_FOUND 예외가 발생한다")
+    void follow_fail_followeeNotFound() {
+        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(false);
+
+        assertThatThrownBy(() -> followService.follow(FOLLOWER_ID, FOLLOWEE_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+
+        verifyNoInteractions(followRepository);
+    }
+
+    @Test
     @DisplayName("중복 팔로우 시 FOLLOW_DUPLICATE 예외가 발생한다")
     void follow_fail_duplicate() {
+        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
         when(followRepository.existsByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID)).thenReturn(true);
 
         assertThatThrownBy(() -> followService.follow(FOLLOWER_ID, FOLLOWEE_ID))
@@ -74,6 +90,7 @@ class FollowServiceTest {
     @Test
     @DisplayName("동시 요청으로 DB 유니크 제약 위반 시 FOLLOW_DUPLICATE 예외가 발생한다")
     void follow_fail_concurrentDuplicate() {
+        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
         when(followRepository.existsByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
                 .thenReturn(false)  // 사전 중복 체크
                 .thenReturn(true);  // catch 블록 내 재확인
