@@ -115,25 +115,27 @@ public class WatchingSessionServiceTest {
     }
 
     @Test
-    @DisplayName("다른 콘텐츠를 시청 중이던 사용자가 새로 시작하면 기존 세션을 교체")
-    void start_success_replaceExistingSession() {
+    @DisplayName("start()는 writer가 반환한 스냅샷을 enrich해서 dto로 변환함")
+    void start_success_returnsEnrichedDtoFromWriterResult() {
         // given
         mockUserAndContentExists();
 
-        WatchingSessionSnapshot existing = WatchingSessionSnapshot.builder()
+        WatchingSessionSnapshot upserted = WatchingSessionSnapshot.builder()
             .watcherId(WATCHER_ID)
             .contentId(CONTENT_ID)
             .expiresAt(Instant.now().plusSeconds(60))
             .build();
 
         when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
-            .thenReturn(existing);
+            .thenReturn(upserted);
 
         // when
         WatchingSessionDto response = watchingSessionService.start(WATCHER_ID, CONTENT_ID);
 
-        // then - 같은 객체, 기존 행 갱신
+        // then - enrich되어 나오는지 확인
         assertThat(response.content().id()).isEqualTo(CONTENT_ID);
+        assertThat(response.watcher().userId()).isEqualTo(WATCHER_ID);
+        verify(watchingSessionSnapshotWriter).upsert(eq(WATCHER_ID), eq(CONTENT_ID), any());
     }
 
     @Test
@@ -148,7 +150,7 @@ public class WatchingSessionServiceTest {
             .extracting("errorCode")
             .isEqualTo(ErrorCode.CONTENT_NOT_FOUND);
 
-        verify(watchingSessionSnapshotRepository, never()).save(any());
+        verify(watchingSessionSnapshotWriter, never()).upsert(any(), any(), any());
     }
 
     @Test

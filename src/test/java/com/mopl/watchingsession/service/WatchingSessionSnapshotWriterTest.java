@@ -87,16 +87,21 @@ public class WatchingSessionSnapshotWriterTest {
     @Test
     @DisplayName("기존 행이 있으면 새로 삽입하지 않고 갱신")
     void upsert_updatesExistingRow() {
+        // given
         UUID watcherId = insertUser();
-        UUID contentId1 = insertContent();
-        UUID contentId2 = insertContent();
+        UUID previousContentId = insertContent();
+        UUID newContentId = insertContent();
 
-        writer.upsert(watcherId, contentId1, Instant.now().plusSeconds(60));
+        WatchingSessionSnapshot first = writer.upsert(watcherId, previousContentId, Instant.now().plusSeconds(60));
+        UUID rowId = first.getId();
 
-        WatchingSessionSnapshot result = writer.upsert(watcherId, contentId2, Instant.now().plusSeconds(120));
+        // when
+        WatchingSessionSnapshot result = writer.upsert(watcherId, newContentId, Instant.now().plusSeconds(120));
 
+        // then
         assertThat(repository.count()).isEqualTo(1);
-        assertThat(result.getContentId()).isEqualTo(contentId2);
+        assertThat(result.getId()).isEqualTo(rowId);
+        assertThat(result.getContentId()).isEqualTo(newContentId);
     }
 
     @Test
