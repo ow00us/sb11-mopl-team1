@@ -74,7 +74,9 @@ class FollowServiceTest {
     @Test
     @DisplayName("동시 요청으로 DB 유니크 제약 위반 시 FOLLOW_DUPLICATE 예외가 발생한다")
     void follow_fail_concurrentDuplicate() {
-        when(followRepository.existsByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID)).thenReturn(false);
+        when(followRepository.existsByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(false)  // 사전 중복 체크
+                .thenReturn(true);  // catch 블록 내 재확인
         when(followRepository.saveAndFlush(any(Follow.class)))
                 .thenThrow(new DataIntegrityViolationException("uk_follows_follower_followee"));
 
