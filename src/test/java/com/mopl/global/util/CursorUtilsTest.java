@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class CursorUtilsTest {
 
@@ -29,5 +30,25 @@ class CursorUtilsTest {
         long decoded = CursorUtils.decodeAsLong(cursor);
 
         assertThat(decoded).isEqualTo(value);
+    }
+
+    @Test
+    @DisplayName("encodeLongPair / decodeAsLongPair 는 두 값을 정확히 복원한다")
+    void encodeLongPair_decodesCorrectly() {
+        String cursor = CursorUtils.encodeLongPair(100L, 7L);
+
+        CursorUtils.LongPair decoded = CursorUtils.decodeAsLongPair(cursor);
+
+        assertThat(decoded.first()).isEqualTo(100L);
+        assertThat(decoded.second()).isEqualTo(7L);
+    }
+
+    @Test
+    @DisplayName("콜론 구분자가 없는 값을 decodeAsLongPair 하면 예외가 발생한다")
+    void decodeAsLongPair_fail_invalidFormat() {
+        String cursor = CursorUtils.encode("not-a-pair");
+
+        assertThatThrownBy(() -> CursorUtils.decodeAsLongPair(cursor))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }
