@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.mopl.directmessage.entity.Conversation;
 import com.mopl.directmessage.entity.ConversationParticipant;
 import com.mopl.directmessage.entity.DirectMessage;
+import com.mopl.directmessage.entity.ParticipantSlot;
 import com.mopl.global.config.JpaConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -147,7 +148,11 @@ public class DirectMessageRepositoryTest {
             conversationRepository.saveAndFlush(Conversation.create());
 
         ConversationParticipant participant =
-            ConversationParticipant.create(conversation.getId(), USER_ID_1);
+            ConversationParticipant.create(
+                conversation.getId(),
+                USER_ID_1,
+                ParticipantSlot.FIRST
+            );
 
         participantRepository.saveAndFlush(participant);
 
@@ -180,7 +185,11 @@ public class DirectMessageRepositoryTest {
             conversationRepository.saveAndFlush(Conversation.create());
 
         ConversationParticipant participant =
-            ConversationParticipant.create(conversation.getId(), USER_ID_1);
+            ConversationParticipant.create(
+                conversation.getId(),
+                USER_ID_1,
+                ParticipantSlot.FIRST
+            );
 
         participantRepository.saveAndFlush(participant);
 
@@ -207,8 +216,16 @@ public class DirectMessageRepositoryTest {
             conversationRepository.saveAndFlush(Conversation.create());
 
         participantRepository.saveAllAndFlush(List.of(
-            ConversationParticipant.create(conversation.getId(), USER_ID_1),
-            ConversationParticipant.create(otherConversation.getId(), USER_ID_1)
+            ConversationParticipant.create(
+                conversation.getId(),
+                USER_ID_1,
+                ParticipantSlot.FIRST
+            ),
+            ConversationParticipant.create(
+                otherConversation.getId(),
+                USER_ID_1,
+                ParticipantSlot.FIRST
+            )
         ));
 
         Instant firstTime = Instant.parse("2026-07-29T00:00:00Z");
