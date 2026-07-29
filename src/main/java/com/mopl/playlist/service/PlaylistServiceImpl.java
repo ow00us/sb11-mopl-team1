@@ -1,5 +1,8 @@
 package com.mopl.playlist.service;
 
+import com.mopl.content.entity.Content;
+import com.mopl.content.entity.ContentType;
+import com.mopl.global.common.ContentSummary;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
@@ -54,7 +57,8 @@ public class PlaylistServiceImpl implements PlaylistService {
         Playlist playlist = findOrThrow(playlistId);
         boolean subscribedByMe = requesterId != null &&
                 subscriptionRepository.existsByPlaylistIdAndSubscriberId(playlistId, requesterId);
-        return PlaylistDto.from(playlist, subscribedByMe);
+        List<ContentSummary> contents = loadContents(playlistId);
+        return PlaylistDto.from(playlist, subscribedByMe, contents);
     }
 
     @Override
@@ -86,7 +90,8 @@ public class PlaylistServiceImpl implements PlaylistService {
         }
         final Set<UUID> finalSubscribedIds = subscribedIds;
         List<PlaylistDto> data = page.stream()
-                .map(p -> PlaylistDto.from(p, finalSubscribedIds.contains(p.getId())))
+                .map(p -> PlaylistDto.from(p, finalSubscribedIds.contains(p.getId()),
+                        loadContents(p.getId())))
                 .toList();
 
         String ownerIdStr      = ownerIdEqual      != null ? ownerIdEqual.toString()      : null;
@@ -195,6 +200,41 @@ public class PlaylistServiceImpl implements PlaylistService {
             return CursorUtils.encodeLong(last.getSubscriberCount());
         }
         return CursorUtils.encodeInstant(last.getUpdatedAt());
+    }
+
+    private List<ContentSummary> loadContents(UUID playlistId) {
+        List<UUID> contentIds = playlistContentRepository
+                .findAllByPlaylistIdOrderByCreatedAtAsc(playlistId)
+                .stream()
+                .map(pc -> pc.getContentId())
+                .toList();
+        if (contentIds.isEmpty()) return List.of();
+
+        return contentRepository.findAllById(contentIds)
+                .stream()
+                .map(this::toContentSummary)
+                .toList();
+    }
+
+    private ContentSummary toContentSummary(Content content) {
+        return new ContentSummary(
+                content.getId(),
+                toApiType(content.getType()),
+                content.getTitle(),
+                content.getDescription(),
+                content.getThumbnailUrl(),
+                List.copyOf(content.getTags()),
+                content.getAverageRating().doubleValue(),
+                content.getReviewCount().intValue()
+        );
+    }
+
+    private String toApiType(ContentType type) {
+        return switch (type) {
+            case MOVIE     -> "movie";
+            case TV_SERIES -> "tvSeries";
+            case SPORT     -> "sport";
+        };
     }
 
     @Override
