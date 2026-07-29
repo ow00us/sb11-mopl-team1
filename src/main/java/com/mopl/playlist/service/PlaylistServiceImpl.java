@@ -27,7 +27,7 @@ import java.util.UUID;
 public class PlaylistServiceImpl implements PlaylistService {
 
     private static final String SORT_UPDATED_AT      = "updatedAt";
-    private static final String SORT_SUBSCRIBE_COUNT = "subscribeCount";
+    private static final String SORT_SUBSCRIBE_COUNT = "subscriberCount";
     private static final String DIRECTION_ASC        = "ASCENDING";
 
     private final PlaylistRepository playlistRepository;
