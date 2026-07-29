@@ -29,6 +29,7 @@ import org.springframework.web.multipart.MultipartFile;
 @Transactional(readOnly = true)
 public class ContentServiceImpl implements ContentService {
 
+    private static final String SORT_CREATED_AT = "createdAt";
     private static final String SORT_WATCHER_COUNT = "watcherCount";
     private static final String SORT_AVERAGE_RATING = "averageRating";
     private static final String DIRECTION_ASC = "ASCENDING";
@@ -61,6 +62,9 @@ public class ContentServiceImpl implements ContentService {
             String cursor, UUID idAfter, int limit, String sortBy, String sortDirection) {
 
         if (limit < 1 || limit > 100) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        if (!SORT_CREATED_AT.equals(sortBy) && !SORT_WATCHER_COUNT.equals(sortBy) && !SORT_AVERAGE_RATING.equals(sortBy)) {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
 

@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mopl.content.dto.ContentCreateRequest;
@@ -206,6 +207,17 @@ class ContentServiceTest {
                 null, null, null, null, null, Integer.MAX_VALUE, "createdAt", "DESCENDING"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
+    @DisplayName("인식되지 않는 sortBy 값이면 리포지토리 호출 없이 INVALID_INPUT 예외가 발생한다")
+    void getList_fail_invalidSortBy() {
+        assertThatThrownBy(() -> contentService.getList(
+                null, null, null, null, null, 10, "watcher_count", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+
+        verifyNoInteractions(contentRepository);
     }
 
     @Test
