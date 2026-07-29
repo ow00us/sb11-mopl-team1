@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -18,6 +19,7 @@ import com.mopl.content.dto.ContentDto;
 import com.mopl.content.dto.ContentUpdateRequest;
 import com.mopl.content.entity.ContentType;
 import com.mopl.content.service.ContentService;
+import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import java.math.BigDecimal;
@@ -25,6 +27,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -154,6 +157,112 @@ class ContentControllerTest {
                 .andExpect(status().isForbidden());
 
         verifyNoInteractions(contentService);
+    }
+
+    // ── GET /api/contents ────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("콘텐츠 목록 조회 시 CursorResponse를 반환한다")
+    void getList_success() throws Exception {
+        CursorResponse<ContentDto> response = CursorResponse.of(
+                List.of(sampleDto()), null, null, false, 1L, "createdAt", "ASCENDING");
+        when(contentService.getList(any(), any(), any(), any(), any(), eq(10),
+                eq("createdAt"), eq("ASCENDING"))).thenReturn(response);
+
+        mockMvc.perform(get("/api/contents")
+                        .param("limit", "10")
+                        .param("sortBy", "createdAt")
+                        .param("sortDirection", "ASCENDING"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].id").value(CONTENT_ID.toString()))
+                .andExpect(jsonPath("$.hasNext").value(false));
+    }
+
+    @Test
+    @DisplayName("typeEqual/keywordLike/tagsIn 필터가 서비스로 그대로 전달된다")
+    void getList_success_withFilters() throws Exception {
+        CursorResponse<ContentDto> response = CursorResponse.of(
+                List.of(sampleDto()), null, null, false, 1L, "createdAt", "ASCENDING");
+        when(contentService.getList(eq("movie"), eq("매트릭스"), eq(List.of("action", "sf")),
+                any(), any(), eq(10), eq("createdAt"), eq("ASCENDING"))).thenReturn(response);
+
+        mockMvc.perform(get("/api/contents")
+                        .param("typeEqual", "movie")
+                        .param("keywordLike", "매트릭스")
+                        .param("tagsIn", "action", "sf")
+                        .param("limit", "10")
+                        .param("sortBy", "createdAt")
+                        .param("sortDirection", "ASCENDING"))
+                .andExpect(status().isOk());
+
+        verify(contentService).getList(eq("movie"), eq("매트릭스"), eq(List.of("action", "sf")),
+                any(), any(), eq(10), eq("createdAt"), eq("ASCENDING"));
+    }
+
+    @Test
+    @DisplayName("limit이 0 이하면 400을 반환한다")
+    void getList_fail_invalidLimit() throws Exception {
+        mockMvc.perform(get("/api/contents")
+                        .param("limit", "0")
+                        .param("sortBy", "createdAt")
+                        .param("sortDirection", "ASCENDING"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("limit이 100 초과면 400을 반환한다")
+    void getList_fail_limitExceedsMax() throws Exception {
+        mockMvc.perform(get("/api/contents")
+                        .param("limit", "101")
+                        .param("sortBy", "createdAt")
+                        .param("sortDirection", "ASCENDING"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("sortBy가 허용값이 아니면 400을 반환한다")
+    void getList_fail_invalidSortBy() throws Exception {
+        mockMvc.perform(get("/api/contents")
+                        .param("limit", "10")
+                        .param("sortBy", "invalidField")
+                        .param("sortDirection", "ASCENDING"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("sortDirection이 허용값이 아니면 400을 반환한다")
+    void getList_fail_invalidSortDirection() throws Exception {
+        mockMvc.perform(get("/api/contents")
+                        .param("limit", "10")
+                        .param("sortBy", "createdAt")
+                        .param("sortDirection", "WRONG"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("typeEqual이 허용값이 아니면 400을 반환한다")
+    void getList_fail_invalidTypeEqual() throws Exception {
+        mockMvc.perform(get("/api/contents")
+                        .param("typeEqual", "documentary")
+                        .param("limit", "10")
+                        .param("sortBy", "createdAt")
+                        .param("sortDirection", "ASCENDING"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("tagsIn이 20개를 초과하면 400을 반환한다")
+    void getList_fail_tooManyTags() throws Exception {
+        String[] tags = IntStream.range(0, 21)
+                .mapToObj(i -> "tag" + i)
+                .toArray(String[]::new);
+
+        mockMvc.perform(get("/api/contents")
+                        .param("limit", "10")
+                        .param("sortBy", "createdAt")
+                        .param("sortDirection", "ASCENDING")
+                        .param("tagsIn", tags))
+                .andExpect(status().isBadRequest());
     }
 
     // ── GET /api/contents/{contentId} ───────────────────────────────────────
