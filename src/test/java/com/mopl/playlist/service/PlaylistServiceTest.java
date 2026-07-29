@@ -10,6 +10,8 @@ import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
 import com.mopl.playlist.entity.Playlist;
 import com.mopl.playlist.entity.PlaylistSubscription;
+import com.mopl.content.repository.ContentRepository;
+import com.mopl.playlist.repository.PlaylistContentRepository;
 import com.mopl.playlist.repository.PlaylistRepository;
 import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
 import org.junit.jupiter.api.DisplayName;
@@ -33,11 +35,10 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class PlaylistServiceTest {
 
-    @Mock
-    PlaylistRepository playlistRepository;
-
-    @Mock
-    PlaylistSubscriptionRepository subscriptionRepository;
+    @Mock PlaylistRepository playlistRepository;
+    @Mock PlaylistSubscriptionRepository subscriptionRepository;
+    @Mock PlaylistContentRepository playlistContentRepository;
+    @Mock ContentRepository contentRepository;
 
     @InjectMocks
     PlaylistServiceImpl playlistService;
@@ -45,6 +46,12 @@ class PlaylistServiceTest {
     private static final UUID OWNER_ID    = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
     private static final UUID OTHER_ID    = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
     private static final UUID PLAYLIST_ID = UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc");
+
+    @org.junit.jupiter.api.BeforeEach
+    void setUp() {
+        lenient().when(playlistContentRepository.findAllByPlaylistIdOrderByCreatedAtAsc(any()))
+                .thenReturn(List.of());
+    }
 
     // ── create ───────────────────────────────────────────────────────────────
 
