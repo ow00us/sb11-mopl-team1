@@ -90,7 +90,6 @@ class SecurityErrorHandlerTest {
         ) throws Exception {
             http
                 .securityMatcher("/test/security/**")
-                .csrf(csrf -> csrf.disable())
                 .exceptionHandling(exception -> exception
                     .authenticationEntryPoint(authenticationEntryPoint)
                     .accessDeniedHandler(accessDeniedHandler))
