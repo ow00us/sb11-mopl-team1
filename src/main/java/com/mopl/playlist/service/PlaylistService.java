@@ -7,29 +7,34 @@ import com.mopl.playlist.dto.PlaylistUpdateRequest;
 
 import java.util.UUID;
 
-/** 플레이리스트 생성·조회·수정·삭제 비즈니스 로직을 정의하는 인터페이스입니다. */
+/** 플레이리스트 CRUD 및 구독 비즈니스 로직을 정의하는 인터페이스입니다. */
 public interface PlaylistService {
 
-    /** 플레이리스트를 생성하고 결과를 반환합니다. */
     PlaylistDto create(PlaylistCreateRequest request, UUID ownerId);
 
-    /** 플레이리스트를 단건 조회합니다. 존재하지 않으면 예외를 발생시킵니다. */
-    PlaylistDto get(UUID playlistId);
+    /** 단건 조회합니다. requesterId 가 null 이면 subscribedByMe 는 false 입니다. */
+    PlaylistDto get(UUID playlistId, UUID requesterId);
 
-    /** 커서 페이지네이션으로 플레이리스트 목록을 조회합니다. */
+    /** 커서 페이지네이션으로 목록을 조회합니다. requesterId 가 null 이면 subscribedByMe 는 false 입니다. */
     CursorResponse<PlaylistDto> getList(
             String keywordLike,
             UUID ownerIdEqual,
+            UUID subscriberIdEqual,
             String cursor,
             UUID idAfter,
             int limit,
             String sortBy,
-            String sortDirection
+            String sortDirection,
+            UUID requesterId
     );
 
-    /** 소유자 검증 후 플레이리스트를 수정합니다. */
     PlaylistDto update(UUID playlistId, PlaylistUpdateRequest request, UUID requesterId);
 
-    /** 소유자 검증 후 플레이리스트를 삭제합니다. */
     void delete(UUID playlistId, UUID requesterId);
+
+    /** 플레이리스트를 구독합니다. 소유자 구독 시 403, 중복 시 409 를 발생시킵니다. */
+    void subscribe(UUID playlistId, UUID subscriberId);
+
+    /** 플레이리스트 구독을 취소합니다. 구독 정보가 없으면 404 를 발생시킵니다. */
+    void unsubscribe(UUID playlistId, UUID subscriberId);
 }
