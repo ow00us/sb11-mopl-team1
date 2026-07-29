@@ -3,6 +3,7 @@ package com.mopl.global.exception;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -91,5 +92,13 @@ public class GlobalExceptionHandler {
         return ResponseEntity
             .status(code.getStatus())
             .body(body);
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException e) {
+        log.warn("DataIntegrityViolationException", e);
+        ErrorCode code = ErrorCode.REQUEST_CONFLICT;
+        ErrorResponse body = ErrorResponse.of(e.getClass().getSimpleName(), code, code.getMessage(), new HashMap<>());
+        return ResponseEntity.status(code.getStatus()).body(body);
     }
 }
