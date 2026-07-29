@@ -318,6 +318,43 @@ class ContentControllerTest {
     }
 
     @Test
+    @DisplayName("title이 공백만으로 이루어지면 400을 반환한다")
+    void update_fail_titleBlank() throws Exception {
+        setAuth(ADMIN_ID, true);
+
+        mockMvc.perform(multipart(HttpMethod.PATCH, "/api/contents/{contentId}", CONTENT_ID)
+                        .file(requestPart(new ContentUpdateRequest("   ", null, null))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
+
+        verifyNoInteractions(contentService);
+    }
+
+    @Test
+    @DisplayName("description이 빈 문자열이면 400을 반환한다")
+    void update_fail_descriptionBlank() throws Exception {
+        setAuth(ADMIN_ID, true);
+
+        mockMvc.perform(multipart(HttpMethod.PATCH, "/api/contents/{contentId}", CONTENT_ID)
+                        .file(requestPart(new ContentUpdateRequest(null, "", null))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
+
+        verifyNoInteractions(contentService);
+    }
+
+    @Test
+    @DisplayName("여러 줄로 이루어진 정상 description은 통과한다")
+    void update_success_multilineDescription() throws Exception {
+        setAuth(ADMIN_ID, true);
+        when(contentService.update(eq(CONTENT_ID), any(), any())).thenReturn(sampleDto());
+
+        mockMvc.perform(multipart(HttpMethod.PATCH, "/api/contents/{contentId}", CONTENT_ID)
+                        .file(requestPart(new ContentUpdateRequest(null, "1줄\n2줄", null))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     @DisplayName("미인증 사용자가 수정 시도 시 401을 반환한다")
     void update_fail_unauthorized() throws Exception {
         mockMvc.perform(multipart(HttpMethod.PATCH, "/api/contents/{contentId}", CONTENT_ID)
