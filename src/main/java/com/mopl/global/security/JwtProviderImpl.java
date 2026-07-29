@@ -22,6 +22,13 @@ import org.springframework.stereotype.Component;
  * 지금은 validate가 항상 false라 필터가 인증을 세팅하지 않습니다. 다만 SecurityConfig가 현재 anyRequest를 permitAll로
  * 열어 두었기 때문에 실제로는 모든 요청이 통과합니다. 이후 인가를 .authenticated()로 잠그면, 그때부터 공개 경로 외에는 막힙니다.
  */
+
+/**
+ * JWT 액세스 토큰을 발급하고 검증하며
+ * 유효한 토큰에서 Spring Security 인증 정보를 복원
+ *
+ * 토큰 subject에는 사용자 UUID를, role 클레임에는 사용자 역할을 저장
+ */
 @Component
 @RequiredArgsConstructor
 public class JwtProviderImpl implements JwtProvider {
@@ -44,7 +51,6 @@ public class JwtProviderImpl implements JwtProvider {
             .expiration(Date.from(expiration))
             .signWith(signingKey())
             .compact();
-        // throw new UnsupportedOperationException("JWT 발급은 빌드 주차에 구현합니다.");
     }
 
     /**
@@ -61,7 +67,6 @@ public class JwtProviderImpl implements JwtProvider {
         } catch (JwtException | IllegalArgumentException exception) {
             return false;
         }
-        // return false;
     }
 
     /**
@@ -85,13 +90,12 @@ public class JwtProviderImpl implements JwtProvider {
             null,
             List.of(new SimpleGrantedAuthority("ROLE_" + role))
         );
-        // throw new UnsupportedOperationException("JWT 파싱은 빌드 주차에 구현합니다.");
     }
 
     /**
      * JWT 문자열을 파싱해 Claims를 반환
      *
-     * verifyWith()이 토큰의 서명을 검증하고,
+     * verifyWith()이 토큰의 서명을 검증하고
      * parseSignedClaims()가 만료 시간도 함께 검증
      */
     private Claims parseClaims(String token) {
