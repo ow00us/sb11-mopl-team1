@@ -212,7 +212,7 @@ public class DirectMessageRepositoryTest {
         ));
 
         Instant firstTime = Instant.parse("2026-07-29T00:00:00Z");
-        Instant secondTime = Instant.parse("2026-07-29T01:00:00Z");
+        Instant secondTime = Instant.parse("2026-07-29T01:00:00.123456789Z");
 
         UUID messageId1 =
             UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1");
