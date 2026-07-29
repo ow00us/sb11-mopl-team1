@@ -3,6 +3,9 @@ package com.mopl.content.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -14,8 +17,11 @@ import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentType;
 import com.mopl.content.repository.ContentRepository;
 import com.mopl.content.storage.ThumbnailStorage;
+import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.util.CursorUtils;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -101,6 +107,222 @@ class ContentServiceTest {
         assertThatThrownBy(() -> contentService.get(CONTENT_ID))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+    }
+
+    // ── getList ──────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("tagsIn이 정규화되어 레포지토리에 전달된다")
+    void getList_normalizesTags() {
+        when(contentRepository.findByCreatedAtDesc(any(), any(), any(), anyInt(), any(), any(), anyInt()))
+                .thenReturn(List.of());
+        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(0L);
+
+        contentService.getList(null, null, List.of("Action", " SF "), null, null, 10, "createdAt", "DESCENDING");
+
+        verify(contentRepository).findByCreatedAtDesc(
+                isNull(), isNull(), eq(List.of("action", "sf")), eq(2), isNull(), isNull(), eq(11));
+        verify(contentRepository).countByFilter(isNull(), isNull(), eq(List.of("action", "sf")), eq(2));
+    }
+
+    @Test
+    @DisplayName("tagsIn이 없으면 더미 태그와 tagCount 0이 레포지토리에 전달된다")
+    void getList_withoutTags_passesDummyTagAndZeroCount() {
+        when(contentRepository.findByCreatedAtDesc(any(), any(), any(), anyInt(), any(), any(), anyInt()))
+                .thenReturn(List.of());
+        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(0L);
+
+        contentService.getList(null, null, null, null, null, 10, "createdAt", "DESCENDING");
+
+        verify(contentRepository).findByCreatedAtDesc(
+                isNull(), isNull(), eq(List.of("")), eq(0), isNull(), isNull(), eq(11));
+    }
+
+    @Test
+    @DisplayName("typeEqual은 DB 저장 형식(enum name)으로 변환되어 전달된다")
+    void getList_convertsTypeEqualToEnumName() {
+        when(contentRepository.findByCreatedAtDesc(any(), any(), any(), anyInt(), any(), any(), anyInt()))
+                .thenReturn(List.of());
+        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(0L);
+
+        contentService.getList("tvSeries", null, null, null, null, 10, "createdAt", "DESCENDING");
+
+        verify(contentRepository).findByCreatedAtDesc(
+                eq("TV_SERIES"), isNull(), any(), anyInt(), isNull(), isNull(), eq(11));
+    }
+
+    @Test
+    @DisplayName("cursor만 있고 idAfter가 없으면 INVALID_INPUT 예외가 발생한다")
+    void getList_fail_cursorWithoutIdAfter() {
+        String validCursor = CursorUtils.encodeInstant(Instant.now());
+
+        assertThatThrownBy(() -> contentService.getList(
+                null, null, null, validCursor, null, 10, "createdAt", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
+    @DisplayName("Base64는 유효하지만 날짜 형식이 아닌 createdAt 커서는 INVALID_INPUT 예외가 발생한다")
+    void getList_fail_invalidInstantCursor() {
+        String invalidInstantCursor = CursorUtils.encode("not-a-date");
+
+        assertThatThrownBy(() -> contentService.getList(
+                null, null, null, invalidInstantCursor, UUID.randomUUID(), 10, "createdAt", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
+    @DisplayName("잘못된 cursor 값이면 INVALID_INPUT 예외가 발생한다")
+    void getList_fail_invalidCursor() {
+        assertThatThrownBy(() -> contentService.getList(
+                null, null, null, "not-a-valid-cursor!!", UUID.randomUUID(), 10, "createdAt", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
+    @DisplayName("watcherCount DESC 정렬이면 findByWatcherCountDesc를 호출한다")
+    void getList_watcherCountSort_descending_callsFindByWatcherCountDesc() {
+        when(contentRepository.findByWatcherCountDesc(any(), any(), any(), anyInt(), any(), any(), any(), anyInt()))
+                .thenReturn(List.of());
+        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(0L);
+
+        contentService.getList(null, null, null, null, null, 10, "watcherCount", "DESCENDING");
+
+        verify(contentRepository).findByWatcherCountDesc(
+                isNull(), isNull(), any(), anyInt(), isNull(), isNull(), isNull(), eq(11));
+    }
+
+    @Test
+    @DisplayName("watcherCount DESC 정렬 시 다음 페이지가 있으면 (watcherCount, reviewCount) 복합 커서를 반환한다")
+    void getList_watcherCountDescSort_returnsCompositeCursor() {
+        Content lastOfPage = savedContentWithId(UUID.randomUUID(), "B");
+        ReflectionTestUtils.setField(lastOfPage, "watcherCount", 10L);
+        ReflectionTestUtils.setField(lastOfPage, "reviewCount", 3L);
+        List<Content> rows = List.of(
+                savedContentWithId(UUID.randomUUID(), "A"),
+                lastOfPage,
+                savedContentWithId(UUID.randomUUID(), "C"));
+        when(contentRepository.findByWatcherCountDesc(any(), any(), any(), anyInt(), any(), any(), any(), eq(3)))
+                .thenReturn(rows);
+        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(5L);
+
+        CursorResponse<ContentDto> result = contentService.getList(
+                null, null, null, null, null, 2, "watcherCount", "DESCENDING");
+
+        CursorUtils.LongPair decoded = CursorUtils.decodeAsLongPair(result.nextCursor());
+        assertThat(decoded.first()).isEqualTo(10L);
+        assertThat(decoded.second()).isEqualTo(3L);
+    }
+
+    @Test
+    @DisplayName("형식이 잘못된 watcherCount 복합 커서는 INVALID_INPUT 예외가 발생한다")
+    void getList_fail_invalidWatcherCountPairCursor() {
+        String invalidPairCursor = CursorUtils.encode("not-a-pair");
+
+        assertThatThrownBy(() -> contentService.getList(
+                null, null, null, invalidPairCursor, UUID.randomUUID(), 10, "watcherCount", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
+    @DisplayName("averageRating ASC 정렬이면 findByAverageRatingAsc를 호출한다")
+    void getList_averageRatingSort_ascending_callsFindByAverageRatingAsc() {
+        when(contentRepository.findByAverageRatingAsc(any(), any(), any(), anyInt(), any(), any(), anyInt()))
+                .thenReturn(List.of());
+        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(0L);
+
+        contentService.getList(null, null, null, null, null, 10, "averageRating", "ASCENDING");
+
+        verify(contentRepository).findByAverageRatingAsc(
+                isNull(), isNull(), any(), anyInt(), isNull(), isNull(), eq(11));
+    }
+
+    @Test
+    @DisplayName("createdAt 정렬 시 다음 페이지가 있으면 hasNext true와 nextCursor를 반환한다")
+    void getList_createdAtSort_hasNextPage() {
+        List<Content> rows = List.of(
+                savedContentWithId(UUID.randomUUID(), "A"),
+                savedContentWithId(UUID.randomUUID(), "B"),
+                savedContentWithId(UUID.randomUUID(), "C"));
+        when(contentRepository.findByCreatedAtDesc(any(), any(), any(), anyInt(), any(), any(), eq(3)))
+                .thenReturn(rows);
+        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(5L);
+
+        CursorResponse<ContentDto> result = contentService.getList(
+                null, null, null, null, null, 2, "createdAt", "DESCENDING");
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.hasNext()).isTrue();
+        assertThat(result.nextCursor()).isNotNull();
+        assertThat(result.nextIdAfter()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("idAfter만 있고 cursor가 없으면 INVALID_INPUT 예외가 발생한다")
+    void getList_fail_idAfterWithoutCursor() {
+        assertThatThrownBy(() -> contentService.getList(
+                null, null, null, null, UUID.randomUUID(), 10, "createdAt", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
+    @DisplayName("createdAt 정렬 첫 페이지 조회 시 hasNext false를 반환한다")
+    void getList_createdAtSort_firstPage_noNextPage() {
+        List<Content> rows = List.of(savedContentWithId(UUID.randomUUID(), "A"));
+        when(contentRepository.findByCreatedAtAsc(any(), any(), any(), anyInt(), any(), any(), eq(3)))
+                .thenReturn(rows);
+        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(1L);
+
+        CursorResponse<ContentDto> result = contentService.getList(
+                null, null, null, null, null, 2, "createdAt", "ASCENDING");
+
+        assertThat(result.data()).hasSize(1);
+        assertThat(result.hasNext()).isFalse();
+        assertThat(result.nextCursor()).isNull();
+    }
+
+    @Test
+    @DisplayName("watcherCount 정렬 시 다음 페이지가 있으면 hasNext true와 nextCursor를 반환한다")
+    void getList_watcherCountSort_hasNextPage() {
+        List<Content> rows = List.of(
+                savedContentWithId(UUID.randomUUID(), "A"),
+                savedContentWithId(UUID.randomUUID(), "B"),
+                savedContentWithId(UUID.randomUUID(), "C"));
+        when(contentRepository.findByWatcherCountAsc(any(), any(), any(), anyInt(), any(), any(), eq(3)))
+                .thenReturn(rows);
+        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(5L);
+
+        CursorResponse<ContentDto> result = contentService.getList(
+                null, null, null, null, null, 2, "watcherCount", "ASCENDING");
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.hasNext()).isTrue();
+        assertThat(result.nextCursor()).isNotNull();
+        assertThat(result.nextIdAfter()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("averageRating 정렬 시 다음 페이지가 있으면 hasNext true와 nextCursor를 반환한다")
+    void getList_averageRatingSort_hasNextPage() {
+        List<Content> rows = List.of(
+                savedContentWithId(UUID.randomUUID(), "A"),
+                savedContentWithId(UUID.randomUUID(), "B"),
+                savedContentWithId(UUID.randomUUID(), "C"));
+        when(contentRepository.findByAverageRatingDesc(any(), any(), any(), anyInt(), any(), any(), eq(3)))
+                .thenReturn(rows);
+        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(5L);
+
+        CursorResponse<ContentDto> result = contentService.getList(
+                null, null, null, null, null, 2, "averageRating", "DESCENDING");
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.hasNext()).isTrue();
+        assertThat(result.nextCursor()).isNotNull();
     }
 
     // ── update ───────────────────────────────────────────────────────────────
@@ -207,6 +429,17 @@ class ContentServiceTest {
                 .thumbnailUrl(thumbnailUrl)
                 .build();
         ReflectionTestUtils.setField(content, "id", id);
+        return content;
+    }
+
+    private Content savedContentWithId(UUID id, String title) {
+        Content content = Content.builder()
+                .type(ContentType.MOVIE)
+                .title(title)
+                .description("설명")
+                .build();
+        ReflectionTestUtils.setField(content, "id", id);
+        ReflectionTestUtils.setField(content, "createdAt", Instant.now());
         return content;
     }
 }
