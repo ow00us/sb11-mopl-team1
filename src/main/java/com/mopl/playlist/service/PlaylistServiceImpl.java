@@ -200,12 +200,25 @@ public class PlaylistServiceImpl implements PlaylistService {
     @Override
     @Transactional
     public void addContent(UUID playlistId, UUID contentId, UUID requesterId) {
-        throw new UnsupportedOperationException();
+        Playlist playlist = findOrThrow(playlistId);
+        verifyOwner(playlist, requesterId);
+        if (!contentRepository.existsById(contentId)) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
+        }
+        if (playlistContentRepository.existsByPlaylistIdAndContentId(playlistId, contentId)) {
+            return;
+        }
+        playlistContentRepository.save(PlaylistContent.create(playlistId, contentId));
     }
 
     @Override
     @Transactional
     public void removeContent(UUID playlistId, UUID contentId, UUID requesterId) {
-        throw new UnsupportedOperationException();
+        Playlist playlist = findOrThrow(playlistId);
+        verifyOwner(playlist, requesterId);
+        if (!playlistContentRepository.existsByPlaylistIdAndContentId(playlistId, contentId)) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
+        }
+        playlistContentRepository.deleteByPlaylistIdAndContentId(playlistId, contentId);
     }
 }
