@@ -20,6 +20,7 @@ public enum ErrorCode {
     RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "COMMON_404_1", "리소스를 찾을 수 없습니다."),
     CONTENT_NOT_FOUND(HttpStatus.NOT_FOUND, "CONTENT_404_1", "존재하지 않는 콘텐츠입니다"),
     SUBSCRIPTION_DUPLICATE(HttpStatus.CONFLICT, "PLAYLIST_409_1", "이미 구독 중인 플레이리스트입니다."),
+    REQUEST_CONFLICT(HttpStatus.CONFLICT, "COMMON_409_1", "요청이 다른 처리와 충돌했습니다."),
     EMAIL_DUPLICATE(HttpStatus.CONFLICT, "USER_409_1", "이미 사용 중인 이메일입니다."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "COMMON_500_1", "서버 오류가 발생했습니다.");
 
