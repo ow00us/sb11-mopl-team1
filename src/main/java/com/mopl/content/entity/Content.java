@@ -122,6 +122,9 @@ public class Content extends BaseEntity {
         if (normalized.isEmpty()) {
             throw new BusinessException(ErrorCode.INVALID_INPUT, "태그는 비어 있을 수 없습니다.");
         }
+        if (normalized.length() > 100) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT, "태그는 100자를 초과할 수 없습니다.");
+        }
         return normalized;
     }
 }

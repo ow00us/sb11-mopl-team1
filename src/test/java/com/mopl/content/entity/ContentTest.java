@@ -99,6 +99,26 @@ class ContentTest {
     }
 
     @Test
+    @DisplayName("정규화 후 태그 길이가 100자를 초과하면 예외가 발생한다")
+    void normalize_fail_tagTooLong() {
+        String tooLong = "a".repeat(101);
+
+        assertThatThrownBy(() -> Content.normalize(tooLong))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
+    @DisplayName("정규화 후 태그 길이가 정확히 100자면 통과한다")
+    void normalize_success_tagExactly100Chars() {
+        String exactly100 = "a".repeat(100);
+
+        String result = Content.normalize(exactly100);
+
+        assertThat(result).hasSize(100);
+    }
+
+    @Test
     @DisplayName("updateThumbnail 호출 시 thumbnailUrl이 변경된다")
     void updateThumbnail_changesThumbnailUrl() {
         Content content = movie();
