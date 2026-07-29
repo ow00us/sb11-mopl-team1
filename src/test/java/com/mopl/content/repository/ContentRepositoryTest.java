@@ -294,6 +294,19 @@ class ContentRepositoryTest {
     }
 
     @Test
+    @DisplayName("keywordLike에 %가 포함되면 이스케이프된 값 기준으로 리터럴 매칭만 된다")
+    void findByCreatedAtDesc_keywordWithPercent_matchesLiterally() {
+        Instant now = Instant.now();
+        UUID literalMatch = insertContent("50% off sale", BigDecimal.ZERO, 0, now, "MOVIE");
+        insertContent("50X off sale", BigDecimal.ZERO, 0, now.minusSeconds(1), "MOVIE");
+
+        List<Content> result = contentRepository.findByCreatedAtDesc(
+                null, "50\\%", List.of(""), 0, null, null, 10);
+
+        assertThat(result).extracting(Content::getId).containsExactly(literalMatch);
+    }
+
+    @Test
     @DisplayName("논리 삭제된 콘텐츠는 목록/카운트 네이티브 쿼리에서도 제외된다")
     void findByCreatedAtDesc_excludesDeletedContent() {
         Instant now = Instant.now();

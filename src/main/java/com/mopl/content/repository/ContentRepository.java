@@ -21,8 +21,8 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
             WHERE c.deleted_at IS NULL
               AND (CAST(:typeEqual AS text) IS NULL OR c.type = CAST(:typeEqual AS text))
               AND (CAST(:keywordLike AS text) IS NULL
-                   OR LOWER(c.title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%')
-                   OR LOWER(c.description) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%'))
+                   OR LOWER(c.title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\'
+                   OR LOWER(c.description) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\')
               AND (CAST(:cursorTime AS timestamptz) IS NULL
                    OR c.created_at > CAST(:cursorTime AS timestamptz)
                    OR (c.created_at = CAST(:cursorTime AS timestamptz) AND c.id > CAST(:idAfter AS uuid)))
@@ -48,8 +48,8 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
             WHERE c.deleted_at IS NULL
               AND (CAST(:typeEqual AS text) IS NULL OR c.type = CAST(:typeEqual AS text))
               AND (CAST(:keywordLike AS text) IS NULL
-                   OR LOWER(c.title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%')
-                   OR LOWER(c.description) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%'))
+                   OR LOWER(c.title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\'
+                   OR LOWER(c.description) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\')
               AND (CAST(:cursorTime AS timestamptz) IS NULL
                    OR c.created_at < CAST(:cursorTime AS timestamptz)
                    OR (c.created_at = CAST(:cursorTime AS timestamptz) AND c.id > CAST(:idAfter AS uuid)))
@@ -77,8 +77,8 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
             WHERE c.deleted_at IS NULL
               AND (CAST(:typeEqual AS text) IS NULL OR c.type = CAST(:typeEqual AS text))
               AND (CAST(:keywordLike AS text) IS NULL
-                   OR LOWER(c.title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%')
-                   OR LOWER(c.description) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%'))
+                   OR LOWER(c.title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\'
+                   OR LOWER(c.description) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\')
               AND (:cursorCount IS NULL
                    OR c.watcher_count > :cursorCount
                    OR (c.watcher_count = :cursorCount AND c.id > CAST(:idAfter AS uuid)))
@@ -104,8 +104,8 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
             WHERE c.deleted_at IS NULL
               AND (CAST(:typeEqual AS text) IS NULL OR c.type = CAST(:typeEqual AS text))
               AND (CAST(:keywordLike AS text) IS NULL
-                   OR LOWER(c.title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%')
-                   OR LOWER(c.description) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%'))
+                   OR LOWER(c.title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\'
+                   OR LOWER(c.description) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\')
               AND (:cursorWatcherCount IS NULL
                    OR c.watcher_count < :cursorWatcherCount
                    OR (c.watcher_count = :cursorWatcherCount AND c.review_count < :cursorReviewCount)
@@ -136,8 +136,8 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
             WHERE c.deleted_at IS NULL
               AND (CAST(:typeEqual AS text) IS NULL OR c.type = CAST(:typeEqual AS text))
               AND (CAST(:keywordLike AS text) IS NULL
-                   OR LOWER(c.title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%')
-                   OR LOWER(c.description) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%'))
+                   OR LOWER(c.title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\'
+                   OR LOWER(c.description) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\')
               AND (:cursorRating IS NULL
                    OR c.average_rating > :cursorRating
                    OR (c.average_rating = :cursorRating AND c.id > CAST(:idAfter AS uuid)))
@@ -163,8 +163,8 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
             WHERE c.deleted_at IS NULL
               AND (CAST(:typeEqual AS text) IS NULL OR c.type = CAST(:typeEqual AS text))
               AND (CAST(:keywordLike AS text) IS NULL
-                   OR LOWER(c.title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%')
-                   OR LOWER(c.description) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%'))
+                   OR LOWER(c.title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\'
+                   OR LOWER(c.description) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\')
               AND (:cursorRating IS NULL
                    OR c.average_rating < :cursorRating
                    OR (c.average_rating = :cursorRating AND c.id > CAST(:idAfter AS uuid)))
@@ -193,8 +193,8 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
                 WHERE c.deleted_at IS NULL
                   AND (CAST(:typeEqual AS text) IS NULL OR c.type = CAST(:typeEqual AS text))
                   AND (CAST(:keywordLike AS text) IS NULL
-                       OR LOWER(c.title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%')
-                       OR LOWER(c.description) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%'))
+                       OR LOWER(c.title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\'
+                       OR LOWER(c.description) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\')
                 GROUP BY c.id
                 HAVING (:tagCount = 0 OR COUNT(DISTINCT ct.tag) = :tagCount)
             ) matched

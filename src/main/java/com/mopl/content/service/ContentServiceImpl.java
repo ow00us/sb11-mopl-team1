@@ -61,6 +61,7 @@ public class ContentServiceImpl implements ContentService {
             String cursor, UUID idAfter, int limit, String sortBy, String sortDirection) {
 
         String typeStr = typeEqual != null ? ContentType.fromApiValue(typeEqual).name() : null;
+        String escapedKeyword = keywordLike != null ? escapeLikePattern(keywordLike) : null;
         List<String> normalizedTags = tagsIn == null ? List.of()
                 : tagsIn.stream().map(Content::normalize).toList();
         int tagCount = normalizedTags.size();
@@ -68,7 +69,7 @@ public class ContentServiceImpl implements ContentService {
 
         int fetchSize = limit + 1;
         List<Content> rows = fetchPage(
-                typeStr, keywordLike, tagsForQuery, tagCount, cursor, idAfter, fetchSize, sortBy, sortDirection);
+                typeStr, escapedKeyword, tagsForQuery, tagCount, cursor, idAfter, fetchSize, sortBy, sortDirection);
 
         boolean hasNext = rows.size() == fetchSize;
         List<Content> page = hasNext ? rows.subList(0, limit) : rows;
@@ -82,7 +83,7 @@ public class ContentServiceImpl implements ContentService {
         }
 
         List<ContentDto> data = page.stream().map(ContentDto::from).toList();
-        long total = contentRepository.countByFilter(typeStr, keywordLike, tagsForQuery, tagCount);
+        long total = contentRepository.countByFilter(typeStr, escapedKeyword, tagsForQuery, tagCount);
 
         return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, total, sortBy, sortDirection);
     }
@@ -109,6 +110,13 @@ public class ContentServiceImpl implements ContentService {
     private Content findOrThrow(UUID contentId) {
         return contentRepository.findById(contentId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
+    }
+
+    private static String escapeLikePattern(String value) {
+        return value
+                .replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
     }
 
     private List<Content> fetchPage(

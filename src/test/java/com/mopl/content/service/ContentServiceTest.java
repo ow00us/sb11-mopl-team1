@@ -28,6 +28,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -149,6 +150,20 @@ class ContentServiceTest {
 
         verify(contentRepository).findByCreatedAtDesc(
                 eq("TV_SERIES"), isNull(), any(), anyInt(), isNull(), isNull(), eq(11));
+    }
+
+    @Test
+    @DisplayName("keywordLike에 LIKE 와일드카드 문자가 포함되면 이스케이프해서 리포지토리에 전달한다")
+    void getList_escapesLikeWildcardsInKeyword() {
+        ArgumentCaptor<String> keywordCaptor = ArgumentCaptor.forClass(String.class);
+        when(contentRepository.findByCreatedAtDesc(
+                any(), keywordCaptor.capture(), any(), anyInt(), any(), any(), anyInt()))
+                .thenReturn(List.of());
+        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(0L);
+
+        contentService.getList(null, "50%_off", null, null, null, 10, "createdAt", "DESCENDING");
+
+        assertThat(keywordCaptor.getValue()).isEqualTo("50\\%\\_off");
     }
 
     @Test
