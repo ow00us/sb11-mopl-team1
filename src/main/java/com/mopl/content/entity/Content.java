@@ -88,6 +88,23 @@ public class Content extends BaseEntity {
         return Collections.unmodifiableSet(tags);
     }
 
+    public void update(String title, String description, Set<String> tags) {
+        if (title != null) {
+            this.title = title;
+        }
+        if (description != null) {
+            this.description = description;
+        }
+        if (tags != null) {
+            this.tags.clear();
+            tags.forEach(this::addTag);
+        }
+    }
+
+    public void updateThumbnail(String thumbnailUrl) {
+        this.thumbnailUrl = thumbnailUrl;
+    }
+
     public boolean addTag(String rawTag) {
         String normalized = normalize(rawTag);
         return this.tags.add(normalized);
