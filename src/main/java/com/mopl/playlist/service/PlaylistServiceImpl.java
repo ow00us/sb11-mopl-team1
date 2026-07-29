@@ -24,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -206,13 +207,20 @@ public class PlaylistServiceImpl implements PlaylistService {
         List<UUID> contentIds = playlistContentRepository
                 .findAllByPlaylistIdOrderByCreatedAtAsc(playlistId)
                 .stream()
-                .map(pc -> pc.getContentId())
+                .map(PlaylistContent::getContentId)
                 .toList();
         if (contentIds.isEmpty()) return List.of();
 
-        return contentRepository.findAllById(contentIds)
+        Map<UUID, ContentSummary> summaryById = contentRepository.findAllById(contentIds)
                 .stream()
-                .map(this::toContentSummary)
+                .collect(java.util.stream.Collectors.toMap(
+                        Content::getId,
+                        this::toContentSummary
+                ));
+
+        return contentIds.stream()
+                .filter(summaryById::containsKey)
+                .map(summaryById::get)
                 .toList();
     }
 
@@ -248,7 +256,11 @@ public class PlaylistServiceImpl implements PlaylistService {
         if (playlistContentRepository.existsByPlaylistIdAndContentId(playlistId, contentId)) {
             return;
         }
-        playlistContentRepository.save(PlaylistContent.create(playlistId, contentId));
+        try {
+            playlistContentRepository.saveAndFlush(PlaylistContent.create(playlistId, contentId));
+        } catch (DataIntegrityViolationException e) {
+            // 동시 요청으로 인한 중복 추가는 무시
+        }
     }
 
     @Override

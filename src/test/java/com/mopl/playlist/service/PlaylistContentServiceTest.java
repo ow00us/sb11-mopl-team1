@@ -57,7 +57,7 @@ class PlaylistContentServiceTest {
 
         playlistService.addContent(PLAYLIST_ID, CONTENT_ID, OWNER_ID);
 
-        verify(playlistContentRepository).save(any(PlaylistContent.class));
+        verify(playlistContentRepository).saveAndFlush(any(PlaylistContent.class));
     }
 
     @Test
@@ -69,7 +69,7 @@ class PlaylistContentServiceTest {
 
         playlistService.addContent(PLAYLIST_ID, CONTENT_ID, OWNER_ID);
 
-        verify(playlistContentRepository, never()).save(any());
+        verify(playlistContentRepository, never()).saveAndFlush(any());
     }
 
     @Test
