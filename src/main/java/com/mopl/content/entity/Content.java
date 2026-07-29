@@ -96,8 +96,12 @@ public class Content extends BaseEntity {
             this.description = description;
         }
         if (tags != null) {
+            Set<String> normalizedTags = new HashSet<>();
+            for (String rawTag : tags) {
+                normalizedTags.add(normalize(rawTag));
+            }
             this.tags.clear();
-            tags.forEach(this::addTag);
+            this.tags.addAll(normalizedTags);
         }
     }
 

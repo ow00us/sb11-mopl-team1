@@ -1,7 +1,10 @@
 package com.mopl.content.entity;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.mopl.global.exception.BusinessException;
+import com.mopl.global.exception.ErrorCode;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -80,6 +83,19 @@ class ContentTest {
         content.update(null, null, Set.of());
 
         assertThat(content.getTags()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("update 호출 시 태그 중 하나라도 유효하지 않으면 기존 태그가 유지된 채로 예외가 발생한다")
+    void update_withInvalidTag_keepsExistingTagsAndThrows() {
+        Content content = movie();
+        content.addTag("action");
+
+        assertThatThrownBy(() -> content.update(null, null, Set.of("sf", "   ")))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+
+        assertThat(content.getTags()).containsExactly("action");
     }
 
     @Test
