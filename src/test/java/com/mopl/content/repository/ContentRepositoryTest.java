@@ -3,6 +3,7 @@ package com.mopl.content.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.mopl.content.dto.ContentDto;
 import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentSource;
 import com.mopl.content.entity.ContentType;
@@ -14,6 +15,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -406,6 +409,35 @@ class ContentRepositoryTest {
                 null, null, List.of(""), 0, last.getWatcherCount(), last.getReviewCount(),
                 last.getId().toString(), 2);
         assertThat(secondPage).extracting(Content::getId).containsExactly(id1);
+    }
+
+    @Test
+    @DisplayName("콘텐츠 목록을 DTO로 변환하면 태그가 배치로 미리 로딩되어, 이후 영속성 컨텍스트가 비워져도 안전하게 읽을 수 있다")
+    void findByCreatedAtDesc_tagsAreBatchFetchedAndSafeAfterContextCleared() {
+        Instant now = Instant.now();
+        for (int i = 0; i < 5; i++) {
+            UUID id = insertContent("Content " + i, BigDecimal.ZERO, 0, now.minusSeconds(i), "MOVIE");
+            insertTag(id, "action");
+            insertTag(id, "sf");
+        }
+
+        List<Content> result = contentRepository.findByCreatedAtDesc(null, null, List.of(""), 0, null, null, 10);
+
+        SessionFactory sessionFactory = entityManager.getEntityManager()
+                .getEntityManagerFactory().unwrap(SessionFactory.class);
+        Statistics statistics = sessionFactory.getStatistics();
+        statistics.setStatisticsEnabled(true);
+        statistics.clear();
+
+        List<ContentDto> dtos = result.stream().map(ContentDto::from).toList();
+
+        // 태그 5개 콘텐츠분을 배치 사이즈(100) 안에서 한 번에 가져오므로 추가 쿼리는 1개 이하여야 한다
+        assertThat(statistics.getPrepareStatementCount()).isLessThanOrEqualTo(1);
+
+        entityManager.getEntityManager().clear();
+
+        // 영속성 컨텍스트를 비워도 DTO의 tags는 이미 순수 Set으로 복사돼 있어 예외 없이 읽힌다
+        assertThat(dtos).allSatisfy(dto -> assertThat(dto.tags()).containsExactlyInAnyOrder("action", "sf"));
     }
 
     private UUID insertContent(

@@ -21,6 +21,7 @@ import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.BatchSize;
 import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
 
@@ -67,6 +68,7 @@ public class Content extends BaseEntity {
     @ElementCollection
     @CollectionTable(name = "content_tags", joinColumns = @JoinColumn(name = "content_id"))
     @Column(name = "tag", length = 100, nullable = false)
+    @BatchSize(size = 100)
     @Getter(AccessLevel.NONE)
     private Set<String> tags = new HashSet<>();
 

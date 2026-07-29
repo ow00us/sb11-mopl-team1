@@ -20,7 +20,7 @@ public record ContentDto(
     public static ContentDto from(Content content) {
         return new ContentDto(
                 content.getId(), content.getType(), content.getTitle(), content.getDescription(),
-                content.getThumbnailUrl(), content.getTags(), content.getAverageRating(),
+                content.getThumbnailUrl(), Set.copyOf(content.getTags()), content.getAverageRating(),
                 content.getReviewCount(), content.getWatcherCount());
     }
 }
