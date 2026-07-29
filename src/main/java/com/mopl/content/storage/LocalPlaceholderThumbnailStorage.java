@@ -1,6 +1,8 @@
 package com.mopl.content.storage;
 
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -11,9 +13,19 @@ import org.springframework.web.multipart.MultipartFile;
 @Component
 public class LocalPlaceholderThumbnailStorage implements ThumbnailStorage {
 
+    private static final Pattern SAFE_EXTENSION_PATTERN = Pattern.compile("\\.[a-zA-Z0-9]{1,10}$");
+
     @Override
     public String upload(MultipartFile file) {
-        String name = file.getOriginalFilename() == null ? "thumbnail" : file.getOriginalFilename();
-        return "https://placeholder.mopl.local/thumbnails/" + UUID.randomUUID() + "-" + name;
+        String extension = extractSafeExtension(file.getOriginalFilename());
+        return "https://placeholder.mopl.local/thumbnails/" + UUID.randomUUID() + extension;
+    }
+
+    private String extractSafeExtension(String originalFilename) {
+        if (originalFilename == null) {
+            return "";
+        }
+        Matcher matcher = SAFE_EXTENSION_PATTERN.matcher(originalFilename);
+        return matcher.find() ? matcher.group() : "";
     }
 }
