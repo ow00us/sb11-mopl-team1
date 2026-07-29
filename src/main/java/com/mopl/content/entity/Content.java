@@ -110,7 +110,7 @@ public class Content extends BaseEntity {
         return this.tags.add(normalized);
     }
 
-    private String normalize(String rawTag) {
+    public static String normalize(String rawTag) {
         if (rawTag == null) {
             throw new BusinessException(ErrorCode.INVALID_INPUT, "태그는 비어 있을 수 없습니다.");
         }
