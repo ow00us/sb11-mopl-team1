@@ -7,8 +7,11 @@ import com.mopl.global.util.CursorUtils;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
+import com.mopl.content.repository.ContentRepository;
 import com.mopl.playlist.entity.Playlist;
+import com.mopl.playlist.entity.PlaylistContent;
 import com.mopl.playlist.entity.PlaylistSubscription;
+import com.mopl.playlist.repository.PlaylistContentRepository;
 import com.mopl.playlist.repository.PlaylistRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
@@ -32,6 +35,8 @@ public class PlaylistServiceImpl implements PlaylistService {
 
     private final PlaylistRepository playlistRepository;
     private final PlaylistSubscriptionRepository subscriptionRepository;
+    private final PlaylistContentRepository playlistContentRepository;
+    private final ContentRepository contentRepository;
 
     @Override
     @Transactional
@@ -190,5 +195,17 @@ public class PlaylistServiceImpl implements PlaylistService {
             return CursorUtils.encodeLong(last.getSubscriberCount());
         }
         return CursorUtils.encodeInstant(last.getUpdatedAt());
+    }
+
+    @Override
+    @Transactional
+    public void addContent(UUID playlistId, UUID contentId, UUID requesterId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    @Transactional
+    public void removeContent(UUID playlistId, UUID contentId, UUID requesterId) {
+        throw new UnsupportedOperationException();
     }
 }
