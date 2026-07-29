@@ -1,7 +1,11 @@
 package com.mopl.global.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.security.JwtAuthenticationFilter;
 import com.mopl.global.security.JwtProvider;
+import com.mopl.global.security.handler.RestAccessDeniedHandler;
+import com.mopl.global.security.handler.RestAuthenticationEntryPoint;
+import com.mopl.global.security.handler.SecurityErrorResponseWriter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -42,11 +46,39 @@ public class SecurityConfig {
     };
 
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    public SecurityErrorResponseWriter securityErrorResponseWriter(
+        ObjectMapper objectMapper
+    ) {
+        return new SecurityErrorResponseWriter(objectMapper);
+    }
+
+    @Bean
+    public RestAuthenticationEntryPoint restAuthenticationEntryPoint(
+        SecurityErrorResponseWriter responseWriter
+    ) {
+        return new RestAuthenticationEntryPoint(responseWriter);
+    }
+
+    @Bean
+    public RestAccessDeniedHandler restAccessDeniedHandler(
+        SecurityErrorResponseWriter responseWriter
+    ) {
+        return new RestAccessDeniedHandler(responseWriter);
+    }
+
+    @Bean
+    public SecurityFilterChain filterChain(
+        HttpSecurity http,
+        RestAuthenticationEntryPoint authenticationEntryPoint,
+        RestAccessDeniedHandler accessDeniedHandler
+    ) throws Exception {
         http
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                         .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler()))
+                .exceptionHandling(exception -> exception
+                        .authenticationEntryPoint(authenticationEntryPoint)
+                        .accessDeniedHandler(accessDeniedHandler))
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_PATHS).permitAll()
