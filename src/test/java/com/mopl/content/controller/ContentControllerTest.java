@@ -78,6 +78,18 @@ class ContentControllerTest {
     }
 
     @Test
+    @DisplayName("썸네일 없이 생성 요청해도 201을 반환한다")
+    void create_success_withoutThumbnail() throws Exception {
+        setAuth(ADMIN_ID, true);
+        when(contentService.create(any(), any())).thenReturn(sampleDto());
+
+        mockMvc.perform(multipart("/api/contents")
+                        .file(requestPart(new ContentCreateRequest(
+                                ContentType.MOVIE, "제목", "설명", List.of("action")))))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
     @DisplayName("title이 빈 값이면 400을 반환한다")
     void create_fail_blankTitle() throws Exception {
         setAuth(ADMIN_ID, true);

@@ -47,7 +47,9 @@ public class ContentServiceImpl implements ContentService {
                 .description(request.description())
                 .build();
         request.tags().forEach(content::addTag);
-        content.updateThumbnail(thumbnailStorage.upload(thumbnail));
+        if (thumbnail != null && !thumbnail.isEmpty()) {
+            content.updateThumbnail(thumbnailStorage.upload(thumbnail));
+        }
         return ContentDto.from(contentRepository.save(content));
     }
 

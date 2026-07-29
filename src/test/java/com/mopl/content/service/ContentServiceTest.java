@@ -73,6 +73,20 @@ class ContentServiceTest {
     }
 
     @Test
+    @DisplayName("썸네일 없이 생성하면 업로드를 호출하지 않고 콘텐츠를 저장한다")
+    void create_success_withoutThumbnail() {
+        ContentCreateRequest request = new ContentCreateRequest(
+                ContentType.MOVIE, "제목", "설명", List.of("action"));
+        Content saved = savedContent(CONTENT_ID, "제목", "설명", null);
+        when(contentRepository.save(any(Content.class))).thenReturn(saved);
+
+        ContentDto result = contentService.create(request, null);
+
+        assertThat(result.thumbnailUrl()).isNull();
+        verify(thumbnailStorage, never()).upload(any());
+    }
+
+    @Test
     @DisplayName("태그가 유효하지 않으면 썸네일 업로드를 호출하지 않는다")
     void create_fail_invalidTag_doesNotUploadThumbnail() {
         ContentCreateRequest request = new ContentCreateRequest(

@@ -49,7 +49,7 @@ public class ContentController {
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ContentDto> create(
             @RequestPart("request") ContentCreateRequest request,
-            @RequestPart("thumbnail") MultipartFile thumbnail) {
+            @RequestPart(value = "thumbnail", required = false) MultipartFile thumbnail) {
         requireAdmin();
         validate(request);
         return ResponseEntity.status(HttpStatus.CREATED)
