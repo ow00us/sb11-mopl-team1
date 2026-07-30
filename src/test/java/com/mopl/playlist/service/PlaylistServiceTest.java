@@ -30,6 +30,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -128,6 +129,27 @@ class PlaylistServiceTest {
         assertThat(result.data()).hasSize(2);
         assertThat(result.hasNext()).isFalse();
         assertThat(result.nextCursor()).isNull();
+    }
+
+    @Test
+    @DisplayName("getList는 페이지 크기와 무관하게 콘텐츠 조회를 단일 배치 쿼리로 수행한다 (N+1 방지)")
+    void getList_batchLoadsContents_noNPlusOne() {
+        List<Playlist> rows = List.of(
+                savedPlaylist(UUID.randomUUID(), OWNER_ID, "A", "a", Instant.now()),
+                savedPlaylist(UUID.randomUUID(), OWNER_ID, "B", "b", Instant.now()),
+                savedPlaylist(UUID.randomUUID(), OWNER_ID, "C", "c", Instant.now())
+        );
+        when(playlistRepository.findByUpdatedAtAsc(null, null, null, null, null, 4)).thenReturn(rows);
+        when(playlistRepository.countByFilter(null, null, null)).thenReturn(3L);
+        when(playlistContentRepository.findAllByPlaylistIdInOrderByPlaylistIdAscCreatedAtAsc(anyList()))
+                .thenReturn(List.of());
+
+        playlistService.getList(null, null, null, null, null, 3, "updatedAt", "ASCENDING", null);
+
+        verify(playlistContentRepository, times(1))
+                .findAllByPlaylistIdInOrderByPlaylistIdAscCreatedAtAsc(anyList());
+        verify(playlistContentRepository, never())
+                .findAllByPlaylistIdOrderByCreatedAtAsc(any(UUID.class));
     }
 
     @Test
