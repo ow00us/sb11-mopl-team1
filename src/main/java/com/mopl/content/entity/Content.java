@@ -21,6 +21,7 @@ import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.BatchSize;
 import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
 
@@ -67,6 +68,7 @@ public class Content extends BaseEntity {
     @ElementCollection
     @CollectionTable(name = "content_tags", joinColumns = @JoinColumn(name = "content_id"))
     @Column(name = "tag", length = 100, nullable = false)
+    @BatchSize(size = 100)
     @Getter(AccessLevel.NONE)
     private Set<String> tags = new HashSet<>();
 
@@ -88,18 +90,42 @@ public class Content extends BaseEntity {
         return Collections.unmodifiableSet(tags);
     }
 
+    public void update(String title, String description, Set<String> tags) {
+        if (title != null) {
+            this.title = title;
+        }
+        if (description != null) {
+            this.description = description;
+        }
+        if (tags != null) {
+            Set<String> normalizedTags = new HashSet<>();
+            for (String rawTag : tags) {
+                normalizedTags.add(normalize(rawTag));
+            }
+            this.tags.clear();
+            this.tags.addAll(normalizedTags);
+        }
+    }
+
+    public void updateThumbnail(String thumbnailUrl) {
+        this.thumbnailUrl = thumbnailUrl;
+    }
+
     public boolean addTag(String rawTag) {
         String normalized = normalize(rawTag);
         return this.tags.add(normalized);
     }
 
-    private String normalize(String rawTag) {
+    public static String normalize(String rawTag) {
         if (rawTag == null) {
             throw new BusinessException(ErrorCode.INVALID_INPUT, "태그는 비어 있을 수 없습니다.");
         }
         String normalized = rawTag.strip().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
         if (normalized.isEmpty()) {
             throw new BusinessException(ErrorCode.INVALID_INPUT, "태그는 비어 있을 수 없습니다.");
+        }
+        if (normalized.length() > 100) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT, "태그는 100자를 초과할 수 없습니다.");
         }
         return normalized;
     }
