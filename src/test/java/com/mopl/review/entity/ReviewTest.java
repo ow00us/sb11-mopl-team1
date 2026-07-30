@@ -61,4 +61,18 @@ class ReviewTest {
                 .extracting(exception -> ((BusinessException) exception).getErrorCode())
                 .isEqualTo(ErrorCode.INVALID_INPUT);
     }
+
+    @ParameterizedTest
+    @DisplayName("rating이 0.0 또는 5.0이면 경계값으로 정상 생성된다")
+    @ValueSource(strings = {"0.0", "5.0"})
+    void builder_success_boundaryRating(String boundaryRating) {
+        Review review = Review.builder()
+                .authorId(UUID.randomUUID())
+                .contentId(UUID.randomUUID())
+                .text("text")
+                .rating(new BigDecimal(boundaryRating))
+                .build();
+
+        assertThat(review.getRating()).isEqualByComparingTo(boundaryRating);
+    }
 }
