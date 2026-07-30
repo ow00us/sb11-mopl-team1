@@ -10,15 +10,19 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+@Validated
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api")
@@ -73,7 +77,10 @@ public class WatchingSessionController {
         @RequestParam(required = false) UUID idAfter,
 
         @Parameter(description = "한 번에 가져올 개수", required = true)
-        @RequestParam int limit,
+        @RequestParam
+        @Min(value = 1, message = "limit는 1 이상이어야 합니다.")
+        @Max(value = 100, message = "limit는 100 이하여야 합니다.")
+        int limit,
 
         @Parameter(description = "정렬 방향", required = true,
             schema = @Schema(allowableValues = {"ASCENDING", "DESCENDING"}))
