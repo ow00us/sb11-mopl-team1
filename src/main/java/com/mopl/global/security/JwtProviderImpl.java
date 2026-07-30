@@ -11,7 +11,6 @@ import java.util.Date;
 import java.util.List;
 import java.util.UUID;
 import javax.crypto.SecretKey;
-import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -23,14 +22,29 @@ import org.springframework.stereotype.Component;
  * 유효한 토큰에서 Spring Security 인증 정보를 복원
  *
  * 토큰 subject에는 사용자 UUID를, role 클레임에는 사용자 역할을 저장
+ *
+ * 애플리케이션 시작 시 1회 Base64 디코딩 → SecretKey 생성
+ * 요청마다 캐시된 SecretKey로 토큰 검증
  */
 @Component
-@RequiredArgsConstructor
 public class JwtProviderImpl implements JwtProvider {
 
     private static final String ROLE_CLAIM = "role";
 
     private final JwtProperties jwtProperties;
+
+    // 애플리케이션 실행 동안 바뀌지 않는 HMAC 서명 키를 한 번만 생성해 재사용합니다.
+    private final SecretKey signingKey;
+
+    /**
+     * JWT 설정값을 받아 HMAC 서명 키를 한 번 생성합니다.
+     *
+     * 잘못된 Base64 값 또는 너무 짧은 비밀키는 애플리케이션 시작 시점에 발견됩니다.
+     */
+    public JwtProviderImpl(JwtProperties jwtProperties) {
+        this.jwtProperties = jwtProperties;
+        this.signingKey = createSigningKey(jwtProperties.getSecret());
+    }
 
     // 사용자 ID와 역할을 담은 액세스 토큰을 발급
     @Override
@@ -44,7 +58,7 @@ public class JwtProviderImpl implements JwtProvider {
             .claim(ROLE_CLAIM, role)
             .issuedAt(Date.from(now))
             .expiration(Date.from(expiration))
-            .signWith(signingKey())
+            .signWith(signingKey)
             .compact();
     }
 
@@ -93,7 +107,7 @@ public class JwtProviderImpl implements JwtProvider {
      */
     private TokenClaims parseAndValidateToken(String token) {
         Claims claims = Jwts.parser()
-            .verifyWith(signingKey())
+            .verifyWith(signingKey)
             .requireIssuer(jwtProperties.getIssuer())
             .build()
             .parseSignedClaims(token)
@@ -149,24 +163,13 @@ public class JwtProviderImpl implements JwtProvider {
     }
 
     /**
-     * JWT 문자열을 파싱해 Claims를 반환
+     * Base64 형식 비밀키를 HMAC 서명용 SecretKey로 변환합니다.
      *
-     * verifyWith()이 토큰의 서명을 검증하고
-     * parseSignedClaims()가 만료 시간도 함께 검증
+     * 이 메서드는 생성자에서 한 번만 호출되고,
+     * 이후 토큰 발급과 검증은 캐시된 signingKey 필드를 재사용합니다.
      */
-    private Claims parseClaims(String token) {
-        return Jwts.parser()
-            .verifyWith(signingKey())
-            .build()
-            .parseSignedClaims(token)
-            .getPayload();
-    }
-
-    /**
-     * 환경 변수의 Base64 비밀키를 HMAC 서명용 키로 변환
-     */
-    private SecretKey signingKey() {
-        byte[] keyBytes = Decoders.BASE64.decode(jwtProperties.getSecret());
+    private static SecretKey createSigningKey(String secret) {
+        byte[] keyBytes = Decoders.BASE64.decode(secret);
 
         return Keys.hmacShaKeyFor(keyBytes);
     }
