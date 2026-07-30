@@ -23,6 +23,7 @@ import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -60,7 +61,6 @@ public class WatchingSessionServiceTest {
     private static final UUID CONTENT_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
     private static final UUID NEW_CONTENT_ID = UUID.fromString("33322222-2222-2222-2222-222222222222");
     private static final Instant FIRST_CREATED_AT = Instant.parse("2026-07-29T10:00:00Z");
-    private static final Instant NOW = Instant.parse("2026-07-29T10:05:00Z");
 
     private void mockUserAndContentExists(UUID contentId) {
         Content mockContent = mock(Content.class);
@@ -102,7 +102,7 @@ public class WatchingSessionServiceTest {
         mockUserAndContentExists(CONTENT_ID);
 
         WatchingSessionSnapshot created = createSnapshotFixture(
-            CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT, FIRST_CREATED_AT.plusSeconds(60)
+            CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT, FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS)
         );
         when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any())).thenReturn(created);
 
@@ -122,8 +122,10 @@ public class WatchingSessionServiceTest {
         // given
         mockUserAndContentExists(CONTENT_ID);
 
+        Instant now = Instant.now();
+
         WatchingSessionSnapshot afterRetry = createSnapshotFixture(
-            CONTENT_ID, FIRST_CREATED_AT, NOW, NOW.plusSeconds(60)
+            CONTENT_ID, FIRST_CREATED_AT, now, now.plus(1, ChronoUnit.HOURS)
         );
 
         when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
@@ -136,7 +138,7 @@ public class WatchingSessionServiceTest {
         // then
         assertThat(response.id()).isEqualTo(SNAPSHOT_ID);
         // DTO의 createdAt에는 Entity의 createdAt이 아닌 updatedAt(NOW)가 나와야함
-        assertThat(response.createdAt()).isEqualTo(NOW);
+        assertThat(response.createdAt()).isEqualTo(now);
         assertThat(response.createdAt()).isNotEqualTo(FIRST_CREATED_AT);
         assertThat(response.content().id()).isEqualTo(CONTENT_ID);
         verify(watchingSessionSnapshotWriter, times(2)).upsert(eq(WATCHER_ID), eq(CONTENT_ID), any());
@@ -149,8 +151,10 @@ public class WatchingSessionServiceTest {
         mockUserAndContentExists(CONTENT_ID);
         mockUserAndContentExists(NEW_CONTENT_ID);
 
+        Instant now = Instant.now();
+
         WatchingSessionSnapshot upserted = createSnapshotFixture(
-            NEW_CONTENT_ID, FIRST_CREATED_AT, NOW, NOW.plusSeconds(60)
+            NEW_CONTENT_ID, FIRST_CREATED_AT, now, now.plus(1, ChronoUnit.HOURS)
         );
 
         when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
@@ -161,7 +165,7 @@ public class WatchingSessionServiceTest {
 
         // then - enrich되어 나오는지 확인
         assertThat(response.id()).isEqualTo(SNAPSHOT_ID);
-        assertThat(response.createdAt()).isEqualTo(NOW);
+        assertThat(response.createdAt()).isEqualTo(now);
         assertThat(response.createdAt()).isNotEqualTo(FIRST_CREATED_AT);
         assertThat(response.content().id()).isEqualTo(NEW_CONTENT_ID);
         assertThat(response.watcher().userId()).isEqualTo(WATCHER_ID);
@@ -198,8 +202,10 @@ public class WatchingSessionServiceTest {
         // given
         mockUserAndContentExists(CONTENT_ID);
 
+        Instant now = Instant.now();
+
         WatchingSessionSnapshot snapshot = createSnapshotFixture(
-            CONTENT_ID, FIRST_CREATED_AT, NOW, NOW.plusSeconds(60)
+            CONTENT_ID, FIRST_CREATED_AT, now, now.plus(1, ChronoUnit.HOURS)
         );
         when(watchingSessionSnapshotRepository.findByWatcherId(WATCHER_ID)).thenReturn(Optional.of(snapshot));
 
@@ -210,7 +216,7 @@ public class WatchingSessionServiceTest {
         assertThat(result).isPresent();
         WatchingSessionDto dto = result.get();
         assertThat(dto.id()).isEqualTo(SNAPSHOT_ID);
-        assertThat(dto.createdAt()).isEqualTo(NOW);
+        assertThat(dto.createdAt()).isEqualTo(now);
         assertThat(dto.createdAt()).isNotEqualTo(FIRST_CREATED_AT);
         assertThat(dto.watcher().userId()).isEqualTo(WATCHER_ID);
         assertThat(dto.content().id()).isEqualTo(CONTENT_ID);
@@ -220,8 +226,9 @@ public class WatchingSessionServiceTest {
     @DisplayName("활성 세션이 없으면 빈 Optional 반환")
     void get_success_whenNoActiveSession() {
         // given
+        Instant now = Instant.now();
         WatchingSessionSnapshot expired = createSnapshotFixture(
-            CONTENT_ID, FIRST_CREATED_AT, NOW, Instant.now().minusSeconds(1)
+            CONTENT_ID, FIRST_CREATED_AT, now, now.minusSeconds(1)
         );
         when(watchingSessionSnapshotRepository.findByWatcherId(WATCHER_ID)).thenReturn(Optional.of(expired));
 
