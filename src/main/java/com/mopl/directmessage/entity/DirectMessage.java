@@ -49,4 +49,10 @@ public class DirectMessage extends BaseEntity {
             content
         );
     }
+
+    public void markAsRead(Instant readAt) {
+        if (this.readAt == null) {
+            this.readAt = readAt;
+        }
+    }
 }

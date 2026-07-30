@@ -330,4 +330,47 @@ public class DirectMessageService {
             user.getProfileImageUrl()
         );
     }
+
+    @Transactional
+    public void read(
+        UUID requesterId,
+        UUID conversationId,
+        UUID directMessageId
+    ) {
+        List<ConversationParticipant> participants =
+            getParticipants(
+                conversationId,
+                requesterId
+            );
+
+        DirectMessage message =
+            directMessageRepository
+                .findByIdAndConversationId(
+                    directMessageId,
+                    conversationId
+                )
+                .orElseThrow(() ->
+                    new BusinessException(
+                        ErrorCode.RESOURCE_NOT_FOUND
+                    )
+                );
+        UUID receiverId = participants.stream()
+            .map(ConversationParticipant::getUserId)
+            .filter(userId ->
+                !userId.equals(message.getSenderId())
+            )
+            .findFirst()
+            .orElseThrow(() ->
+                new BusinessException(
+                    ErrorCode.RESOURCE_NOT_FOUND
+                )
+            );
+
+        if (!receiverId.equals(requesterId)) {
+            throw new BusinessException(
+                ErrorCode.FORBIDDEN
+            );
+        }
+        message.markAsRead(Instant.now());
+    }
 }

@@ -25,6 +25,7 @@ import com.mopl.user.repository.UserRepository;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -473,5 +474,158 @@ class DirectMessageServiceTest {
                         );
                 }
             );
+    }
+
+    @Test
+    @DisplayName("DM 수신자가 읽음 처리하면 readAt을 기록")
+    void read_receiver_success() {
+        // given
+        DirectMessage message = createMessage(
+            UUID.fromString(
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            ),
+            USER_ID_1,
+            Instant.parse("2026-07-31T01:00:00Z"),
+            "읽을 메시지"
+        );
+
+        when(
+            participantRepository.findAllByConversationId(
+                CONVERSATION_ID
+            )
+        ).thenReturn(participants());
+
+        when(
+            directMessageRepository.findByIdAndConversationId(
+                message.getId(),
+                CONVERSATION_ID
+            )
+        ).thenReturn(Optional.of(message));
+
+        // when
+        directMessageService.read(
+            USER_ID_2,
+            CONVERSATION_ID,
+            message.getId()
+        );
+
+        // then
+        assertThat(message.getReadAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("이미 읽은 DM을 다시 읽음 처리하면 최초 readAt을 유지")
+    void read_alreadyRead_preservesFirstReadAt() {
+        // given
+        DirectMessage message = createMessage(
+            UUID.fromString(
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            ),
+            USER_ID_1,
+            Instant.parse("2026-07-31T01:00:00Z"),
+            "읽을 메시지"
+        );
+
+        when(
+            participantRepository.findAllByConversationId(
+                CONVERSATION_ID
+            )
+        ).thenReturn(participants());
+
+        when(
+            directMessageRepository.findByIdAndConversationId(
+                message.getId(),
+                CONVERSATION_ID
+            )
+        ).thenReturn(Optional.of(message));
+
+        directMessageService.read(
+            USER_ID_2,
+            CONVERSATION_ID,
+            message.getId()
+        );
+
+        Instant firstReadAt = message.getReadAt();
+
+        // when
+        directMessageService.read(
+            USER_ID_2,
+            CONVERSATION_ID,
+            message.getId()
+        );
+
+        // then
+        assertThat(message.getReadAt())
+            .isEqualTo(firstReadAt);
+    }
+
+    @Test
+    @DisplayName("DM 발신자는 자신의 메시지를 읽음 처리할 수 없음")
+    void read_sender_fails() {
+        // given
+        DirectMessage message = createMessage(
+            UUID.fromString(
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            ),
+            USER_ID_1,
+            Instant.parse("2026-07-31T01:00:00Z"),
+            "읽을 메시지"
+        );
+
+        when(
+            participantRepository.findAllByConversationId(
+                CONVERSATION_ID
+            )
+        ).thenReturn(participants());
+
+        when(
+            directMessageRepository.findByIdAndConversationId(
+                message.getId(),
+                CONVERSATION_ID
+            )
+        ).thenReturn(Optional.of(message));
+
+        // when & then
+        assertThatThrownBy(() ->
+            directMessageService.read(
+                USER_ID_1,
+                CONVERSATION_ID,
+                message.getId()
+            )
+        ).isInstanceOf(BusinessException.class);
+
+        assertThat(message.getReadAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("대화에 속하지 않은 DM은 읽음 처리할 수 없음")
+    void read_messageNotInConversation_fails() {
+        // given
+        UUID messageId =
+            UUID.fromString(
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            );
+
+        when(
+            participantRepository.findAllByConversationId(
+                CONVERSATION_ID
+            )
+        ).thenReturn(participants());
+
+        when(
+            directMessageRepository.findByIdAndConversationId(
+                messageId,
+                CONVERSATION_ID
+            )
+        ).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() ->
+            directMessageService.read(
+                USER_ID_2,
+                CONVERSATION_ID,
+                messageId
+            )
+        ).isInstanceOf(BusinessException.class);
     }
 }
