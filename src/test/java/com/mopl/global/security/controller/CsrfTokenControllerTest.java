@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.cookie;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.mopl.global.config.SecurityConfig;
@@ -16,6 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -67,7 +69,12 @@ class CsrfTokenControllerTest {
     @DisplayName("CSRF 토큰이 없으면 상태 변경 요청에 403을 반환한다")
     void stateChangingRequest_withoutToken_isForbidden() throws Exception {
         mockMvc.perform(post("/test/csrf-protected"))
-            .andExpect(status().isForbidden());
+            .andExpect(status().isForbidden())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.exceptionName").isNotEmpty())
+            .andExpect(jsonPath("$.errorCode").value("COMMON_403_1"))
+            .andExpect(jsonPath("$.message").value("권한이 없습니다."))
+            .andExpect(jsonPath("$.details").isEmpty());
     }
 
     @Test
@@ -78,7 +85,12 @@ class CsrfTokenControllerTest {
         mockMvc.perform(post("/test/csrf-protected")
                 .cookie(csrfCookie)
                 .header(CSRF_HEADER_NAME, "mismatched-token"))
-            .andExpect(status().isForbidden());
+            .andExpect(status().isForbidden())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.exceptionName").isNotEmpty())
+            .andExpect(jsonPath("$.errorCode").value("COMMON_403_1"))
+            .andExpect(jsonPath("$.message").value("권한이 없습니다."))
+            .andExpect(jsonPath("$.details").isEmpty());
     }
 
     private MvcResult requestCsrfToken() throws Exception {
