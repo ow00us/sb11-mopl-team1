@@ -561,4 +561,26 @@ public class WatchingSessionServiceTest {
             .extracting("errorCode")
             .isEqualTo(ErrorCode.INVALID_INPUT);
     }
+
+    @Test
+    @DisplayName("watcherNameLike에 %, _가 포함되면 이스케이프되어 Repository에 전달")
+    void getListByContent_escapesLikeWildcards() {
+        // given
+        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+        when(watchingSessionSnapshotRepository.findByContentIdFirstPageDesc(
+            eq(CONTENT_ID), eq("100\\%\\_off"), any(), any()))
+            .thenReturn(List.of());
+        when(watchingSessionSnapshotRepository.countByContentId(
+            eq(CONTENT_ID), eq("100\\%\\_off"), any()))
+            .thenReturn(0L);
+
+        // when
+        watchingSessionService.getListByContent(
+            CONTENT_ID, "100%_off", null, null, 10, "createdAt", "DESCENDING"
+        );
+
+        // then
+        verify(watchingSessionSnapshotRepository).findByContentIdFirstPageDesc(
+            eq(CONTENT_ID), eq("100\\%\\_off"), any(), any());
+    }
 }

@@ -333,5 +333,48 @@ public class WatchingSessionSnapshotRepositoryTest {
         return entityManager.find(WatchingSessionSnapshot.class, snapshot.getId());
     }
 
+    @Test
+    @DisplayName("watcherNameLike에 %가 포함되면 리터럴로 취급되어 전체 매칭되지 않음")
+    void findByContentIdFirstPageDesc_escapesPercentWildcard() {
+        // given
+        UUID watcherId = insertUser("100%김철수");
+        UUID otherWatcherId = insertUser("이영희");
+        UUID contentId = insertContent();
+        Instant now = Instant.now();
+
+        persistSnapshot(watcherId, contentId, now, now.plusSeconds(60));
+        persistSnapshot(otherWatcherId, contentId, now, now.plusSeconds(60));
+        entityManager.clear();
+
+        // when: "%" 자체를 리터럴로 검색 (서비스단 이스케이프 후 전달된다고 가정)
+        List<WatchingSessionSnapshot> result = repository.findByContentIdFirstPageDesc(
+            contentId, "100\\%", now, PageRequest.of(0, 10)
+        );
+
+        // then: "100%김철수"만 매칭, "이영희"는 안 나옴
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getWatcherId()).isEqualTo(watcherId);
+    }
+
+    @Test
+    @DisplayName("watcherNameLike 대소문자를 구분하지 않고 검색")
+    void findByContentIdFirstPageDescending_isCaseInsensitive() {
+        // given
+        UUID watcherId = insertUser("Kim철수");
+        UUID contentId = insertContent();
+        Instant now = Instant.now();
+
+        persistSnapshot(watcherId, contentId, now, now.plusSeconds(60));
+        entityManager.clear();
+
+        // when
+        List<WatchingSessionSnapshot> result = repository.findByContentIdFirstPageDesc(
+            contentId, "kim", now, PageRequest.of(0, 10)
+        );
+
+        // then
+        assertThat(result).hasSize(1);
+    }
+
 }
 

@@ -31,6 +31,7 @@ public class WatchingSessionService {
     // Redis presence + heartbeat/TTL이 들어오기 전 쓰는 임시 고정 TTL
     // TODO(심화필수): Redis 쓰기 모델로 옮기면서 heartbeat 기반 갱신으로 대체
     private static final Duration DEFAULT_SESSION_TTL = Duration.ofMinutes(30);
+    private static final String LIKE_ESCAPE_CHAR = "\\";
 
     private final WatchingSessionSnapshotRepository watchingSessionSnapshotRepository;
     private final ContentRepository contentRepository;
@@ -92,6 +93,8 @@ public class WatchingSessionService {
         validateSortBy(sortBy);
         validateCursorPair(cursor, idAfter);
 
+        String escapedWatcherNameLike = escapeLikePattern(watcherNameLike);
+
         Instant now = Instant.now();
         boolean ascending = "ASCENDING".equalsIgnoreCase(sortDirection);
         Pageable pageable = PageRequest.of(0, limit + 1);
@@ -100,16 +103,16 @@ public class WatchingSessionService {
         if (cursor == null) {
             rows = ascending
                 ? watchingSessionSnapshotRepository.findByContentIdFirstPageAsc(
-                    contentId, watcherNameLike, now, pageable)
+                    contentId, escapedWatcherNameLike, now, pageable)
                 : watchingSessionSnapshotRepository.findByContentIdFirstPageDesc(
-                    contentId, watcherNameLike, now, pageable);
+                    contentId, escapedWatcherNameLike, now, pageable);
         } else {
             Instant cursorValue = CursorUtils.decodeAsInstant(cursor);
             rows = ascending
                 ? watchingSessionSnapshotRepository.findByContentIdAfterAsc(
-                    contentId, watcherNameLike, now, cursorValue, idAfter, pageable)
+                    contentId, escapedWatcherNameLike, now, cursorValue, idAfter, pageable)
                 : watchingSessionSnapshotRepository.findByContentIdAfterDesc(
-                    contentId, watcherNameLike, now, cursorValue, idAfter, pageable);
+                    contentId, escapedWatcherNameLike, now, cursorValue, idAfter, pageable);
         }
 
         boolean hasNext = rows.size() > limit;
@@ -127,7 +130,7 @@ public class WatchingSessionService {
             nextIdAfter = last.getId();
         }
 
-        long totalCount = watchingSessionSnapshotRepository.countByContentId(contentId, watcherNameLike, now);
+        long totalCount = watchingSessionSnapshotRepository.countByContentId(contentId, escapedWatcherNameLike, now);
 
         return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, totalCount, sortBy, sortDirection);
     }
@@ -144,6 +147,17 @@ public class WatchingSessionService {
         if (cursorPresent != idAfterPresent) {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
+    }
+
+    // 이스케이프 헬퍼 메서드
+    private String escapeLikePattern(String value) {
+        if (value == null) {
+            return null;
+        }
+        return value
+            .replace(LIKE_ESCAPE_CHAR, LIKE_ESCAPE_CHAR + LIKE_ESCAPE_CHAR)
+            .replace("%", LIKE_ESCAPE_CHAR + "%")
+            .replace("_", LIKE_ESCAPE_CHAR + "_");
     }
 
 }
