@@ -14,6 +14,8 @@ import org.springframework.data.repository.query.Param;
 public interface DirectMessageRepository
     extends JpaRepository<DirectMessage, UUID> {
 
+    long countByConversationId(UUID conversationId);
+
     private static Instant normalizeToMicros(Instant cursor) {
         return cursor
             .plusNanos(500)
