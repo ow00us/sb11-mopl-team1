@@ -130,4 +130,21 @@ class ReviewRepositoryTest {
         assertThatThrownBy(() -> entityManager.persistAndFlush(review))
                 .isInstanceOf(RuntimeException.class);
     }
+
+    @Test
+    @DisplayName("존재하지 않는 author_id로 저장하면 외래키 제약 위반이 발생한다")
+    void nonexistent_author_id_violates_fk_constraint() {
+        // given
+        UUID contentId = insertContent();
+        Review review = Review.builder()
+                .authorId(UUID.randomUUID())
+                .contentId(contentId)
+                .text("text")
+                .rating(new BigDecimal("3.0"))
+                .build();
+
+        // when & then
+        assertThatThrownBy(() -> entityManager.persistAndFlush(review))
+                .isInstanceOf(RuntimeException.class);
+    }
 }
