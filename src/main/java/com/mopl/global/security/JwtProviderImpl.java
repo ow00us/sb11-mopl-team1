@@ -99,6 +99,11 @@ public class JwtProviderImpl implements JwtProvider {
             .parseSignedClaims(token)
             .getPayload();
 
+        // parseSignedClaims()는 만료된 exp는 검증하지만 exp 클레임 자체가 없는 토큰은 별도로 거절
+        if (claims.getExpiration() == null) {
+            throw new JwtException("JWT에 만료 시간 정보가 없습니다.");
+        }
+
         UUID userId = parseUserId(claims.getSubject());
         UserRole role = parseUserRole(claims.get(ROLE_CLAIM, String.class));
 

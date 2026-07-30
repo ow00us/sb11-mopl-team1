@@ -150,6 +150,24 @@ class JwtProviderImplTest {
         assertThat(jwtProvider.validate(token)).isFalse();
     }
 
+    @Test
+    @DisplayName("만료 시간 클레임이 없으면 유효하지 않은 토큰으로 처리한다")
+    void validate_fail_whenExpirationIsMissing() {
+        SecretKey signingKey = Keys.hmacShaKeyFor(
+            Decoders.BASE64.decode(TEST_SECRET)
+        );
+
+        String token = Jwts.builder()
+            .issuer("mopl")
+            .subject(UUID.randomUUID().toString())
+            .claim("role", "USER")
+            .issuedAt(Date.from(Instant.now()))
+            .signWith(signingKey)
+            .compact();
+
+        assertThat(jwtProvider.validate(token)).isFalse();
+    }
+
     /**
      * 특정 클레임 값을 가진 서명 토큰을 만들어 검증 실패 상황을 테스트
      *
