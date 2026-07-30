@@ -121,6 +121,35 @@ class ContentControllerTest {
     }
 
     @Test
+    @DisplayName("request 파트가 누락되면 400을 반환한다")
+    void create_fail_missingRequestPart() throws Exception {
+        setAuth(ADMIN_ID, true);
+
+        mockMvc.perform(multipart("/api/contents")
+                        .file(thumbnailPart()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
+
+        verifyNoInteractions(contentService);
+    }
+
+    @Test
+    @DisplayName("request 파트의 JSON이 깨져 있으면 400을 반환한다")
+    void create_fail_malformedRequestJson() throws Exception {
+        setAuth(ADMIN_ID, true);
+        MockMultipartFile request = new MockMultipartFile("request", "", "application/json",
+                "{invalid".getBytes(StandardCharsets.UTF_8));
+
+        mockMvc.perform(multipart("/api/contents")
+                        .file(request)
+                        .file(thumbnailPart()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
+
+        verifyNoInteractions(contentService);
+    }
+
+    @Test
     @DisplayName("미인증 사용자가 생성 시도 시 401을 반환한다")
     void create_fail_unauthorized() throws Exception {
         mockMvc.perform(multipart("/api/contents")
@@ -323,6 +352,21 @@ class ContentControllerTest {
 
         mockMvc.perform(multipart(HttpMethod.PATCH, "/api/contents/{contentId}", CONTENT_ID)
                         .file(requestPart(new ContentUpdateRequest(tooLong, null, null))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
+
+        verifyNoInteractions(contentService);
+    }
+
+    @Test
+    @DisplayName("request 파트의 JSON이 깨져 있으면 400을 반환한다")
+    void update_fail_malformedRequestJson() throws Exception {
+        setAuth(ADMIN_ID, true);
+        MockMultipartFile request = new MockMultipartFile("request", "", "application/json",
+                "{invalid".getBytes(StandardCharsets.UTF_8));
+
+        mockMvc.perform(multipart(HttpMethod.PATCH, "/api/contents/{contentId}", CONTENT_ID)
+                        .file(request))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
 
