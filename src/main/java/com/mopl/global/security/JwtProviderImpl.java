@@ -1,5 +1,6 @@
 package com.mopl.global.security;
 
+import com.mopl.user.entity.UserRole;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
@@ -16,12 +17,6 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.stereotype.Component;
 
-/**
- * JWT 실구현은 아직 채워지지 않은 골격입니다.
- * TODO(빌드 주차): jjwt로 서명·만료·클레임 파싱을 구현하고, secret/만료 시간은 설정에서 주입합니다.
- * 지금은 validate가 항상 false라 필터가 인증을 세팅하지 않습니다. 다만 SecurityConfig가 현재 anyRequest를 permitAll로
- * 열어 두었기 때문에 실제로는 모든 요청이 통과합니다. 이후 인가를 .authenticated()로 잠그면, 그때부터 공개 경로 외에는 막힙니다.
- */
 
 /**
  * JWT 액세스 토큰을 발급하고 검증하며
@@ -54,15 +49,15 @@ public class JwtProviderImpl implements JwtProvider {
     }
 
     /**
-     * 토큰의 서명과 만료 시간을 검증
+     * 토큰의 서명, 만료 시간, issuer, subject, role 클레임을 검증
      *
-     * 형식이 잘못됐거나, 서명이 다르거나, 만료된 경우 false를 반환
-     * 예외를 밖으로 던지지 않아 JWT 필터가 안전하게 다음 필터로 넘길 수 있음.
+     * 검증에 실패한 토큰은 예외를 외부로 전달하지 않고 false를 반환
+     * JwtAuthenticationFilter는 false인 경우 인증 정보를 SecurityContext에 저장하지 않음
      */
     @Override
     public boolean validate(String token) {
         try {
-            parseClaims(token);
+            parseAndValidateToken(token);
             return true;
         } catch (JwtException | IllegalArgumentException exception) {
             return false;
@@ -70,26 +65,82 @@ public class JwtProviderImpl implements JwtProvider {
     }
 
     /**
-     * 검증된 토큰의 사용자 ID와 역할을 Spring Security 인증 정보로 복원
+     * 검증 규칙을 통과한 토큰을 Spring Security Authentication으로 변환
      *
-     * principal은 사용자 UUID 문자열이며,
-     * 컨트롤러에서 authentication.getName() 또는 principal.getName()으로 조회 가능
+     * principal에는 UUID 객체를 넣어 이후 도메인 코드가 사용자 식별값으로 사용할 수 있게 함
+     * 권한은 Spring Security 관례에 맞게 ROLE_USER 또는 ROLE_ADMIN 형태로 변환
      */
     @Override
     public Authentication getAuthentication(String token) {
-        Claims claims = parseClaims(token);
+        TokenClaims tokenClaims = parseAndValidateToken(token);
 
-        String role = claims.get(ROLE_CLAIM, String.class);
+        return UsernamePasswordAuthenticationToken.authenticated(
+            tokenClaims.userId(),
+            null,
+            List.of(
+                new SimpleGrantedAuthority(
+                    "ROLE_" + tokenClaims.role().name()
+                )
+            )
+        );
+    }
 
+    /**
+     * 서명된 JWT를 파싱하고, 애플리케이션이 요구하는 클레임 규칙까지 검증
+     *
+     * requireIssuer는 다른 발급자가 만든 정상 서명 토큰을 허용하지 않게 함
+     * subject와 role은 파싱 가능한 값인지 별도로 확인
+     */
+    private TokenClaims parseAndValidateToken(String token) {
+        Claims claims = Jwts.parser()
+            .verifyWith(signingKey())
+            .requireIssuer(jwtProperties.getIssuer())
+            .build()
+            .parseSignedClaims(token)
+            .getPayload();
+
+        UUID userId = parseUserId(claims.getSubject());
+        UserRole role = parseUserRole(claims.get(ROLE_CLAIM, String.class));
+
+        return new TokenClaims(userId, role);
+    }
+
+    /**
+     * JWT subject가 비어 있지 않은 UUID 문자열인지 검증
+     */
+    private UUID parseUserId(String subject) {
+        if (subject == null || subject.isBlank()) {
+            throw new JwtException("JWT에 사용자 식별자가 없습니다.");
+        }
+
+        try {
+            return UUID.fromString(subject);
+        } catch (IllegalArgumentException exception) {
+            throw new JwtException("JWT 사용자 식별자 형식이 올바르지 않습니다.");
+        }
+    }
+
+    /**
+     * role 클레임이 현재 서비스에서 허용하는 UserRole 값인지 검증
+     */
+    private UserRole parseUserRole(String role) {
         if (role == null || role.isBlank()) {
             throw new JwtException("JWT에 사용자 역할 정보가 없습니다.");
         }
 
-        return new UsernamePasswordAuthenticationToken(
-            claims.getSubject(),
-            null,
-            List.of(new SimpleGrantedAuthority("ROLE_" + role))
-        );
+        try {
+            return UserRole.valueOf(role);
+        } catch (IllegalArgumentException exception) {
+            throw new JwtException("JWT 사용자 역할 값이 올바르지 않습니다.");
+        }
+    }
+
+    /**
+     * JWT에서 검증을 마친 사용자 식별값과 역할만 보관하는 내부 값 객체
+     *
+     * Claims 전체를 밖으로 넘기지 않아 Authentication 생성에 필요한 값만 사용
+     */
+    private record TokenClaims(UUID userId, UserRole role) {
     }
 
     /**

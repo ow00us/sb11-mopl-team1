@@ -46,13 +46,17 @@ class JwtProviderImplTest {
 
         // when
         String token = jwtProvider.createAccessToken(userId, "USER");
-        Authentication authentication = jwtProvider.getAuthentication(token);
 
-        // then
+        // validate()가 true인 토큰은 getAuthentication()으로 안전하게 변환할 수 있어야 함
         assertThat(jwtProvider.validate(token)).isTrue();
+
+        Authentication authentication = jwtProvider.getAuthentication(token);
 
         // JWT subject에 저장한 사용자 UUID가 인증 주체 이름으로 복원
         assertThat(authentication.getName()).isEqualTo(userId.toString());
+
+        // validate()가 true를 반환한 토큰은 getAuthentication()에서 안전하게 Authentication으로 변환
+        assertThat(authentication.getPrincipal()).isEqualTo(userId);
 
         // JWT role 클레임이 Spring Security 권한 형식인 ROLE_USER로 복원
         assertThat(authentication.getAuthorities())
@@ -90,5 +94,86 @@ class JwtProviderImplTest {
 
         // when & then
         assertThat(jwtProvider.validate(expiredToken)).isFalse();
+    }
+
+    @Test
+    @DisplayName("issuer가 다르면 유효하지 않은 토큰으로 처리한다")
+    void validate_fail_whenIssuerIsDifferent() {
+        String token = createSignedToken(
+            "another-service",
+            UUID.randomUUID().toString(),
+            "USER"
+        );
+
+        assertThat(jwtProvider.validate(token)).isFalse();
+    }
+
+    @Test
+    @DisplayName("subject가 UUID 형식이 아니면 유효하지 않은 토큰으로 처리한다")
+    void validate_fail_whenSubjectIsNotUuid() {
+        String token = createSignedToken(
+            "mopl",
+            "not-a-uuid",
+            "USER"
+        );
+
+        assertThat(jwtProvider.validate(token)).isFalse();
+    }
+
+    @Test
+    @DisplayName("허용되지 않은 role이면 유효하지 않은 토큰으로 처리한다")
+    void validate_fail_whenRoleIsNotAllowed() {
+        String token = createSignedToken(
+            "mopl",
+            UUID.randomUUID().toString(),
+            "SUPER_ADMIN"
+        );
+
+        assertThat(jwtProvider.validate(token)).isFalse();
+    }
+
+    @Test
+    @DisplayName("role 클레임이 없으면 유효하지 않은 토큰으로 처리한다")
+    void validate_fail_whenRoleIsMissing() {
+        SecretKey signingKey = Keys.hmacShaKeyFor(
+            Decoders.BASE64.decode(TEST_SECRET)
+        );
+
+        String token = Jwts.builder()
+            .issuer("mopl")
+            .subject(UUID.randomUUID().toString())
+            .issuedAt(Date.from(Instant.now()))
+            .expiration(Date.from(Instant.now().plusSeconds(60)))
+            .signWith(signingKey)
+            .compact();
+
+        assertThat(jwtProvider.validate(token)).isFalse();
+    }
+
+    /**
+     * 특정 클레임 값을 가진 서명 토큰을 만들어 검증 실패 상황을 테스트
+     *
+     * 운영 토큰을 위조하는 코드가 아닌
+     * 테스트 전용 비밀키로 잘못된 클레임을 가진 토큰을 만드는 헬퍼
+     */
+    private String createSignedToken(
+        String issuer,
+        String subject,
+        String role
+    ) {
+        SecretKey signingKey = Keys.hmacShaKeyFor(
+            Decoders.BASE64.decode(TEST_SECRET)
+        );
+
+        Instant now = Instant.now();
+
+        return Jwts.builder()
+            .issuer(issuer)
+            .subject(subject)
+            .claim("role", role)
+            .issuedAt(Date.from(now))
+            .expiration(Date.from(now.plusSeconds(60)))
+            .signWith(signingKey)
+            .compact();
     }
 }
