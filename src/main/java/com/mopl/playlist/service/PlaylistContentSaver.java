@@ -3,7 +3,6 @@ package com.mopl.playlist.service;
 import com.mopl.playlist.entity.PlaylistContent;
 import com.mopl.playlist.repository.PlaylistContentRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,12 +15,10 @@ public class PlaylistContentSaver {
 
     private final PlaylistContentRepository playlistContentRepository;
 
-    // 동시 중복 삽입은 새 트랜잭션에서 시도해야 유니크 제약 위반 시 상위 트랜잭션이 rollback-only로 오염되지 않는다.
+    // 예외 처리는 호출자가 REQUIRES_NEW 트랜잭션 커밋 이후에 수행해야 rollback-only 오염을 피할 수 있으므로
+    // 이 메서드는 예외를 잡지 않고 그대로 전파한다.
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void saveIgnoringDuplicate(UUID playlistId, UUID contentId) {
-        try {
-            playlistContentRepository.saveAndFlush(PlaylistContent.create(playlistId, contentId));
-        } catch (DataIntegrityViolationException ignored) {
-        }
+    public void save(UUID playlistId, UUID contentId) {
+        playlistContentRepository.saveAndFlush(PlaylistContent.create(playlistId, contentId));
     }
 }

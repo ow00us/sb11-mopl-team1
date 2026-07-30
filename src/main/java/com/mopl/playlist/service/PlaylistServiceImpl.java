@@ -18,10 +18,12 @@ import com.mopl.playlist.repository.PlaylistContentRepository;
 import com.mopl.playlist.repository.PlaylistRepository;
 import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +38,7 @@ public class PlaylistServiceImpl implements PlaylistService {
     private static final String SORT_UPDATED_AT      = "updatedAt";
     private static final String SORT_SUBSCRIBE_COUNT = "subscriberCount";
     private static final String DIRECTION_ASC        = "ASCENDING";
+    private static final String PG_UNIQUE_VIOLATION_SQLSTATE = "23505";
 
     private final PlaylistRepository playlistRepository;
     private final PlaylistSubscriptionRepository subscriptionRepository;
@@ -257,7 +260,22 @@ public class PlaylistServiceImpl implements PlaylistService {
         if (playlistContentRepository.existsByPlaylistIdAndContentId(playlistId, contentId)) {
             return;
         }
-        playlistContentSaver.saveIgnoringDuplicate(playlistId, contentId);
+        try {
+            playlistContentSaver.save(playlistId, contentId);
+        } catch (DataIntegrityViolationException e) {
+            if (!isDuplicateKeyViolation(e)) {
+                throw e;
+            }
+        }
+    }
+
+    private boolean isDuplicateKeyViolation(DataIntegrityViolationException e) {
+        if (e instanceof DuplicateKeyException) {
+            return true;
+        }
+        Throwable cause = e.getMostSpecificCause();
+        return cause instanceof SQLException sql
+                && PG_UNIQUE_VIOLATION_SQLSTATE.equals(sql.getSQLState());
     }
 
     @Override

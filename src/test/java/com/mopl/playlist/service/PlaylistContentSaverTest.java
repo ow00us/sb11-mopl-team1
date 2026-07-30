@@ -13,6 +13,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
@@ -27,20 +28,20 @@ class PlaylistContentSaverTest {
     private static final UUID CONTENT_ID  = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
 
     @Test
-    @DisplayName("정상 저장 시 예외 없이 완료된다")
-    void saveIgnoringDuplicate_success() {
-        assertThatCode(() -> saver.saveIgnoringDuplicate(PLAYLIST_ID, CONTENT_ID))
+    @DisplayName("정상 저장 시 saveAndFlush를 호출한다")
+    void save_success() {
+        assertThatCode(() -> saver.save(PLAYLIST_ID, CONTENT_ID))
                 .doesNotThrowAnyException();
         verify(playlistContentRepository).saveAndFlush(any(PlaylistContent.class));
     }
 
     @Test
-    @DisplayName("유니크 제약 위반 시 예외를 삼키고 정상 반환한다")
-    void saveIgnoringDuplicate_swallowsDuplicate() {
-        doThrow(new DataIntegrityViolationException("duplicate"))
+    @DisplayName("무결성 예외는 호출자에게 그대로 전파한다")
+    void save_propagatesIntegrityViolation() {
+        doThrow(new DataIntegrityViolationException("dup"))
                 .when(playlistContentRepository).saveAndFlush(any(PlaylistContent.class));
 
-        assertThatCode(() -> saver.saveIgnoringDuplicate(PLAYLIST_ID, CONTENT_ID))
-                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> saver.save(PLAYLIST_ID, CONTENT_ID))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 }

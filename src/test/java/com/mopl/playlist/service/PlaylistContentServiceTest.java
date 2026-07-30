@@ -15,11 +15,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.sql.SQLException;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
@@ -58,7 +62,7 @@ class PlaylistContentServiceTest {
 
         playlistService.addContent(PLAYLIST_ID, CONTENT_ID, OWNER_ID);
 
-        verify(playlistContentSaver).saveIgnoringDuplicate(PLAYLIST_ID, CONTENT_ID);
+        verify(playlistContentSaver).save(PLAYLIST_ID, CONTENT_ID);
         verify(playlistContentRepository, never()).saveAndFlush(any(PlaylistContent.class));
     }
 
@@ -71,8 +75,49 @@ class PlaylistContentServiceTest {
 
         playlistService.addContent(PLAYLIST_ID, CONTENT_ID, OWNER_ID);
 
-        verify(playlistContentSaver, never()).saveIgnoringDuplicate(any(), any());
+        verify(playlistContentSaver, never()).save(any(), any());
         verify(playlistContentRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    @DisplayName("saver가 PostgreSQL unique_violation(23505)을 던지면 무시하고 정상 완료된다")
+    void addContent_swallowsUniqueViolation() {
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+        when(playlistContentRepository.existsByPlaylistIdAndContentId(PLAYLIST_ID, CONTENT_ID)).thenReturn(false);
+        SQLException uniqueViolation = new SQLException("dup", "23505");
+        doThrow(new DataIntegrityViolationException("dup", uniqueViolation))
+                .when(playlistContentSaver).save(PLAYLIST_ID, CONTENT_ID);
+
+        assertThatCode(() -> playlistService.addContent(PLAYLIST_ID, CONTENT_ID, OWNER_ID))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("saver가 Spring DuplicateKeyException을 던지면 무시하고 정상 완료된다")
+    void addContent_swallowsDuplicateKeyException() {
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+        when(playlistContentRepository.existsByPlaylistIdAndContentId(PLAYLIST_ID, CONTENT_ID)).thenReturn(false);
+        doThrow(new DuplicateKeyException("dup"))
+                .when(playlistContentSaver).save(PLAYLIST_ID, CONTENT_ID);
+
+        assertThatCode(() -> playlistService.addContent(PLAYLIST_ID, CONTENT_ID, OWNER_ID))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("saver가 비중복 무결성 예외(FK 위반 등)를 던지면 그대로 전파한다")
+    void addContent_propagatesNonDuplicateIntegrityViolation() {
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+        when(playlistContentRepository.existsByPlaylistIdAndContentId(PLAYLIST_ID, CONTENT_ID)).thenReturn(false);
+        SQLException fkViolation = new SQLException("fk", "23503");
+        doThrow(new DataIntegrityViolationException("fk", fkViolation))
+                .when(playlistContentSaver).save(PLAYLIST_ID, CONTENT_ID);
+
+        assertThatThrownBy(() -> playlistService.addContent(PLAYLIST_ID, CONTENT_ID, OWNER_ID))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
