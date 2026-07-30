@@ -233,7 +233,7 @@ public class PlaylistServiceImpl implements PlaylistService {
     }
 
     // 페이지 단위 배치 조회로 getList의 N+1을 방지한다.
-    // playlist_contents 1회 + contents 1회 = 총 2회 쿼리로 전체 페이지 콘텐츠 매핑을 완성한다.
+    // playlist_contents 1회 + contents(+ 태그 EntityGraph 조인) 1회 = 페이지 크기와 무관하게 상수 쿼리로 완료한다.
     private Map<UUID, List<ContentSummary>> loadContentsBatch(List<UUID> playlistIds) {
         if (playlistIds.isEmpty()) return Map.of();
 
@@ -242,7 +242,7 @@ public class PlaylistServiceImpl implements PlaylistService {
         if (links.isEmpty()) return Map.of();
 
         List<UUID> allContentIds = links.stream().map(PlaylistContent::getContentId).distinct().toList();
-        Map<UUID, ContentSummary> summaryById = contentRepository.findAllById(allContentIds)
+        Map<UUID, ContentSummary> summaryById = contentRepository.findAllWithTagsByIdIn(allContentIds)
                 .stream()
                 .collect(java.util.stream.Collectors.toMap(
                         Content::getId,
