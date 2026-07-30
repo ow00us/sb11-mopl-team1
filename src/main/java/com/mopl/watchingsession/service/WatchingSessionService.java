@@ -2,8 +2,10 @@ package com.mopl.watchingsession.service;
 
 import com.mopl.content.entity.Content;
 import com.mopl.content.repository.ContentRepository;
+import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.util.CursorUtils;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
@@ -11,10 +13,13 @@ import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -77,6 +82,68 @@ public class WatchingSessionService {
         Content content = contentRepository.findById(snapshot.getContentId())
             .orElseThrow(() -> new BusinessException(ErrorCode.CONTENT_NOT_FOUND));
         return WatchingSessionDto.from(snapshot, watcher, content);
+    }
+
+    // 커서 페이지네이션 조회
+    public CursorResponse<WatchingSessionDto> getListByContent(
+        UUID contentId, String watcherNameLike, String cursor, UUID idAfter, int limit, String sortBy, String sortDirection
+    ) {
+        validateContentExists(contentId);
+        validateSortBy(sortBy);
+        validateCursorPair(cursor, idAfter);
+
+        Instant now = Instant.now();
+        boolean ascending = "ASCENDING".equalsIgnoreCase(sortDirection);
+        Pageable pageable = PageRequest.of(0, limit + 1);
+
+        List<WatchingSessionSnapshot> rows;
+        if (cursor == null) {
+            rows = ascending
+                ? watchingSessionSnapshotRepository.findByContentIdFirstPageAsc(
+                    contentId, watcherNameLike, now, pageable)
+                : watchingSessionSnapshotRepository.findByContentIdFirstPageDesc(
+                    contentId, watcherNameLike, now, pageable);
+        } else {
+            Instant cursorValue = CursorUtils.decodeAsInstant(cursor);
+            rows = ascending
+                ? watchingSessionSnapshotRepository.findByContentIdAfterAsc(
+                    contentId, watcherNameLike, now, cursorValue, idAfter, pageable)
+                : watchingSessionSnapshotRepository.findByContentIdAfterDesc(
+                    contentId, watcherNameLike, now, cursorValue, idAfter, pageable);
+        }
+
+        boolean hasNext = rows.size() > limit;
+        List<WatchingSessionSnapshot> page = hasNext ? rows.subList(0, limit) : rows;
+
+        List<WatchingSessionDto> data = page.stream()
+            .map(this::enrich)
+            .toList();
+
+        String nextCursor = null;
+        UUID nextIdAfter = null;
+        if (hasNext && !page.isEmpty()) {
+            WatchingSessionSnapshot last = page.get(page.size() - 1);
+            nextCursor = CursorUtils.encodeInstant(last.getUpdatedAt());
+            nextIdAfter = last.getId();
+        }
+
+        long totalCount = watchingSessionSnapshotRepository.countByContentId(contentId, watcherNameLike, now);
+
+        return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, totalCount, sortBy, sortDirection);
+    }
+
+    private void validateSortBy(String sortBy) {
+        if (!"createdAt".equals(sortBy)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+    }
+
+    private void validateCursorPair(String cursor, UUID idAfter) {
+        boolean cursorPresent = cursor != null;
+        boolean idAfterPresent = idAfter != null;
+        if (cursorPresent != idAfterPresent) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
     }
 
 }
