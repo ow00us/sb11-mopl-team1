@@ -39,6 +39,7 @@ class PlaylistServiceTest {
     @Mock PlaylistSubscriptionRepository subscriptionRepository;
     @Mock PlaylistContentRepository playlistContentRepository;
     @Mock ContentRepository contentRepository;
+    @Mock PlaylistContentSaver playlistContentSaver;
 
     @InjectMocks
     PlaylistServiceImpl playlistService;

@@ -16,8 +16,8 @@ import com.mopl.playlist.entity.PlaylistContent;
 import com.mopl.playlist.entity.PlaylistSubscription;
 import com.mopl.playlist.repository.PlaylistContentRepository;
 import com.mopl.playlist.repository.PlaylistRepository;
-import org.springframework.dao.DataIntegrityViolationException;
 import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +41,7 @@ public class PlaylistServiceImpl implements PlaylistService {
     private final PlaylistSubscriptionRepository subscriptionRepository;
     private final PlaylistContentRepository playlistContentRepository;
     private final ContentRepository contentRepository;
+    private final PlaylistContentSaver playlistContentSaver;
 
     @Override
     @Transactional
@@ -256,11 +257,7 @@ public class PlaylistServiceImpl implements PlaylistService {
         if (playlistContentRepository.existsByPlaylistIdAndContentId(playlistId, contentId)) {
             return;
         }
-        try {
-            playlistContentRepository.saveAndFlush(PlaylistContent.create(playlistId, contentId));
-        } catch (DataIntegrityViolationException e) {
-            // 동시 요청으로 인한 중복 추가는 무시
-        }
+        playlistContentSaver.saveIgnoringDuplicate(playlistId, contentId);
     }
 
     @Override

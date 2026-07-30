@@ -31,6 +31,7 @@ class PlaylistContentServiceTest {
     @Mock PlaylistSubscriptionRepository subscriptionRepository;
     @Mock PlaylistContentRepository playlistContentRepository;
     @Mock ContentRepository contentRepository;
+    @Mock PlaylistContentSaver playlistContentSaver;
     @InjectMocks PlaylistServiceImpl playlistService;
 
     private static final UUID OWNER_ID      = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
@@ -49,7 +50,7 @@ class PlaylistContentServiceTest {
     // ── addContent ────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("소유자가 콘텐츠를 추가하면 저장된다")
+    @DisplayName("소유자가 콘텐츠를 추가하면 별도 트랜잭션의 saver가 호출된다")
     void addContent_success() {
         when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
         when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
@@ -57,11 +58,12 @@ class PlaylistContentServiceTest {
 
         playlistService.addContent(PLAYLIST_ID, CONTENT_ID, OWNER_ID);
 
-        verify(playlistContentRepository).saveAndFlush(any(PlaylistContent.class));
+        verify(playlistContentSaver).saveIgnoringDuplicate(PLAYLIST_ID, CONTENT_ID);
+        verify(playlistContentRepository, never()).saveAndFlush(any(PlaylistContent.class));
     }
 
     @Test
-    @DisplayName("이미 추가된 콘텐츠는 중복 저장하지 않는다")
+    @DisplayName("이미 추가된 콘텐츠는 saver를 호출하지 않는다")
     void addContent_duplicate_ignored() {
         when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
         when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
@@ -69,6 +71,7 @@ class PlaylistContentServiceTest {
 
         playlistService.addContent(PLAYLIST_ID, CONTENT_ID, OWNER_ID);
 
+        verify(playlistContentSaver, never()).saveIgnoringDuplicate(any(), any());
         verify(playlistContentRepository, never()).saveAndFlush(any());
     }
 
