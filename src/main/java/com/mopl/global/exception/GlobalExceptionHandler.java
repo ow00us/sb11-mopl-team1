@@ -5,11 +5,13 @@ import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -54,6 +56,26 @@ public class GlobalExceptionHandler {
         ErrorCode code = ErrorCode.INVALID_INPUT;
         ErrorResponse body = ErrorResponse.of(
                 e.getClass().getSimpleName(), code, code.getMessage(), details);
+        return ResponseEntity.status(code.getStatus()).body(body);
+    }
+
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<ErrorResponse> handleMissingServletRequestPart(MissingServletRequestPartException e) {
+        log.warn("MissingServletRequestPartException: {}", e.getRequestPartName());
+        Map<String, String> details = new HashMap<>();
+        details.put(e.getRequestPartName(), "필수 요청 파트가 누락되었습니다.");
+        ErrorCode code = ErrorCode.INVALID_INPUT;
+        ErrorResponse body = ErrorResponse.of(
+                e.getClass().getSimpleName(), code, code.getMessage(), details);
+        return ResponseEntity.status(code.getStatus()).body(body);
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> handleHttpMessageNotReadable(HttpMessageNotReadableException e) {
+        log.warn("HttpMessageNotReadableException", e);
+        ErrorCode code = ErrorCode.INVALID_INPUT;
+        ErrorResponse body = ErrorResponse.of(
+                e.getClass().getSimpleName(), code, "요청 본문을 파싱할 수 없습니다. 형식을 확인해주세요.", new HashMap<>());
         return ResponseEntity.status(code.getStatus()).body(body);
     }
 

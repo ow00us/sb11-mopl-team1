@@ -3,6 +3,7 @@ package com.mopl.content.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.mopl.content.dto.ContentDto;
 import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentSource;
 import com.mopl.content.entity.ContentType;
@@ -10,9 +11,12 @@ import com.mopl.global.config.JpaConfig;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -256,5 +260,222 @@ class ContentRepositoryTest {
 
         // 3) deleted_at에 삭제 시각이 기록되어 있음
         assertThat(row[1]).isNotNull();
+    }
+
+    // ── 목록 조회 ────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("tagsIn으로 조회하면 요청한 태그를 모두 가진 콘텐츠만 반환된다(AND 매칭)")
+    void findByCreatedAtDesc_tagsIn_matchesAllRequestedTags() {
+        Instant now = Instant.now();
+        UUID both = insertContent("Both Tags", BigDecimal.ZERO, 0, now, "MOVIE");
+        insertTag(both, "action");
+        insertTag(both, "sf");
+        UUID onlyOne = insertContent("Only One Tag", BigDecimal.ZERO, 0, now.minusSeconds(1), "MOVIE");
+        insertTag(onlyOne, "action");
+
+        List<Content> result = contentRepository.findByCreatedAtDesc(
+                null, null, List.of("action", "sf"), 2, null, null, 10);
+        long count = contentRepository.countByFilter(null, null, List.of("action", "sf"), 2);
+
+        assertThat(result).extracting(Content::getId).containsExactly(both);
+        assertThat(count).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("typeEqual과 keywordLike 필터가 함께 적용된다")
+    void findByCreatedAtDesc_appliesTypeAndKeywordFilters() {
+        Instant now = Instant.now();
+        UUID matched = insertContent("Matrix Reloaded", BigDecimal.ZERO, 0, now, "MOVIE");
+        insertContent("Matrix Series", BigDecimal.ZERO, 0, now.minusSeconds(1), "TV_SERIES");
+        insertContent("Unrelated Title", BigDecimal.ZERO, 0, now.minusSeconds(2), "MOVIE");
+
+        List<Content> result = contentRepository.findByCreatedAtDesc(
+                "MOVIE", "matrix", List.of(""), 0, null, null, 10);
+
+        assertThat(result).extracting(Content::getId).containsExactly(matched);
+    }
+
+    @Test
+    @DisplayName("keywordLike에 %가 포함되면 이스케이프된 값 기준으로 리터럴 매칭만 된다")
+    void findByCreatedAtDesc_keywordWithPercent_matchesLiterally() {
+        Instant now = Instant.now();
+        UUID literalMatch = insertContent("50% off sale", BigDecimal.ZERO, 0, now, "MOVIE");
+        insertContent("50X off sale", BigDecimal.ZERO, 0, now.minusSeconds(1), "MOVIE");
+
+        List<Content> result = contentRepository.findByCreatedAtDesc(
+                null, "50\\%", List.of(""), 0, null, null, 10);
+
+        assertThat(result).extracting(Content::getId).containsExactly(literalMatch);
+    }
+
+    @Test
+    @DisplayName("논리 삭제된 콘텐츠는 목록/카운트 네이티브 쿼리에서도 제외된다")
+    void findByCreatedAtDesc_excludesDeletedContent() {
+        Instant now = Instant.now();
+        UUID active = insertContent("Active", BigDecimal.ZERO, 0, now, "MOVIE");
+        UUID deleted = insertContent("Deleted", BigDecimal.ZERO, 0, now.minusSeconds(1), "MOVIE");
+        markDeleted(deleted);
+
+        List<Content> result = contentRepository.findByCreatedAtDesc(
+                null, null, List.of(""), 0, null, null, 10);
+        long count = contentRepository.countByFilter(null, null, List.of(""), 0);
+
+        assertThat(result).extracting(Content::getId).containsExactly(active);
+        assertThat(count).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("createdAt DESC 정렬로 커서 페이지네이션 시 2페이지에 걸쳐 전부 조회된다")
+    void findByCreatedAtDesc_pagination_acrossTwoPages() {
+        Instant base = Instant.now();
+        UUID id1 = insertContent("C1", BigDecimal.ZERO, 0, base.minusSeconds(3), "MOVIE");
+        UUID id2 = insertContent("C2", BigDecimal.ZERO, 0, base.minusSeconds(2), "MOVIE");
+        UUID id3 = insertContent("C3", BigDecimal.ZERO, 0, base.minusSeconds(1), "MOVIE");
+
+        List<Content> firstPage = contentRepository.findByCreatedAtDesc(
+                null, null, List.of(""), 0, null, null, 2);
+        assertThat(firstPage).extracting(Content::getId).containsExactly(id3, id2);
+
+        Content last = firstPage.get(firstPage.size() - 1);
+        List<Content> secondPage = contentRepository.findByCreatedAtDesc(
+                null, null, List.of(""), 0, last.getCreatedAt(), last.getId().toString(), 2);
+        assertThat(secondPage).extracting(Content::getId).containsExactly(id1);
+    }
+
+    @Test
+    @DisplayName("watcherCount ASC 정렬로 커서 페이지네이션이 정상 동작한다")
+    void findByWatcherCountAsc_pagination_acrossTwoPages() {
+        Instant now = Instant.now();
+        UUID id1 = insertContent("W1", BigDecimal.ZERO, 10, now, "MOVIE");
+        UUID id2 = insertContent("W2", BigDecimal.ZERO, 20, now, "MOVIE");
+        UUID id3 = insertContent("W3", BigDecimal.ZERO, 30, now, "MOVIE");
+
+        List<Content> firstPage = contentRepository.findByWatcherCountAsc(
+                null, null, List.of(""), 0, null, null, 2);
+        assertThat(firstPage).extracting(Content::getId).containsExactly(id1, id2);
+
+        Content last = firstPage.get(firstPage.size() - 1);
+        List<Content> secondPage = contentRepository.findByWatcherCountAsc(
+                null, null, List.of(""), 0, last.getWatcherCount(), last.getId().toString(), 2);
+        assertThat(secondPage).extracting(Content::getId).containsExactly(id3);
+    }
+
+    @Test
+    @DisplayName("averageRating DESC 정렬로 커서 페이지네이션이 정상 동작한다")
+    void findByAverageRatingDesc_pagination_acrossTwoPages() {
+        Instant now = Instant.now();
+        UUID id1 = insertContent("R1", new BigDecimal("1.0"), 0, now, "MOVIE");
+        UUID id2 = insertContent("R2", new BigDecimal("3.0"), 0, now, "MOVIE");
+        UUID id3 = insertContent("R3", new BigDecimal("5.0"), 0, now, "MOVIE");
+
+        List<Content> firstPage = contentRepository.findByAverageRatingDesc(
+                null, null, List.of(""), 0, null, null, 2);
+        assertThat(firstPage).extracting(Content::getId).containsExactly(id3, id2);
+
+        Content last = firstPage.get(firstPage.size() - 1);
+        List<Content> secondPage = contentRepository.findByAverageRatingDesc(
+                null, null, List.of(""), 0, last.getAverageRating(), last.getId().toString(), 2);
+        assertThat(secondPage).extracting(Content::getId).containsExactly(id1);
+    }
+
+    @Test
+    @DisplayName("watcherCount가 같으면 reviewCount가 많은 콘텐츠가 먼저 나온다(2차 정렬)")
+    void findByWatcherCountDesc_tieBreaksByReviewCount() {
+        Instant now = Instant.now();
+        UUID lowReview = insertContent("Low Review", BigDecimal.ZERO, 10, 1, now, "MOVIE");
+        UUID highReview = insertContent("High Review", BigDecimal.ZERO, 10, 5, now.minusSeconds(1), "MOVIE");
+
+        List<Content> result = contentRepository.findByWatcherCountDesc(
+                null, null, List.of(""), 0, null, null, null, 10);
+
+        assertThat(result).extracting(Content::getId).containsExactly(highReview, lowReview);
+    }
+
+    @Test
+    @DisplayName("watcherCount DESC 정렬은 (watcherCount, reviewCount, id) 복합 커서로 2페이지에 걸쳐 정상 동작한다")
+    void findByWatcherCountDesc_pagination_acrossTwoPages_withReviewCountTiebreak() {
+        Instant now = Instant.now();
+        UUID id1 = insertContent("W1", BigDecimal.ZERO, 10, 1, now, "MOVIE");
+        UUID id2 = insertContent("W2", BigDecimal.ZERO, 10, 5, now, "MOVIE");
+        UUID id3 = insertContent("W3", BigDecimal.ZERO, 20, 0, now, "MOVIE");
+
+        List<Content> firstPage = contentRepository.findByWatcherCountDesc(
+                null, null, List.of(""), 0, null, null, null, 2);
+        assertThat(firstPage).extracting(Content::getId).containsExactly(id3, id2);
+
+        Content last = firstPage.get(firstPage.size() - 1);
+        List<Content> secondPage = contentRepository.findByWatcherCountDesc(
+                null, null, List.of(""), 0, last.getWatcherCount(), last.getReviewCount(),
+                last.getId().toString(), 2);
+        assertThat(secondPage).extracting(Content::getId).containsExactly(id1);
+    }
+
+    @Test
+    @DisplayName("콘텐츠 목록을 DTO로 변환하면 태그가 배치로 미리 로딩되어, 이후 영속성 컨텍스트가 비워져도 안전하게 읽을 수 있다")
+    void findByCreatedAtDesc_tagsAreBatchFetchedAndSafeAfterContextCleared() {
+        Instant now = Instant.now();
+        for (int i = 0; i < 5; i++) {
+            UUID id = insertContent("Content " + i, BigDecimal.ZERO, 0, now.minusSeconds(i), "MOVIE");
+            insertTag(id, "action");
+            insertTag(id, "sf");
+        }
+
+        List<Content> result = contentRepository.findByCreatedAtDesc(null, null, List.of(""), 0, null, null, 10);
+
+        SessionFactory sessionFactory = entityManager.getEntityManager()
+                .getEntityManagerFactory().unwrap(SessionFactory.class);
+        Statistics statistics = sessionFactory.getStatistics();
+        statistics.setStatisticsEnabled(true);
+        statistics.clear();
+
+        List<ContentDto> dtos = result.stream().map(ContentDto::from).toList();
+
+        // 태그 5개 콘텐츠분을 배치 사이즈(100) 안에서 한 번에 가져오므로 추가 쿼리는 1개 이하여야 한다
+        assertThat(statistics.getPrepareStatementCount()).isLessThanOrEqualTo(1);
+
+        entityManager.getEntityManager().clear();
+
+        // 영속성 컨텍스트를 비워도 DTO의 tags는 이미 순수 Set으로 복사돼 있어 예외 없이 읽힌다
+        assertThat(dtos).allSatisfy(dto -> assertThat(dto.tags()).containsExactlyInAnyOrder("action", "sf"));
+    }
+
+    private UUID insertContent(
+            String title, BigDecimal averageRating, long watcherCount, Instant createdAt, String type) {
+        return insertContent(title, averageRating, watcherCount, 0, createdAt, type);
+    }
+
+    private UUID insertContent(
+            String title, BigDecimal averageRating, long watcherCount, long reviewCount,
+            Instant createdAt, String type) {
+        UUID id = UUID.randomUUID();
+        entityManager.getEntityManager()
+                .createNativeQuery("INSERT INTO contents "
+                        + "(id, created_at, updated_at, type, title, description, average_rating, review_count, watcher_count) "
+                        + "VALUES (:id, :createdAt, :createdAt, :type, :title, 'description', :averageRating, :reviewCount, :watcherCount)")
+                .setParameter("id", id)
+                .setParameter("createdAt", createdAt)
+                .setParameter("type", type)
+                .setParameter("title", title)
+                .setParameter("averageRating", averageRating)
+                .setParameter("reviewCount", reviewCount)
+                .setParameter("watcherCount", watcherCount)
+                .executeUpdate();
+        return id;
+    }
+
+    private void insertTag(UUID contentId, String tag) {
+        entityManager.getEntityManager()
+                .createNativeQuery("INSERT INTO content_tags (content_id, tag) VALUES (:contentId, :tag)")
+                .setParameter("contentId", contentId)
+                .setParameter("tag", tag)
+                .executeUpdate();
+    }
+
+    private void markDeleted(UUID contentId) {
+        entityManager.getEntityManager()
+                .createNativeQuery("UPDATE contents SET deleted_at = now() WHERE id = :id")
+                .setParameter("id", contentId)
+                .executeUpdate();
     }
 }

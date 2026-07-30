@@ -18,7 +18,7 @@ public record PlaylistDto(
         boolean subscribedByMe,
         List<ContentSummary> contents
 ) {
-    public static PlaylistDto from(Playlist playlist, boolean subscribedByMe) {
+    public static PlaylistDto from(Playlist playlist, boolean subscribedByMe, List<ContentSummary> contents) {
         return new PlaylistDto(
                 playlist.getId(),
                 new UserSummary(playlist.getOwnerId(), null, null),
@@ -27,12 +27,16 @@ public record PlaylistDto(
                 playlist.getUpdatedAt(),
                 playlist.getSubscriberCount(),
                 subscribedByMe,
-                List.of()
+                contents
         );
     }
 
-    /** owner.name·profileImageUrl·contents 는 각 도메인 연동 후 채워집니다. */
+    public static PlaylistDto from(Playlist playlist, boolean subscribedByMe) {
+        return from(playlist, subscribedByMe, List.of());
+    }
+
+    /** owner.name·profileImageUrl 은 User 도메인 연동 후 채워집니다. */
     public static PlaylistDto from(Playlist playlist) {
-        return from(playlist, false);
+        return from(playlist, false, List.of());
     }
 }
