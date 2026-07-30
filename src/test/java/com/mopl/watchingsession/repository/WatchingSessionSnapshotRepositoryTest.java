@@ -8,6 +8,7 @@ import com.mopl.global.config.JpaConfig;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -20,6 +21,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -55,6 +57,18 @@ public class WatchingSessionSnapshotRepositoryTest {
         return id;
     }
 
+    private UUID insertUser(String name) {
+        UUID id = UUID.randomUUID();
+        entityManager.getEntityManager().createNativeQuery(
+                "INSERT INTO users (id, email, password_hash, name, role, locked, created_at, updated_at)"
+                    + "VALUES (:id, :email, 'stub', :name , 'USER', false, now(), now())")
+            .setParameter("id", id)
+            .setParameter("email", id + "@test.local")
+            .setParameter("name", name)
+            .executeUpdate();
+        return id;
+    }
+
     private UUID insertContent() {
         UUID id = UUID.randomUUID();
         entityManager.getEntityManager().createNativeQuery(
@@ -72,12 +86,7 @@ public class WatchingSessionSnapshotRepositoryTest {
         UUID watcherId = insertUser();
         UUID contentId = insertContent();
         Instant expiresAt = Instant.now().plus(1, ChronoUnit.MINUTES);
-        entityManager.persistAndFlush(WatchingSessionSnapshot.builder()
-            .watcherId(watcherId)
-            .contentId(contentId)
-            .expiresAt(expiresAt)
-            .build());
-        entityManager.clear();
+        persistSnapshot(watcherId, contentId, Instant.now(), expiresAt);
 
         // when
         Optional<WatchingSessionSnapshot> result = repository.findByWatcherId(watcherId);
@@ -121,12 +130,7 @@ public class WatchingSessionSnapshotRepositoryTest {
         UUID watcherId = insertUser();
         UUID contentId = insertContent();
         Instant expiresAt = Instant.now().plus(1, ChronoUnit.MINUTES);
-        entityManager.persistAndFlush(WatchingSessionSnapshot.builder()
-            .watcherId(watcherId)
-            .contentId(contentId)
-            .expiresAt(expiresAt)
-            .build());
-        entityManager.clear();
+        persistSnapshot(watcherId, contentId, Instant.now(), expiresAt);
 
         // when
         repository.deleteByWatcherId(watcherId);
@@ -147,6 +151,186 @@ public class WatchingSessionSnapshotRepositoryTest {
             repository.deleteByWatcherId(watcherIdWithoutSession);
             entityManager.flush();
         }).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("만료된 세션은 목록에서 제외")
+    void findByContentIdFirstPageDesc_excludesExpired() {
+        // given
+        UUID watcherId1 = insertUser("영수");
+        UUID watcherId2 = insertUser("민수");
+        UUID contentId = insertContent();
+        Instant now = Instant.now();
+
+        persistSnapshot(watcherId1, contentId, now.minusSeconds(10), now.plusSeconds(60)); // 활성세션
+        persistSnapshot(watcherId2, contentId, now.minusSeconds(5), now.minusSeconds(1)); // 만료세션
+        entityManager.clear();
+
+        // when
+        List<WatchingSessionSnapshot> result = repository.findByContentIdFirstPageDesc(
+            contentId, null, now, PageRequest.of(0, 10)
+        );
+
+        // then
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getWatcherId()).isEqualTo(watcherId1);
+    }
+
+    @Test
+    @DisplayName("watcherNameLike로 이름 부분 일치 검색이 동작한다")
+    void findByContentIdFirstPageDesc_filtersByWatcherNameLike() {
+        // given
+        UUID kimId = insertUser("김철수");
+        UUID leeId = insertUser("이영희");
+        UUID contentId = insertContent();
+        Instant now = Instant.now();
+
+        persistSnapshot(kimId, contentId, now, now.plusSeconds(60));
+        persistSnapshot(leeId, contentId, now, now.plusSeconds(60));
+        entityManager.clear();
+
+        // when
+        List<WatchingSessionSnapshot> result = repository.findByContentIdFirstPageDesc(
+            contentId, "김", now, PageRequest.of(0,10)
+        );
+
+        // then
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getWatcherId()).isEqualTo(kimId);
+    }
+
+    @Test
+    @DisplayName("커서 이후 데이터를 updatedAt Desc, id Desc 순으로 조회한다")
+    void findByContentIdAfterDesc_returnsCorrectOrder() {
+        // given
+        UUID watcherId1 = insertUser();
+        UUID watcherId2 = insertUser();
+        UUID watcherId3 = insertUser();
+        UUID contentId = insertContent();
+        Instant now = Instant.now();
+
+        WatchingSessionSnapshot s1 = persistSnapshot(watcherId1, contentId, now.minusSeconds(30), now.plusSeconds(60));
+        WatchingSessionSnapshot s2 = persistSnapshot(watcherId2, contentId, now.minusSeconds(20), now.plusSeconds(60));
+        WatchingSessionSnapshot s3 = persistSnapshot(watcherId3, contentId, now.minusSeconds(10), now.plusSeconds(60));
+        entityManager.clear();
+
+        // when: s3(가장 최신) 이후부터 조회 -> s2, s1 순으로
+        List<WatchingSessionSnapshot> result = repository.findByContentIdAfterDesc(
+            contentId, null, now, s3.getUpdatedAt(), s3.getId(), PageRequest.of(0, 10)
+        );
+
+        // then
+        assertThat(result).extracting(WatchingSessionSnapshot::getId)
+            .containsExactly(s2.getId(), s1.getId());
+    }
+
+    @Test
+    @DisplayName("커서 이후 데이터를 updatedAt Asc, id Asc 순으로 조회한다")
+    void findByContentIdAfterAsc_returnsCorrectOrder() {
+        // given
+        UUID watcherId1 = insertUser();
+        UUID watcherId2 = insertUser();
+        UUID watcherId3 = insertUser();
+        UUID contentId = insertContent();
+        Instant now = Instant.now();
+
+        WatchingSessionSnapshot s1 = persistSnapshot(watcherId1, contentId, now.minusSeconds(30), now.plusSeconds(60));
+        WatchingSessionSnapshot s2 = persistSnapshot(watcherId2, contentId, now.minusSeconds(20), now.plusSeconds(60));
+        WatchingSessionSnapshot s3 = persistSnapshot(watcherId3, contentId, now.minusSeconds(10), now.plusSeconds(60));
+        entityManager.clear();
+
+        // when: s1(가장 오래됨) 이후부터 조회 -> s2, s3 순으로
+        List<WatchingSessionSnapshot> result = repository.findByContentIdAfterAsc(
+            contentId, null, now, s1.getUpdatedAt(), s1.getId(), PageRequest.of(0, 10)
+        );
+
+        // then
+        assertThat(result).extracting(WatchingSessionSnapshot::getId)
+            .containsExactly(s2.getId(), s3.getId());
+    }
+
+    @Test
+    @DisplayName("다른 콘텐츠의 세션은 조회되지 않음")
+    void findByContentIdFirstPageDesc_excludesOtherContent() {
+        // given
+        UUID watcherId1 = insertUser();
+        UUID watcherId2 = insertUser();
+        UUID contentId = insertContent();
+        UUID contentId2 = insertContent();
+        Instant now = Instant.now();
+
+        persistSnapshot(watcherId1, contentId, now, now.plusSeconds(60));
+        persistSnapshot(watcherId2, contentId2, now, now.plusSeconds(60));
+        entityManager.clear();
+
+        // when
+        List<WatchingSessionSnapshot> result = repository.findByContentIdFirstPageDesc(
+            contentId, null, now, PageRequest.of(0, 10)
+        );
+
+        // then
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getWatcherId()).isEqualTo(watcherId1);
+    }
+
+    @Test
+    @DisplayName("countByContentId는 만료를 제외한 개수를 반환")
+    void countByContentId_returnsFilteredCount() {
+        // given
+        UUID watcherId1 = insertUser();
+        UUID watcherId2 = insertUser();
+        UUID contentId = insertContent();
+        Instant now = Instant.now();
+
+        persistSnapshot(watcherId1, contentId, now, now.plusSeconds(60));   // 활성
+        persistSnapshot(watcherId2, contentId, now, now.minusSeconds(1));   // 만료
+        entityManager.clear();
+
+        // when
+        long count = repository.countByContentId(contentId, null, now);
+
+        // then
+        assertThat(count).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("countByContentId는 watcherNameLike 필터를 반영")
+    void countByContentId_filtersByWatcherNameLike() {
+        // given
+        UUID kimId = insertUser("김철수");
+        UUID leeId = insertUser("이영희");
+        UUID contentId = insertContent();
+        Instant now = Instant.now();
+
+        persistSnapshot(kimId, contentId, now, now.plusSeconds(60));
+        persistSnapshot(leeId, contentId, now, now.plusSeconds(60));
+        entityManager.clear();
+
+        // when
+        long count = repository.countByContentId(contentId, "김", now);
+
+        // then
+        assertThat(count).isEqualTo(1L);
+    }
+
+    private WatchingSessionSnapshot persistSnapshot(
+        UUID watcherId, UUID contentId, Instant updatedAt, Instant expiresAt
+    ) {
+        WatchingSessionSnapshot snapshot = WatchingSessionSnapshot.builder()
+            .watcherId(watcherId)
+            .contentId(contentId)
+            .expiresAt(expiresAt)
+            .build();
+        entityManager.persistAndFlush(snapshot);
+
+        entityManager.getEntityManager().createNativeQuery(
+                "UPDATE watching_session_snapshots SET updated_at = :updatedAt WHERE id = :id")
+            .setParameter("updatedAt", updatedAt)
+            .setParameter("id", snapshot.getId())
+            .executeUpdate();
+        entityManager.clear();
+
+        return entityManager.find(WatchingSessionSnapshot.class, snapshot.getId());
     }
 
 }
