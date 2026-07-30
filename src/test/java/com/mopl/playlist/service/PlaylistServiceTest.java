@@ -8,7 +8,10 @@ import org.springframework.dao.DataIntegrityViolationException;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
+import com.mopl.content.entity.Content;
+import com.mopl.content.entity.ContentType;
 import com.mopl.playlist.entity.Playlist;
+import com.mopl.playlist.entity.PlaylistContent;
 import com.mopl.playlist.entity.PlaylistSubscription;
 import com.mopl.content.repository.ContentRepository;
 import com.mopl.playlist.repository.PlaylistContentRepository;
@@ -132,24 +135,53 @@ class PlaylistServiceTest {
     }
 
     @Test
-    @DisplayName("getList는 페이지 크기와 무관하게 콘텐츠 조회를 단일 배치 쿼리로 수행한다 (N+1 방지)")
+    @DisplayName("getList는 페이지 크기와 무관하게 콘텐츠·태그 조회를 상수 쿼리(playlist_contents 1 + contents+tags 1)로 수행한다")
     void getList_batchLoadsContents_noNPlusOne() {
-        List<Playlist> rows = List.of(
-                savedPlaylist(UUID.randomUUID(), OWNER_ID, "A", "a", Instant.now()),
-                savedPlaylist(UUID.randomUUID(), OWNER_ID, "B", "b", Instant.now()),
-                savedPlaylist(UUID.randomUUID(), OWNER_ID, "C", "c", Instant.now())
+        Playlist p1 = savedPlaylist(UUID.randomUUID(), OWNER_ID, "A", "a", Instant.now());
+        Playlist p2 = savedPlaylist(UUID.randomUUID(), OWNER_ID, "B", "b", Instant.now());
+        Playlist p3 = savedPlaylist(UUID.randomUUID(), OWNER_ID, "C", "c", Instant.now());
+        List<Playlist> rows = List.of(p1, p2, p3);
+
+        UUID contentId1 = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID contentId2 = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        UUID contentId3 = UUID.fromString("33333333-3333-3333-3333-333333333333");
+
+        Content content1 = savedContent(contentId1, "콘텐츠1");
+        Content content2 = savedContent(contentId2, "콘텐츠2");
+        Content content3 = savedContent(contentId3, "콘텐츠3");
+
+        List<PlaylistContent> links = List.of(
+                savedLink(p1.getId(), contentId1, Instant.now().minusSeconds(30)),
+                savedLink(p1.getId(), contentId2, Instant.now().minusSeconds(20)),
+                savedLink(p2.getId(), contentId3, Instant.now().minusSeconds(10))
         );
+
         when(playlistRepository.findByUpdatedAtAsc(null, null, null, null, null, 4)).thenReturn(rows);
         when(playlistRepository.countByFilter(null, null, null)).thenReturn(3L);
         when(playlistContentRepository.findAllByPlaylistIdInOrderByPlaylistIdAscCreatedAtAsc(anyList()))
-                .thenReturn(List.of());
+                .thenReturn(links);
+        when(contentRepository.findAllWithTagsByIdIn(anyList()))
+                .thenReturn(List.of(content1, content2, content3));
 
-        playlistService.getList(null, null, null, null, null, 3, "updatedAt", "ASCENDING", null);
+        CursorResponse<PlaylistDto> result = playlistService.getList(
+                null, null, null, null, null, 3, "updatedAt", "ASCENDING", null);
 
+        // 배치 쿼리 계약: 콘텐츠 연결 1회 + 콘텐츠(+태그) 1회
         verify(playlistContentRepository, times(1))
                 .findAllByPlaylistIdInOrderByPlaylistIdAscCreatedAtAsc(anyList());
+        verify(contentRepository, times(1)).findAllWithTagsByIdIn(anyList());
+        // 항목별 조회 및 태그 lazy 로딩 유발 경로 미사용 검증
         verify(playlistContentRepository, never())
                 .findAllByPlaylistIdOrderByCreatedAtAsc(any(UUID.class));
+        verify(contentRepository, never()).findAllById(anyList());
+
+        // 순서·매핑 검증: p1 → [content1, content2], p2 → [content3], p3 → []
+        assertThat(result.data()).hasSize(3);
+        assertThat(result.data().get(0).contents()).extracting("id")
+                .containsExactly(contentId1, contentId2);
+        assertThat(result.data().get(1).contents()).extracting("id")
+                .containsExactly(contentId3);
+        assertThat(result.data().get(2).contents()).isEmpty();
     }
 
     @Test
@@ -421,5 +453,21 @@ class PlaylistServiceTest {
                 .playlistId(playlistId)
                 .subscriberId(subscriberId)
                 .build();
+    }
+
+    private Content savedContent(UUID id, String title) {
+        Content c = Content.builder()
+                .type(ContentType.MOVIE)
+                .title(title)
+                .description("설명")
+                .build();
+        ReflectionTestUtils.setField(c, "id", id);
+        return c;
+    }
+
+    private PlaylistContent savedLink(UUID playlistId, UUID contentId, Instant createdAt) {
+        PlaylistContent link = PlaylistContent.create(playlistId, contentId);
+        ReflectionTestUtils.setField(link, "createdAt", createdAt);
+        return link;
     }
 }
