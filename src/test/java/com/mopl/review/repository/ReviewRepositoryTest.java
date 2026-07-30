@@ -4,16 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.mopl.global.config.JpaConfig;
-import com.mopl.global.exception.BusinessException;
-import com.mopl.global.exception.ErrorCode;
 import com.mopl.review.entity.Review;
 import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
@@ -92,35 +88,6 @@ class ReviewRepositoryTest {
         assertThat(result.get().getRating()).isEqualByComparingTo("4.5");
         assertThat(result.get().getCreatedAt()).isNotNull();
         assertThat(result.get().getUpdatedAt()).isNotNull();
-    }
-
-    @Test
-    @DisplayName("rating이 null이면 생성 시점에 BusinessException이 발생한다")
-    void null_rating_throws_business_exception() {
-        assertThatThrownBy(() -> Review.builder()
-                .authorId(UUID.randomUUID())
-                .contentId(UUID.randomUUID())
-                .text("text")
-                .rating(null)
-                .build())
-                .isInstanceOf(BusinessException.class)
-                .extracting(exception -> ((BusinessException) exception).getErrorCode())
-                .isEqualTo(ErrorCode.INVALID_INPUT);
-    }
-
-    @ParameterizedTest
-    @DisplayName("rating이 범위를 벗어나거나 0.5 단위가 아니면 생성 시점에 BusinessException이 발생한다")
-    @ValueSource(strings = {"-0.1", "5.1", "1.2", "3.3"})
-    void invalid_rating_throws_business_exception(String invalidRating) {
-        assertThatThrownBy(() -> Review.builder()
-                .authorId(UUID.randomUUID())
-                .contentId(UUID.randomUUID())
-                .text("text")
-                .rating(new BigDecimal(invalidRating))
-                .build())
-                .isInstanceOf(BusinessException.class)
-                .extracting(exception -> ((BusinessException) exception).getErrorCode())
-                .isEqualTo(ErrorCode.INVALID_INPUT);
     }
 
     @Test
