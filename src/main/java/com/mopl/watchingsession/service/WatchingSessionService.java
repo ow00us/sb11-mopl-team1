@@ -108,7 +108,12 @@ public class WatchingSessionService {
                 : watchingSessionSnapshotRepository.findByContentIdFirstPageDesc(
                     contentId, escapedWatcherNameLike, now, pageable);
         } else {
-            Instant cursorValue = CursorUtils.decodeAsInstant(cursor);
+            Instant cursorValue;
+            try {
+                cursorValue = CursorUtils.decodeAsInstant(cursor);
+            } catch (RuntimeException e) {
+                throw new BusinessException(ErrorCode.INVALID_INPUT);
+            }
             rows = ascending
                 ? watchingSessionSnapshotRepository.findByContentIdAfterAsc(
                     contentId, escapedWatcherNameLike, now, cursorValue, idAfter, pageable)
