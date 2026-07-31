@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 import com.mopl.directmessage.dto.DirectMessageDto;
 import com.mopl.directmessage.service.DirectMessageService;
@@ -225,6 +226,50 @@ class DirectMessageControllerTest {
     }
 
     @Test
+    @DisplayName("DM 읽음 처리 성공 시 204를 반환")
+    void read_success() throws Exception {
+        // when & then
+        mockMvc.perform(
+                post(
+                    "/api/conversations/{conversationId}"
+                        + "/direct-messages/{directMessageId}/read",
+                    CONVERSATION_ID,
+                    MESSAGE_ID
+                )
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isNoContent())
+            .andExpect(content().string(""));
+
+        verify(directMessageService).read(
+            REQUESTER_ID,
+            CONVERSATION_ID,
+            MESSAGE_ID
+        );
+    }
+
+    @Test
+    @DisplayName("인증 정보 없이 DM 읽음 처리 시 401을 반환")
+    void read_unauthenticated_returnsUnauthorized()
+        throws Exception {
+
+        // when & then
+        mockMvc.perform(
+                post(
+                    "/api/conversations/{conversationId}"
+                        + "/direct-messages/{directMessageId}/read",
+                    CONVERSATION_ID,
+                    MESSAGE_ID
+                )
+            )
+            .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(directMessageService);
+    }
+
+    @Test
     @DisplayName("idAfter가 UUID 형식이 아니면 400을 반환한다")
     void getDirectMessages_invalidIdAfter_returnsBadRequest()
         throws Exception {
@@ -337,5 +382,32 @@ class DirectMessageControllerTest {
                 jsonPath("$.errorCode")
                     .value("COMMON_400_1")
             );
+    }
+
+    @Test
+    @DisplayName("directMessageId가 UUID 형식이 아니면 400을 반환한다")
+    void read_invalidDirectMessageId_returnsBadRequest()
+        throws Exception {
+
+        mockMvc.perform(
+                post(
+                    "/api/conversations/{conversationId}"
+                        + "/direct-messages/{directMessageId}/read",
+                    CONVERSATION_ID,
+                    "not-uuid"
+                )
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            );
+
+        verifyNoInteractions(
+            directMessageService
+        );
     }
 }
