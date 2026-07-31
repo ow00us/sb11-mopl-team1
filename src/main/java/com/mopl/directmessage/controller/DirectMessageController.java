@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.PostMapping;
 
 @RestController
 @RequestMapping(
@@ -65,5 +66,20 @@ public class DirectMessageController {
                 ErrorCode.UNAUTHORIZED
             );
         }
+    }
+
+    @PostMapping("/{directMessageId}/read")
+    public void read(
+        @PathVariable UUID conversationId,
+        @PathVariable UUID directMessageId,
+        Principal principal
+    ) {
+        UUID requesterId = getRequesterId(principal);
+
+        directMessageService.read(
+            requesterId,
+            conversationId,
+            directMessageId
+        );
     }
 }

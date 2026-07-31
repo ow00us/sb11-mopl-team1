@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 import com.mopl.directmessage.dto.DirectMessageDto;
 import com.mopl.directmessage.service.DirectMessageService;
@@ -220,6 +221,50 @@ class DirectMessageControllerTest {
                     )
             )
             .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(directMessageService);
+    }
+
+    @Test
+    @DisplayName("DM 읽음 처리 성공 시 200을 반환")
+    void read_success() throws Exception {
+        // when & then
+        mockMvc.perform(
+                post(
+                    "/api/conversations/{conversationId}"
+                        + "/direct-messages/{directMessageId}/read",
+                    CONVERSATION_ID,
+                    MESSAGE_ID
+                )
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isOk())
+            .andExpect(content().string(""));
+
+        verify(directMessageService).read(
+            REQUESTER_ID,
+            CONVERSATION_ID,
+            MESSAGE_ID
+        );
+    }
+
+    @Test
+    @DisplayName("인증 정보 없이 DM 읽음 처리 시 401을 반환")
+    void read_unauthenticated_returnsUnauthorized()
+        throws Exception {
+
+        // when & then
+        mockMvc.perform(
+                post(
+                    "/api/conversations/{conversationId}"
+                        + "/direct-messages/{directMessageId}/read",
+                    CONVERSATION_ID,
+                    MESSAGE_ID
+                )
+            )
+            .andExpect(status().isUnauthorized());
 
         verifyNoInteractions(directMessageService);
     }
