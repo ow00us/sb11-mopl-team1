@@ -56,6 +56,9 @@ public class DirectMessageService {
         List<ConversationParticipant> participants =
             getParticipants(conversationId, requesterId);
 
+        Map<UUID, UUID> receiverIdBySenderId =
+            createReceiverIdMap(participants);
+
         Map<UUID, UserSummary> userSummaries =
             getUserSummaries(participants);
 
@@ -111,7 +114,7 @@ public class DirectMessageService {
             .map(message ->
                 toDto(
                     message,
-                    participants,
+                    receiverIdBySenderId,
                     userSummaries
                 )
             )
@@ -146,28 +149,50 @@ public class DirectMessageService {
         );
     }
 
+    private Map<UUID, UUID> createReceiverIdMap(
+        List<ConversationParticipant> participants
+    ) {
+        UUID firstUserId =
+            participants
+                .get(0)
+                .getUserId();
+
+        UUID secondUserId =
+            participants
+                .get(1)
+                .getUserId();
+
+        return Map.of(
+            firstUserId,
+            secondUserId,
+            secondUserId,
+            firstUserId
+        );
+    }
+
     private DirectMessageDto toDto(
         DirectMessage message,
-        List<ConversationParticipant> participants,
+        Map<UUID, UUID> receiverIdBySenderId,
         Map<UUID, UserSummary> userSummaries
     ) {
         UserSummary sender =
-            userSummaries.get(message.getSenderId());
+            userSummaries
+                .get(message.getSenderId());
 
-        UUID receiverId = participants.stream()
-            .map(ConversationParticipant::getUserId)
-            .filter(userId ->
-                !userId.equals(message.getSenderId())
-            )
-            .findFirst()
-            .orElseThrow(() ->
-                new BusinessException(
-                    ErrorCode.RESOURCE_NOT_FOUND
-                )
+        UUID receiverId =
+            receiverIdBySenderId
+                .get(message.getSenderId());
+
+        if (receiverId == null) {
+            throw new BusinessException(
+                ErrorCode.DIRECT_MESSAGE_INVALID_STATE,
+                "메시지 발신자가 대화 참여자가 아닙니다."
             );
+        }
 
         UserSummary receiver =
-            userSummaries.get(receiverId);
+            userSummaries
+                .get(receiverId);
 
         if (sender == null || receiver == null) {
             throw new BusinessException(
@@ -191,12 +216,28 @@ public class DirectMessageService {
                 conversationId
             );
 
+        // 참여자 없음: 존재 여부 숨기기 위해 404
+        if (participants.isEmpty()) {
+            throw new BusinessException(
+                ErrorCode.RESOURCE_NOT_FOUND
+            );
+        }
+
+        // 참여자가 정확히 2명이 아님: 데이터 정합성 오류이므로 500으로 처리
+        if (participants.size() != 2) {
+            throw new BusinessException(
+                ErrorCode.DIRECT_MESSAGE_INVALID_STATE,
+                "1:1 대화의 참여자는 정확히 2명이어야 합니다."
+            );
+        }
+
         boolean isParticipant = participants.stream()
             .anyMatch(participant ->
                 participant.getUserId().equals(requesterId)
             );
 
-        if (!isParticipant || participants.size() != 2) {
+        // 요청자가 참여자가 아님: 존재 여부를 숨기기 위해 404
+        if (!isParticipant) {
             throw new BusinessException(
                 ErrorCode.RESOURCE_NOT_FOUND
             );

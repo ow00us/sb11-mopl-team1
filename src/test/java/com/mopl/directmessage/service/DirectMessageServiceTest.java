@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -18,6 +19,7 @@ import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.directmessage.repository.DirectMessageRepository;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
+import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
 import java.time.Instant;
@@ -365,5 +367,111 @@ class DirectMessageServiceTest {
         );
 
         return message;
+    }
+
+    @Test
+    @DisplayName("대화에 참여하지 않은 사용자가 DM 목록을 조회하면 실패한다")
+    void getDirectMessages_nonParticipant_throwsResourceNotFound() {
+        // given
+        UUID conversationId = UUID.randomUUID();
+        UUID firstUserId = UUID.randomUUID();
+        UUID secondUserId = UUID.randomUUID();
+        UUID nonParticipantId = UUID.randomUUID();
+
+        ConversationParticipant firstParticipant =
+            ConversationParticipant.create(
+                conversationId,
+                firstUserId,
+                ParticipantSlot.FIRST
+            );
+
+        ConversationParticipant secondParticipant =
+            ConversationParticipant.create(
+                conversationId,
+                secondUserId,
+                ParticipantSlot.SECOND
+            );
+
+        given(
+            participantRepository.findAllByConversationId(
+                conversationId
+            )
+        ).willReturn(
+            List.of(
+                firstParticipant,
+                secondParticipant
+            )
+        );
+
+        // when & then
+        assertThatThrownBy(() ->
+            directMessageService.getDirectMessages(
+                nonParticipantId,
+                conversationId,
+                null,
+                null,
+                10,
+                "DESCENDING",
+                "createdAt"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(
+                            ErrorCode.RESOURCE_NOT_FOUND
+                        )
+            );
+    }
+
+    @Test
+    @DisplayName("1대1 대화의 참여자가 한 명뿐이면 DM 데이터 상태 오류가 발생한다")
+    void getDirectMessages_oneParticipant_throwsInvalidState() {
+        // given
+        UUID conversationId = UUID.randomUUID();
+        UUID requesterId = UUID.randomUUID();
+
+        ConversationParticipant participant =
+            ConversationParticipant.create(
+                conversationId,
+                requesterId,
+                ParticipantSlot.FIRST
+            );
+
+        given(
+            participantRepository.findAllByConversationId(
+                conversationId
+            )
+        ).willReturn(
+            List.of(participant)
+        );
+
+        // when & then
+        assertThatThrownBy(() ->
+            directMessageService.getDirectMessages(
+                requesterId,
+                conversationId,
+                null,
+                null,
+                10,
+                "DESCENDING",
+                "createdAt"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception -> {
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(
+                            ErrorCode.DIRECT_MESSAGE_INVALID_STATE
+                        );
+
+                    assertThat(exception.getMessage())
+                        .isEqualTo(
+                            "1:1 대화의 참여자는 정확히 2명이어야 합니다."
+                        );
+                }
+            );
     }
 }

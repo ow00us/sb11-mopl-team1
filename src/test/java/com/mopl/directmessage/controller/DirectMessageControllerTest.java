@@ -223,4 +223,119 @@ class DirectMessageControllerTest {
 
         verifyNoInteractions(directMessageService);
     }
+
+    @Test
+    @DisplayName("idAfter가 UUID 형식이 아니면 400을 반환한다")
+    void getDirectMessages_invalidIdAfter_returnsBadRequest()
+        throws Exception {
+
+        UUID conversationId = UUID.randomUUID();
+        UUID requesterId = UUID.randomUUID();
+
+        mockMvc.perform(
+                get(
+                    "/api/conversations/{conversationId}/direct-messages",
+                    conversationId
+                )
+                    .principal(
+                        () -> requesterId.toString()
+                    )
+                    .param("idAfter", "not-uuid")
+                    .param("limit", "10")
+                    .param(
+                        "sortDirection",
+                        "DESCENDING"
+                    )
+                    .param("sortBy", "createdAt")
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            );
+    }
+
+    @Test
+    @DisplayName("limit이 누락되면 400을 반환한다")
+    void getDirectMessages_missingLimit_returnsBadRequest()
+        throws Exception {
+
+        UUID conversationId = UUID.randomUUID();
+        UUID requesterId = UUID.randomUUID();
+
+        mockMvc.perform(
+                get(
+                    "/api/conversations/{conversationId}/direct-messages",
+                    conversationId
+                )
+                    .principal(
+                        () -> requesterId.toString()
+                    )
+                    .param(
+                        "sortDirection",
+                        "DESCENDING"
+                    )
+                    .param("sortBy", "createdAt")
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            );
+    }
+
+    @Test
+    @DisplayName("sortDirection이 누락되면 400을 반환한다")
+    void getDirectMessages_missingSortDirection_returnsBadRequest()
+        throws Exception {
+
+        UUID conversationId = UUID.randomUUID();
+        UUID requesterId = UUID.randomUUID();
+
+        mockMvc.perform(
+                get(
+                    "/api/conversations/{conversationId}/direct-messages",
+                    conversationId
+                )
+                    .principal(
+                        () -> requesterId.toString()
+                    )
+                    .param("limit", "10")
+                    .param("sortBy", "createdAt")
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            );
+    }
+
+    @Test
+    @DisplayName("sortBy가 누락되면 400을 반환한다")
+    void getDirectMessages_missingSortBy_returnsBadRequest()
+        throws Exception {
+
+        UUID conversationId = UUID.randomUUID();
+        UUID requesterId = UUID.randomUUID();
+
+        mockMvc.perform(
+                get(
+                    "/api/conversations/{conversationId}/direct-messages",
+                    conversationId
+                )
+                    .principal(
+                        () -> requesterId.toString()
+                    )
+                    .param("limit", "10")
+                    .param(
+                        "sortDirection",
+                        "DESCENDING"
+                    )
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            );
+    }
 }

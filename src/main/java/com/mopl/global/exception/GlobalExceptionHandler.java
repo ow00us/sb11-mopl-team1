@@ -10,6 +10,8 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
@@ -97,23 +99,29 @@ public class GlobalExceptionHandler {
                 parameterName != null
                     ? parameterName
                     : "parameter",
-                error.getDefaultMessage()
-                )
-            );
+                error.getDefaultMessage()));
         });
-
         ErrorCode code = ErrorCode.INVALID_INPUT;
+        ErrorResponse body = ErrorResponse.of(e.getClass().getSimpleName(), code, code.getMessage(), details);
+        return ResponseEntity.status(code.getStatus()).body(body);
+    }
 
-        ErrorResponse body = ErrorResponse.of(
-            e.getClass().getSimpleName(),
-            code,
-            code.getMessage(),
-            details
-        );
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
+        Map<String, String> details = new HashMap<>();
+        details.put(e.getName(), "올바른 형식의 값을 입력해 주세요.");
+        ErrorCode code = ErrorCode.INVALID_INPUT;
+        ErrorResponse body = ErrorResponse.of(e.getClass().getSimpleName(), code, code.getMessage(), details);
+        return ResponseEntity.status(code.getStatus()).body(body);
+    }
 
-        return ResponseEntity
-            .status(code.getStatus())
-            .body(body);
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ErrorResponse> handleMissingRequestParameter(MissingServletRequestParameterException e) {
+        Map<String, String> details = new HashMap<>();
+        details.put(e.getParameterName(), "필수 요청 파라미터입니다.");
+        ErrorCode code = ErrorCode.INVALID_INPUT;
+        ErrorResponse body = ErrorResponse.of(e.getClass().getSimpleName(), code, code.getMessage(), details);
+        return ResponseEntity.status(code.getStatus()).body(body);
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)
