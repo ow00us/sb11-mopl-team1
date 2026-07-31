@@ -2947,13 +2947,11 @@ components:
         플레이리스트 부분 수정 요청. `null` 또는 빈 문자열/공백만 있는 필드는 무시되고 기존값이 유지됩니다.
       properties:
         title:
-          type: "string"
-          nullable: true
+          type: ["string", "null"]
           maxLength: 255
           description: "플레이리스트 제목. `null` 또는 빈 문자열/공백만 있는 경우 기존값이 유지됩니다. 256자 이상 문자열(공백 포함)은 400 이 반환됩니다."
         description:
-          type: "string"
-          nullable: true
+          type: ["string", "null"]
           description: "플레이리스트 설명. `null` 또는 빈 문자열/공백만 있는 경우 기존값이 유지됩니다."
     ContentUpdateRequest:
       type: "object"
