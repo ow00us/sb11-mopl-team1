@@ -88,15 +88,19 @@ public class PlaylistServiceImpl implements PlaylistService {
             nextIdAfter = last.getId();
         }
 
+        List<UUID> pageIds = page.stream().map(Playlist::getId).toList();
+
         Set<UUID> subscribedIds = Set.of();
-        if (requesterId != null && !page.isEmpty()) {
-            List<UUID> pageIds = page.stream().map(Playlist::getId).toList();
+        if (requesterId != null && !pageIds.isEmpty()) {
             subscribedIds = subscriptionRepository.findSubscribedPlaylistIds(requesterId, pageIds);
         }
         final Set<UUID> finalSubscribedIds = subscribedIds;
+
+        Map<UUID, List<ContentSummary>> contentsByPlaylistId = loadContentsBatch(pageIds);
+
         List<PlaylistDto> data = page.stream()
                 .map(p -> PlaylistDto.from(p, finalSubscribedIds.contains(p.getId()),
-                        loadContents(p.getId())))
+                        contentsByPlaylistId.getOrDefault(p.getId(), List.of())))
                 .toList();
 
         String ownerIdStr      = ownerIdEqual      != null ? ownerIdEqual.toString()      : null;
@@ -226,6 +230,32 @@ public class PlaylistServiceImpl implements PlaylistService {
                 .filter(summaryById::containsKey)
                 .map(summaryById::get)
                 .toList();
+    }
+
+    // 페이지 단위 배치 조회로 getList의 N+1을 방지한다.
+    // playlist_contents 1회 + contents(+ 태그 EntityGraph 조인) 1회 = 페이지 크기와 무관하게 상수 쿼리로 완료한다.
+    private Map<UUID, List<ContentSummary>> loadContentsBatch(List<UUID> playlistIds) {
+        if (playlistIds.isEmpty()) return Map.of();
+
+        List<PlaylistContent> links = playlistContentRepository
+                .findAllByPlaylistIdInOrderByPlaylistIdAscCreatedAtAsc(playlistIds);
+        if (links.isEmpty()) return Map.of();
+
+        List<UUID> allContentIds = links.stream().map(PlaylistContent::getContentId).distinct().toList();
+        Map<UUID, ContentSummary> summaryById = contentRepository.findAllWithTagsByIdIn(allContentIds)
+                .stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        Content::getId,
+                        this::toContentSummary
+                ));
+
+        Map<UUID, List<ContentSummary>> grouped = new java.util.LinkedHashMap<>();
+        for (PlaylistContent link : links) {
+            ContentSummary summary = summaryById.get(link.getContentId());
+            if (summary == null) continue;
+            grouped.computeIfAbsent(link.getPlaylistId(), k -> new java.util.ArrayList<>()).add(summary);
+        }
+        return grouped;
     }
 
     private ContentSummary toContentSummary(Content content) {
