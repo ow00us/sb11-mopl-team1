@@ -1,9 +1,9 @@
 package com.mopl.global.exception;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,6 +18,8 @@ public class GlobalExceptionHandlerTest {
     @Autowired
     MockMvc mockMvc;
 
+    private static final String VALID_UUID = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+
     @Test
     @DisplayName("limit 값의 타입이 불일치하면 400")
     void limit_typeMismatch_returnsBadRequest() throws Exception {
@@ -25,7 +27,25 @@ public class GlobalExceptionHandlerTest {
                 .param("limit", "abc")
                 .param("sortBy", "createdAt")
                 .param("sortDirection", "DESCENDING"))
-            .andExpect(status().isBadRequest());
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.exceptionName")
+                .value("MethodArgumentTypeMismatchException"))
+            .andExpect(jsonPath("$.details.limit")
+                .value("파라미터 형식이 올바르지 않습니다."));
+    }
+
+    @Test
+    void idAfter_typeMismatch_returnsBadRequest() throws Exception {
+        mockMvc.perform(get("/test/exception-handler/params")
+                .param("limit", "10")
+                .param("sortBy", "createdAt")
+                .param("sortDirection", "DESCENDING")
+                .param("idAfter", "not-a-uuid"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.exceptionName")
+                .value("MethodArgumentTypeMismatchException"))
+            .andExpect(jsonPath("$.details.idAfter")
+                .value("파라미터 형식이 올바르지 않습니다."));
     }
 
     @Test
@@ -34,7 +54,11 @@ public class GlobalExceptionHandlerTest {
         mockMvc.perform(get("/test/exception-handler/params")
                 .param("sortBy", "createdAt")
                 .param("sortDirection", "DESCENDING"))
-            .andExpect(status().isBadRequest());
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.exceptionName")
+                .value("MissingServletRequestParameterException"))
+            .andExpect(jsonPath("$.details.limit")
+                .value("필수 파라미터입니다."));
     }
 
     @Test
@@ -43,7 +67,11 @@ public class GlobalExceptionHandlerTest {
         mockMvc.perform(get("/test/exception-handler/params")
                 .param("limit", "10")
                 .param("sortDirection", "DESCENDING"))
-            .andExpect(status().isBadRequest());
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.exceptionName")
+                .value("MissingServletRequestParameterException"))
+            .andExpect(jsonPath("$.details.sortBy")
+                .value("필수 파라미터입니다."));
     }
 
     @Test
@@ -52,7 +80,11 @@ public class GlobalExceptionHandlerTest {
         mockMvc.perform(get("/test/exception-handler/params")
                 .param("sortBy", "createdAt")
                 .param("limit", "10"))
-            .andExpect(status().isBadRequest());
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.exceptionName")
+                .value("MissingServletRequestParameterException"))
+            .andExpect(jsonPath("$.details.sortDirection")
+                .value("필수 파라미터입니다."));
     }
 
     @Test
@@ -62,7 +94,7 @@ public class GlobalExceptionHandlerTest {
                 .param("limit", "10")
                 .param("sortBy", "createdAt")
                 .param("sortDirection", "DESCENDING")
-                .principal(() -> UUID.randomUUID().toString()))
+                .param("idAfter", VALID_UUID))
             .andExpect(status().isOk());
     }
 
