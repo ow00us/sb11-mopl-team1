@@ -14,9 +14,7 @@ import com.mopl.user.dto.JwtDto;
 import com.mopl.user.dto.SignInRequest;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
-import com.mopl.user.repository.UserRepository;
-import java.util.List;
-import java.util.Optional;
+import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -30,14 +28,13 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.LockedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 로그인 API 서비스의 인증 및 JWT 발급 규칙을 검증
  *
- * AuthenticationManager와 JwtProvider는 외부 의존성이므로 Mock으로 대체하고,
- * AuthService가 각 결과를 올바르게 연결하는지에 집중
+ * AuthenticationManager와 JwtProvider는 Mock으로 대체하고
+ * AuthService가 각 결과를 올바르게 연결하는지 확인
  */
 @ExtendWith(MockitoExtension.class)
 class AuthServiceTest {
@@ -45,11 +42,11 @@ class AuthServiceTest {
     private static final UUID USER_ID =
         UUID.fromString("11111111-1111-1111-1111-111111111111");
 
-    @Mock
-    AuthenticationManager authenticationManager;
+    private static final Instant CREATED_AT =
+        Instant.parse("2026-07-31T03:00:00Z");
 
     @Mock
-    UserRepository userRepository;
+    AuthenticationManager authenticationManager;
 
     @Mock
     JwtProvider jwtProvider;
@@ -58,7 +55,7 @@ class AuthServiceTest {
     AuthService authService;
 
     @Test
-    @DisplayName("올바른 이메일과 비밀번호면 JWT 액세스 토큰을 발급한다")
+    @DisplayName("로그인 성공 시 사용자 정보와 JWT 액세스 토큰을 반환한다")
     void signIn_success() {
         // given
         SignInRequest request = new SignInRequest(
@@ -66,35 +63,34 @@ class AuthServiceTest {
             "passwordTest1!"
         );
 
-        /*
-         * AuthenticationManager 인증 성공 결과
-         * 실제 서비스에서는 MoplUserDetailsService가 이메일을 소문자로 정규화하므로,
-         * 성공한 Authentication의 name도 정규화된 이메일이라고 가정
-         */
-        Authentication authenticated = UsernamePasswordAuthenticationToken.authenticated(
-            "user@example.com",
-            null,
-            List.of(new SimpleGrantedAuthority("ROLE_USER"))
-        );
-
         User user = User.builder()
             .email("user@example.com")
             .passwordHash("encoded-password")
             .name("테스트 사용자")
+            .profileImageUrl("https://example.com/profile.png")
             .role(UserRole.USER)
             .locked(false)
             .build();
 
         /*
-         * JPA가 저장 시 생성하는 ID를 단위 테스트에서는 직접 넣는다.
-         * JWT 발급 인자로 사용자 UUID가 전달되는지 확인하기 위함
+         * 실제 저장 과정에서는 JPA가 UUID와 생성 시각을 채웁니다.
+         * 단위 테스트에서는 로그인 응답을 검증하기 위해 직접 설정합니다.
          */
         ReflectionTestUtils.setField(user, "id", USER_ID);
+        ReflectionTestUtils.setField(user, "createdAt", CREATED_AT);
+
+        MoplUserDetails principal = new MoplUserDetails(user);
+
+        Authentication authenticated =
+            UsernamePasswordAuthenticationToken.authenticated(
+                principal,
+                null,
+                principal.getAuthorities()
+            );
 
         when(authenticationManager.authenticate(any(UsernamePasswordAuthenticationToken.class)))
             .thenReturn(authenticated);
-        when(userRepository.findByEmail("user@example.com"))
-            .thenReturn(Optional.of(user));
+
         when(jwtProvider.createAccessToken(USER_ID, "USER"))
             .thenReturn("access-token");
 
@@ -104,9 +100,18 @@ class AuthServiceTest {
         // then
         assertThat(response.accessToken()).isEqualTo("access-token");
 
+        assertThat(response.userDto().id()).isEqualTo(USER_ID);
+        assertThat(response.userDto().createdAt()).isEqualTo(CREATED_AT);
+        assertThat(response.userDto().email()).isEqualTo("user@example.com");
+        assertThat(response.userDto().name()).isEqualTo("테스트 사용자");
+        assertThat(response.userDto().profileImageUrl())
+            .isEqualTo("https://example.com/profile.png");
+        assertThat(response.userDto().role()).isEqualTo(UserRole.USER);
+        assertThat(response.userDto().locked()).isFalse();
+
         /*
-         * 요청으로 받은 이메일·비밀번호가 AuthenticationManager에 전달됐는지 확인
-         * 이 객체는 아직 인증 전 상태의 UsernamePasswordAuthenticationToken
+         * 클라이언트가 보낸 이메일과 비밀번호가 인증 객체에
+         * 정확하게 담겨 AuthenticationManager로 전달됐는지 확인합니다.
          */
         ArgumentCaptor<UsernamePasswordAuthenticationToken> tokenCaptor =
             ArgumentCaptor.forClass(UsernamePasswordAuthenticationToken.class);
@@ -119,7 +124,6 @@ class AuthServiceTest {
         assertThat(authenticationToken.getPrincipal()).isEqualTo("User@Example.Com");
         assertThat(authenticationToken.getCredentials()).isEqualTo("passwordTest1!");
 
-        verify(userRepository).findByEmail("user@example.com");
         verify(jwtProvider).createAccessToken(USER_ID, "USER");
     }
 
@@ -144,7 +148,7 @@ class AuthServiceTest {
         /*
          * 인증 실패 후에는 사용자 정보를 조회하거나 JWT를 발급하면 안 됨
          */
-        verifyNoInteractions(userRepository, jwtProvider);
+        verifyNoInteractions(jwtProvider);
     }
 
     @Test
@@ -165,6 +169,6 @@ class AuthServiceTest {
             .extracting("errorCode")
             .isEqualTo(ErrorCode.UNAUTHORIZED);
 
-        verifyNoInteractions(userRepository, jwtProvider);
+        verifyNoInteractions(jwtProvider);
     }
 }

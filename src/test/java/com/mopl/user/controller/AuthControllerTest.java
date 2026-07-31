@@ -12,7 +12,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.user.dto.JwtDto;
 import com.mopl.user.dto.SignInRequest;
+import com.mopl.user.dto.UserDto;
+import com.mopl.user.entity.UserRole;
 import com.mopl.user.service.AuthService;
+import java.time.Instant;
+import java.util.UUID;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,13 +49,29 @@ class AuthControllerTest {
     @DisplayName("로그인 성공 시 200과 액세스 토큰을 반환한다")
     void signIn_success() throws Exception {
         // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        Instant createdAt =
+            Instant.parse("2026-07-31T03:00:00Z");
+
         Map<String, String> request = Map.of(
             "email", "user@example.com",
             "password", "passwordTest1!"
         );
 
+        UserDto userDto = new UserDto(
+            userId,
+            createdAt,
+            "user@example.com",
+            "테스트 사용자",
+            "https://example.com/profile.png",
+            UserRole.USER,
+            false
+        );
+
         when(authService.signIn(any(SignInRequest.class)))
-            .thenReturn(new JwtDto("access-token"));
+            .thenReturn(new JwtDto(userDto, "access-token"));
 
         // when & then
         mockMvc.perform(post("/api/auth/sign-in")
@@ -59,7 +79,14 @@ class AuthControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
             .andExpect(status().isOk())
             .andExpect(content().contentType("application/json"))
-            .andExpect(jsonPath("$.accessToken").value("access-token"));
+            .andExpect(jsonPath("$.accessToken").value("access-token"))
+            .andExpect(jsonPath("$.userDto.id").value(userId.toString()))
+            .andExpect(jsonPath("$.userDto.email").value("user@example.com"))
+            .andExpect(jsonPath("$.userDto.name").value("테스트 사용자"))
+            .andExpect(jsonPath("$.userDto.profileImageUrl")
+                .value("https://example.com/profile.png"))
+            .andExpect(jsonPath("$.userDto.role").value("USER"))
+            .andExpect(jsonPath("$.userDto.locked").value(false));
 
         /*
          * JSON 요청 본문이 SignInRequest로 올바르게 변환되어

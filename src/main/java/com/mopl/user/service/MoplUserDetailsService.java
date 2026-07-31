@@ -35,12 +35,6 @@ public class MoplUserDetailsService implements UserDetailsService {
                 "등록되지 않은 이메일입니다."
             ));
 
-        // Spring Security의 UserDetails에 비밀번호 해시, 권한, 잠금 상태를 전달
-        return org.springframework.security.core.userdetails.User.builder()
-            .username(user.getEmail())
-            .password(user.getPasswordHash())
-            .authorities("ROLE_" + user.getRole().name())
-            .accountLocked(user.isLocked())
-            .build();
+        return new MoplUserDetails(user);
     }
 }

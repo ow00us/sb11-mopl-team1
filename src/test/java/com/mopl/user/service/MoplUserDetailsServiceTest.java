@@ -49,10 +49,21 @@ class MoplUserDetailsServiceTest {
             moplUserDetailsService.loadUserByUsername(" User@Example.Com ");
 
         // then
-        assertThat(userDetails.getUsername()).isEqualTo("user@example.com");
-        assertThat(userDetails.getPassword()).isEqualTo("encoded-password");
-        assertThat(userDetails.isAccountNonLocked()).isTrue();
-        assertThat(userDetails.getAuthorities())
+        assertThat(userDetails).isInstanceOf(MoplUserDetails.class);
+
+        MoplUserDetails moplUserDetails = (MoplUserDetails) userDetails;
+
+        /*
+         * 조회한 User가 커스텀 principal에 보관되는지 확인합니다.
+         * AuthService는 이 User를 사용하므로 다시 DB를 조회할 필요가 없습니다.
+         */
+        assertThat(moplUserDetails.getUser()).isSameAs(user);
+        assertThat(moplUserDetails.getUsername())
+            .isEqualTo("user@example.com");
+        assertThat(moplUserDetails.getPassword())
+            .isEqualTo("encoded-password");
+        assertThat(moplUserDetails.isAccountNonLocked()).isTrue();
+        assertThat(moplUserDetails.getAuthorities())
             .extracting("authority")
             .containsExactly("ROLE_USER");
 
