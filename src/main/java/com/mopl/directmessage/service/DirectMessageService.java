@@ -354,17 +354,19 @@ public class DirectMessageService {
                         ErrorCode.RESOURCE_NOT_FOUND
                     )
                 );
-        UUID receiverId = participants.stream()
-            .map(ConversationParticipant::getUserId)
-            .filter(userId ->
-                !userId.equals(message.getSenderId())
-            )
-            .findFirst()
-            .orElseThrow(() ->
-                new BusinessException(
-                    ErrorCode.RESOURCE_NOT_FOUND
-                )
+
+        Map<UUID, UUID> receiverIdBySenderId =
+            createReceiverIdMap(participants);
+
+        UUID receiverId =
+            receiverIdBySenderId.get(message.getSenderId());
+
+        if (receiverId == null) {
+            throw new BusinessException(
+                ErrorCode.DIRECT_MESSAGE_INVALID_STATE,
+                "메시지 발신자가 대화 참여자가 아닙니다."
             );
+        }
 
         if (!receiverId.equals(requesterId)) {
             throw new BusinessException(

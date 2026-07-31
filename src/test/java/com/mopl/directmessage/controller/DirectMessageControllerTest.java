@@ -226,7 +226,7 @@ class DirectMessageControllerTest {
     }
 
     @Test
-    @DisplayName("DM 읽음 처리 성공 시 200을 반환")
+    @DisplayName("DM 읽음 처리 성공 시 204를 반환")
     void read_success() throws Exception {
         // when & then
         mockMvc.perform(
@@ -240,7 +240,7 @@ class DirectMessageControllerTest {
                         () -> REQUESTER_ID.toString()
                     )
             )
-            .andExpect(status().isOk())
+            .andExpect(status().isNoContent())
             .andExpect(content().string(""));
 
         verify(directMessageService).read(
@@ -382,5 +382,32 @@ class DirectMessageControllerTest {
                 jsonPath("$.errorCode")
                     .value("COMMON_400_1")
             );
+    }
+
+    @Test
+    @DisplayName("directMessageId가 UUID 형식이 아니면 400을 반환한다")
+    void read_invalidDirectMessageId_returnsBadRequest()
+        throws Exception {
+
+        mockMvc.perform(
+                post(
+                    "/api/conversations/{conversationId}"
+                        + "/direct-messages/{directMessageId}/read",
+                    CONVERSATION_ID,
+                    "not-uuid"
+                )
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            );
+
+        verifyNoInteractions(
+            directMessageService
+        );
     }
 }

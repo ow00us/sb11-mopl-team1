@@ -560,8 +560,8 @@ class DirectMessageServiceTest {
     }
 
     @Test
-    @DisplayName("DM 발신자는 자신의 메시지를 읽음 처리할 수 없음")
-    void read_sender_fails() {
+    @DisplayName("DM 발신자가 자신의 메시지를 읽음 처리하면 권한 오류가 발생한다")
+    void read_sender_throwsForbidden() {
         // given
         DirectMessage message = createMessage(
             UUID.fromString(
@@ -592,14 +592,22 @@ class DirectMessageServiceTest {
                 CONVERSATION_ID,
                 message.getId()
             )
-        ).isInstanceOf(BusinessException.class);
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(
+                            ErrorCode.FORBIDDEN
+                        )
+            );
 
         assertThat(message.getReadAt()).isNull();
     }
 
     @Test
-    @DisplayName("대화에 속하지 않은 DM은 읽음 처리할 수 없음")
-    void read_messageNotInConversation_fails() {
+    @DisplayName("대화에 속하지 않은 DM을 읽음 처리하면 리소스 없음 오류가 발생한다")
+    void read_messageNotInConversation_throwsResourceNotFound() {
         // given
         UUID messageId =
             UUID.fromString(
@@ -626,6 +634,110 @@ class DirectMessageServiceTest {
                 CONVERSATION_ID,
                 messageId
             )
-        ).isInstanceOf(BusinessException.class);
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(
+                            ErrorCode.RESOURCE_NOT_FOUND
+                        )
+            );
+    }
+
+    @Test
+    @DisplayName("메시지 발신자가 대화 참여자가 아니면 DM 데이터 상태 오류가 발생한다")
+    void read_senderNotParticipant_throwsInvalidState() {
+        // given
+        UUID messageId =
+            UUID.fromString(
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            );
+
+        UUID invalidSenderId =
+            UUID.fromString(
+                "33333333-3333-3333-3333-333333333333"
+            );
+
+        DirectMessage message = createMessage(
+            messageId,
+            invalidSenderId,
+            Instant.parse("2026-07-31T01:00:00Z"),
+            "잘못된 발신자가 저장된 메시지"
+        );
+
+        when(
+            participantRepository.findAllByConversationId(
+                CONVERSATION_ID
+            )
+        ).thenReturn(participants());
+
+        when(
+            directMessageRepository.findByIdAndConversationId(
+                messageId,
+                CONVERSATION_ID
+            )
+        ).thenReturn(Optional.of(message));
+
+        // when & then
+        assertThatThrownBy(() ->
+            directMessageService.read(
+                USER_ID_2,
+                CONVERSATION_ID,
+                messageId
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(
+                            ErrorCode.DIRECT_MESSAGE_INVALID_STATE
+                        )
+            );
+
+        assertThat(message.getReadAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("대화 비참여자가 DM을 읽음 처리하면 리소스 없음 오류가 발생한다")
+    void read_nonParticipant_throwsResourceNotFound() {
+        // given
+        UUID nonParticipantId =
+            UUID.fromString(
+                "33333333-3333-3333-3333-333333333333"
+            );
+
+        UUID messageId =
+            UUID.fromString(
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            );
+
+        when(
+            participantRepository.findAllByConversationId(
+                CONVERSATION_ID
+            )
+        ).thenReturn(participants());
+
+        // when & then
+        assertThatThrownBy(() ->
+            directMessageService.read(
+                nonParticipantId,
+                CONVERSATION_ID,
+                messageId
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(
+                            ErrorCode.RESOURCE_NOT_FOUND
+                        )
+            );
+
+        verifyNoInteractions(
+            directMessageRepository
+        );
     }
 }
