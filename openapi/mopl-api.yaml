@@ -2349,6 +2349,12 @@ paths:
             "*/*":
               schema:
                 "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "존재하지 않는 콘텐츠"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
         "500":
           description: "서버 오류"
           content:
@@ -2553,6 +2559,9 @@ components:
           type: "number"
           format: "double"
           description: "평점 (0.0 ~ 5.0)"
+          minimum: 0
+          maximum: 5
+          multipleOf: 0.5
       required:
         - "contentId"
         - "rating"
@@ -2938,6 +2947,9 @@ components:
           type: "number"
           format: "double"
           description: "평점 (0.0 ~ 5.0)"
+          minimum: 0
+          maximum: 5
+          multipleOf: 0.5
     PlaylistUpdateRequest:
       type: "object"
       properties:

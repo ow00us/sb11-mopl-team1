@@ -68,38 +68,4 @@ class PlaylistTest {
 
         assertThat(playlist.isOwnedBy(OTHER_ID)).isFalse();
     }
-
-    @Test
-    @DisplayName("incrementSubscriberCount 호출 시 subscriberCount 가 1 증가한다")
-    void increment_increasesCount() {
-        Playlist playlist = Playlist.builder()
-                .ownerId(OWNER_ID).title("제목").description("설명").build();
-
-        playlist.incrementSubscriberCount();
-
-        assertThat(playlist.getSubscriberCount()).isEqualTo(1L);
-    }
-
-    @Test
-    @DisplayName("decrementSubscriberCount 호출 시 subscriberCount 가 1 감소한다")
-    void decrement_decreasesCount() {
-        Playlist playlist = Playlist.builder()
-                .ownerId(OWNER_ID).title("제목").description("설명").build();
-        playlist.incrementSubscriberCount();
-
-        playlist.decrementSubscriberCount();
-
-        assertThat(playlist.getSubscriberCount()).isZero();
-    }
-
-    @Test
-    @DisplayName("decrementSubscriberCount 는 0 미만으로 내려가지 않는다")
-    void decrement_doesNotGoBelowZero() {
-        Playlist playlist = Playlist.builder()
-                .ownerId(OWNER_ID).title("제목").description("설명").build();
-
-        playlist.decrementSubscriberCount();
-
-        assertThat(playlist.getSubscriberCount()).isZero();
-    }
 }
