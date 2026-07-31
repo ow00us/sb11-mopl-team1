@@ -46,14 +46,4 @@ public class Playlist extends BaseEntity {
     public boolean isOwnedBy(UUID userId) {
         return this.ownerId.equals(userId);
     }
-
-    /** 구독자 수를 1 증가시킵니다. */
-    public void incrementSubscriberCount() {
-        this.subscriberCount++;
-    }
-
-    /** 구독자 수를 1 감소시킵니다. 0 미만으로 내려가지 않습니다. */
-    public void decrementSubscriberCount() {
-        if (this.subscriberCount > 0) this.subscriberCount--;
-    }
 }

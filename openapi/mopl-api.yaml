@@ -2553,6 +2553,9 @@ components:
           type: "number"
           format: "double"
           description: "평점 (0.0 ~ 5.0)"
+          minimum: 0
+          maximum: 5
+          multipleOf: 0.5
       required:
         - "contentId"
         - "rating"
@@ -2938,6 +2941,9 @@ components:
           type: "number"
           format: "double"
           description: "평점 (0.0 ~ 5.0)"
+          minimum: 0
+          maximum: 5
+          multipleOf: 0.5
     PlaylistUpdateRequest:
       type: "object"
       properties:
