@@ -211,6 +211,9 @@ public class PlaylistServiceImpl implements PlaylistService {
         return CursorUtils.encodeInstant(last.getUpdatedAt());
     }
 
+    // 단건 조회에서도 contents + content_tags 를 EntityGraph 로 한 번에 조회한다.
+    // findAllById 를 사용하면 tags 가 콘텐츠별로 지연 로딩되어 N+1 이 발생하므로
+    // loadContentsBatch 와 동일하게 findAllWithTagsByIdIn 을 사용한다.
     private List<ContentSummary> loadContents(UUID playlistId) {
         List<UUID> contentIds = playlistContentRepository
                 .findAllByPlaylistIdOrderByCreatedAtAsc(playlistId)
@@ -219,7 +222,7 @@ public class PlaylistServiceImpl implements PlaylistService {
                 .toList();
         if (contentIds.isEmpty()) return List.of();
 
-        Map<UUID, ContentSummary> summaryById = contentRepository.findAllById(contentIds)
+        Map<UUID, ContentSummary> summaryById = contentRepository.findAllWithTagsByIdIn(contentIds)
                 .stream()
                 .collect(java.util.stream.Collectors.toMap(
                         Content::getId,
