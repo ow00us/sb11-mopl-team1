@@ -1639,7 +1639,10 @@ paths:
       tags:
         - "플레이리스트 관리"
       summary: "플레이리스트 수정"
-      description: "플레이리스트 소유자만 수정할 수 있습니다."
+      description: |
+        플레이리스트 소유자만 수정할 수 있습니다.
+        요청 본문의 필드가 `null` 이거나 빈 문자열/공백만 있는 경우 해당 필드는 무시되고 기존값이 유지됩니다.
+        단, `title` 은 255자 제한이 우선 적용되어 256자 이상 문자열(공백 포함)은 400 이 반환됩니다.
       operationId: "updatePlaylist"
       security:
         -
@@ -2952,13 +2955,16 @@ components:
           multipleOf: 0.5
     PlaylistUpdateRequest:
       type: "object"
+      description: |
+        플레이리스트 부분 수정 요청. `null` 또는 빈 문자열/공백만 있는 필드는 무시되고 기존값이 유지됩니다.
       properties:
         title:
-          type: "string"
-          description: "플레이리스트 제목"
+          type: ["string", "null"]
+          maxLength: 255
+          description: "플레이리스트 제목. `null` 또는 빈 문자열/공백만 있는 경우 기존값이 유지됩니다. 256자 이상 문자열(공백 포함)은 400 이 반환됩니다."
         description:
-          type: "string"
-          description: "플레이리스트 설명"
+          type: ["string", "null"]
+          description: "플레이리스트 설명. `null` 또는 빈 문자열/공백만 있는 경우 기존값이 유지됩니다."
     ContentUpdateRequest:
       type: "object"
       properties:
