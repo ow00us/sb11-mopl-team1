@@ -25,7 +25,7 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
       JOIN User u ON u.id = s.watcherId
       WHERE s.contentId = :contentId
         AND s.expiresAt > :now
-        AND (:watcherNameLike IS NULL OR LOWER(u.name) LIKE LOWER(CONCAT('%', :watcherNameLike, '%')) ESCAPE '\\')
+        AND (cast(:watcherNameLike as string) IS NULL OR LOWER(u.name) LIKE LOWER(CONCAT('%', cast(:watcherNameLike as string), '%')) ESCAPE '\\')
       ORDER BY s.updatedAt DESC, s.id DESC
       """)
     List<WatchingSessionSnapshot> findByContentIdFirstPageDesc(
@@ -41,7 +41,7 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
       JOIN User u ON u.id = s.watcherId
       WHERE s.contentId = :contentId
         AND s.expiresAt > :now
-        AND (:watcherNameLike IS NULL OR LOWER(u.name) LIKE LOWER(CONCAT( '%', :watcherNameLike, '%')) ESCAPE '\\')
+        AND (cast(:watcherNameLike as string) IS NULL OR LOWER(u.name) LIKE LOWER(CONCAT( '%', cast(:watcherNameLike as string), '%')) ESCAPE '\\')
         AND (s.updatedAt < :cursor
           OR (s.updatedAt = :cursor AND s.id < :idAfter))
       ORDER BY s.updatedAt DESC, s.id DESC
@@ -61,7 +61,7 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
       JOIN User u ON u.id = s.watcherId
       WHERE s.contentId = :contentId
         AND s.expiresAt > :now
-        AND (:watcherNameLike IS NULL OR LOWER(u.name) LIKE LOWER(CONCAT('%', :watcherNameLike, '%')) ESCAPE '\\')
+        AND (cast(:watcherNameLike as string) IS NULL OR LOWER(u.name) LIKE LOWER(CONCAT('%', cast(:watcherNameLike as string), '%')) ESCAPE '\\')
       ORDER BY s.updatedAt ASC, s.id ASC
       """)
     List<WatchingSessionSnapshot> findByContentIdFirstPageAsc(
@@ -77,7 +77,7 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
       JOIN User u ON u.id = s.watcherId
       WHERE s.contentId = :contentId
         AND s.expiresAt > :now
-        AND (:watcherNameLike IS NULL OR LOWER(u.name) LIKE LOWER(CONCAT('%', :watcherNameLike, '%')) ESCAPE '\\')
+        AND (cast(:watcherNameLike as string) IS NULL OR LOWER(u.name) LIKE LOWER(CONCAT('%', cast(:watcherNameLike as string), '%')) ESCAPE '\\')
         AND (s.updatedAt > :cursor
           OR (s.updatedAt = :cursor AND s.id > :idAfter))
       ORDER BY s.updatedAt ASC, s.id ASC
@@ -97,7 +97,7 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
       JOIN User u ON u.id = s.watcherId
       WHERE s.contentId = :contentId
         AND s.expiresAt > :now
-        AND (:watcherNameLike IS NULL OR LOWER(u.name) LIKE LOWER(CONCAT('%', :watcherNameLike, '%')) ESCAPE '\\')
+        AND (cast(:watcherNameLike as string) IS NULL OR LOWER(u.name) LIKE LOWER(CONCAT('%', cast(:watcherNameLike as string), '%')) ESCAPE '\\')
      """)
     long countByContentId(
         @Param("contentId") UUID contentId,

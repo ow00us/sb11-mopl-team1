@@ -656,4 +656,22 @@ public class WatchingSessionServiceTest {
         verify(watchingSessionSnapshotRepository).findByContentIdFirstPageDesc(
             eq(CONTENT_ID), eq("100\\%\\_off"), any(), any());
     }
+
+    @Test
+    @DisplayName("요청 sortDirection이 소문자여도 응답은 대문자로 정규화된다")
+    void getListByContent_success_normalizesSortDirectionCase() {
+        // given
+        mockContentExists(CONTENT_ID);
+        when(watchingSessionSnapshotRepository.findByContentIdFirstPageAsc(
+            eq(CONTENT_ID), any(), any(), any()))
+            .thenReturn(List.of());
+        when(watchingSessionSnapshotRepository.countByContentId(eq(CONTENT_ID), any(), any())).thenReturn(0L);
+
+        // when
+        CursorResponse<WatchingSessionDto> result = watchingSessionService.getListByContent(
+            CONTENT_ID, null, null, null, 10, "createdAt", "ascending");
+
+        // then
+        assertThat(result.sortDirection()).isEqualTo("ASCENDING");
+    }
 }

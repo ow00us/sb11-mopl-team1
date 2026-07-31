@@ -102,6 +102,7 @@ public class WatchingSessionService {
 
         Instant now = Instant.now();
         boolean ascending = "ASCENDING".equalsIgnoreCase(sortDirection);
+        String normalizedSortDirection = ascending ? "ASCENDING" : "DESCENDING";
         Pageable pageable = PageRequest.of(0, limit + 1);
 
         List<WatchingSessionSnapshot> rows;
@@ -153,7 +154,7 @@ public class WatchingSessionService {
 
         long totalCount = watchingSessionSnapshotRepository.countByContentId(contentId, escapedWatcherNameLike, now);
 
-        return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, totalCount, sortBy, sortDirection);
+        return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, totalCount, sortBy, normalizedSortDirection);
     }
 
     private void validateSortBy(String sortBy) {
