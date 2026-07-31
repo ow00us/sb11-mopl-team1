@@ -416,8 +416,46 @@ public class WatchingSessionServiceTest {
 
         // then
         assertThat(result.data()).hasSize(1);
+        assertThat(result.totalCount()).isEqualTo(1L);
         verify(watchingSessionSnapshotRepository).findByContentIdFirstPageDesc(
             eq(CONTENT_ID), eq("김"), any(), any());
+        verify(watchingSessionSnapshotRepository).countByContentId(
+            eq(CONTENT_ID), eq("김"), any());
+    }
+
+    @Test
+    @DisplayName("watcherNameLike의 와일드카드 문자가 이스케이프되어 두 쿼리에 동일하게 전달")
+    void getListByContent_success_escapesWildcardConsistently() {
+        // given
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+
+        Instant now = Instant.now();
+        String rawInput = "50%_off";
+        String escapedInput = "50\\%\\_off";
+
+        WatchingSessionSnapshot snapshot = createSnapshotFixture(
+            CONTENT_ID, FIRST_CREATED_AT, now, now.plus(1, ChronoUnit.HOURS)
+        );
+        when(watchingSessionSnapshotRepository.findByContentIdFirstPageDesc(
+            eq(CONTENT_ID), eq(escapedInput), any(), any()))
+            .thenReturn(List.of(snapshot));
+        when(watchingSessionSnapshotRepository.countByContentId(
+            eq(CONTENT_ID), eq(escapedInput), any()))
+            .thenReturn(1L);
+
+        // when
+        CursorResponse<WatchingSessionDto> result = watchingSessionService.getListByContent(
+            CONTENT_ID, rawInput, null, null, 10, "createdAt", "DESCENDING"
+        );
+
+        // then
+        assertThat(result.data()).hasSize(1);
+        assertThat(result.totalCount()).isEqualTo(1L);
+        verify(watchingSessionSnapshotRepository).findByContentIdFirstPageDesc(
+            eq(CONTENT_ID), eq(escapedInput), any(), any());
+        verify(watchingSessionSnapshotRepository).countByContentId(
+            eq(CONTENT_ID), eq(escapedInput), any());
     }
 
     @Test
@@ -453,8 +491,11 @@ public class WatchingSessionServiceTest {
         // then
         assertThat(result.data()).hasSize(1);
         assertThat(result.hasNext()).isTrue();
-        assertThat(result.nextCursor()).isNotNull();
+        assertThat(result.totalCount()).isEqualTo(2L);
+        assertThat(result.nextCursor()).isEqualTo(CursorUtils.encodeInstant(s1.getUpdatedAt()));
         assertThat(result.nextIdAfter()).isEqualTo(s1.getId());
+        verify(watchingSessionSnapshotRepository).countByContentId(
+            eq(CONTENT_ID), isNull(), any());
     }
 
     @Test
