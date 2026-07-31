@@ -224,6 +224,24 @@ class PlaylistControllerTest {
         verifyNoInteractions(playlistService);
     }
 
+    @Test
+    @DisplayName("title 이 255자를 초과하면 400 을 반환한다 (공백 문자열이어도 @Size 가 먼저 적용됨)")
+    void update_fail_titleTooLong() throws Exception {
+        setAuth(OWNER_ID);
+        // 공백만 있어도 256자 이상이면 update()의 isBlank() 무시 로직에 도달하기 전에
+        // @Size(max = 255) 검증이 먼저 실패해 400 이 반환된다.
+        String tooLong = " ".repeat(256);
+
+        mockMvc.perform(patch("/api/playlists/{playlistId}", PLAYLIST_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new PlaylistUpdateRequest(tooLong, null))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
+
+        verifyNoInteractions(playlistService);
+    }
+
     // ── DELETE /api/playlists/{playlistId} ────────────────────────────────────
 
     @Test
