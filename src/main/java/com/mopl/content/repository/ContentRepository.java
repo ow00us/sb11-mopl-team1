@@ -3,14 +3,22 @@ package com.mopl.content.repository;
 import com.mopl.content.entity.Content;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 /** 콘텐츠 커서 페이지네이션, 필터 카운트를 위한 저장소입니다. */
 public interface ContentRepository extends JpaRepository<Content, UUID> {
+
+    // ID 목록으로 콘텐츠와 태그를 함께 조회한다.
+    // @ElementCollection 태그를 @EntityGraph로 미리 조인해 findAllById 사용 시 발생하는
+    // 콘텐츠당 태그 배치 지연 로딩을 없앤다. 페이지 단위 콘텐츠 조회에 사용한다.
+    @EntityGraph(attributePaths = {"tags"})
+    List<Content> findAllWithTagsByIdIn(Collection<UUID> ids);
 
     // ── createdAt 정렬 ──────────────────────────────────────────────────────
 
