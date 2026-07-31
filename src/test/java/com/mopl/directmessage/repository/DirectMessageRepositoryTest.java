@@ -286,6 +286,10 @@ public class DirectMessageRepositoryTest {
                 PageRequest.of(0, 10)
             );
 
+        long totalCount = directMessageRepository.countByConversationId(
+            conversation.getId()
+        );
+
         // then
         assertThat(descending)
             .extracting(DirectMessage::getId)
@@ -302,5 +306,7 @@ public class DirectMessageRepositoryTest {
         assertThat(ascendingAfterCursor)
             .extracting(DirectMessage::getId)
             .containsExactly(messageId3);
+
+        assertThat(totalCount).isEqualTo(3L);
     }
 }

@@ -2205,6 +2205,12 @@ paths:
             "*/*":
               schema:
                 "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "대화를 찾을 수 없거나 접근할 수 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
         "500":
           description: "서버 오류"
           content:
@@ -2342,6 +2348,12 @@ paths:
                 "$ref": "#/components/schemas/ErrorResponse"
         "401":
           description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "존재하지 않는 콘텐츠"
           content:
             "*/*":
               schema:

@@ -11,8 +11,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 import java.util.HashMap;
@@ -99,23 +99,11 @@ public class GlobalExceptionHandler {
                 parameterName != null
                     ? parameterName
                     : "parameter",
-                error.getDefaultMessage()
-                )
-            );
+                error.getDefaultMessage()));
         });
-
         ErrorCode code = ErrorCode.INVALID_INPUT;
-
-        ErrorResponse body = ErrorResponse.of(
-            e.getClass().getSimpleName(),
-            code,
-            code.getMessage(),
-            details
-        );
-
-        return ResponseEntity
-            .status(code.getStatus())
-            .body(body);
+        ErrorResponse body = ErrorResponse.of(e.getClass().getSimpleName(), code, code.getMessage(), details);
+        return ResponseEntity.status(code.getStatus()).body(body);
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)
