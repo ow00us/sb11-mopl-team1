@@ -146,6 +146,8 @@ public class PlaylistServiceImpl implements PlaylistService {
         } catch (DataIntegrityViolationException e) {
             throw new BusinessException(ErrorCode.SUBSCRIPTION_DUPLICATE);
         }
+        // 엔티티 setter/증감 메서드 대신 원자적 SQL UPDATE 를 사용해
+        // 동시 구독 요청 사이의 lost update 를 방지한다 (unsubscribe 도 동일).
         playlistRepository.incrementSubscriberCount(playlistId);
     }
 
