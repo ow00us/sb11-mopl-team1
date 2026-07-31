@@ -66,19 +66,27 @@ public class WatchingSessionServiceTest {
     private static final UUID NEW_CONTENT_ID = UUID.fromString("33322222-2222-2222-2222-222222222222");
     private static final Instant FIRST_CREATED_AT = Instant.parse("2026-07-29T10:00:00Z");
 
-    private void mockUserAndContentExists(UUID contentId) {
+    // Content 도메인 전용 헬퍼
+    private void mockContentExists(UUID contentId) {
         Content mockContent = mock(Content.class);
         when(mockContent.getId()).thenReturn(contentId);
         when(mockContent.getType()).thenReturn(ContentType.MOVIE);
         when(mockContent.getAverageRating()).thenReturn(BigDecimal.ZERO);
         when(mockContent.getReviewCount()).thenReturn(0L);
 
+        // Content 관련 Repository 스텁
         when(contentRepository.existsById(contentId)).thenReturn(true);
         when(contentRepository.findById(contentId)).thenReturn(Optional.of(mockContent));
+    }
 
+    // User 도메인 전용 헬퍼
+    private void mockUserExists(UUID userId) {
         User mockUser = mock(User.class);
-        when(mockUser.getId()).thenReturn(WATCHER_ID);
-        when(userRepository.findById(WATCHER_ID)).thenReturn(Optional.of(mockUser));
+        when(mockUser.getId()).thenReturn(userId);
+
+        // User 관련 Repository 스텁 (단건/다건 모두 처리)
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+        when(userRepository.findAllById(any())).thenReturn(List.of(mockUser));
     }
 
     private WatchingSessionSnapshot createSnapshotFixture(UUID id, UUID watcherId, UUID contentId, Instant createdAt, Instant updatedAt, Instant expiresAt) {
@@ -104,7 +112,8 @@ public class WatchingSessionServiceTest {
     @DisplayName("활성 세션 없으면 새 세션 생성")
     void start_success_whenNoActiveSession() {
         // given
-        mockUserAndContentExists(CONTENT_ID);
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
 
         WatchingSessionSnapshot created = createSnapshotFixture(
             CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT, FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS)
@@ -125,7 +134,8 @@ public class WatchingSessionServiceTest {
     @DisplayName("동시 삽입 경합 시 한 번 재시도해 갱신 결과 반환")
     void start_success_retriesOnConcurrentInsertConflict() {
         // given
-        mockUserAndContentExists(CONTENT_ID);
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
 
         Instant now = Instant.now();
 
@@ -153,8 +163,9 @@ public class WatchingSessionServiceTest {
     @DisplayName("start()는 writer가 반환한 스냅샷을 enrich해서 dto로 변환함")
     void start_success_returnsEnrichedDtoFromWriterResult() {
         // given
-        mockUserAndContentExists(CONTENT_ID);
-        mockUserAndContentExists(NEW_CONTENT_ID);
+        mockContentExists(CONTENT_ID);
+        mockContentExists(NEW_CONTENT_ID);
+        mockUserExists(WATCHER_ID);
 
         Instant now = Instant.now();
 
@@ -207,7 +218,8 @@ public class WatchingSessionServiceTest {
     @DisplayName("활성 세션이 있으면 조회 결과 반환")
     void get_success_whenActiveSessionExists() {
         // given
-        mockUserAndContentExists(CONTENT_ID);
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
 
         Instant now = Instant.now();
 
@@ -273,8 +285,8 @@ public class WatchingSessionServiceTest {
     @DisplayName("정상 조회 시 CursorResponse로 변환되어 반환")
     void getListByContent_success_returnsData() {
         // given
-        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
-        mockUserAndContentExists(CONTENT_ID);
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
 
         Instant now = Instant.now();
 
@@ -306,7 +318,8 @@ public class WatchingSessionServiceTest {
     @DisplayName("sortDirection=ASCENDING이면 오름차순 조회 메서드를 호출한다")
     void getListByContent_success_ascendingCallsCorrectMethod() {
         // given
-        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+        mockContentExists(CONTENT_ID);
+
         when(watchingSessionSnapshotRepository.findByContentIdFirstPageAsc(
             eq(CONTENT_ID), isNull(), any(Instant.class), any()))
             .thenReturn(List.of());
@@ -330,7 +343,7 @@ public class WatchingSessionServiceTest {
     @DisplayName("sortDirection=ASCENDING이고 cursor가 있으면 findByContentIdAfterAscending을 호출한다")
     void getListByContent_success_ascendingWithCursorCallsCorrectMethod() {
         // given
-        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+        mockContentExists(CONTENT_ID);
         UUID idAfter = UUID.randomUUID();
         Instant now= Instant.now();
         String cursor = CursorUtils.encodeInstant(now);
@@ -358,7 +371,7 @@ public class WatchingSessionServiceTest {
     @DisplayName("시청자가 없으면 빈 목록과 totalCount 0 반환")
     void getListByContent_success_returnsEmptyList() {
         // given
-        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+        mockContentExists(CONTENT_ID);
         when(watchingSessionSnapshotRepository.findByContentIdFirstPageDesc(
             eq(CONTENT_ID), isNull(), any(), any()))
             .thenReturn(List.of());
@@ -381,8 +394,8 @@ public class WatchingSessionServiceTest {
     @DisplayName("watcherNameLike로 필터링된 결과만 반환")
     void getListByContent_success_filtersByWatcherName() {
         // given
-        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
-        mockUserAndContentExists(CONTENT_ID);
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
 
         Instant now = Instant.now();
 
@@ -411,8 +424,8 @@ public class WatchingSessionServiceTest {
     @DisplayName("limit보다 많은 데이터가 있으면 hasNest=true와 다음 커서 반환")
     void getListByContent_success_hasNextTrueWithCursor() {
         // given
-        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
-        mockUserAndContentExists(CONTENT_ID);
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
 
         Instant now = Instant.now();
 
@@ -448,8 +461,8 @@ public class WatchingSessionServiceTest {
     @DisplayName("cursor/idAfter로 다음 페이지 조회")
     void getListByContent_success_withCursorMovesToNextPage() {
         // given
-        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
-        mockUserAndContentExists(CONTENT_ID);
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
 
         Instant now = Instant.now();
         UUID idAfter = UUID.randomUUID();
@@ -482,7 +495,7 @@ public class WatchingSessionServiceTest {
         // given
         // Repository에서 이미 expiresAt > now 조건으로 걸러주므로 서비스는 now 값을 정확히 넘기는지만 검증
         // given
-        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+        mockContentExists(CONTENT_ID);
         when(watchingSessionSnapshotRepository.findByContentIdFirstPageDesc(
             eq(CONTENT_ID), isNull(), any(Instant.class), any()))
             .thenReturn(List.of());
@@ -501,10 +514,42 @@ public class WatchingSessionServiceTest {
     }
 
     @Test
+    @DisplayName("정상 조회 시 N+1 없이 배치로 사용자를 조회한다")
+    void getListByContent_success_batchFetchesWatchers() {
+        // given
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+
+        Instant now = Instant.now();
+
+        WatchingSessionSnapshot snapshot = createSnapshotFixture(
+            CONTENT_ID, FIRST_CREATED_AT, now, now.plusSeconds(60)
+        );
+        when(watchingSessionSnapshotRepository.findByContentIdFirstPageDesc(
+            eq(CONTENT_ID), any(), any(), any()))
+            .thenReturn(List.of(snapshot));
+
+        User mockUser = mock(User.class);
+        when(mockUser.getId()).thenReturn(WATCHER_ID);
+        when(userRepository.findAllById(List.of(WATCHER_ID))).thenReturn(List.of(mockUser));
+
+        when(watchingSessionSnapshotRepository.countByContentId(eq(CONTENT_ID), any(), any())).thenReturn(1L);
+
+        // when
+        CursorResponse<WatchingSessionDto> result = watchingSessionService.getListByContent(
+            CONTENT_ID, null, null, null, 10, "createdAt", "DESCENDING");
+
+        // then
+        assertThat(result.data()).hasSize(1);
+        verify(userRepository).findAllById(List.of(WATCHER_ID));
+        verify(userRepository, never()).findById(any());
+    }
+
+    @Test
     @DisplayName("존재하지 않는 콘텐츠면 CONTENT_NOT_FOUND 예외 발생")
     void getListByContent_fail_contentNotFound() {
         // given
-        when(contentRepository.existsById(CONTENT_ID)).thenReturn(false);
+        when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.empty());
 
         // when & then
         assertThatThrownBy(() -> watchingSessionService.getListByContent(
@@ -519,7 +564,7 @@ public class WatchingSessionServiceTest {
     @DisplayName("sortBy가 createdAt이 아니면 INVALID_INPUT 에외 발생")
     void getListByContent_fail_invalidSortBy() {
         // given
-        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+        mockContentExists(CONTENT_ID);
 
         // when & then
         assertThatThrownBy(() -> watchingSessionService.getListByContent(
@@ -534,7 +579,7 @@ public class WatchingSessionServiceTest {
     @DisplayName("cursor만 있고 idAfter가 없으면 INVALID_INPUT 예외 발생")
     void getListByContent_fail_cursorWithoutIdAfter() {
         // given
-        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+        mockContentExists(CONTENT_ID);
         Instant now = Instant.now();
         String cursor = CursorUtils.encodeInstant(now);
 
@@ -548,10 +593,23 @@ public class WatchingSessionServiceTest {
     }
 
     @Test
+    @DisplayName("잘못된 cursor 값이 들어오면 INVALID_INPUT 예외 발생")
+    void getListByContent_fail_invalidCursor() {
+        // given
+        mockContentExists(CONTENT_ID);
+
+        // when & then
+        assertThatThrownBy(() -> watchingSessionService.getListByContent(
+            CONTENT_ID, null, "invalid-cursor!!", UUID.randomUUID(), 10, "createdAt", "DESCENDING"))
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
     @DisplayName("idAfter만 있고 cursor가 없으면 INVALID_INPUT 예외 발생")
     void getListByContent_fail_idAfterWithoutCursor() {
         // given
-        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+        mockContentExists(CONTENT_ID);
 
         // when & then
         assertThatThrownBy(() -> watchingSessionService.getListByContent(
@@ -566,7 +624,7 @@ public class WatchingSessionServiceTest {
     @DisplayName("sortDirection이 허용값이 아니면 INVALID_INPUT 예외 발생")
     void getListByContent_fail_invalidSortDirection() {
         // given
-        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+        mockContentExists(CONTENT_ID);
 
         // when & then
         assertThatThrownBy(() -> watchingSessionService.getListByContent(
@@ -581,7 +639,7 @@ public class WatchingSessionServiceTest {
     @DisplayName("watcherNameLike에 %, _가 포함되면 이스케이프되어 Repository에 전달")
     void getListByContent_escapesLikeWildcards() {
         // given
-        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+        mockContentExists(CONTENT_ID);
         when(watchingSessionSnapshotRepository.findByContentIdFirstPageDesc(
             eq(CONTENT_ID), eq("100\\%\\_off"), any(), any()))
             .thenReturn(List.of());

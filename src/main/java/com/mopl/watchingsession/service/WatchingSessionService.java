@@ -14,8 +14,11 @@ import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
@@ -89,7 +92,8 @@ public class WatchingSessionService {
     public CursorResponse<WatchingSessionDto> getListByContent(
         UUID contentId, String watcherNameLike, String cursor, UUID idAfter, int limit, String sortBy, String sortDirection
     ) {
-        validateContentExists(contentId);
+        Content content = contentRepository.findById(contentId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.CONTENT_NOT_FOUND));
         validateSortBy(sortBy);
         validateSortDirection(sortDirection);
         validateCursorPair(cursor, idAfter);
@@ -124,8 +128,19 @@ public class WatchingSessionService {
         boolean hasNext = rows.size() > limit;
         List<WatchingSessionSnapshot> page = hasNext ? rows.subList(0, limit) : rows;
 
+        Map<UUID, User> watchers = userRepository
+            .findAllById(page.stream().map(WatchingSessionSnapshot::getWatcherId).toList())
+            .stream()
+            .collect(Collectors.toMap(User::getId, Function.identity()));
+
         List<WatchingSessionDto> data = page.stream()
-            .map(this::enrich)
+            .map(s -> {
+                User watcher = watchers.get(s.getWatcherId());
+                if (watcher == null) {
+                    throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
+                }
+                return WatchingSessionDto.from(s, watcher, content);
+            })
             .toList();
 
         String nextCursor = null;
