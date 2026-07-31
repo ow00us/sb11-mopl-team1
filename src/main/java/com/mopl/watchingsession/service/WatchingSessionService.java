@@ -2,8 +2,10 @@ package com.mopl.watchingsession.service;
 
 import com.mopl.content.entity.Content;
 import com.mopl.content.repository.ContentRepository;
+import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.util.CursorUtils;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
@@ -11,10 +13,16 @@ import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +34,7 @@ public class WatchingSessionService {
     // Redis presence + heartbeat/TTL이 들어오기 전 쓰는 임시 고정 TTL
     // TODO(심화필수): Redis 쓰기 모델로 옮기면서 heartbeat 기반 갱신으로 대체
     private static final Duration DEFAULT_SESSION_TTL = Duration.ofMinutes(30);
+    private static final String LIKE_ESCAPE_CHAR = "\\";
 
     private final WatchingSessionSnapshotRepository watchingSessionSnapshotRepository;
     private final ContentRepository contentRepository;
@@ -77,6 +86,107 @@ public class WatchingSessionService {
         Content content = contentRepository.findById(snapshot.getContentId())
             .orElseThrow(() -> new BusinessException(ErrorCode.CONTENT_NOT_FOUND));
         return WatchingSessionDto.from(snapshot, watcher, content);
+    }
+
+    // 커서 페이지네이션 조회
+    public CursorResponse<WatchingSessionDto> getListByContent(
+        UUID contentId, String watcherNameLike, String cursor, UUID idAfter, int limit, String sortBy, String sortDirection
+    ) {
+        Content content = contentRepository.findById(contentId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.CONTENT_NOT_FOUND));
+        validateSortBy(sortBy);
+        validateSortDirection(sortDirection);
+        validateCursorPair(cursor, idAfter);
+
+        String escapedWatcherNameLike = escapeLikePattern(watcherNameLike);
+
+        Instant now = Instant.now();
+        boolean ascending = "ASCENDING".equalsIgnoreCase(sortDirection);
+        String normalizedSortDirection = ascending ? "ASCENDING" : "DESCENDING";
+        Pageable pageable = PageRequest.of(0, limit + 1);
+
+        List<WatchingSessionSnapshot> rows;
+        if (cursor == null) {
+            rows = ascending
+                ? watchingSessionSnapshotRepository.findByContentIdFirstPageAsc(
+                    contentId, escapedWatcherNameLike, now, pageable)
+                : watchingSessionSnapshotRepository.findByContentIdFirstPageDesc(
+                    contentId, escapedWatcherNameLike, now, pageable);
+        } else {
+            Instant cursorValue;
+            try {
+                cursorValue = CursorUtils.decodeAsInstant(cursor);
+            } catch (RuntimeException e) {
+                throw new BusinessException(ErrorCode.INVALID_INPUT);
+            }
+            rows = ascending
+                ? watchingSessionSnapshotRepository.findByContentIdAfterAsc(
+                    contentId, escapedWatcherNameLike, now, cursorValue, idAfter, pageable)
+                : watchingSessionSnapshotRepository.findByContentIdAfterDesc(
+                    contentId, escapedWatcherNameLike, now, cursorValue, idAfter, pageable);
+        }
+
+        boolean hasNext = rows.size() > limit;
+        List<WatchingSessionSnapshot> page = hasNext ? rows.subList(0, limit) : rows;
+
+        Map<UUID, User> watchers = userRepository
+            .findAllById(page.stream().map(WatchingSessionSnapshot::getWatcherId).toList())
+            .stream()
+            .collect(Collectors.toMap(User::getId, Function.identity()));
+
+        List<WatchingSessionDto> data = page.stream()
+            .map(s -> {
+                User watcher = watchers.get(s.getWatcherId());
+                if (watcher == null) {
+                    throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
+                }
+                return WatchingSessionDto.from(s, watcher, content);
+            })
+            .toList();
+
+        String nextCursor = null;
+        UUID nextIdAfter = null;
+        if (hasNext && !page.isEmpty()) {
+            WatchingSessionSnapshot last = page.get(page.size() - 1);
+            nextCursor = CursorUtils.encodeInstant(last.getUpdatedAt());
+            nextIdAfter = last.getId();
+        }
+
+        long totalCount = watchingSessionSnapshotRepository.countByContentId(contentId, escapedWatcherNameLike, now);
+
+        return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, totalCount, sortBy, normalizedSortDirection);
+    }
+
+    private void validateSortBy(String sortBy) {
+        if (!"createdAt".equals(sortBy)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+    }
+
+    private void validateCursorPair(String cursor, UUID idAfter) {
+        boolean cursorPresent = cursor != null;
+        boolean idAfterPresent = idAfter != null;
+        if (cursorPresent != idAfterPresent) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+    }
+
+    private void validateSortDirection(String sortDirection) {
+        if (!"ASCENDING".equalsIgnoreCase(sortDirection)
+        && !"DESCENDING".equalsIgnoreCase(sortDirection)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+    }
+
+    // 이스케이프 헬퍼 메서드
+    private String escapeLikePattern(String value) {
+        if (value == null) {
+            return null;
+        }
+        return value
+            .replace(LIKE_ESCAPE_CHAR, LIKE_ESCAPE_CHAR + LIKE_ESCAPE_CHAR)
+            .replace("%", LIKE_ESCAPE_CHAR + "%")
+            .replace("_", LIKE_ESCAPE_CHAR + "_");
     }
 
 }
