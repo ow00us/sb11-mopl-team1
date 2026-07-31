@@ -2,6 +2,7 @@ package com.mopl.playlist.service;
 
 import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentType;
+import com.mopl.content.repository.ContentRepository;
 import com.mopl.global.common.ContentSummary;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
@@ -10,25 +11,27 @@ import com.mopl.global.util.CursorUtils;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
-import com.mopl.content.repository.ContentRepository;
 import com.mopl.playlist.entity.Playlist;
 import com.mopl.playlist.entity.PlaylistContent;
 import com.mopl.playlist.entity.PlaylistSubscription;
 import com.mopl.playlist.repository.PlaylistContentRepository;
 import com.mopl.playlist.repository.PlaylistRepository;
 import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
+import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -224,7 +227,7 @@ public class PlaylistServiceImpl implements PlaylistService {
 
         Map<UUID, ContentSummary> summaryById = contentRepository.findAllWithTagsByIdIn(contentIds)
                 .stream()
-                .collect(java.util.stream.Collectors.toMap(
+                .collect(Collectors.toMap(
                         Content::getId,
                         this::toContentSummary
                 ));
@@ -247,16 +250,16 @@ public class PlaylistServiceImpl implements PlaylistService {
         List<UUID> allContentIds = links.stream().map(PlaylistContent::getContentId).distinct().toList();
         Map<UUID, ContentSummary> summaryById = contentRepository.findAllWithTagsByIdIn(allContentIds)
                 .stream()
-                .collect(java.util.stream.Collectors.toMap(
+                .collect(Collectors.toMap(
                         Content::getId,
                         this::toContentSummary
                 ));
 
-        Map<UUID, List<ContentSummary>> grouped = new java.util.LinkedHashMap<>();
+        Map<UUID, List<ContentSummary>> grouped = new LinkedHashMap<>();
         for (PlaylistContent link : links) {
             ContentSummary summary = summaryById.get(link.getContentId());
             if (summary == null) continue;
-            grouped.computeIfAbsent(link.getPlaylistId(), k -> new java.util.ArrayList<>()).add(summary);
+            grouped.computeIfAbsent(link.getPlaylistId(), k -> new ArrayList<>()).add(summary);
         }
         return grouped;
     }
