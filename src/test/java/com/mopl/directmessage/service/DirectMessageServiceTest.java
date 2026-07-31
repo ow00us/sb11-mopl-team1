@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -502,6 +503,14 @@ class DirectMessageServiceTest {
             )
         ).thenReturn(Optional.of(message));
 
+        when(
+            directMessageRepository.markAsReadIfUnread(
+                eq(message.getId()),
+                eq(CONVERSATION_ID),
+                any(Instant.class)
+            )
+        ).thenReturn(1);
+
         // when
         directMessageService.read(
             USER_ID_2,
@@ -510,7 +519,12 @@ class DirectMessageServiceTest {
         );
 
         // then
-        assertThat(message.getReadAt()).isNotNull();
+        verify(directMessageRepository)
+            .markAsReadIfUnread(
+                eq(message.getId()),
+                eq(CONVERSATION_ID),
+                any(Instant.class)
+            );
     }
 
     @Test
@@ -539,13 +553,19 @@ class DirectMessageServiceTest {
             )
         ).thenReturn(Optional.of(message));
 
+        when(
+            directMessageRepository.markAsReadIfUnread(
+                eq(message.getId()),
+                eq(CONVERSATION_ID),
+                any(Instant.class)
+            )
+        ).thenReturn(1, 0);
+
         directMessageService.read(
             USER_ID_2,
             CONVERSATION_ID,
             message.getId()
         );
-
-        Instant firstReadAt = message.getReadAt();
 
         // when
         directMessageService.read(
@@ -555,8 +575,14 @@ class DirectMessageServiceTest {
         );
 
         // then
-        assertThat(message.getReadAt())
-            .isEqualTo(firstReadAt);
+        verify(
+            directMessageRepository,
+            times(2)
+        ).markAsReadIfUnread(
+            eq(message.getId()),
+            eq(CONVERSATION_ID),
+            any(Instant.class)
+        );
     }
 
     @Test

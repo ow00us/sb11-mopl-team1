@@ -9,6 +9,7 @@ import java.util.UUID;
 import java.util.Optional;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -36,6 +37,23 @@ public interface DirectMessageRepository
     Optional<DirectMessage> findByIdAndConversationId(
         UUID directMessageId,
         UUID conversationId
+    );
+
+    @Modifying(
+        flushAutomatically = true,
+        clearAutomatically = true
+    )
+    @Query("""
+    UPDATE DirectMessage dm
+    SET dm.readAt = :readAt
+    WHERE dm.id = :directMessageId
+      AND dm.conversationId = :conversationId
+      AND dm.readAt IS NULL
+    """)
+    int markAsReadIfUnread(
+        @Param("directMessageId") UUID directMessageId,
+        @Param("conversationId") UUID conversationId,
+        @Param("readAt") Instant readAt
     );
 
     @Query("""

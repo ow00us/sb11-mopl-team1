@@ -373,6 +373,11 @@ public class DirectMessageService {
                 ErrorCode.FORBIDDEN
             );
         }
-        message.markAsRead(Instant.now());
+
+        directMessageRepository.markAsReadIfUnread(
+            directMessageId,
+            conversationId,
+            Instant.now()
+        );
     }
 }
