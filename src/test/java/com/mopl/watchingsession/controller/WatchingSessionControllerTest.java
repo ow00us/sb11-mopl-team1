@@ -1,5 +1,6 @@
 package com.mopl.watchingsession.controller;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
@@ -281,4 +282,20 @@ public class WatchingSessionControllerTest {
                 .param("sortDirection", "DESCENDING"))
             .andExpect(status().isOk());
     }
+
+    @Test
+    @DisplayName("sortDirection이 허용값이 아니면 400을 반환")
+    void getListByContent_fail_invalidSortDirection() throws Exception {
+        when(watchingSessionService.getListByContent(
+            eq(CONTENT_ID), isNull(), isNull(), isNull(), eq(10), eq("createdAt"), eq("WRONG")))
+            .thenThrow(new BusinessException(ErrorCode.INVALID_INPUT));
+
+        mockMvc.perform(get("/api/contents/{contentId}/watching-sessions", CONTENT_ID)
+            .param("limit", "10")
+            .param("sortBy", "createdAt")
+            .param("sortDirection", "WRONG"))
+            .andExpect(status().isBadRequest());
+    }
+
+
 }

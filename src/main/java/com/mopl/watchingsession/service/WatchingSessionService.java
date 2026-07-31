@@ -91,6 +91,7 @@ public class WatchingSessionService {
     ) {
         validateContentExists(contentId);
         validateSortBy(sortBy);
+        validateSortDirection(sortDirection);
         validateCursorPair(cursor, idAfter);
 
         String escapedWatcherNameLike = escapeLikePattern(watcherNameLike);
@@ -145,6 +146,13 @@ public class WatchingSessionService {
         boolean cursorPresent = cursor != null;
         boolean idAfterPresent = idAfter != null;
         if (cursorPresent != idAfterPresent) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+    }
+
+    private void validateSortDirection(String sortDirection) {
+        if (!"ASCENDING".equalsIgnoreCase(sortDirection)
+        && !"DESCENDING".equalsIgnoreCase(sortDirection)) {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
     }

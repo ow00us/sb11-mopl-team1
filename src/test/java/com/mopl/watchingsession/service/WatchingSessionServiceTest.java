@@ -563,6 +563,21 @@ public class WatchingSessionServiceTest {
     }
 
     @Test
+    @DisplayName("sortDirection이 허용값이 아니면 INVALID_INPUT 예외 발생")
+    void getListByContent_fail_invalidSortDirection() {
+        // given
+        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+
+        // when & then
+        assertThatThrownBy(() -> watchingSessionService.getListByContent(
+            CONTENT_ID, null, null, null, 10, "createdAt", "WRONG"
+        ))
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
     @DisplayName("watcherNameLike에 %, _가 포함되면 이스케이프되어 Repository에 전달")
     void getListByContent_escapesLikeWildcards() {
         // given
