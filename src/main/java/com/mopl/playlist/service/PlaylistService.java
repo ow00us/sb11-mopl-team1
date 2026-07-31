@@ -37,4 +37,10 @@ public interface PlaylistService {
 
     /** 플레이리스트 구독을 취소합니다. 구독 정보가 없으면 404 를 발생시킵니다. */
     void unsubscribe(UUID playlistId, UUID subscriberId);
+
+    /** 플레이리스트에 콘텐츠를 추가합니다. 소유자가 아니면 403, 중복이면 무시합니다. */
+    void addContent(UUID playlistId, UUID contentId, UUID requesterId);
+
+    /** 플레이리스트에서 콘텐츠를 삭제합니다. 소유자가 아니면 403, 없으면 404 를 발생시킵니다. */
+    void removeContent(UUID playlistId, UUID contentId, UUID requesterId);
 }

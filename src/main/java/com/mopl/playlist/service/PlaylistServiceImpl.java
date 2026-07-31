@@ -1,5 +1,8 @@
 package com.mopl.playlist.service;
 
+import com.mopl.content.entity.Content;
+import com.mopl.content.entity.ContentType;
+import com.mopl.global.common.ContentSummary;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
@@ -7,17 +10,23 @@ import com.mopl.global.util.CursorUtils;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
+import com.mopl.content.repository.ContentRepository;
 import com.mopl.playlist.entity.Playlist;
+import com.mopl.playlist.entity.PlaylistContent;
 import com.mopl.playlist.entity.PlaylistSubscription;
+import com.mopl.playlist.repository.PlaylistContentRepository;
 import com.mopl.playlist.repository.PlaylistRepository;
-import org.springframework.dao.DataIntegrityViolationException;
 import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -29,9 +38,13 @@ public class PlaylistServiceImpl implements PlaylistService {
     private static final String SORT_UPDATED_AT      = "updatedAt";
     private static final String SORT_SUBSCRIBE_COUNT = "subscriberCount";
     private static final String DIRECTION_ASC        = "ASCENDING";
+    private static final String PG_UNIQUE_VIOLATION_SQLSTATE = "23505";
 
     private final PlaylistRepository playlistRepository;
     private final PlaylistSubscriptionRepository subscriptionRepository;
+    private final PlaylistContentRepository playlistContentRepository;
+    private final ContentRepository contentRepository;
+    private final PlaylistContentSaver playlistContentSaver;
 
     @Override
     @Transactional
@@ -49,7 +62,8 @@ public class PlaylistServiceImpl implements PlaylistService {
         Playlist playlist = findOrThrow(playlistId);
         boolean subscribedByMe = requesterId != null &&
                 subscriptionRepository.existsByPlaylistIdAndSubscriberId(playlistId, requesterId);
-        return PlaylistDto.from(playlist, subscribedByMe);
+        List<ContentSummary> contents = loadContents(playlistId);
+        return PlaylistDto.from(playlist, subscribedByMe, contents);
     }
 
     @Override
@@ -74,14 +88,19 @@ public class PlaylistServiceImpl implements PlaylistService {
             nextIdAfter = last.getId();
         }
 
+        List<UUID> pageIds = page.stream().map(Playlist::getId).toList();
+
         Set<UUID> subscribedIds = Set.of();
-        if (requesterId != null && !page.isEmpty()) {
-            List<UUID> pageIds = page.stream().map(Playlist::getId).toList();
+        if (requesterId != null && !pageIds.isEmpty()) {
             subscribedIds = subscriptionRepository.findSubscribedPlaylistIds(requesterId, pageIds);
         }
         final Set<UUID> finalSubscribedIds = subscribedIds;
+
+        Map<UUID, List<ContentSummary>> contentsByPlaylistId = loadContentsBatch(pageIds);
+
         List<PlaylistDto> data = page.stream()
-                .map(p -> PlaylistDto.from(p, finalSubscribedIds.contains(p.getId())))
+                .map(p -> PlaylistDto.from(p, finalSubscribedIds.contains(p.getId()),
+                        contentsByPlaylistId.getOrDefault(p.getId(), List.of())))
                 .toList();
 
         String ownerIdStr      = ownerIdEqual      != null ? ownerIdEqual.toString()      : null;
@@ -190,5 +209,113 @@ public class PlaylistServiceImpl implements PlaylistService {
             return CursorUtils.encodeLong(last.getSubscriberCount());
         }
         return CursorUtils.encodeInstant(last.getUpdatedAt());
+    }
+
+    private List<ContentSummary> loadContents(UUID playlistId) {
+        List<UUID> contentIds = playlistContentRepository
+                .findAllByPlaylistIdOrderByCreatedAtAsc(playlistId)
+                .stream()
+                .map(PlaylistContent::getContentId)
+                .toList();
+        if (contentIds.isEmpty()) return List.of();
+
+        Map<UUID, ContentSummary> summaryById = contentRepository.findAllById(contentIds)
+                .stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        Content::getId,
+                        this::toContentSummary
+                ));
+
+        return contentIds.stream()
+                .filter(summaryById::containsKey)
+                .map(summaryById::get)
+                .toList();
+    }
+
+    // 페이지 단위 배치 조회로 getList의 N+1을 방지한다.
+    // playlist_contents 1회 + contents(+ 태그 EntityGraph 조인) 1회 = 페이지 크기와 무관하게 상수 쿼리로 완료한다.
+    private Map<UUID, List<ContentSummary>> loadContentsBatch(List<UUID> playlistIds) {
+        if (playlistIds.isEmpty()) return Map.of();
+
+        List<PlaylistContent> links = playlistContentRepository
+                .findAllByPlaylistIdInOrderByPlaylistIdAscCreatedAtAsc(playlistIds);
+        if (links.isEmpty()) return Map.of();
+
+        List<UUID> allContentIds = links.stream().map(PlaylistContent::getContentId).distinct().toList();
+        Map<UUID, ContentSummary> summaryById = contentRepository.findAllWithTagsByIdIn(allContentIds)
+                .stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        Content::getId,
+                        this::toContentSummary
+                ));
+
+        Map<UUID, List<ContentSummary>> grouped = new java.util.LinkedHashMap<>();
+        for (PlaylistContent link : links) {
+            ContentSummary summary = summaryById.get(link.getContentId());
+            if (summary == null) continue;
+            grouped.computeIfAbsent(link.getPlaylistId(), k -> new java.util.ArrayList<>()).add(summary);
+        }
+        return grouped;
+    }
+
+    private ContentSummary toContentSummary(Content content) {
+        return new ContentSummary(
+                content.getId(),
+                toApiType(content.getType()),
+                content.getTitle(),
+                content.getDescription(),
+                content.getThumbnailUrl(),
+                List.copyOf(content.getTags()),
+                content.getAverageRating().doubleValue(),
+                content.getReviewCount().intValue()
+        );
+    }
+
+    private String toApiType(ContentType type) {
+        return switch (type) {
+            case MOVIE     -> "movie";
+            case TV_SERIES -> "tvSeries";
+            case SPORT     -> "sport";
+        };
+    }
+
+    @Override
+    @Transactional
+    public void addContent(UUID playlistId, UUID contentId, UUID requesterId) {
+        Playlist playlist = findOrThrow(playlistId);
+        verifyOwner(playlist, requesterId);
+        if (!contentRepository.existsById(contentId)) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
+        }
+        if (playlistContentRepository.existsByPlaylistIdAndContentId(playlistId, contentId)) {
+            return;
+        }
+        try {
+            playlistContentSaver.save(playlistId, contentId);
+        } catch (DataIntegrityViolationException e) {
+            if (!isDuplicateKeyViolation(e)) {
+                throw e;
+            }
+        }
+    }
+
+    private boolean isDuplicateKeyViolation(DataIntegrityViolationException e) {
+        if (e instanceof DuplicateKeyException) {
+            return true;
+        }
+        Throwable cause = e.getMostSpecificCause();
+        return cause instanceof SQLException sql
+                && PG_UNIQUE_VIOLATION_SQLSTATE.equals(sql.getSQLState());
+    }
+
+    @Override
+    @Transactional
+    public void removeContent(UUID playlistId, UUID contentId, UUID requesterId) {
+        Playlist playlist = findOrThrow(playlistId);
+        verifyOwner(playlist, requesterId);
+        if (!playlistContentRepository.existsByPlaylistIdAndContentId(playlistId, contentId)) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
+        }
+        playlistContentRepository.deleteByPlaylistIdAndContentId(playlistId, contentId);
     }
 }

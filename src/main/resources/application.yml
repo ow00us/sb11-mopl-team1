@@ -17,6 +17,11 @@ management:
       exposure:
         include: health, info, metrics, prometheus
 
+jwt:
+  issuer: mopl
+  secret: ${JWT_SECRET}
+  access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION:30m}
+
 ---
 spring:
   config:
@@ -26,6 +31,9 @@ spring:
     url: jdbc:postgresql://localhost:5432/mopl
     username: mopl
     password: mopl
+    hikari:
+      # REQUIRES_NEW로 부모+자식 트랜잭션이 커넥션 2개를 점유할 수 있어 상한을 명시. 부하 튜닝은 별도 인프라 이슈.
+      maximum-pool-size: 20
   data:
     redis:
       host: localhost
