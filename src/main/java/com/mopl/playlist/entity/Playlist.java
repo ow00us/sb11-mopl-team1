@@ -36,7 +36,16 @@ public class Playlist extends BaseEntity {
         this.description = description;
     }
 
-    /** 제목과 설명을 수정합니다. null 또는 빈 문자열이면 기존 값을 유지합니다. */
+    /**
+     * 제목과 설명을 부분 수정합니다.
+     * {@code null} 또는 빈 문자열/공백만 있는 값은 무시되고 기존값이 유지됩니다.
+     * <p>
+     * 단, title 은 {@code PlaylistUpdateRequest} 의 {@code @Size(max = 255)} 가
+     * 컨트롤러 단에서 먼저 검증되므로 256자 이상 문자열(공백 포함)은
+     * 이 메서드에 도달하기 전에 400 으로 거절됩니다.
+     * <p>
+     * 이 계약은 {@code openapi/mopl-api.yaml} 의 {@code PlaylistUpdateRequest} 스키마와 동기화되어야 합니다.
+     */
     public void update(String title, String description) {
         if (title != null && !title.isBlank()) this.title = title;
         if (description != null && !description.isBlank()) this.description = description;
