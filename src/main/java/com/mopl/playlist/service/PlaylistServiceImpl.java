@@ -2,6 +2,7 @@ package com.mopl.playlist.service;
 
 import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentType;
+import com.mopl.content.repository.ContentRepository;
 import com.mopl.global.common.ContentSummary;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
@@ -10,25 +11,27 @@ import com.mopl.global.util.CursorUtils;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
-import com.mopl.content.repository.ContentRepository;
 import com.mopl.playlist.entity.Playlist;
 import com.mopl.playlist.entity.PlaylistContent;
 import com.mopl.playlist.entity.PlaylistSubscription;
 import com.mopl.playlist.repository.PlaylistContentRepository;
 import com.mopl.playlist.repository.PlaylistRepository;
 import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
+import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -88,15 +91,19 @@ public class PlaylistServiceImpl implements PlaylistService {
             nextIdAfter = last.getId();
         }
 
+        List<UUID> pageIds = page.stream().map(Playlist::getId).toList();
+
         Set<UUID> subscribedIds = Set.of();
-        if (requesterId != null && !page.isEmpty()) {
-            List<UUID> pageIds = page.stream().map(Playlist::getId).toList();
+        if (requesterId != null && !pageIds.isEmpty()) {
             subscribedIds = subscriptionRepository.findSubscribedPlaylistIds(requesterId, pageIds);
         }
         final Set<UUID> finalSubscribedIds = subscribedIds;
+
+        Map<UUID, List<ContentSummary>> contentsByPlaylistId = loadContentsBatch(pageIds);
+
         List<PlaylistDto> data = page.stream()
                 .map(p -> PlaylistDto.from(p, finalSubscribedIds.contains(p.getId()),
-                        loadContents(p.getId())))
+                        contentsByPlaylistId.getOrDefault(p.getId(), List.of())))
                 .toList();
 
         String ownerIdStr      = ownerIdEqual      != null ? ownerIdEqual.toString()      : null;
@@ -142,6 +149,8 @@ public class PlaylistServiceImpl implements PlaylistService {
         } catch (DataIntegrityViolationException e) {
             throw new BusinessException(ErrorCode.SUBSCRIPTION_DUPLICATE);
         }
+        // 엔티티 setter/증감 메서드 대신 원자적 SQL UPDATE 를 사용해
+        // 동시 구독 요청 사이의 lost update 를 방지한다 (unsubscribe 도 동일).
         playlistRepository.incrementSubscriberCount(playlistId);
     }
 
@@ -207,6 +216,9 @@ public class PlaylistServiceImpl implements PlaylistService {
         return CursorUtils.encodeInstant(last.getUpdatedAt());
     }
 
+    // 단건 조회에서도 contents + content_tags 를 EntityGraph 로 한 번에 조회한다.
+    // findAllById 를 사용하면 tags 가 콘텐츠별로 지연 로딩되어 N+1 이 발생하므로
+    // loadContentsBatch 와 동일하게 findAllWithTagsByIdIn 을 사용한다.
     private List<ContentSummary> loadContents(UUID playlistId) {
         List<UUID> contentIds = playlistContentRepository
                 .findAllByPlaylistIdOrderByCreatedAtAsc(playlistId)
@@ -215,9 +227,9 @@ public class PlaylistServiceImpl implements PlaylistService {
                 .toList();
         if (contentIds.isEmpty()) return List.of();
 
-        Map<UUID, ContentSummary> summaryById = contentRepository.findAllById(contentIds)
+        Map<UUID, ContentSummary> summaryById = contentRepository.findAllWithTagsByIdIn(contentIds)
                 .stream()
-                .collect(java.util.stream.Collectors.toMap(
+                .collect(Collectors.toMap(
                         Content::getId,
                         this::toContentSummary
                 ));
@@ -226,6 +238,32 @@ public class PlaylistServiceImpl implements PlaylistService {
                 .filter(summaryById::containsKey)
                 .map(summaryById::get)
                 .toList();
+    }
+
+    // 페이지 단위 배치 조회로 getList의 N+1을 방지한다.
+    // playlist_contents 1회 + contents(+ 태그 EntityGraph 조인) 1회 = 페이지 크기와 무관하게 상수 쿼리로 완료한다.
+    private Map<UUID, List<ContentSummary>> loadContentsBatch(List<UUID> playlistIds) {
+        if (playlistIds.isEmpty()) return Map.of();
+
+        List<PlaylistContent> links = playlistContentRepository
+                .findAllByPlaylistIdInOrderByPlaylistIdAscCreatedAtAsc(playlistIds);
+        if (links.isEmpty()) return Map.of();
+
+        List<UUID> allContentIds = links.stream().map(PlaylistContent::getContentId).distinct().toList();
+        Map<UUID, ContentSummary> summaryById = contentRepository.findAllWithTagsByIdIn(allContentIds)
+                .stream()
+                .collect(Collectors.toMap(
+                        Content::getId,
+                        this::toContentSummary
+                ));
+
+        Map<UUID, List<ContentSummary>> grouped = new LinkedHashMap<>();
+        for (PlaylistContent link : links) {
+            ContentSummary summary = summaryById.get(link.getContentId());
+            if (summary == null) continue;
+            grouped.computeIfAbsent(link.getPlaylistId(), k -> new ArrayList<>()).add(summary);
+        }
+        return grouped;
     }
 
     private ContentSummary toContentSummary(Content content) {
