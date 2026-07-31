@@ -12,5 +12,7 @@ public interface PlaylistContentRepository extends JpaRepository<PlaylistContent
 
     List<PlaylistContent> findAllByPlaylistIdOrderByCreatedAtAsc(UUID playlistId);
 
+    List<PlaylistContent> findAllByPlaylistIdInOrderByPlaylistIdAscCreatedAtAsc(List<UUID> playlistIds);
+
     void deleteByPlaylistIdAndContentId(UUID playlistId, UUID contentId);
 }

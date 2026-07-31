@@ -118,4 +118,38 @@ class PlaylistContentRepositoryTest {
 
         assertThat(playlistContentRepository.existsByPlaylistIdAndContentId(playlist.getId(), CONTENT_ID_1)).isFalse();
     }
+
+    @Test
+    @DisplayName("여러 플레이리스트의 콘텐츠를 한 번에 조회한다 (N+1 방지)")
+    void findAllByPlaylistIdIn_returnsAllContentsGroupedByPlaylist() {
+        Playlist another = playlistRepository.saveAndFlush(
+                Playlist.builder().ownerId(OWNER_ID).title("두번째 플리").description("설명2").build()
+        );
+        playlistContentRepository.saveAndFlush(PlaylistContent.create(playlist.getId(), CONTENT_ID_1));
+        playlistContentRepository.saveAndFlush(PlaylistContent.create(playlist.getId(), CONTENT_ID_2));
+        playlistContentRepository.saveAndFlush(PlaylistContent.create(another.getId(), CONTENT_ID_1));
+        em.clear();
+
+        List<PlaylistContent> results = playlistContentRepository
+                .findAllByPlaylistIdInOrderByPlaylistIdAscCreatedAtAsc(
+                        List.of(playlist.getId(), another.getId()));
+
+        assertThat(results).hasSize(3);
+        assertThat(results.stream().filter(pc -> pc.getPlaylistId().equals(playlist.getId())).toList())
+                .hasSize(2);
+        assertThat(results.stream().filter(pc -> pc.getPlaylistId().equals(another.getId())).toList())
+                .hasSize(1);
+    }
+
+    @Test
+    @DisplayName("빈 playlistId 목록으로 조회 시 빈 리스트를 반환한다")
+    void findAllByPlaylistIdIn_emptyInput_returnsEmpty() {
+        playlistContentRepository.saveAndFlush(PlaylistContent.create(playlist.getId(), CONTENT_ID_1));
+        em.clear();
+
+        List<PlaylistContent> results = playlistContentRepository
+                .findAllByPlaylistIdInOrderByPlaylistIdAscCreatedAtAsc(List.of());
+
+        assertThat(results).isEmpty();
+    }
 }
