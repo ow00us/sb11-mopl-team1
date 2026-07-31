@@ -24,6 +24,7 @@ public enum ErrorCode {
     FOLLOW_DUPLICATE(HttpStatus.CONFLICT, "FOLLOW_409_1", "이미 팔로우한 사용자입니다."),
     REQUEST_CONFLICT(HttpStatus.CONFLICT, "COMMON_409_1", "요청이 다른 처리와 충돌했습니다."),
     EMAIL_DUPLICATE(HttpStatus.CONFLICT, "USER_409_1", "이미 사용 중인 이메일입니다."),
+    DIRECT_MESSAGE_INVALID_STATE(HttpStatus.INTERNAL_SERVER_ERROR, "DM_500_1", "DM 데이터 상태가 올바르지 않습니다."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "COMMON_500_1", "서버 오류가 발생했습니다.");
 
     private final HttpStatus status;
