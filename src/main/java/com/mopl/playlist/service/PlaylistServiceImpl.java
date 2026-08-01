@@ -137,21 +137,16 @@ public class PlaylistServiceImpl implements PlaylistService {
         if (playlist.isOwnedBy(subscriberId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN);
         }
-        if (subscriptionRepository.existsByPlaylistIdAndSubscriberId(playlistId, subscriberId)) {
-            throw new BusinessException(ErrorCode.SUBSCRIPTION_DUPLICATE);
+        // 예외 없는 upsert 로 삽입 시도 (ADR 2 - 204 멱등).
+        // 이미 존재하면 rows=0 이 반환되고 트랜잭션은 abort 되지 않으므로,
+        // 사전 exists 체크나 catch 블록 안에서의 재조회가 필요 없다.
+        int inserted = subscriptionRepository.insertIfAbsent(
+                playlistId.toString(), subscriberId.toString());
+        if (inserted == 1) {
+            // 엔티티 setter/증감 메서드 대신 원자적 SQL UPDATE 로 lost update 를 방지한다.
+            // 신규 삽입 경로에서만 카운터를 증가시켜 중복 요청이 재증가시키지 않도록 한다.
+            playlistRepository.incrementSubscriberCount(playlistId);
         }
-        try {
-            subscriptionRepository.saveAndFlush(
-                    PlaylistSubscription.builder()
-                            .playlistId(playlistId)
-                            .subscriberId(subscriberId)
-                            .build());
-        } catch (DataIntegrityViolationException e) {
-            throw new BusinessException(ErrorCode.SUBSCRIPTION_DUPLICATE);
-        }
-        // 엔티티 setter/증감 메서드 대신 원자적 SQL UPDATE 를 사용해
-        // 동시 구독 요청 사이의 lost update 를 방지한다 (unsubscribe 도 동일).
-        playlistRepository.incrementSubscriberCount(playlistId);
     }
 
     @Override

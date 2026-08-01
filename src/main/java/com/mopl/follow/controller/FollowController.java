@@ -3,6 +3,7 @@ package com.mopl.follow.controller;
 import com.mopl.follow.dto.FollowDto;
 import com.mopl.follow.dto.FollowerCountDto;
 import com.mopl.follow.dto.FollowRequest;
+import com.mopl.follow.service.FollowResult;
 import com.mopl.follow.service.FollowService;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
@@ -26,8 +27,9 @@ public class FollowController {
     @PostMapping
     public ResponseEntity<FollowDto> follow(@Valid @RequestBody FollowRequest request) {
         UUID followerId = resolveUserId();
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(followService.follow(followerId, request.followeeId()));
+        FollowResult result = followService.follow(followerId, request.followeeId());
+        HttpStatus status = result.created() ? HttpStatus.CREATED : HttpStatus.OK;
+        return ResponseEntity.status(status).body(result.dto());
     }
 
     @DeleteMapping("/{followId}")
