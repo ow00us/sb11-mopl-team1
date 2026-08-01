@@ -47,6 +47,16 @@ public class Review extends BaseEntity {
         this.rating = rating;
     }
 
+    public void update(String text, BigDecimal rating) {
+        if (text != null) {
+            this.text = text;
+        }
+        if (rating != null) {
+            validateRating(rating);
+            this.rating = rating;
+        }
+    }
+
     private static void validateRating(BigDecimal rating) {
         boolean inRange = rating != null
                 && rating.compareTo(BigDecimal.ZERO) >= 0
