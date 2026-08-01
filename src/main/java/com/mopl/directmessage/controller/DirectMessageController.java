@@ -10,11 +10,8 @@ import jakarta.validation.constraints.Min;
 import java.security.Principal;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping(
@@ -65,5 +62,21 @@ public class DirectMessageController {
                 ErrorCode.UNAUTHORIZED
             );
         }
+    }
+
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @PostMapping("/{directMessageId}/read")
+    public void read(
+        @PathVariable UUID conversationId,
+        @PathVariable UUID directMessageId,
+        Principal principal
+    ) {
+        UUID requesterId = getRequesterId(principal);
+
+        directMessageService.read(
+            requesterId,
+            conversationId,
+            directMessageId
+        );
     }
 }

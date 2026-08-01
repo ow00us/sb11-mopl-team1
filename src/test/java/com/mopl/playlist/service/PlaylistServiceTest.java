@@ -4,7 +4,6 @@ import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.util.CursorUtils;
-import org.springframework.dao.DataIntegrityViolationException;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
@@ -350,16 +349,16 @@ class PlaylistServiceTest {
     // ── subscribe ─────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("구독 성공 시 saveAndFlush 로 즉시 저장 후 subscriberCount 를 증가시킨다")
+    @DisplayName("구독 성공 시 upsert rows=1 이면 subscriberCount 를 증가시킨다")
     void subscribe_success() {
         Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
         when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
-        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID)).thenReturn(false);
-        when(subscriptionRepository.saveAndFlush(any(PlaylistSubscription.class))).thenReturn(any());
+        when(subscriptionRepository.insertIfAbsent(PLAYLIST_ID.toString(), OTHER_ID.toString()))
+                .thenReturn(1);
 
         playlistService.subscribe(PLAYLIST_ID, OTHER_ID);
 
-        verify(subscriptionRepository).saveAndFlush(any(PlaylistSubscription.class));
+        verify(subscriptionRepository).insertIfAbsent(PLAYLIST_ID.toString(), OTHER_ID.toString());
         verify(playlistRepository).incrementSubscriberCount(PLAYLIST_ID);
     }
 
@@ -377,29 +376,16 @@ class PlaylistServiceTest {
     }
 
     @Test
-    @DisplayName("중복 구독 시도 시 SUBSCRIPTION_DUPLICATE 예외가 발생한다")
-    void subscribe_fail_duplicate() {
+    @DisplayName("중복 구독 시 upsert rows=0, subscriberCount 는 재증가하지 않는다 (ADR 2)")
+    void subscribe_duplicate_noOp() {
         Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
         when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
-        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID)).thenReturn(true);
+        when(subscriptionRepository.insertIfAbsent(PLAYLIST_ID.toString(), OTHER_ID.toString()))
+                .thenReturn(0);
 
-        assertThatThrownBy(() -> playlistService.subscribe(PLAYLIST_ID, OTHER_ID))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.SUBSCRIPTION_DUPLICATE);
-    }
+        playlistService.subscribe(PLAYLIST_ID, OTHER_ID);
 
-    @Test
-    @DisplayName("동시 요청으로 DB 유니크 제약 위반 시 SUBSCRIPTION_DUPLICATE 예외가 발생한다")
-    void subscribe_fail_concurrentDuplicate() {
-        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
-        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
-        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID)).thenReturn(false);
-        when(subscriptionRepository.saveAndFlush(any(PlaylistSubscription.class)))
-                .thenThrow(new DataIntegrityViolationException("uk_playlist_subscriptions_playlist_subscriber"));
-
-        assertThatThrownBy(() -> playlistService.subscribe(PLAYLIST_ID, OTHER_ID))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.SUBSCRIPTION_DUPLICATE);
+        verify(playlistRepository, never()).incrementSubscriberCount(any(UUID.class));
     }
 
     @Test
