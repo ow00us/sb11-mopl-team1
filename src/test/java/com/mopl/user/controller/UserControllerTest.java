@@ -182,7 +182,9 @@ class UserControllerTest {
             .andExpect(jsonPath("$.profileImageUrl")
                 .value("https://example.com/profile.png"))
             .andExpect(jsonPath("$.role").value("USER"))
-            .andExpect(jsonPath("$.locked").value(false));
+            .andExpect(jsonPath("$.locked").value(false))
+            .andExpect(jsonPath("$.password").doesNotExist())
+            .andExpect(jsonPath("$.passwordHash").doesNotExist());
 
         /* users/me
          * 요청자가 path나 body로 전달한 사용자 ID가 아니라
