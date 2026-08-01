@@ -90,7 +90,7 @@ public class WebSocketStompErrorHandler extends StompSubProtocolErrorHandler {
     private BusinessException findBusinessException(Throwable ex) {
         Throwable current = ex;
         int depth = 0;
-        while (current != null & depth++ < 10) {
+        while (current != null && depth++ < 10) {
             if (current instanceof BusinessException be) {
                 return be;
             }
