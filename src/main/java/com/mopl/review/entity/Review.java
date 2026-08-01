@@ -48,11 +48,13 @@ public class Review extends BaseEntity {
     }
 
     public void update(String text, BigDecimal rating) {
+        if (rating != null) {
+            validateRating(rating);
+        }
         if (text != null) {
             this.text = text;
         }
         if (rating != null) {
-            validateRating(rating);
             this.rating = rating;
         }
     }

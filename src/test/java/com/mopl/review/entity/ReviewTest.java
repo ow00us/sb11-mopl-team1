@@ -130,4 +130,18 @@ class ReviewTest {
 
         assertThat(review.getRating()).isEqualByComparingTo("3.0");
     }
+
+    @Test
+    @DisplayName("update 호출 시 text와 유효하지 않은 rating을 함께 전달하면 예외가 발생하고 text도 변경되지 않는다")
+    void update_fail_invalidRating_withText_keepsBothExistingValues() {
+        Review review = review();
+
+        assertThatThrownBy(() -> review.update("새 리뷰", new BigDecimal("1.2")))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(ErrorCode.INVALID_INPUT);
+
+        assertThat(review.getText()).isEqualTo("원래 리뷰");
+        assertThat(review.getRating()).isEqualByComparingTo("3.0");
+    }
 }
