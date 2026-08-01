@@ -439,6 +439,114 @@ class PlaylistServiceTest {
                 .extracting("errorCode").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
     }
 
+    // ── getSubscribers ────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("getSubscribers 는 최근순 결과를 CursorResponse 로 매핑한다 (hasNext=false)")
+    void getSubscribers_firstPage_noNext() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", java.time.Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(java.util.Optional.of(playlist));
+
+        java.time.Instant t1 = java.time.Instant.parse("2026-08-01T10:00:00Z");
+        java.time.Instant t2 = java.time.Instant.parse("2026-08-01T11:00:00Z");
+        UUID subId1 = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID subId2 = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        UUID subscriber1 = UUID.randomUUID();
+        UUID subscriber2 = UUID.randomUUID();
+        PlaylistSubscription s1 = savedSubscriptionWithCreatedAt(subId1, PLAYLIST_ID, subscriber1, t2);
+        PlaylistSubscription s2 = savedSubscriptionWithCreatedAt(subId2, PLAYLIST_ID, subscriber2, t1);
+
+        when(subscriptionRepository.findByPlaylistIdDesc(
+                org.mockito.ArgumentMatchers.eq(PLAYLIST_ID.toString()),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(11)))
+                .thenReturn(List.of(s1, s2));
+        when(subscriptionRepository.countByPlaylistId(PLAYLIST_ID)).thenReturn(2L);
+
+        com.mopl.global.common.CursorResponse<com.mopl.playlist.dto.SubscriberItemDto> result =
+                playlistService.getSubscribers(PLAYLIST_ID, null, null, 10, "subscribedAt", "DESCENDING");
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.data().get(0).subscriptionId()).isEqualTo(subId1);
+        assertThat(result.data().get(0).user().userId()).isEqualTo(subscriber1);
+        assertThat(result.data().get(0).subscribedAt()).isEqualTo(t2);
+        assertThat(result.hasNext()).isFalse();
+        assertThat(result.nextCursor()).isNull();
+        assertThat(result.totalCount()).isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("getSubscribers 는 결과 수가 limit+1 이면 hasNext=true 와 nextCursor 를 설정한다")
+    void getSubscribers_hasNext() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", java.time.Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(java.util.Optional.of(playlist));
+
+        java.time.Instant base = java.time.Instant.parse("2026-08-01T10:00:00Z");
+        PlaylistSubscription s1 = savedSubscriptionWithCreatedAt(
+                UUID.randomUUID(), PLAYLIST_ID, UUID.randomUUID(), base.plusSeconds(30));
+        PlaylistSubscription s2 = savedSubscriptionWithCreatedAt(
+                UUID.randomUUID(), PLAYLIST_ID, UUID.randomUUID(), base.plusSeconds(20));
+        PlaylistSubscription s3 = savedSubscriptionWithCreatedAt(
+                UUID.randomUUID(), PLAYLIST_ID, UUID.randomUUID(), base.plusSeconds(10));
+
+        when(subscriptionRepository.findByPlaylistIdDesc(
+                org.mockito.ArgumentMatchers.eq(PLAYLIST_ID.toString()),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(3)))
+                .thenReturn(List.of(s1, s2, s3));
+        when(subscriptionRepository.countByPlaylistId(PLAYLIST_ID)).thenReturn(5L);
+
+        com.mopl.global.common.CursorResponse<com.mopl.playlist.dto.SubscriberItemDto> result =
+                playlistService.getSubscribers(PLAYLIST_ID, null, null, 2, "subscribedAt", "DESCENDING");
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.hasNext()).isTrue();
+        assertThat(result.nextCursor()).isEqualTo(
+                com.mopl.global.util.CursorUtils.encodeInstant(s2.getCreatedAt()));
+        assertThat(result.nextIdAfter()).isEqualTo(s2.getId());
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 플레이리스트의 구독자 조회 시 RESOURCE_NOT_FOUND 예외가 발생한다")
+    void getSubscribers_fail_notFound() {
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(java.util.Optional.empty());
+
+        assertThatThrownBy(() -> playlistService.getSubscribers(
+                PLAYLIST_ID, null, null, 10, "subscribedAt", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+
+        verifyNoInteractions(subscriptionRepository);
+    }
+
+    @Test
+    @DisplayName("cursor 만 있고 idAfter 가 없으면 INVALID_INPUT 예외가 발생한다")
+    void getSubscribers_fail_cursorWithoutIdAfter() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", java.time.Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(java.util.Optional.of(playlist));
+
+        String validCursor = com.mopl.global.util.CursorUtils.encodeInstant(java.time.Instant.now());
+
+        assertThatThrownBy(() -> playlistService.getSubscribers(
+                PLAYLIST_ID, validCursor, null, 10, "subscribedAt", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
+    @DisplayName("잘못된 cursor 값이면 INVALID_INPUT 예외가 발생한다")
+    void getSubscribers_fail_invalidCursor() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", java.time.Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(java.util.Optional.of(playlist));
+
+        assertThatThrownBy(() -> playlistService.getSubscribers(
+                PLAYLIST_ID, "not-base64!!", UUID.randomUUID(), 10, "subscribedAt", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
     private Playlist savedPlaylist(UUID id, UUID ownerId, String title, String desc, Instant updatedAt) {
@@ -453,6 +561,14 @@ class PlaylistServiceTest {
                 .playlistId(playlistId)
                 .subscriberId(subscriberId)
                 .build();
+    }
+
+    private PlaylistSubscription savedSubscriptionWithCreatedAt(
+            UUID id, UUID playlistId, UUID subscriberId, java.time.Instant createdAt) {
+        PlaylistSubscription sub = savedSubscription(playlistId, subscriberId);
+        ReflectionTestUtils.setField(sub, "id", id);
+        ReflectionTestUtils.setField(sub, "createdAt", createdAt);
+        return sub;
     }
 
     private Content savedContent(UUID id, String title) {

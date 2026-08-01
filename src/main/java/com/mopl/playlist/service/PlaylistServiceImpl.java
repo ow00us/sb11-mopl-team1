@@ -11,6 +11,7 @@ import com.mopl.global.util.CursorUtils;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
+import com.mopl.playlist.dto.SubscriberItemDto;
 import com.mopl.playlist.entity.Playlist;
 import com.mopl.playlist.entity.PlaylistContent;
 import com.mopl.playlist.entity.PlaylistSubscription;
@@ -325,5 +326,13 @@ public class PlaylistServiceImpl implements PlaylistService {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
         }
         playlistContentRepository.deleteByPlaylistIdAndContentId(playlistId, contentId);
+    }
+
+    /** Red 스텁: Green 단계에서 커서 페이지네이션 구현 예정. */
+    @Override
+    public CursorResponse<SubscriberItemDto> getSubscribers(
+            UUID playlistId, String cursor, UUID idAfter,
+            int limit, String sortBy, String sortDirection) {
+        throw new UnsupportedOperationException("Green 단계에서 구현");
     }
 }
