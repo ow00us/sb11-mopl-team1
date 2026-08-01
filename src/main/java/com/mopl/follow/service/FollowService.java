@@ -1,8 +1,10 @@
 package com.mopl.follow.service;
 
 import com.mopl.follow.dto.FollowDto;
+import com.mopl.follow.dto.FollowUserItemDto;
 import com.mopl.follow.entity.Follow;
 import com.mopl.follow.repository.FollowRepository;
+import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.repository.UserRepository;
@@ -62,5 +64,19 @@ public class FollowService {
         return followRepository.findByFollowerIdAndFolloweeId(followerId, followeeId)
                 .map(FollowDto::from)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
+    }
+
+    /** Red 스텁: Green 단계에서 커서 페이지네이션 구현 예정. */
+    public CursorResponse<FollowUserItemDto> getFollowers(
+            UUID followeeId, String cursor, UUID idAfter,
+            int limit, String sortBy, String sortDirection) {
+        throw new UnsupportedOperationException("Green 단계에서 구현");
+    }
+
+    /** Red 스텁: Green 단계에서 커서 페이지네이션 구현 예정. */
+    public CursorResponse<FollowUserItemDto> getFollowings(
+            UUID followerId, String cursor, UUID idAfter,
+            int limit, String sortBy, String sortDirection) {
+        throw new UnsupportedOperationException("Green 단계에서 구현");
     }
 }
