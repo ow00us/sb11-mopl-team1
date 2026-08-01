@@ -5,8 +5,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.exception.ErrorResponse;
 import com.mopl.global.security.JwtProvider;
+import java.io.IOException;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -65,6 +68,9 @@ public class StompAuthIntegrationTest {
     private WebSocketStompClient stompClient;
     private ThreadPoolTaskScheduler taskScheduler;
     private StompSession session;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
@@ -156,17 +162,36 @@ public class StompAuthIntegrationTest {
     }
 
     @Test
-    @DisplayName("Authorization 헤더 없이 CONNECT하면 연결 거부")
-    void connectWithoutToken_connectionRejected() {
+    @DisplayName("Authorization 헤더 없이 CONNECT하면 UNAUTHORIZED ErrorResponse와 함께 연결 거부")
+    void connectWithoutToken_connectionRejected() throws Exception {
         StompHeaders connectHeaders = new StompHeaders();
+        CompletableFuture<ErrorResponse> errorResponseFuture = new CompletableFuture<>();
 
+        StompSessionHandler sessionHandler = new StompSessionHandlerAdapter() {
+            @Override
+            public Type getPayloadType(StompHeaders headers) {
+                return String.class;
+            }
+
+            @Override
+            public void handleFrame(StompHeaders headers, Object payload) {
+                try {
+                    errorResponseFuture.complete(objectMapper.readValue((String) payload, ErrorResponse.class));
+                } catch (IOException e) {
+                    errorResponseFuture.completeExceptionally(e);
+                }
+            }
+        };
         CompletableFuture<StompSession> future = stompClient.connectAsync(
-            wsUrl(), (WebSocketHttpHeaders) null, connectHeaders, new StompSessionHandlerAdapter() {});
+            wsUrl(), (WebSocketHttpHeaders) null, connectHeaders, sessionHandler);
 
         assertThatThrownBy(() -> future.get(5, TimeUnit.SECONDS))
             .isInstanceOf(ExecutionException.class)
             .cause()
             .isInstanceOf(ConnectionLostException.class);
+
+        ErrorResponse errorResponse = errorResponseFuture.get(5, TimeUnit.SECONDS);
+        assertThat(errorResponse.errorCode()).isEqualTo(ErrorCode.UNAUTHORIZED.getCode());
     }
 
     @Test
@@ -179,14 +204,20 @@ public class StompAuthIntegrationTest {
         StompHeaders connectHeaders = new StompHeaders();
         connectHeaders.add("Authorization", "Bearer " + token);
 
-        CompletableFuture<String> errorPayloadFuture = new CompletableFuture<>();
+        CompletableFuture<ErrorResponse> errorResponseFuture = new CompletableFuture<>();
 
         StompSessionHandler sessionHandler = new StompSessionHandlerAdapter() {
             @Override
-            public void handleException(StompSession session, @Nullable StompCommand command,
-                StompHeaders headers, byte[] payload, Throwable exception) {
-                if (StompCommand.ERROR.equals(command)) {
-                    errorPayloadFuture.complete(new String(payload, StandardCharsets.UTF_8));
+            public Type getPayloadType(StompHeaders headers) {
+                return String.class;
+            }
+
+            @Override
+            public void handleFrame(StompHeaders headers, Object payload) {
+                try {
+                    errorResponseFuture.complete(objectMapper.readValue((String) payload, ErrorResponse.class));
+                } catch (IOException e) {
+                    errorResponseFuture.completeExceptionally(e);
                 }
             }
         };
@@ -201,10 +232,8 @@ public class StompAuthIntegrationTest {
             .cause()
             .isInstanceOf(ConnectionLostException.class);
 
-        // 에러 핸들러가 가로챈 JSON 페이로드 검증
-        String errorPayload = errorPayloadFuture.get(5, TimeUnit.SECONDS);
-        // 에러 코드 값 검증
-        assertThat(errorPayload).contains("\"errorCode\":\"" + ErrorCode.UNAUTHORIZED.getCode() + "\"");
+        ErrorResponse errorResponse = errorResponseFuture.get(5, TimeUnit.SECONDS);
+        assertThat(errorResponse.errorCode()).isEqualTo(ErrorCode.UNAUTHORIZED.getCode());
     }
 
     private String wsUrl() {

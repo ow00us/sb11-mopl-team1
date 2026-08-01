@@ -52,7 +52,6 @@ public class WebSocketStompErrorHandler extends StompSubProtocolErrorHandler {
 
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.ERROR);
         accessor.setMessage(message);
-        accessor.setNativeHeader("content-type", "application/json");
         accessor.setLeaveMutable(true);
 
         StompHeaderAccessor clientHeaderAccessor = MessageHeaderAccessor.getAccessor(
