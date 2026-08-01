@@ -7,7 +7,6 @@ import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,27 +28,13 @@ public class FollowService {
         if (!userRepository.existsById(followeeId)) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
         }
-        // 사전 중복 체크: 이미 팔로우 중이면 기존 관계를 그대로 반환 (ADR 2 - 200)
-        if (followRepository.existsByFollowerIdAndFolloweeId(followerId, followeeId)) {
-            return existingResult(followerId, followeeId);
-        }
-        try {
-            Follow follow = followRepository.saveAndFlush(
-                    Follow.builder().followerId(followerId).followeeId(followeeId).build());
-            return new FollowResult(FollowDto.from(follow), true);
-        } catch (DataIntegrityViolationException e) {
-            // 사전 체크와 저장 사이의 동시 팔로우 요청으로 유니크 제약 위반 시,
-            // 이미 존재하는 관계로 간주하고 조회 후 기존 값을 반환한다.
-            return followRepository.findByFollowerIdAndFolloweeId(followerId, followeeId)
-                    .map(existing -> new FollowResult(FollowDto.from(existing), false))
-                    .orElseThrow(() -> e);
-        }
-    }
 
-    private FollowResult existingResult(UUID followerId, UUID followeeId) {
-        Follow existing = followRepository.findByFollowerIdAndFolloweeId(followerId, followeeId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
-        return new FollowResult(FollowDto.from(existing), false);
+        // 예외 없는 upsert 로 삽입 시도. 이미 존재하면 rows=0 이 반환되고
+        // 트랜잭션은 그대로 유지되어 후속 조회가 안전하다.
+        int inserted = followRepository.insertIfAbsent(followerId.toString(), followeeId.toString());
+        Follow follow = followRepository.findByFollowerIdAndFolloweeId(followerId, followeeId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_ERROR));
+        return new FollowResult(FollowDto.from(follow), inserted == 1);
     }
 
     @Transactional

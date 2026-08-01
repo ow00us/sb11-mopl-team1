@@ -12,7 +12,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Optional;
@@ -37,15 +36,14 @@ class FollowServiceTest {
     // ── follow ────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("신규 팔로우 성공 시 created=true 와 FollowDto 를 반환한다")
+    @DisplayName("신규 팔로우 성공 시 created=true 와 FollowDto 를 반환한다 (upsert rows=1)")
     void follow_success_new() {
+        Follow saved = savedFollow(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID);
         when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
-        when(followRepository.existsByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID)).thenReturn(false);
-        when(followRepository.saveAndFlush(any(Follow.class))).thenAnswer(inv -> {
-            Follow f = inv.getArgument(0);
-            ReflectionTestUtils.setField(f, "id", FOLLOW_ID);
-            return f;
-        });
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(1);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.of(saved));
 
         FollowResult result = followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
 
@@ -78,30 +76,12 @@ class FollowServiceTest {
     }
 
     @Test
-    @DisplayName("중복 팔로우 시 예외 대신 created=false 와 기존 FollowDto 를 반환한다 (ADR 2)")
+    @DisplayName("중복 팔로우 시 upsert rows=0, created=false 와 기존 FollowDto 를 반환한다 (ADR 2)")
     void follow_duplicate_returnsExistingWithCreatedFalse() {
         Follow existing = savedFollow(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID);
         when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
-        when(followRepository.existsByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID)).thenReturn(true);
-        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
-                .thenReturn(Optional.of(existing));
-
-        FollowResult result = followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
-
-        assertThat(result.created()).isFalse();
-        assertThat(result.dto().id()).isEqualTo(FOLLOW_ID);
-        verify(followRepository, never()).saveAndFlush(any(Follow.class));
-    }
-
-    @Test
-    @DisplayName("동시 요청으로 DB 유니크 제약 위반 시 예외 대신 created=false 와 기존 FollowDto 를 반환한다 (ADR 2)")
-    void follow_concurrentDuplicate_returnsExistingWithCreatedFalse() {
-        Follow existing = savedFollow(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID);
-        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
-        when(followRepository.existsByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
-                .thenReturn(false);  // 사전 중복 체크
-        when(followRepository.saveAndFlush(any(Follow.class)))
-                .thenThrow(new DataIntegrityViolationException("uk_follows_follower_followee"));
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(0);
         when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
                 .thenReturn(Optional.of(existing));
 
