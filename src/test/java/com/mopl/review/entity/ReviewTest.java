@@ -75,4 +75,59 @@ class ReviewTest {
 
         assertThat(review.getRating()).isEqualByComparingTo(boundaryRating);
     }
+
+    private Review review() {
+        return Review.builder()
+                .authorId(UUID.randomUUID())
+                .contentId(UUID.randomUUID())
+                .text("원래 리뷰")
+                .rating(new BigDecimal("3.0"))
+                .build();
+    }
+
+    @Test
+    @DisplayName("update 호출 시 null이 아닌 필드만 변경된다")
+    void update_onlyNonNullFieldsChanged() {
+        Review review = review();
+
+        review.update("새 리뷰", null);
+
+        assertThat(review.getText()).isEqualTo("새 리뷰");
+        assertThat(review.getRating()).isEqualByComparingTo("3.0");
+    }
+
+    @Test
+    @DisplayName("update 호출 시 text/rating이 모두 null이면 기존 값이 유지된다")
+    void update_allNull_keepsExistingValues() {
+        Review review = review();
+
+        review.update(null, null);
+
+        assertThat(review.getText()).isEqualTo("원래 리뷰");
+        assertThat(review.getRating()).isEqualByComparingTo("3.0");
+    }
+
+    @Test
+    @DisplayName("update 호출 시 text와 rating이 모두 non-null이면 둘 다 변경된다")
+    void update_bothNonNull_bothChanged() {
+        Review review = review();
+
+        review.update("새 리뷰", new BigDecimal("4.5"));
+
+        assertThat(review.getText()).isEqualTo("새 리뷰");
+        assertThat(review.getRating()).isEqualByComparingTo("4.5");
+    }
+
+    @Test
+    @DisplayName("update 호출 시 유효하지 않은 rating이면 재검증에서 예외가 발생하고 기존 값이 유지된다")
+    void update_fail_invalidRating_keepsExistingValue() {
+        Review review = review();
+
+        assertThatThrownBy(() -> review.update(null, new BigDecimal("1.2")))
+                .isInstanceOf(BusinessException.class)
+                .extracting(exception -> ((BusinessException) exception).getErrorCode())
+                .isEqualTo(ErrorCode.INVALID_INPUT);
+
+        assertThat(review.getRating()).isEqualByComparingTo("3.0");
+    }
 }

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import java.math.BigDecimal;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -116,6 +117,48 @@ class ContentTest {
         String result = Content.normalize(exactly100);
 
         assertThat(result).hasSize(100);
+    }
+
+    @Test
+    @DisplayName("updateReviewAggregate 호출 시 averageRating/reviewCount가 반영된다")
+    void updateReviewAggregate_updatesFields() {
+        Content content = movie();
+
+        content.updateReviewAggregate(new BigDecimal("4.3"), 7L);
+
+        assertThat(content.getAverageRating()).isEqualByComparingTo("4.3");
+        assertThat(content.getReviewCount()).isEqualTo(7L);
+    }
+
+    @Test
+    @DisplayName("updateReviewAggregate 호출 시 averageRating이 null이면 0.0으로 처리된다")
+    void updateReviewAggregate_nullAverageRating_defaultsToZero() {
+        Content content = movie();
+
+        content.updateReviewAggregate(null, 0L);
+
+        assertThat(content.getAverageRating()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(content.getReviewCount()).isEqualTo(0L);
+    }
+
+    @Test
+    @DisplayName("updateReviewAggregate 호출 시 소수 둘째 자리 이하 평균은 첫째 자리로 반올림된다")
+    void updateReviewAggregate_roundsToOneDecimalPlace() {
+        Content content = movie();
+
+        content.updateReviewAggregate(new BigDecimal("4.166666666666667"), 3L);
+
+        assertThat(content.getAverageRating()).isEqualByComparingTo("4.2");
+    }
+
+    @Test
+    @DisplayName("updateReviewAggregate 호출 시 반올림 경계값(x.x5)은 HALF_UP으로 올림된다")
+    void updateReviewAggregate_halfUpBoundary_roundsUp() {
+        Content content = movie();
+
+        content.updateReviewAggregate(new BigDecimal("4.25"), 4L);
+
+        assertThat(content.getAverageRating()).isEqualByComparingTo("4.3");
     }
 
     @Test
