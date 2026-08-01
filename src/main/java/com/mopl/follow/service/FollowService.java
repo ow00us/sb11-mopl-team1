@@ -22,7 +22,7 @@ public class FollowService {
     private final UserRepository userRepository;
 
     @Transactional
-    public FollowDto follow(UUID followerId, UUID followeeId) {
+    public FollowResult follow(UUID followerId, UUID followeeId) {
         if (followerId.equals(followeeId)) {
             throw new BusinessException(ErrorCode.FOLLOW_SELF);
         }
@@ -35,7 +35,7 @@ public class FollowService {
         try {
             Follow follow = followRepository.saveAndFlush(
                     Follow.builder().followerId(followerId).followeeId(followeeId).build());
-            return FollowDto.from(follow);
+            return new FollowResult(FollowDto.from(follow), true);
         } catch (DataIntegrityViolationException e) {
             if (followRepository.existsByFollowerIdAndFolloweeId(followerId, followeeId)) {
                 throw new BusinessException(ErrorCode.FOLLOW_DUPLICATE);

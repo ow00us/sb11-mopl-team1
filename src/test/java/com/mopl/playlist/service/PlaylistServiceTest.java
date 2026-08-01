@@ -377,29 +377,32 @@ class PlaylistServiceTest {
     }
 
     @Test
-    @DisplayName("중복 구독 시도 시 SUBSCRIPTION_DUPLICATE 예외가 발생한다")
-    void subscribe_fail_duplicate() {
+    @DisplayName("중복 구독 시도 시 예외 없이 조용히 성공하고 subscriberCount 는 재증가하지 않는다 (ADR 2)")
+    void subscribe_duplicate_noOp() {
         Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
         when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
         when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID)).thenReturn(true);
 
-        assertThatThrownBy(() -> playlistService.subscribe(PLAYLIST_ID, OTHER_ID))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.SUBSCRIPTION_DUPLICATE);
+        playlistService.subscribe(PLAYLIST_ID, OTHER_ID);
+
+        verify(subscriptionRepository, never()).saveAndFlush(any(PlaylistSubscription.class));
+        verify(playlistRepository, never()).incrementSubscriberCount(any(UUID.class));
     }
 
     @Test
-    @DisplayName("동시 요청으로 DB 유니크 제약 위반 시 SUBSCRIPTION_DUPLICATE 예외가 발생한다")
-    void subscribe_fail_concurrentDuplicate() {
+    @DisplayName("동시 요청으로 DB 유니크 제약 위반 시 예외 없이 조용히 성공한다 (ADR 2)")
+    void subscribe_concurrentDuplicate_noOp() {
         Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
         when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
-        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID)).thenReturn(false);
+        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
+                .thenReturn(false)  // 사전 중복 체크
+                .thenReturn(true);  // catch 블록 내 재확인
         when(subscriptionRepository.saveAndFlush(any(PlaylistSubscription.class)))
                 .thenThrow(new DataIntegrityViolationException("uk_playlist_subscriptions_playlist_subscriber"));
 
-        assertThatThrownBy(() -> playlistService.subscribe(PLAYLIST_ID, OTHER_ID))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.SUBSCRIPTION_DUPLICATE);
+        playlistService.subscribe(PLAYLIST_ID, OTHER_ID);
+
+        verify(playlistRepository, never()).incrementSubscriberCount(any(UUID.class));
     }
 
     @Test

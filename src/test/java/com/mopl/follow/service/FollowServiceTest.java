@@ -37,8 +37,8 @@ class FollowServiceTest {
     // ── follow ────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("팔로우 성공 시 FollowDto 를 반환한다")
-    void follow_success() {
+    @DisplayName("신규 팔로우 성공 시 created=true 와 FollowDto 를 반환한다")
+    void follow_success_new() {
         when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
         when(followRepository.existsByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID)).thenReturn(false);
         when(followRepository.saveAndFlush(any(Follow.class))).thenAnswer(inv -> {
@@ -47,11 +47,12 @@ class FollowServiceTest {
             return f;
         });
 
-        FollowDto result = followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
+        FollowResult result = followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
 
-        assertThat(result.id()).isEqualTo(FOLLOW_ID);
-        assertThat(result.followerId()).isEqualTo(FOLLOWER_ID);
-        assertThat(result.followeeId()).isEqualTo(FOLLOWEE_ID);
+        assertThat(result.created()).isTrue();
+        assertThat(result.dto().id()).isEqualTo(FOLLOW_ID);
+        assertThat(result.dto().followerId()).isEqualTo(FOLLOWER_ID);
+        assertThat(result.dto().followeeId()).isEqualTo(FOLLOWEE_ID);
     }
 
     @Test
@@ -77,29 +78,37 @@ class FollowServiceTest {
     }
 
     @Test
-    @DisplayName("중복 팔로우 시 FOLLOW_DUPLICATE 예외가 발생한다")
-    void follow_fail_duplicate() {
+    @DisplayName("중복 팔로우 시 예외 대신 created=false 와 기존 FollowDto 를 반환한다 (ADR 2)")
+    void follow_duplicate_returnsExistingWithCreatedFalse() {
+        Follow existing = savedFollow(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID);
         when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
         when(followRepository.existsByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID)).thenReturn(true);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.of(existing));
 
-        assertThatThrownBy(() -> followService.follow(FOLLOWER_ID, FOLLOWEE_ID))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.FOLLOW_DUPLICATE);
+        FollowResult result = followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
+
+        assertThat(result.created()).isFalse();
+        assertThat(result.dto().id()).isEqualTo(FOLLOW_ID);
+        verify(followRepository, never()).saveAndFlush(any(Follow.class));
     }
 
     @Test
-    @DisplayName("동시 요청으로 DB 유니크 제약 위반 시 FOLLOW_DUPLICATE 예외가 발생한다")
-    void follow_fail_concurrentDuplicate() {
+    @DisplayName("동시 요청으로 DB 유니크 제약 위반 시 예외 대신 created=false 와 기존 FollowDto 를 반환한다 (ADR 2)")
+    void follow_concurrentDuplicate_returnsExistingWithCreatedFalse() {
+        Follow existing = savedFollow(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID);
         when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
         when(followRepository.existsByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
-                .thenReturn(false)  // 사전 중복 체크
-                .thenReturn(true);  // catch 블록 내 재확인
+                .thenReturn(false);  // 사전 중복 체크
         when(followRepository.saveAndFlush(any(Follow.class)))
                 .thenThrow(new DataIntegrityViolationException("uk_follows_follower_followee"));
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.of(existing));
 
-        assertThatThrownBy(() -> followService.follow(FOLLOWER_ID, FOLLOWEE_ID))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.FOLLOW_DUPLICATE);
+        FollowResult result = followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
+
+        assertThat(result.created()).isFalse();
+        assertThat(result.dto().id()).isEqualTo(FOLLOW_ID);
     }
 
     // ── unfollow ──────────────────────────────────────────────────────────────
