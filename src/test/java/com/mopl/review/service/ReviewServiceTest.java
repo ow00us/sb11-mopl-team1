@@ -28,6 +28,7 @@ import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -39,6 +40,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -114,19 +116,48 @@ class ReviewServiceTest {
     }
 
     @Test
-    @DisplayName("사전 체크를 통과했지만 DB 제약 위반이 나면 REVIEW_DUPLICATE 예외로 변환한다")
+    @DisplayName("사전 체크를 통과했지만 DB unique_violation(23505)이 나면 REVIEW_DUPLICATE 예외로 변환한다")
     void create_fail_duplicate_dbConstraint() {
         ReviewCreateRequest request = new ReviewCreateRequest(CONTENT_ID, "text", new BigDecimal("3.0"));
         when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(movie()));
         when(reviewRepository.existsByAuthorIdAndContentId(AUTHOR_ID, CONTENT_ID)).thenReturn(false);
+        SQLException uniqueViolation = new SQLException("dup", "23505");
         when(reviewRepository.saveAndFlush(any(Review.class)))
-                .thenThrow(new DataIntegrityViolationException("duplicate"));
+                .thenThrow(new DataIntegrityViolationException("dup", uniqueViolation));
 
         assertThatThrownBy(() -> reviewService.create(request, AUTHOR_ID))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.REVIEW_DUPLICATE);
 
         verify(reviewRepository, never()).aggregateByContentId(any());
+    }
+
+    @Test
+    @DisplayName("Spring DuplicateKeyException이 나도 REVIEW_DUPLICATE 예외로 변환한다")
+    void create_fail_duplicate_springDuplicateKeyException() {
+        ReviewCreateRequest request = new ReviewCreateRequest(CONTENT_ID, "text", new BigDecimal("3.0"));
+        when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(movie()));
+        when(reviewRepository.existsByAuthorIdAndContentId(AUTHOR_ID, CONTENT_ID)).thenReturn(false);
+        when(reviewRepository.saveAndFlush(any(Review.class)))
+                .thenThrow(new DuplicateKeyException("dup"));
+
+        assertThatThrownBy(() -> reviewService.create(request, AUTHOR_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.REVIEW_DUPLICATE);
+    }
+
+    @Test
+    @DisplayName("중복이 아닌 제약 위반(CHECK 등)은 REVIEW_DUPLICATE로 변환하지 않고 원본 예외를 그대로 전파한다")
+    void create_fail_nonDuplicateConstraintViolation_propagatesOriginalException() {
+        ReviewCreateRequest request = new ReviewCreateRequest(CONTENT_ID, "text", new BigDecimal("3.0"));
+        when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(movie()));
+        when(reviewRepository.existsByAuthorIdAndContentId(AUTHOR_ID, CONTENT_ID)).thenReturn(false);
+        SQLException checkViolation = new SQLException("check", "23514");
+        when(reviewRepository.saveAndFlush(any(Review.class)))
+                .thenThrow(new DataIntegrityViolationException("check", checkViolation));
+
+        assertThatThrownBy(() -> reviewService.create(request, AUTHOR_ID))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test

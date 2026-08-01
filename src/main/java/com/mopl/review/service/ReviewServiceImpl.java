@@ -14,6 +14,7 @@ import com.mopl.review.repository.ReviewRepository;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.time.DateTimeException;
 import java.time.Instant;
 import java.util.List;
@@ -22,6 +23,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,6 +36,7 @@ public class ReviewServiceImpl implements ReviewService {
     private static final String SORT_RATING = "rating";
     private static final String DIRECTION_ASC = "ASCENDING";
     private static final String DIRECTION_DESC = "DESCENDING";
+    private static final String PG_UNIQUE_VIOLATION_SQLSTATE = "23505";
 
     private final ReviewRepository reviewRepository;
     private final ContentRepository contentRepository;
@@ -59,7 +62,10 @@ public class ReviewServiceImpl implements ReviewService {
         try {
             reviewRepository.saveAndFlush(review);
         } catch (DataIntegrityViolationException e) {
-            throw new BusinessException(ErrorCode.REVIEW_DUPLICATE);
+            if (isDuplicateKeyViolation(e)) {
+                throw new BusinessException(ErrorCode.REVIEW_DUPLICATE);
+            }
+            throw e;
         }
 
         refreshContentAggregate(request.contentId());
@@ -139,6 +145,15 @@ public class ReviewServiceImpl implements ReviewService {
         if (!review.getAuthorId().equals(requesterId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN);
         }
+    }
+
+    private boolean isDuplicateKeyViolation(DataIntegrityViolationException e) {
+        if (e instanceof DuplicateKeyException) {
+            return true;
+        }
+        Throwable cause = e.getMostSpecificCause();
+        return cause instanceof SQLException sql
+                && PG_UNIQUE_VIOLATION_SQLSTATE.equals(sql.getSQLState());
     }
 
     // 리뷰 변경사항이 이미 flush 되어 있어야 이 집계 쿼리(네이티브)에 반영된다.
