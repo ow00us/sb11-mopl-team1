@@ -24,6 +24,8 @@ public enum ErrorCode {
     FOLLOW_DUPLICATE(HttpStatus.CONFLICT, "FOLLOW_409_1", "이미 팔로우한 사용자입니다."),
     REQUEST_CONFLICT(HttpStatus.CONFLICT, "COMMON_409_1", "요청이 다른 처리와 충돌했습니다."),
     EMAIL_DUPLICATE(HttpStatus.CONFLICT, "USER_409_1", "이미 사용 중인 이메일입니다."),
+    REVIEW_NOT_FOUND(HttpStatus.NOT_FOUND, "REVIEW_404_1", "존재하지 않는 리뷰입니다."),
+    REVIEW_DUPLICATE(HttpStatus.CONFLICT, "REVIEW_409_1", "이미 작성한 리뷰가 존재합니다."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "COMMON_500_1", "서버 오류가 발생했습니다.");
 
     private final HttpStatus status;
