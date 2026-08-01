@@ -12,6 +12,7 @@ import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
 import com.mopl.playlist.dto.SubscriberItemDto;
+import com.mopl.global.common.UserSummary;
 import com.mopl.playlist.entity.Playlist;
 import com.mopl.playlist.entity.PlaylistContent;
 import com.mopl.playlist.entity.PlaylistSubscription;
@@ -328,11 +329,50 @@ public class PlaylistServiceImpl implements PlaylistService {
         playlistContentRepository.deleteByPlaylistIdAndContentId(playlistId, contentId);
     }
 
-    /** Red 스텁: Green 단계에서 커서 페이지네이션 구현 예정. */
     @Override
     public CursorResponse<SubscriberItemDto> getSubscribers(
             UUID playlistId, String cursor, UUID idAfter,
             int limit, String sortBy, String sortDirection) {
-        throw new UnsupportedOperationException("Green 단계에서 구현");
+        // 존재하지 않는 플레이리스트는 404 (다른 목록 API 와 달리 리소스 소속 개념이 강해 사전 검증한다)
+        findOrThrow(playlistId);
+
+        if ((cursor != null) != (idAfter != null)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        Instant cursorTime;
+        try {
+            cursorTime = (cursor != null) ? CursorUtils.decodeAsInstant(cursor) : null;
+        } catch (IllegalArgumentException | java.time.format.DateTimeParseException e) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        int fetchSize = limit + 1;
+        List<PlaylistSubscription> rows = subscriptionRepository.findByPlaylistIdDesc(
+                playlistId.toString(),
+                cursorTime,
+                idAfter != null ? idAfter.toString() : null,
+                fetchSize);
+
+        boolean hasNext = rows.size() == fetchSize;
+        List<PlaylistSubscription> page = hasNext ? rows.subList(0, limit) : rows;
+
+        String nextCursor  = null;
+        UUID   nextIdAfter = null;
+        if (hasNext && !page.isEmpty()) {
+            PlaylistSubscription last = page.get(page.size() - 1);
+            nextCursor  = CursorUtils.encodeInstant(last.getCreatedAt());
+            nextIdAfter = last.getId();
+        }
+
+        List<SubscriberItemDto> data = page.stream()
+                .map(s -> new SubscriberItemDto(
+                        s.getId(),
+                        new UserSummary(s.getSubscriberId(), null, null),
+                        s.getCreatedAt()))
+                .toList();
+
+        long total = subscriptionRepository.countByPlaylistId(playlistId);
+        return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, total, sortBy, sortDirection);
     }
 }
