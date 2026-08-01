@@ -1,5 +1,6 @@
 package com.mopl.directmessage.controller;
 
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -114,7 +115,7 @@ class ConversationControllerTest {
             )
             .andExpect(
                 jsonPath("$.latestMessage")
-                    .doesNotExist()
+                    .value(nullValue())
             )
             .andExpect(
                 jsonPath("$.hasUnread")
