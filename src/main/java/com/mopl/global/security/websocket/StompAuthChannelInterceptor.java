@@ -30,13 +30,18 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
+        if (!StompCommand.CONNECT.equals(StompHeaderAccessor.wrap(message).getCommand())) {
+            return message;
+        }
+
         StompHeaderAccessor accessor =
             MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
 
-        if (accessor != null && StompCommand.CONNECT.equals(accessor.getCommand())) {
-            accessor.setUser(authenticate(accessor));
+        if (accessor == null) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "WebSocket 인증 처리에 실패했습니다.");
         }
 
+        accessor.setUser(authenticate(accessor));
         return message;
     }
 

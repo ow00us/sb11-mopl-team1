@@ -13,21 +13,28 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import org.jspecify.annotations.Nullable;
+import org.springframework.lang.Nullable;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.messaging.converter.StringMessageConverter;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.simp.stomp.ConnectionLostException;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
 import org.springframework.messaging.simp.stomp.StompHeaders;
 import org.springframework.messaging.simp.stomp.StompSession;
+import org.springframework.messaging.simp.stomp.StompSession.Subscription;
 import org.springframework.messaging.simp.stomp.StompSessionHandler;
 import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
+import org.springframework.scheduling.TaskScheduler;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -37,9 +44,18 @@ import org.springframework.web.socket.messaging.WebSocketStompClient;
 import org.springframework.web.socket.sockjs.client.SockJsClient;
 import org.springframework.web.socket.sockjs.client.Transport;
 import org.springframework.web.socket.sockjs.client.WebSocketTransport;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
+@Testcontainers
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
 public class StompAuthIntegrationTest {
+
+    @Container
+    @ServiceConnection
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
+
 
     @LocalServerPort
     private int port;
@@ -48,15 +64,38 @@ public class StompAuthIntegrationTest {
     private JwtProvider jwtProvider;
 
     private WebSocketStompClient stompClient;
+    private StompSession session;
+
+    @Autowired
+    private SimpMessagingTemplate messagingTemplate;
 
     @BeforeEach
     void setUp() {
         stompClient = new WebSocketStompClient(new StandardWebSocketClient());
         stompClient.setMessageConverter(new StringMessageConverter());
+        stompClient.setTaskScheduler(taskScheduler());
+    }
+
+    private TaskScheduler taskScheduler() {
+        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setPoolSize(1);
+        scheduler.setThreadNamePrefix("stomp-test-client-");
+        scheduler.initialize();
+        return scheduler;
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (session != null && session.isConnected()) {
+            session.disconnect();
+        }
+        if (stompClient != null) {
+            stompClient.stop();
+        }
     }
 
     @Test
-    @DisplayName("유효한 토큰으로 CONNECT하면 세션이 수립, 구독 가능해짐")
+    @DisplayName("유효한 토큰으로 CONNECT하면 세션이 수립, 구독한 메시지를 수신함")
     void connectWithValidToken_thenSubscribeSucceeds() throws Exception {
         String token = "valid-token";
         Authentication authentication = UsernamePasswordAuthenticationToken.authenticated(
@@ -67,15 +106,16 @@ public class StompAuthIntegrationTest {
         StompHeaders connectHeaders = new StompHeaders();
         connectHeaders.add("Authorization", "Bearer " + token);
 
-        StompSession session = stompClient
+        session = stompClient
             .connectAsync(wsUrl(), (WebSocketHttpHeaders) null, connectHeaders, new StompSessionHandlerAdapter() {})
             .get(5, TimeUnit.SECONDS);
 
         assertThat(session.isConnected()).isTrue();
 
+        String destination = "/sub/contents/00000000-0000-0000-0000-000000000000/chat";
         CompletableFuture<String> received = new CompletableFuture<>();
-        session.subscribe("/sub/contents/00000000-0000-0000-0000-000000000000/chat",
-            new StompFrameHandler() {
+
+        session.subscribe(destination, new StompFrameHandler() {
                 @Override
                 public Type getPayloadType(StompHeaders headers) {
                     return String.class;
@@ -87,8 +127,14 @@ public class StompAuthIntegrationTest {
                 }
             });
 
-        // 구독 자체가 예외 없이 이루어지는지만 확인
-        assertThat(session.isConnected()).isTrue();
+        // 등록될 때까지 짧은 간격으로 재발행하며 첫 수신 대기
+        long deadline = System.currentTimeMillis() + 5000;
+        while (!received.isDone() && System.currentTimeMillis() < deadline) {
+            messagingTemplate.convertAndSend(destination, "hello");
+            Thread.sleep(100);
+        }
+
+        assertThat(received.get(1, TimeUnit.SECONDS)).isEqualTo("hello");
     }
 
     @Test
@@ -157,15 +203,15 @@ public class StompAuthIntegrationTest {
         when(jwtProvider.getAuthentication(token)).thenReturn(authentication);
 
         List<Transport> transports = List.of(new WebSocketTransport(new StandardWebSocketClient()));
-        WebSocketStompClient sockJsStompClient = new WebSocketStompClient(new SockJsClient(transports));
-        sockJsStompClient.setMessageConverter(new StringMessageConverter());
+        stompClient = new WebSocketStompClient(new SockJsClient(transports));
+        stompClient.setMessageConverter(new StringMessageConverter());
 
         StompHeaders connectHeaders = new StompHeaders();
         connectHeaders.add("Authorization", "Bearer " + token);
 
         String sockJsUrl = "http://localhost:" + port + "/ws";
 
-        StompSession session = sockJsStompClient
+        session = stompClient
             .connectAsync(sockJsUrl, (WebSocketHttpHeaders) null, connectHeaders,
                 new StompSessionHandlerAdapter() {})
             .get(5, TimeUnit.SECONDS);

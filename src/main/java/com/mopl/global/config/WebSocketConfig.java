@@ -3,6 +3,7 @@ package com.mopl.global.config;
 import com.mopl.global.security.websocket.StompAuthChannelInterceptor;
 import com.mopl.global.security.websocket.WebSocketStompErrorHandler;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.simp.config.ChannelRegistration;
@@ -21,10 +22,13 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final StompAuthChannelInterceptor stompAuthChannelInterceptor;
     private final WebSocketStompErrorHandler webSocketStompErrorHandler;
 
+    @Value("${app.websocket.allowed-origins}")
+    private String[] allowedOrigins;
+
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry.addEndpoint("/ws")
-            .setAllowedOriginPatterns("*")  //TODO: 배포 환경에서는 프론트 실제 도메인으로 제한
+            .setAllowedOriginPatterns(allowedOrigins)
             .withSockJS();
         registry.setErrorHandler(webSocketStompErrorHandler);
 
