@@ -200,25 +200,39 @@ class FollowControllerTest {
     // ── GET /api/follows/followers ────────────────────────────────────────────
 
     @Test
-    @DisplayName("팔로워 목록 조회 성공 시 200과 CursorResponse 를 반환한다")
+    @DisplayName("팔로워 목록 조회 성공 시 200과 hasNext/nextCursor/nextIdAfter 포함한 CursorResponse 를 반환한다")
     void getFollowers_success() throws Exception {
-        Instant now = Instant.parse("2026-08-01T10:00:00Z");
+        Instant now  = Instant.parse("2026-08-01T10:00:00Z");
+        Instant next = Instant.parse("2026-08-01T09:00:00Z");
+        UUID otherFollowerId = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        UUID nextIdAfter = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        String nextCursor = "encoded-cursor-token";
+
         CursorResponse<FollowUserItemDto> response = CursorResponse.of(
-                List.of(new FollowUserItemDto(FOLLOW_ID, new UserSummary(FOLLOWER_ID, null, null), now)),
-                null, null, false, 1L, "followedAt", "DESCENDING");
-        when(followService.getFollowers(eq(FOLLOWEE_ID), any(), any(), eq(10),
+                List.of(
+                        new FollowUserItemDto(FOLLOW_ID, new UserSummary(FOLLOWER_ID, null, null), now),
+                        new FollowUserItemDto(nextIdAfter, new UserSummary(otherFollowerId, null, null), next)
+                ),
+                nextCursor, nextIdAfter, true, 5L, "followedAt", "DESCENDING");
+        when(followService.getFollowers(eq(FOLLOWEE_ID), any(), any(), eq(2),
                 eq("followedAt"), eq("DESCENDING"))).thenReturn(response);
 
         mockMvc.perform(get("/api/follows/followers")
                         .param("followeeId", FOLLOWEE_ID.toString())
-                        .param("limit", "10")
+                        .param("limit", "2")
                         .param("sortBy", "followedAt")
                         .param("sortDirection", "DESCENDING"))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
                 .andExpect(jsonPath("$.data[0].followId").value(FOLLOW_ID.toString()))
                 .andExpect(jsonPath("$.data[0].user.userId").value(FOLLOWER_ID.toString()))
-                .andExpect(jsonPath("$.hasNext").value(false))
-                .andExpect(jsonPath("$.totalCount").value(1));
+                .andExpect(jsonPath("$.data[0].followedAt").value(now.toString()))
+                .andExpect(jsonPath("$.data[1].followId").value(nextIdAfter.toString()))
+                .andExpect(jsonPath("$.data[1].followedAt").value(next.toString()))
+                .andExpect(jsonPath("$.hasNext").value(true))
+                .andExpect(jsonPath("$.nextCursor").value(nextCursor))
+                .andExpect(jsonPath("$.nextIdAfter").value(nextIdAfter.toString()))
+                .andExpect(jsonPath("$.totalCount").value(5));
     }
 
     @Test
@@ -270,24 +284,39 @@ class FollowControllerTest {
     // ── GET /api/follows/followings ───────────────────────────────────────────
 
     @Test
-    @DisplayName("팔로잉 목록 조회 성공 시 200과 CursorResponse 를 반환한다")
+    @DisplayName("팔로잉 목록 조회 성공 시 200과 hasNext/nextCursor/nextIdAfter/totalCount 포함한 CursorResponse 를 반환한다")
     void getFollowings_success() throws Exception {
-        Instant now = Instant.parse("2026-08-01T10:00:00Z");
+        Instant now  = Instant.parse("2026-08-01T10:00:00Z");
+        Instant next = Instant.parse("2026-08-01T09:00:00Z");
+        UUID otherFolloweeId = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        UUID nextIdAfter = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        String nextCursor = "encoded-cursor-token";
+
         CursorResponse<FollowUserItemDto> response = CursorResponse.of(
-                List.of(new FollowUserItemDto(FOLLOW_ID, new UserSummary(FOLLOWEE_ID, null, null), now)),
-                null, null, false, 1L, "followedAt", "DESCENDING");
-        when(followService.getFollowings(eq(FOLLOWER_ID), any(), any(), eq(10),
+                List.of(
+                        new FollowUserItemDto(FOLLOW_ID, new UserSummary(FOLLOWEE_ID, null, null), now),
+                        new FollowUserItemDto(nextIdAfter, new UserSummary(otherFolloweeId, null, null), next)
+                ),
+                nextCursor, nextIdAfter, true, 3L, "followedAt", "DESCENDING");
+        when(followService.getFollowings(eq(FOLLOWER_ID), any(), any(), eq(2),
                 eq("followedAt"), eq("DESCENDING"))).thenReturn(response);
 
         mockMvc.perform(get("/api/follows/followings")
                         .param("followerId", FOLLOWER_ID.toString())
-                        .param("limit", "10")
+                        .param("limit", "2")
                         .param("sortBy", "followedAt")
                         .param("sortDirection", "DESCENDING"))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
                 .andExpect(jsonPath("$.data[0].followId").value(FOLLOW_ID.toString()))
                 .andExpect(jsonPath("$.data[0].user.userId").value(FOLLOWEE_ID.toString()))
-                .andExpect(jsonPath("$.hasNext").value(false));
+                .andExpect(jsonPath("$.data[0].followedAt").value(now.toString()))
+                .andExpect(jsonPath("$.data[1].followId").value(nextIdAfter.toString()))
+                .andExpect(jsonPath("$.data[1].followedAt").value(next.toString()))
+                .andExpect(jsonPath("$.hasNext").value(true))
+                .andExpect(jsonPath("$.nextCursor").value(nextCursor))
+                .andExpect(jsonPath("$.nextIdAfter").value(nextIdAfter.toString()))
+                .andExpect(jsonPath("$.totalCount").value(3));
     }
 
     @Test
