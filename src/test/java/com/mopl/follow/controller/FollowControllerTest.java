@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.follow.dto.FollowDto;
 import com.mopl.follow.dto.FollowRequest;
 import com.mopl.follow.dto.FollowUserItemDto;
+import com.mopl.follow.service.FollowResult;
 import com.mopl.follow.service.FollowService;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.common.UserSummary;
@@ -51,11 +52,12 @@ class FollowControllerTest {
     // ── POST /api/follows ─────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("팔로우 성공 시 201과 FollowDto 를 반환한다")
-    void follow_success() throws Exception {
+    @DisplayName("신규 팔로우 성공 시 201과 FollowDto 를 반환한다")
+    void follow_success_new_returns201() throws Exception {
         setAuth(FOLLOWER_ID);
-        FollowDto response = new FollowDto(FOLLOW_ID, FOLLOWEE_ID, FOLLOWER_ID);
-        when(followService.follow(FOLLOWER_ID, FOLLOWEE_ID)).thenReturn(response);
+        FollowDto dto = new FollowDto(FOLLOW_ID, FOLLOWEE_ID, FOLLOWER_ID);
+        when(followService.follow(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(new FollowResult(dto, true));
 
         mockMvc.perform(post("/api/follows")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -81,17 +83,20 @@ class FollowControllerTest {
     }
 
     @Test
-    @DisplayName("중복 팔로우 시도 시 409 를 반환한다")
-    void follow_fail_duplicate() throws Exception {
+    @DisplayName("중복 팔로우 시도 시 200과 기존 FollowDto 를 반환한다 (ADR 2 계약)")
+    void follow_duplicate_returns200WithExistingDto() throws Exception {
         setAuth(FOLLOWER_ID);
+        FollowDto existing = new FollowDto(FOLLOW_ID, FOLLOWEE_ID, FOLLOWER_ID);
         when(followService.follow(FOLLOWER_ID, FOLLOWEE_ID))
-                .thenThrow(new BusinessException(ErrorCode.FOLLOW_DUPLICATE));
+                .thenReturn(new FollowResult(existing, false));
 
         mockMvc.perform(post("/api/follows")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(new FollowRequest(FOLLOWEE_ID))))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.errorCode").value("FOLLOW_409_1"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(FOLLOW_ID.toString()))
+                .andExpect(jsonPath("$.followeeId").value(FOLLOWEE_ID.toString()))
+                .andExpect(jsonPath("$.followerId").value(FOLLOWER_ID.toString()));
     }
 
     @Test

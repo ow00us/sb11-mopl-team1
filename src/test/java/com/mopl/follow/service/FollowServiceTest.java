@@ -15,7 +15,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Instant;
@@ -43,21 +42,21 @@ class FollowServiceTest {
     // ── follow ────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("팔로우 성공 시 FollowDto 를 반환한다")
-    void follow_success() {
+    @DisplayName("신규 팔로우 성공 시 created=true 와 FollowDto 를 반환한다 (upsert rows=1)")
+    void follow_success_new() {
+        Follow saved = savedFollow(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID);
         when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
-        when(followRepository.existsByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID)).thenReturn(false);
-        when(followRepository.saveAndFlush(any(Follow.class))).thenAnswer(inv -> {
-            Follow f = inv.getArgument(0);
-            ReflectionTestUtils.setField(f, "id", FOLLOW_ID);
-            return f;
-        });
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(1);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.of(saved));
 
-        FollowDto result = followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
+        FollowResult result = followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
 
-        assertThat(result.id()).isEqualTo(FOLLOW_ID);
-        assertThat(result.followerId()).isEqualTo(FOLLOWER_ID);
-        assertThat(result.followeeId()).isEqualTo(FOLLOWEE_ID);
+        assertThat(result.created()).isTrue();
+        assertThat(result.dto().id()).isEqualTo(FOLLOW_ID);
+        assertThat(result.dto().followerId()).isEqualTo(FOLLOWER_ID);
+        assertThat(result.dto().followeeId()).isEqualTo(FOLLOWEE_ID);
     }
 
     @Test
@@ -83,29 +82,59 @@ class FollowServiceTest {
     }
 
     @Test
-    @DisplayName("중복 팔로우 시 FOLLOW_DUPLICATE 예외가 발생한다")
-    void follow_fail_duplicate() {
+    @DisplayName("중복 팔로우 시 upsert rows=0, created=false 와 기존 FollowDto 를 반환한다 (ADR 2)")
+    void follow_duplicate_returnsExistingWithCreatedFalse() {
+        Follow existing = savedFollow(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID);
         when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
-        when(followRepository.existsByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID)).thenReturn(true);
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(0);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.of(existing));
 
-        assertThatThrownBy(() -> followService.follow(FOLLOWER_ID, FOLLOWEE_ID))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.FOLLOW_DUPLICATE);
+        FollowResult result = followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
+
+        assertThat(result.created()).isFalse();
+        assertThat(result.dto().id()).isEqualTo(FOLLOW_ID);
     }
 
     @Test
-    @DisplayName("동시 요청으로 DB 유니크 제약 위반 시 FOLLOW_DUPLICATE 예외가 발생한다")
-    void follow_fail_concurrentDuplicate() {
+    @DisplayName("insertIfAbsent=0 이후 findBy 가 empty (동시 unfollow race) 이면 재시도해 신규 관계를 반환한다")
+    void follow_raceUnfollowedBetweenUpsertAndLookup_retriesAndSucceeds() {
+        Follow reinserted = savedFollow(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID);
         when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
-        when(followRepository.existsByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
-                .thenReturn(false)  // 사전 중복 체크
-                .thenReturn(true);  // catch 블록 내 재확인
-        when(followRepository.saveAndFlush(any(Follow.class)))
-                .thenThrow(new DataIntegrityViolationException("uk_follows_follower_followee"));
+        // 1차 upsert: 이미 존재하는 것으로 판단(rows=0) → 재조회가 그러나 empty (그 사이 다른 tx 가 unfollow)
+        // 2차 upsert: 이번엔 신규 삽입 성공(rows=1)
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(0)
+                .thenReturn(1);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(reinserted));
+
+        FollowResult result = followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
+
+        assertThat(result.created()).isTrue();  // 재시도에서 신규 삽입 성공
+        assertThat(result.dto().id()).isEqualTo(FOLLOW_ID);
+        verify(followRepository, times(2))
+                .insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString());
+        verify(followRepository, times(2))
+                .findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID);
+    }
+
+    @Test
+    @DisplayName("재시도 후에도 findBy 가 empty 이면 INTERNAL_ERROR (500) 를 던진다")
+    void follow_raceRetryStillEmpty_throwsInternalError() {
+        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(0)
+                .thenReturn(0);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> followService.follow(FOLLOWER_ID, FOLLOWEE_ID))
                 .isInstanceOf(BusinessException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.FOLLOW_DUPLICATE);
+                .extracting("errorCode").isEqualTo(ErrorCode.INTERNAL_ERROR);
     }
 
     // ── unfollow ──────────────────────────────────────────────────────────────
