@@ -62,7 +62,7 @@ public class FollowController {
             @RequestParam(required = false) UUID idAfter,
             @RequestParam @Min(1) @Max(100) int limit,
             @RequestParam(defaultValue = "followedAt") @Pattern(regexp = "followedAt") String sortBy,
-            @RequestParam(defaultValue = "DESCENDING") @Pattern(regexp = "ASCENDING|DESCENDING") String sortDirection) {
+            @RequestParam(defaultValue = "DESCENDING") @Pattern(regexp = "DESCENDING") String sortDirection) {
         return followService.getFollowers(followeeId, cursor, idAfter, limit, sortBy, sortDirection);
     }
 
@@ -73,7 +73,7 @@ public class FollowController {
             @RequestParam(required = false) UUID idAfter,
             @RequestParam @Min(1) @Max(100) int limit,
             @RequestParam(defaultValue = "followedAt") @Pattern(regexp = "followedAt") String sortBy,
-            @RequestParam(defaultValue = "DESCENDING") @Pattern(regexp = "ASCENDING|DESCENDING") String sortDirection) {
+            @RequestParam(defaultValue = "DESCENDING") @Pattern(regexp = "DESCENDING") String sortDirection) {
         return followService.getFollowings(followerId, cursor, idAfter, limit, sortBy, sortDirection);
     }
 
