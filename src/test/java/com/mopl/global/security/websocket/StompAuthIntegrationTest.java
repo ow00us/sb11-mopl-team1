@@ -11,7 +11,6 @@ import com.mopl.global.exception.ErrorResponse;
 import com.mopl.global.security.JwtProvider;
 import java.io.IOException;
 import java.lang.reflect.Type;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -29,7 +28,6 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.messaging.converter.StringMessageConverter;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.simp.stomp.ConnectionLostException;
-import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
 import org.springframework.messaging.simp.stomp.StompHeaders;
 import org.springframework.messaging.simp.stomp.StompSession;
