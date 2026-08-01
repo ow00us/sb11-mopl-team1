@@ -6,6 +6,7 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
+import com.mopl.playlist.dto.SubscriberItemDto;
 import com.mopl.playlist.service.PlaylistService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -104,6 +105,18 @@ public class PlaylistController {
         UUID requesterId = resolveUserId();
         playlistService.removeContent(playlistId, contentId, requesterId);
         return ResponseEntity.noContent().build();
+    }
+
+    // Red 스텁: 파라미터 검증만 동작하고 실제 위임은 Green 에서 붙인다.
+    @GetMapping("/{playlistId}/subscribers")
+    public CursorResponse<SubscriberItemDto> getSubscribers(
+            @PathVariable UUID playlistId,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false) UUID idAfter,
+            @RequestParam @Min(1) @Max(100) int limit,
+            @RequestParam(defaultValue = "subscribedAt") @Pattern(regexp = "subscribedAt") String sortBy,
+            @RequestParam(defaultValue = "DESCENDING") @Pattern(regexp = "ASCENDING|DESCENDING") String sortDirection) {
+        throw new UnsupportedOperationException("Green 단계에서 구현");
     }
 
     /** 인증된 사용자 ID를 추출합니다. 미인증 시 UNAUTHORIZED 를 발생시킵니다. */
