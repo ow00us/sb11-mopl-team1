@@ -264,13 +264,14 @@ class FollowControllerTest {
     }
 
     @Test
-    @DisplayName("팔로워 목록 조회 시 sortDirection=ASCENDING 은 현재 미지원이므로 400 을 반환한다")
+    @DisplayName("팔로워 목록 조회 시 sortDirection=ASCENDING 은 현재 미지원이므로 400 과 INVALID_INPUT 을 반환한다")
     void getFollowers_fail_ascendingNotSupported() throws Exception {
         mockMvc.perform(get("/api/follows/followers")
                         .param("followeeId", FOLLOWEE_ID.toString())
                         .param("limit", "10")
                         .param("sortDirection", "ASCENDING"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
     }
 
     @Test
@@ -328,13 +329,14 @@ class FollowControllerTest {
     }
 
     @Test
-    @DisplayName("팔로잉 목록 조회 시 sortDirection=ASCENDING 은 현재 미지원이므로 400 을 반환한다")
+    @DisplayName("팔로잉 목록 조회 시 sortDirection=ASCENDING 은 현재 미지원이므로 400 과 INVALID_INPUT 을 반환한다")
     void getFollowings_fail_ascendingNotSupported() throws Exception {
         mockMvc.perform(get("/api/follows/followings")
                         .param("followerId", FOLLOWER_ID.toString())
                         .param("limit", "10")
                         .param("sortDirection", "ASCENDING"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
     }
 
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
