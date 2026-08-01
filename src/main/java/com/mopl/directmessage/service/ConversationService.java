@@ -272,4 +272,126 @@ public class ConversationService {
             user.getProfileImageUrl()
         );
     }
+
+    public ConversationDto getConversation(
+        UUID requesterId,
+        UUID conversationId
+    ) {
+        List<ConversationParticipant> participants =
+            participantRepository.findAllByConversationId(
+                conversationId
+            );
+
+        if (participants.isEmpty()) {
+            throw new BusinessException(
+                ErrorCode.RESOURCE_NOT_FOUND
+            );
+        }
+
+        if (participants.size() != 2) {
+            throw new BusinessException(
+                ErrorCode.DIRECT_MESSAGE_INVALID_STATE,
+                "1:1 대화의 참여자는 정확히 2명이어야 합니다."
+            );
+        }
+
+        boolean isParticipant =
+            participants.stream()
+                .anyMatch(participant ->
+                    participant.getUserId()
+                        .equals(requesterId)
+                );
+
+        if (!isParticipant) {
+            throw new BusinessException(
+                ErrorCode.RESOURCE_NOT_FOUND
+            );
+        }
+
+        UUID withUserId =
+            participants.stream()
+                .map(
+                    ConversationParticipant::getUserId
+                )
+                .filter(userId ->
+                    !userId.equals(requesterId))
+                .findFirst()
+                .orElseThrow(() ->
+                    new BusinessException(
+                        ErrorCode.DIRECT_MESSAGE_INVALID_STATE
+                    )
+                );
+        Conversation conversation =
+            conversationRepository
+                .findById(conversationId)
+                .orElseThrow(() ->
+                    new BusinessException(
+                        ErrorCode.RESOURCE_NOT_FOUND
+                    )
+                );
+
+        Map<UUID, User> users =
+            getUsers(
+                requesterId,
+                withUserId
+            );
+
+        return toDto(
+            conversation,
+            requesterId,
+            withUserId,
+            users
+        );
+    }
+
+    public ConversationDto getConversationWithUser(
+        UUID requesterId,
+        UUID withUserId
+    ) {
+        validateUsers(
+            requesterId,
+            withUserId
+        );
+
+        Map<UUID, User> users =
+            getUsers(
+                requesterId,
+                withUserId
+            );
+
+        List<UUID> conversationIds =
+            participantRepository.findConversationIdsByUserPair(
+                requesterId,
+                withUserId
+            );
+
+        if (conversationIds.isEmpty()) {
+            throw new BusinessException(
+                ErrorCode.RESOURCE_NOT_FOUND
+            );
+        }
+
+        if (conversationIds.size() > 1) {
+            throw new BusinessException(
+                ErrorCode.DIRECT_MESSAGE_INVALID_STATE,
+                "동일한 사용자 사이에 대화가 여러 개 존재합니다."
+            );
+        }
+
+        Conversation conversation =
+            conversationRepository
+                .findById(conversationIds.get(0))
+                .orElseThrow(() ->
+                    new BusinessException(
+                        ErrorCode.RESOURCE_NOT_FOUND
+                    )
+                );
+
+        return toDto(
+            conversation,
+            requesterId,
+            withUserId,
+            users
+        );
+    }
 }
