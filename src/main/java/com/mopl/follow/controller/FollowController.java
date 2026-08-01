@@ -55,7 +55,6 @@ public class FollowController {
         return followService.getFollowedByMe(followerId, followeeId);
     }
 
-    // Red 스텁: 파라미터 검증만 동작하고 실제 위임은 Green 에서 붙인다.
     @GetMapping("/followers")
     public CursorResponse<FollowUserItemDto> getFollowers(
             @RequestParam UUID followeeId,
@@ -64,7 +63,7 @@ public class FollowController {
             @RequestParam @Min(1) @Max(100) int limit,
             @RequestParam(defaultValue = "followedAt") @Pattern(regexp = "followedAt") String sortBy,
             @RequestParam(defaultValue = "DESCENDING") @Pattern(regexp = "ASCENDING|DESCENDING") String sortDirection) {
-        throw new UnsupportedOperationException("Green 단계에서 구현");
+        return followService.getFollowers(followeeId, cursor, idAfter, limit, sortBy, sortDirection);
     }
 
     @GetMapping("/followings")
@@ -75,7 +74,7 @@ public class FollowController {
             @RequestParam @Min(1) @Max(100) int limit,
             @RequestParam(defaultValue = "followedAt") @Pattern(regexp = "followedAt") String sortBy,
             @RequestParam(defaultValue = "DESCENDING") @Pattern(regexp = "ASCENDING|DESCENDING") String sortDirection) {
-        throw new UnsupportedOperationException("Green 단계에서 구현");
+        return followService.getFollowings(followerId, cursor, idAfter, limit, sortBy, sortDirection);
     }
 
     private UUID resolveUserId() {
