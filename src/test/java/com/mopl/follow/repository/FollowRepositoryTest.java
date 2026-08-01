@@ -161,9 +161,16 @@ class FollowRepositoryTest {
         em.flush();
         // BaseEntity 의 @CreatedDate 는 auditing 으로 자동 설정되므로,
         // 테스트 시나리오상 원하는 시각으로 강제 세팅한다.
-        ReflectionTestUtils.setField(follow, "createdAt", createdAt);
-        em.merge(follow);
+        // merge 는 auditing 이 다시 트리거되어 값이 덮어써지므로 native UPDATE 로 강제한다.
+        em.getEntityManager().createNativeQuery("""
+                UPDATE follows SET created_at = :ts WHERE id = :id
+                """)
+                .setParameter("ts", createdAt)
+                .setParameter("id", follow.getId())
+                .executeUpdate();
         em.flush();
-        return follow;
+        em.clear();
+        Follow refreshed = em.find(Follow.class, follow.getId());
+        return refreshed != null ? refreshed : follow;
     }
 }
