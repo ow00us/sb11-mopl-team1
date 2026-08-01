@@ -154,9 +154,12 @@ class UserServiceTest {
     }
 
     @Test
-    @DisplayName("인증된 사용자 ID로 자신의 프로필을 조회한다")
-    void getMyProfile_success() {
-        // given: JWT 인증 정보에서 꺼냈다고 가정하는 사용자 UUID
+    // @DisplayName("인증된 사용자 ID로 자신의 프로필을 조회한다")
+    @DisplayName("사용자 ID로 사용자 상세 정보를 조회한다")
+        // void getMyProfile_success() { /api/users/me 변환
+    void findUser_success() {
+        // // given: JWT 인증 정보에서 꺼냈다고 가정하는 사용자 UUID (/users/me)
+        // given: 조회할 사용자의 UUID
         UUID userId =
             UUID.fromString("11111111-1111-1111-1111-111111111111");
 
@@ -182,7 +185,8 @@ class UserServiceTest {
             .thenReturn(Optional.of(user));
 
         // when: 인증된 사용자의 UUID로 자신의 프로필을 조회
-        UserDto response = userService.getMyProfile(userId);
+        // UserDto response = userService.getMyProfile(userId);
+        UserDto response = userService.findUser(userId);
 
         // then: 비밀번호 해시를 제외한 사용자 정보가 UserDto로 반환
         assertThat(response.id()).isEqualTo(userId);
@@ -199,8 +203,10 @@ class UserServiceTest {
     }
 
     @Test
-    @DisplayName("인증된 사용자 ID에 해당하는 계정이 없으면 조회에 실패한다")
-    void getMyProfile_fail_whenUserDoesNotExist() {
+    // @DisplayName("인증된 사용자 ID에 해당하는 계정이 없으면 조회에 실패한다")
+    @DisplayName("사용자 ID에 해당하는 계정이 없으면 조회에 실패한다")
+        // void getMyProfile_fail_whenUserDoesNotExist() { /users/me
+    void findUser_fail_whenUserDoesNotExist() {
         // given: JWT는 유효하지만 해당 사용자가 이미 탈퇴·삭제된 상황을 가정
         UUID userId =
             UUID.fromString("11111111-1111-1111-1111-111111111111");
@@ -209,7 +215,9 @@ class UserServiceTest {
             .thenReturn(Optional.empty());
 
         // when & then: 존재하지 않는 사용자이므로 404에 대응하는 예외가 발생
-        assertThatThrownBy(() -> userService.getMyProfile(userId))
+        // assertThatThrownBy(() -> userService.getMyProfile(userId))
+        assertThatThrownBy(() -> userService.findUser(userId))
+
             .isInstanceOf(BusinessException.class)
             .extracting("errorCode")
             .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
