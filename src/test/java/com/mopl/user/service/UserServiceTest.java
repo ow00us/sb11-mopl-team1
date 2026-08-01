@@ -6,11 +6,14 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserDto;
+import com.mopl.user.dto.UserUpdateRequest;
+import com.mopl.user.storage.ProfileImageStorage;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
@@ -27,6 +30,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.mock.web.MockMultipartFile;
 
 // 회원가입 비즈니스 규칙 검증 단위 테스트
 // Repository와 PasswordEncoder는 실제 구현 대신 Mock 사용
@@ -43,6 +47,12 @@ class UserServiceTest {
 
     @InjectMocks
     UserService userService;
+
+    /**
+     * 실제 파일 저장소를 사용하지 않고 프로필 이미지 업로드 결과를 제어
+     */
+    @Mock
+    ProfileImageStorage profileImageStorage;
 
     @Test
     @DisplayName("회원가입 시 이메일을 정규화하고 비밀번호 해시를 저장한다.")
@@ -223,6 +233,258 @@ class UserServiceTest {
             .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
 
         verify(userRepository).findById(userId);
+    }
+
+    @Test
+    @DisplayName("본인은 이름과 프로필 이미지를 함께 수정할 수 있다")
+    void updateUser_success_whenNameAndImageAreProvided() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        User user = createUserFixture(userId);
+
+        UserUpdateRequest request =
+            new UserUpdateRequest("변경된 사용자");
+
+        /*
+         * 실제 이미지 파일을 생성하지 않고 multipart 요청에서 전달될
+         * MultipartFile과 같은 역할을 하는 테스트 파일을 준비
+         */
+        MockMultipartFile image = new MockMultipartFile(
+            "image",
+            "profile.png",
+            "image/png",
+            new byte[]{1, 2, 3}
+        );
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        when(profileImageStorage.upload(image))
+            .thenReturn(
+                "https://placeholder.mopl.local/profile-images/new-profile.png"
+            );
+
+        // when
+        UserDto response = userService.updateUser(
+            userId,
+            userId,
+            request,
+            image
+        );
+
+        // then
+        assertThat(response.name())
+            .isEqualTo("변경된 사용자");
+
+        assertThat(response.profileImageUrl())
+            .isEqualTo(
+                "https://placeholder.mopl.local/profile-images/new-profile.png"
+            );
+
+        /*
+         * 반환된 DTO뿐만 아니라 실제 엔티티 상태도 변경되었는지 확인
+         * JPA 변경 감지는 이 엔티티의 변경 상태를 기준으로 동작
+         */
+        assertThat(user.getName())
+            .isEqualTo("변경된 사용자");
+
+        assertThat(user.getProfileImageUrl())
+            .isEqualTo(
+                "https://placeholder.mopl.local/profile-images/new-profile.png"
+            );
+
+        verify(userRepository).findById(userId);
+        verify(profileImageStorage).upload(image);
+
+        /*
+         * 조회한 영속 엔티티는 트랜잭션 종료 시 변경 감지가 동작하므로
+         * save()를 명시적으로 호출하지 않는지 확인
+         */
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    @DisplayName("이미지가 없으면 이름만 변경하고 기존 프로필 이미지를 유지한다")
+    void updateUser_success_whenOnlyNameIsProvided() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        User user = createUserFixture(userId);
+
+        UserUpdateRequest request =
+            new UserUpdateRequest("변경된 사용자");
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        // when
+        UserDto response = userService.updateUser(
+            userId,
+            userId,
+            request,
+            null
+        );
+
+        // then
+        assertThat(response.name())
+            .isEqualTo("변경된 사용자");
+
+        assertThat(response.profileImageUrl())
+            .isEqualTo("https://example.com/old-profile.png");
+
+        assertThat(user.getName())
+            .isEqualTo("변경된 사용자");
+
+        assertThat(user.getProfileImageUrl())
+            .isEqualTo("https://example.com/old-profile.png");
+
+        /*
+         * 이미지가 전달되지 않았으므로 저장소 업로드는 실행되면 안 된다.
+         */
+        verifyNoInteractions(profileImageStorage);
+        verify(userRepository).findById(userId);
+    }
+
+    @Test
+    @DisplayName("인증 정보가 없으면 프로필 수정에 실패한다")
+    void updateUser_fail_whenAuthenticationDoesNotExist() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        UserUpdateRequest request =
+            new UserUpdateRequest("변경된 사용자");
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.updateUser(
+                null,
+                userId,
+                request,
+                null
+            )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.UNAUTHORIZED);
+
+        /*
+         * 인증되지 않은 요청은 사용자 조회나 이미지 업로드를
+         * 수행하기 전에 중단되어야 한다.
+         */
+        verifyNoInteractions(
+            userRepository,
+            profileImageStorage
+        );
+    }
+
+    @Test
+    @DisplayName("다른 사용자의 프로필을 수정하려 하면 실패한다")
+    void updateUser_fail_whenUpdatingAnotherUser() {
+        // given
+        UUID authenticatedUserId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        UUID targetUserId =
+            UUID.fromString("22222222-2222-2222-2222-222222222222");
+
+        UserUpdateRequest request =
+            new UserUpdateRequest("변경된 사용자");
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.updateUser(
+                authenticatedUserId,
+                targetUserId,
+                request,
+                null
+            )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.FORBIDDEN);
+
+        /*
+         * 권한 검사를 사용자 조회보다 먼저 수행하므로
+         * 다른 사용자의 존재 여부를 데이터베이스에서 조회하지 않는다.
+         */
+        verifyNoInteractions(
+            userRepository,
+            profileImageStorage
+        );
+    }
+
+    @Test
+    @DisplayName("수정할 사용자가 존재하지 않으면 프로필 수정에 실패한다")
+    void updateUser_fail_whenUserDoesNotExist() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        UserUpdateRequest request =
+            new UserUpdateRequest("변경된 사용자");
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.updateUser(
+                userId,
+                userId,
+                request,
+                null
+            )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+
+        verify(userRepository).findById(userId);
+
+        /*
+         * 사용자가 없으면 이미지를 업로드해서는 안 된다.
+         * DB에 반영할 사용자도 없는데 파일부터 저장하면
+         * 사용되지 않는 이미지가 저장소에 남을 수 있다.
+         */
+        verifyNoInteractions(profileImageStorage);
+    }
+
+    /**
+     * 프로필 수정 테스트에서 공통으로 사용하는 사용자 엔티티를 생성
+     *
+     * 실제 애플리케이션에서는 id와 createdAt을 JPA가 설정하지만,
+     * 단위 테스트에서는 데이터베이스를 사용하지 않으므로 직접 주입
+     *
+     * @param userId 테스트 사용자 UUID
+     * @return 기존 프로필 정보를 가진 테스트 사용자
+     */
+    private User createUserFixture(UUID userId) {
+        User user = User.builder()
+            .email("user@example.com")
+            .passwordHash("encoded-password")
+            .name("기존 사용자")
+            .profileImageUrl("https://example.com/old-profile.png")
+            .role(UserRole.USER)
+            .locked(false)
+            .build();
+
+        ReflectionTestUtils.setField(
+            user,
+            "id",
+            userId
+        );
+
+        ReflectionTestUtils.setField(
+            user,
+            "createdAt",
+            Instant.parse("2026-08-01T03:00:00Z")
+        );
+
+        return user;
     }
 
 }
