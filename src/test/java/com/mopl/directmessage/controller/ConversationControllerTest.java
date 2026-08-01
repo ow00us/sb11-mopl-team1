@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 
 import com.mopl.directmessage.dto.ConversationCreateRequest;
 import com.mopl.directmessage.dto.ConversationCreateResult;
@@ -326,6 +327,275 @@ class ConversationControllerTest {
             withUser,
             null,
             false
+        );
+    }
+
+    @Test
+    @DisplayName("대화 참여자가 대화를 조회하면 200을 반환")
+    void getConversation_success_returnsOk()
+        throws Exception {
+
+        // given
+        ConversationDto response =
+            createConversationDto();
+
+        when(
+            conversationService.getConversation(
+                REQUESTER_ID,
+                CONVERSATION_ID
+            )
+        ).thenReturn(response);
+
+        // when & then
+        mockMvc.perform(
+                get(
+                    "/api/conversations/{conversationId}",
+                    CONVERSATION_ID
+                )
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isOk())
+            .andExpect(
+                jsonPath("$.id")
+                    .value(CONVERSATION_ID.toString())
+            )
+            .andExpect(
+                jsonPath("$.with.userId")
+                    .value(WITH_USER_ID.toString())
+            )
+            .andExpect(
+                jsonPath("$.latestMessage")
+                    .value(nullValue())
+            )
+            .andExpect(
+                jsonPath("$.hasUnread")
+                    .value(false)
+            );
+
+        verify(conversationService)
+            .getConversation(
+                REQUESTER_ID,
+                CONVERSATION_ID
+            );
+    }
+
+    @Test
+    @DisplayName("특정 사용자와의 대화를 조회하면 200을 반환")
+    void getConversationWithUser_success_returnsOk()
+        throws Exception {
+
+        // given
+        ConversationDto response =
+            createConversationDto();
+
+        when(
+            conversationService
+                .getConversationWithUser(
+                    REQUESTER_ID,
+                    WITH_USER_ID
+                )
+        ).thenReturn(response);
+
+        // when & then
+        mockMvc.perform(
+                get("/api/conversations/with")
+                    .param(
+                        "userId",
+                        WITH_USER_ID.toString()
+                    )
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isOk())
+            .andExpect(
+                jsonPath("$.id")
+                    .value(CONVERSATION_ID.toString())
+            )
+            .andExpect(
+                jsonPath("$.with.userId")
+                    .value(WITH_USER_ID.toString())
+            )
+            .andExpect(
+                jsonPath("$.latestMessage")
+                    .value(nullValue())
+            )
+            .andExpect(
+                jsonPath("$.hasUnread")
+                    .value(false)
+            );
+
+        verify(conversationService)
+            .getConversationWithUser(
+                REQUESTER_ID,
+                WITH_USER_ID
+            );
+    }
+
+    @Test
+    @DisplayName("대화를 찾을 수 없으면 404를 반환")
+    void getConversation_notFound_returnsNotFound()
+        throws Exception {
+
+        // given
+        when(
+            conversationService.getConversation(
+                REQUESTER_ID,
+                CONVERSATION_ID
+            )
+        ).thenThrow(
+            new BusinessException(
+                ErrorCode.RESOURCE_NOT_FOUND
+            )
+        );
+
+        // when & then
+        mockMvc.perform(
+                get(
+                    "/api/conversations/{conversationId}",
+                    CONVERSATION_ID
+                )
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isNotFound())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_404_1")
+            );
+    }
+
+    @Test
+    @DisplayName("특정 사용자와의 대화가 없으면 404를 반환")
+    void getConversationWithUser_notFound_returnsNotFound()
+        throws Exception {
+
+        // given
+        when(
+            conversationService
+                .getConversationWithUser(
+                    REQUESTER_ID,
+                    WITH_USER_ID
+                )
+        ).thenThrow(
+            new BusinessException(
+                ErrorCode.RESOURCE_NOT_FOUND
+            )
+        );
+
+        // when & then
+        mockMvc.perform(
+                get("/api/conversations/with")
+                    .param(
+                        "userId",
+                        WITH_USER_ID.toString()
+                    )
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isNotFound())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_404_1")
+            );
+    }
+
+    @Test
+    @DisplayName("conversationId가 UUID 형식이 아니면 400을 반환")
+    void getConversation_invalidConversationId_returnsBadRequest()
+        throws Exception {
+
+        mockMvc.perform(
+                get(
+                    "/api/conversations/{conversationId}",
+                    "not-uuid"
+                )
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            );
+
+        verifyNoInteractions(
+            conversationService
+        );
+    }
+
+    @Test
+    @DisplayName("특정 사용자 조회에서 userId가 누락되면 400을 반환")
+    void getConversationWithUser_missingUserId_returnsBadRequest()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/api/conversations/with")
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            );
+
+        verifyNoInteractions(
+            conversationService
+        );
+    }
+
+    @Test
+    @DisplayName("userId가 UUID 형식이 아니면 400을 반환")
+    void getConversationWithUser_invalidUserId_returnsBadRequest()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/api/conversations/with")
+                    .param(
+                        "userId",
+                        "not-uuid"
+                    )
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            );
+
+        verifyNoInteractions(
+            conversationService
+        );
+    }
+
+    @Test
+    @DisplayName("인증 정보 없이 대화를 조회하면 401을 반환")
+    void getConversation_unauthenticated_returnsUnauthorized()
+        throws Exception {
+
+        mockMvc.perform(
+                get(
+                    "/api/conversations/{conversationId}",
+                    CONVERSATION_ID
+                )
+            )
+            .andExpect(status().isUnauthorized())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_401_1")
+            );
+
+        verifyNoInteractions(
+            conversationService
         );
     }
 }
