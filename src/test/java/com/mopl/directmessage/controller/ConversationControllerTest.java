@@ -15,6 +15,8 @@ import com.mopl.directmessage.dto.ConversationCreateResult;
 import com.mopl.directmessage.dto.ConversationDto;
 import com.mopl.directmessage.service.ConversationService;
 import com.mopl.global.common.UserSummary;
+import com.mopl.global.exception.BusinessException;
+import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.exception.GlobalExceptionHandler;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -241,6 +243,45 @@ class ConversationControllerTest {
         verifyNoInteractions(
             conversationService
         );
+    }
+
+    @Test
+    @DisplayName("상대 사용자가 존재하지 않으면 404를 반환")
+    void create_userNotFound_returnsNotFound()
+        throws Exception {
+
+        // given
+        when(
+            conversationService.create(
+                eq(REQUESTER_ID),
+                any(ConversationCreateRequest.class)
+            )
+        ).thenThrow(
+            new BusinessException(
+                ErrorCode.RESOURCE_NOT_FOUND
+            )
+        );
+
+        // when & then
+        mockMvc.perform(
+                post("/api/conversations")
+                    .contentType("application/json")
+                    .content(
+                        """
+                        {
+                          "withUserId": "%s"
+                        }
+                        """.formatted(WITH_USER_ID)
+                    )
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isNotFound())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_404_1")
+            );
     }
 
     @Test
