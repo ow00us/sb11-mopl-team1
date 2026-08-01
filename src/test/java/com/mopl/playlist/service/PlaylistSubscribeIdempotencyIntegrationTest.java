@@ -79,7 +79,7 @@ class PlaylistSubscribeIdempotencyIntegrationTest {
     }
 
     @Test
-    @DisplayName("첫 구독은 subscriberCount 를 1 로 증가시키고, 재구독은 카운트 재증가 없이 정상 완료된다")
+    @DisplayName("첫 구독은 subscriberCount 를 1 로 증가시키고, 재구독은 카운트·행 재증가 없이 정상 완료된다")
     void subscribe_idempotent_countIncrementsOnce() {
         playlistService.subscribe(playlist.getId(), SUBSCRIBER_ID);
         playlistService.subscribe(playlist.getId(), SUBSCRIBER_ID);
@@ -88,15 +88,18 @@ class PlaylistSubscribeIdempotencyIntegrationTest {
         assertThat(reloaded.getSubscriberCount()).isEqualTo(1L);
         assertThat(subscriptionRepository
                 .existsByPlaylistIdAndSubscriberId(playlist.getId(), SUBSCRIBER_ID)).isTrue();
+        // 카운터는 맞아도 실제 행이 중복 저장될 가능성을 별개로 확인한다.
+        assertThat(subscriptionRepository.findAll()).hasSize(1);
     }
 
     @Test
-    @DisplayName("같은 사용자가 5번 연속 구독 요청해도 트랜잭션 오염 없이 카운트는 1 로 유지된다")
+    @DisplayName("같은 사용자가 5번 연속 구독 요청해도 트랜잭션 오염 없이 카운트·행 모두 1 로 유지된다")
     void subscribe_repeatedCalls_neverPoisonTransaction() {
         for (int i = 0; i < 5; i++) {
             playlistService.subscribe(playlist.getId(), SUBSCRIBER_ID);
         }
         Playlist reloaded = playlistRepository.findById(playlist.getId()).orElseThrow();
         assertThat(reloaded.getSubscriberCount()).isEqualTo(1L);
+        assertThat(subscriptionRepository.findAll()).hasSize(1);
     }
 }

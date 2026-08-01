@@ -91,6 +91,46 @@ class FollowServiceTest {
         assertThat(result.dto().id()).isEqualTo(FOLLOW_ID);
     }
 
+    @Test
+    @DisplayName("insertIfAbsent=0 이후 findBy 가 empty (동시 unfollow race) 이면 재시도해 신규 관계를 반환한다")
+    void follow_raceUnfollowedBetweenUpsertAndLookup_retriesAndSucceeds() {
+        Follow reinserted = savedFollow(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID);
+        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
+        // 1차 upsert: 이미 존재하는 것으로 판단(rows=0) → 재조회가 그러나 empty (그 사이 다른 tx 가 unfollow)
+        // 2차 upsert: 이번엔 신규 삽입 성공(rows=1)
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(0)
+                .thenReturn(1);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(reinserted));
+
+        FollowResult result = followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
+
+        assertThat(result.created()).isTrue();  // 재시도에서 신규 삽입 성공
+        assertThat(result.dto().id()).isEqualTo(FOLLOW_ID);
+        verify(followRepository, times(2))
+                .insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString());
+        verify(followRepository, times(2))
+                .findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID);
+    }
+
+    @Test
+    @DisplayName("재시도 후에도 findBy 가 empty 이면 INTERNAL_ERROR (500) 를 던진다")
+    void follow_raceRetryStillEmpty_throwsInternalError() {
+        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(0)
+                .thenReturn(0);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> followService.follow(FOLLOWER_ID, FOLLOWEE_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INTERNAL_ERROR);
+    }
+
     // ── unfollow ──────────────────────────────────────────────────────────────
 
     @Test
