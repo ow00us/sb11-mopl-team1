@@ -2089,6 +2089,178 @@ paths:
             "*/*":
               schema:
                 "$ref": "#/components/schemas/ErrorResponse"
+  "/api/follows/followers":
+    get:
+      tags:
+        - "팔로우 관리"
+      summary: "특정 유저의 팔로워 목록 조회 (커서 페이지네이션)"
+      description: "지정한 followeeId 를 팔로우한 사용자들의 목록을 최근순(created_at DESC)으로 반환합니다."
+      operationId: "getFollowers"
+      security:
+        -
+          BearerAuth: []
+      parameters:
+        -
+          name: "followeeId"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "cursor"
+          in: "query"
+          description: "다음 페이지 커서 (마지막 followedAt 을 Base64 로 인코딩). idAfter 와 함께 제공해야 합니다."
+          required: false
+          schema:
+            type: "string"
+        -
+          name: "idAfter"
+          in: "query"
+          description: "같은 followedAt 값 내 UUID 타이브레이커. cursor 와 함께 제공해야 합니다."
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "limit"
+          in: "query"
+          required: true
+          schema:
+            type: "integer"
+            format: "int32"
+            minimum: 1
+            maximum: 100
+        -
+          name: "sortBy"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            default: "followedAt"
+            enum:
+              - "followedAt"
+        -
+          name: "sortDirection"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            default: "DESCENDING"
+            enum:
+              - "ASCENDING"
+              - "DESCENDING"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/CursorResponseFollowUserItemDto"
+        "400":
+          description: "잘못된 요청 (파라미터 검증 실패, 잘못된 커서, cursor/idAfter 부정합)"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/follows/followings":
+    get:
+      tags:
+        - "팔로우 관리"
+      summary: "특정 유저의 팔로잉 목록 조회 (커서 페이지네이션)"
+      description: "지정한 followerId 가 팔로우 중인 사용자들의 목록을 최근순(created_at DESC)으로 반환합니다."
+      operationId: "getFollowings"
+      security:
+        -
+          BearerAuth: []
+      parameters:
+        -
+          name: "followerId"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "cursor"
+          in: "query"
+          description: "다음 페이지 커서. idAfter 와 함께 제공해야 합니다."
+          required: false
+          schema:
+            type: "string"
+        -
+          name: "idAfter"
+          in: "query"
+          description: "같은 followedAt 값 내 UUID 타이브레이커. cursor 와 함께 제공해야 합니다."
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "limit"
+          in: "query"
+          required: true
+          schema:
+            type: "integer"
+            format: "int32"
+            minimum: 1
+            maximum: 100
+        -
+          name: "sortBy"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            default: "followedAt"
+            enum:
+              - "followedAt"
+        -
+          name: "sortDirection"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            default: "DESCENDING"
+            enum:
+              - "ASCENDING"
+              - "DESCENDING"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/CursorResponseFollowUserItemDto"
+        "400":
+          description: "잘못된 요청 (파라미터 검증 실패, 잘못된 커서, cursor/idAfter 부정합)"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
   "/api/conversations/{conversationId}":
     get:
       tags:
@@ -2748,6 +2920,25 @@ components:
         - "followeeId"
         - "followerId"
         - "id"
+    FollowUserItemDto:
+      type: "object"
+      description: "팔로워/팔로잉 목록의 아이템. followers 응답에서 user 는 팔로워, followings 응답에서 user 는 팔로우 대상."
+      properties:
+        followId:
+          type: "string"
+          format: "uuid"
+          description: "팔로우 관계 ID (unfollow 시 사용)"
+        user:
+          "$ref": "#/components/schemas/UserSummary"
+          description: "상대 사용자 요약. name/profileImageUrl 은 User 도메인 연동 전까지 null."
+        followedAt:
+          type: "string"
+          format: "date-time"
+          description: "팔로우 관계 생성 시각"
+      required:
+        - "followId"
+        - "user"
+        - "followedAt"
     ConversationCreateRequest:
       type: "object"
       properties:
@@ -3109,6 +3300,47 @@ components:
           description: "데이터 목록"
           items:
             "$ref": "#/components/schemas/PlaylistDto"
+        nextCursor:
+          type:
+            - "string"
+            - "null"
+          description: "다음 커서"
+        nextIdAfter:
+          type:
+            - "string"
+            - "null"
+          format: "uuid"
+          description: "다음 요청의 보조 커서"
+        hasNext:
+          type: "boolean"
+          description: "다음 데이터가 있는지 여부"
+        totalCount:
+          type: "integer"
+          format: "int64"
+          description: "총 데이터 개수"
+        sortBy:
+          type: "string"
+          description: "정렬 기준"
+        sortDirection:
+          type: "string"
+          description: "정렬 방향"
+          enum:
+            - "ASCENDING"
+            - "DESCENDING"
+      required:
+        - "data"
+        - "hasNext"
+        - "sortBy"
+        - "sortDirection"
+        - "totalCount"
+    CursorResponseFollowUserItemDto:
+      type: "object"
+      properties:
+        data:
+          type: "array"
+          description: "팔로워/팔로잉 목록"
+          items:
+            "$ref": "#/components/schemas/FollowUserItemDto"
         nextCursor:
           type:
             - "string"
