@@ -291,4 +291,67 @@ public class ConversationParticipantRepositoryTest {
             .containsOnly(ParticipantSlot.FIRST);
     }
 
+    @Test
+    @DisplayName("두 사용자가 함께 참여한 대화 ID를 조회")
+    void findConversationIdsByUserPair() {
+        // given
+        UUID userId3 =
+            UUID.fromString(
+                "33333333-3333-3333-3333-333333333333"
+            );
+
+        insertUser(
+            userId3,
+            "third@example.com",
+            "third"
+        );
+
+        Conversation targetConversation =
+            conversationRepository.saveAndFlush(
+                Conversation.create()
+            );
+
+        Conversation otherConversation =
+            conversationRepository.saveAndFlush(
+                Conversation.create()
+            );
+
+        participantRepository.saveAllAndFlush(
+            List.of(
+                ConversationParticipant.create(
+                    targetConversation.getId(),
+                    USER_ID_1,
+                    ParticipantSlot.FIRST
+                ),
+                ConversationParticipant.create(
+                    targetConversation.getId(),
+                    USER_ID_2,
+                    ParticipantSlot.SECOND
+                ),
+                ConversationParticipant.create(
+                    otherConversation.getId(),
+                    USER_ID_1,
+                    ParticipantSlot.FIRST
+                ),
+                ConversationParticipant.create(
+                    otherConversation.getId(),
+                    userId3,
+                    ParticipantSlot.SECOND
+                )
+            )
+        );
+
+        entityManager.clear();
+
+        // when
+        List<UUID> conversationIds =
+            participantRepository.findConversationIdsByUserPair(
+                USER_ID_1,
+                USER_ID_2
+            );
+
+        // then
+        assertThat(conversationIds)
+            .containsExactly(targetConversation.getId());
+    }
 }
