@@ -2782,19 +2782,26 @@ components:
         - "text"
     UserSummary:
       type: "object"
+      description: |
+        여러 도메인의 응답에서 공통으로 사용하는 사용자 요약.
+        name / profileImageUrl 은 User 도메인 연동이 완료되기 전까지 null 로 반환될 수 있어
+        OpenAPI 3.1 표준 nullable 표기(["string", "null"])를 사용한다.
       properties:
         userId:
           type: "string"
           format: "uuid"
           description: "사용자 ID"
         name:
-          type: "string"
-          description: "사용자 이름"
+          type:
+            - "string"
+            - "null"
+          description: "사용자 이름 (User 도메인 연동 전까지 null 가능)"
         profileImageUrl:
-          type: "string"
-          description: "사용자 프로필 이미지 URL"
+          type:
+            - "string"
+            - "null"
+          description: "사용자 프로필 이미지 URL (User 도메인 연동 전까지 null 가능)"
       required:
-        - "name"
         - "userId"
     PlaylistCreateRequest:
       type: "object"
