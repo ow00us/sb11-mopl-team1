@@ -29,19 +29,27 @@ public class FollowService {
         if (!userRepository.existsById(followeeId)) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
         }
+        // 사전 중복 체크: 이미 팔로우 중이면 기존 관계를 그대로 반환 (ADR 2 - 200)
         if (followRepository.existsByFollowerIdAndFolloweeId(followerId, followeeId)) {
-            throw new BusinessException(ErrorCode.FOLLOW_DUPLICATE);
+            return existingResult(followerId, followeeId);
         }
         try {
             Follow follow = followRepository.saveAndFlush(
                     Follow.builder().followerId(followerId).followeeId(followeeId).build());
             return new FollowResult(FollowDto.from(follow), true);
         } catch (DataIntegrityViolationException e) {
-            if (followRepository.existsByFollowerIdAndFolloweeId(followerId, followeeId)) {
-                throw new BusinessException(ErrorCode.FOLLOW_DUPLICATE);
-            }
-            throw e;
+            // 사전 체크와 저장 사이의 동시 팔로우 요청으로 유니크 제약 위반 시,
+            // 이미 존재하는 관계로 간주하고 조회 후 기존 값을 반환한다.
+            return followRepository.findByFollowerIdAndFolloweeId(followerId, followeeId)
+                    .map(existing -> new FollowResult(FollowDto.from(existing), false))
+                    .orElseThrow(() -> e);
         }
+    }
+
+    private FollowResult existingResult(UUID followerId, UUID followeeId) {
+        Follow existing = followRepository.findByFollowerIdAndFolloweeId(followerId, followeeId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
+        return new FollowResult(FollowDto.from(existing), false);
     }
 
     @Transactional

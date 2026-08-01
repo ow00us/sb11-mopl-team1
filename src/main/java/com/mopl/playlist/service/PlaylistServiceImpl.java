@@ -137,8 +137,9 @@ public class PlaylistServiceImpl implements PlaylistService {
         if (playlist.isOwnedBy(subscriberId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN);
         }
+        // 이미 구독 중이면 조용히 성공 (ADR 2 - 204 멱등)
         if (subscriptionRepository.existsByPlaylistIdAndSubscriberId(playlistId, subscriberId)) {
-            throw new BusinessException(ErrorCode.SUBSCRIPTION_DUPLICATE);
+            return;
         }
         try {
             subscriptionRepository.saveAndFlush(
@@ -147,10 +148,16 @@ public class PlaylistServiceImpl implements PlaylistService {
                             .subscriberId(subscriberId)
                             .build());
         } catch (DataIntegrityViolationException e) {
-            throw new BusinessException(ErrorCode.SUBSCRIPTION_DUPLICATE);
+            // 사전 체크와 저장 사이에 다른 트랜잭션이 먼저 저장한 경우:
+            // 이미 존재하는 관계라면 조용히 성공, 그 외 무결성 위반은 상위로 전파.
+            if (subscriptionRepository.existsByPlaylistIdAndSubscriberId(playlistId, subscriberId)) {
+                return;
+            }
+            throw e;
         }
         // 엔티티 setter/증감 메서드 대신 원자적 SQL UPDATE 를 사용해
         // 동시 구독 요청 사이의 lost update 를 방지한다 (unsubscribe 도 동일).
+        // 신규 저장에 성공한 경로에서만 카운터를 증가시켜 중복 요청이 재증가시키지 않도록 한다.
         playlistRepository.incrementSubscriberCount(playlistId);
     }
 

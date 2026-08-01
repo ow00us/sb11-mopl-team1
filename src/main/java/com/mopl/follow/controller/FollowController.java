@@ -28,7 +28,8 @@ public class FollowController {
     public ResponseEntity<FollowDto> follow(@Valid @RequestBody FollowRequest request) {
         UUID followerId = resolveUserId();
         FollowResult result = followService.follow(followerId, request.followeeId());
-        return ResponseEntity.status(HttpStatus.CREATED).body(result.dto());
+        HttpStatus status = result.created() ? HttpStatus.CREATED : HttpStatus.OK;
+        return ResponseEntity.status(status).body(result.dto());
     }
 
     @DeleteMapping("/{followId}")
