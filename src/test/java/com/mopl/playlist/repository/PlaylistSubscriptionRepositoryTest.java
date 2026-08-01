@@ -115,8 +115,10 @@ class PlaylistSubscriptionRepositoryTest {
         List<PlaylistSubscription> page2 = subscriptionRepository.findByPlaylistIdDesc(
                 playlistId.toString(), last1.getCreatedAt(), last1.getId().toString(), 10);
 
-        UUID smaller = s1.getId().compareTo(s2.getId()) < 0 ? s1.getId() : s2.getId();
-        UUID larger  = s1.getId().compareTo(s2.getId()) < 0 ? s2.getId() : s1.getId();
+        // PostgreSQL uuid 정렬은 unsigned byte-order (== hex 문자열 정렬).
+        // Java UUID.compareTo 는 signed 이므로 문자열 비교로 예상 순서를 계산한다.
+        UUID smaller = s1.getId().toString().compareTo(s2.getId().toString()) < 0 ? s1.getId() : s2.getId();
+        UUID larger  = s1.getId().toString().compareTo(s2.getId().toString()) < 0 ? s2.getId() : s1.getId();
         assertThat(page2).extracting(PlaylistSubscription::getId).containsExactly(smaller, larger);
     }
 
