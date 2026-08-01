@@ -3,14 +3,17 @@ package com.mopl.user.controller;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.service.UserService;
+import java.util.UUID;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
 /**
  * 사용자 회원가입 HTTP API를 처리하는 Controller
@@ -40,5 +43,27 @@ public class UserController {
         return ResponseEntity
             .status(HttpStatus.CREATED)
             .body(response);
+    }
+
+    /**
+     * 현재 인증된 사용자의 프로필을 조회
+     *
+     * 클라이언트가 사용자 ID를 path나 request body로 전달하지 않음.
+     * JwtAuthenticationFilter가 유효한 액세스 토큰에서 복원한 사용자 UUID를
+     * Spring Security의 Authentication principal에서 가져옴
+     *
+     * 이를 통해 다른 사용자의 UUID를 요청값으로 전달해
+     * 자신의 프로필인 것처럼 조회하는 문제를 방지
+     *
+     * @param userId JWT subject에서 복원된 현재 인증 사용자의 UUID
+     * @return 현재 사용자의 프로필 정보와 200 OK
+     */
+    @GetMapping("/me")
+    public ResponseEntity<UserDto> getMyProfile(
+        @AuthenticationPrincipal UUID userId
+    ) {
+        UserDto response = userService.getMyProfile(userId);
+
+        return ResponseEntity.ok(response);
     }
 }
