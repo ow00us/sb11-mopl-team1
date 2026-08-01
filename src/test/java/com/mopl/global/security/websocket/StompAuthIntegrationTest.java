@@ -30,10 +30,8 @@ import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
 import org.springframework.messaging.simp.stomp.StompHeaders;
 import org.springframework.messaging.simp.stomp.StompSession;
-import org.springframework.messaging.simp.stomp.StompSession.Subscription;
 import org.springframework.messaging.simp.stomp.StompSessionHandler;
 import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
-import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -56,6 +54,7 @@ public class StompAuthIntegrationTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
 
+    private static final long[] CLIENT_HEARTBEAT = {4000, 4000};
 
     @LocalServerPort
     private int port;
@@ -64,6 +63,7 @@ public class StompAuthIntegrationTest {
     private JwtProvider jwtProvider;
 
     private WebSocketStompClient stompClient;
+    private ThreadPoolTaskScheduler taskScheduler;
     private StompSession session;
 
     @Autowired
@@ -71,12 +71,27 @@ public class StompAuthIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        stompClient = new WebSocketStompClient(new StandardWebSocketClient());
-        stompClient.setMessageConverter(new StringMessageConverter());
-        stompClient.setTaskScheduler(taskScheduler());
+        taskScheduler = createTaskScheduler();
+        stompClient = createNativeStompClime();
     }
 
-    private TaskScheduler taskScheduler() {
+    private WebSocketStompClient createNativeStompClime() {
+        WebSocketStompClient client = new WebSocketStompClient(new StandardWebSocketClient());
+        client.setMessageConverter(new StringMessageConverter());
+        client.setTaskScheduler(taskScheduler);
+        client.setDefaultHeartbeat(CLIENT_HEARTBEAT);
+        return client;
+    }
+
+    private WebSocketStompClient createSockJsStompClime() {
+        List<Transport> transports = List.of(new WebSocketTransport(new StandardWebSocketClient()));
+        WebSocketStompClient client = new WebSocketStompClient(new SockJsClient(transports));
+        client.setMessageConverter(new StringMessageConverter());
+        client.setTaskScheduler(taskScheduler);
+        client.setDefaultHeartbeat(CLIENT_HEARTBEAT);
+        return client;
+    }
+    private ThreadPoolTaskScheduler createTaskScheduler() {
         ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
         scheduler.setPoolSize(1);
         scheduler.setThreadNamePrefix("stomp-test-client-");
@@ -91,6 +106,9 @@ public class StompAuthIntegrationTest {
         }
         if (stompClient != null) {
             stompClient.stop();
+        }
+        if (taskScheduler != null) {
+            taskScheduler.shutdown();
         }
     }
 
@@ -202,9 +220,7 @@ public class StompAuthIntegrationTest {
         when(jwtProvider.validate(token)).thenReturn(true);
         when(jwtProvider.getAuthentication(token)).thenReturn(authentication);
 
-        List<Transport> transports = List.of(new WebSocketTransport(new StandardWebSocketClient()));
-        stompClient = new WebSocketStompClient(new SockJsClient(transports));
-        stompClient.setMessageConverter(new StringMessageConverter());
+        stompClient = createSockJsStompClime();
 
         StompHeaders connectHeaders = new StompHeaders();
         connectHeaders.add("Authorization", "Bearer " + token);

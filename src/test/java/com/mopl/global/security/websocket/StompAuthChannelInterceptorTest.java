@@ -82,7 +82,9 @@ public class StompAuthChannelInterceptorTest {
         Message<?> connectMessage = connectMessageWithAuthorizationHeader("token-only");
 
         assertThatThrownBy(() -> interceptor.preSend(connectMessage, null))
-            .isInstanceOf(BusinessException.class);
+            .isInstanceOf(BusinessException.class)
+            .extracting(e -> ((BusinessException) e).getErrorCode())
+            .isEqualTo(ErrorCode.UNAUTHORIZED);
     }
 
     private Message<?> connectMessageWithAuthorizationHeader(String value) {

@@ -78,10 +78,13 @@ public class WebSocketStompErrorHandler extends StompSubProtocolErrorHandler {
     }
 
     private byte[] fallbackPayload() {
-        String json = "{\"errorCode\":\"%s\",\"message\":\"%s\"}".formatted(
-            ErrorCode.INTERNAL_ERROR.getCode(),
-            ErrorCode.INTERNAL_ERROR.getMessage()
-        );
+        String json = """
+            {"exceptionName":"%s","errorCode":"%s","message":"%s","details":{}}"""
+            .formatted(
+                "SerializationFailure",
+                ErrorCode.INTERNAL_ERROR.getCode(),
+                ErrorCode.INTERNAL_ERROR.getMessage()
+            );
         return json.getBytes(StandardCharsets.UTF_8);
     }
 
