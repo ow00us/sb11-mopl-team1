@@ -114,9 +114,11 @@ class FollowRepositoryTest {
         List<Follow> page2 = followRepository.findFollowersByFolloweeIdDesc(
                 USER_B.toString(), last1.getCreatedAt(), last1.getId().toString(), 10);
 
-        // 같은 createdAt 인 f1, f2 는 id ASC 로 정렬됨
-        UUID smaller = f1.getId().compareTo(f2.getId()) < 0 ? f1.getId() : f2.getId();
-        UUID larger  = f1.getId().compareTo(f2.getId()) < 0 ? f2.getId() : f1.getId();
+        // 같은 createdAt 인 f1, f2 는 id ASC 로 정렬됨.
+        // PostgreSQL uuid 정렬은 unsigned byte-order (== hex 문자열 정렬).
+        // Java UUID.compareTo 는 signed 이므로 문자열 비교로 예상 순서를 계산한다.
+        UUID smaller = f1.getId().toString().compareTo(f2.getId().toString()) < 0 ? f1.getId() : f2.getId();
+        UUID larger  = f1.getId().toString().compareTo(f2.getId().toString()) < 0 ? f2.getId() : f1.getId();
         assertThat(page2).extracting(Follow::getId).containsExactly(smaller, larger);
     }
 
