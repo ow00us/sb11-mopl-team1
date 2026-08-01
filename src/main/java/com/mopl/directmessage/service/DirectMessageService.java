@@ -330,4 +330,54 @@ public class DirectMessageService {
             user.getProfileImageUrl()
         );
     }
+
+    @Transactional
+    public void read(
+        UUID requesterId,
+        UUID conversationId,
+        UUID directMessageId
+    ) {
+        List<ConversationParticipant> participants =
+            getParticipants(
+                conversationId,
+                requesterId
+            );
+
+        DirectMessage message =
+            directMessageRepository
+                .findByIdAndConversationId(
+                    directMessageId,
+                    conversationId
+                )
+                .orElseThrow(() ->
+                    new BusinessException(
+                        ErrorCode.RESOURCE_NOT_FOUND
+                    )
+                );
+
+        Map<UUID, UUID> receiverIdBySenderId =
+            createReceiverIdMap(participants);
+
+        UUID receiverId =
+            receiverIdBySenderId.get(message.getSenderId());
+
+        if (receiverId == null) {
+            throw new BusinessException(
+                ErrorCode.DIRECT_MESSAGE_INVALID_STATE,
+                "메시지 발신자가 대화 참여자가 아닙니다."
+            );
+        }
+
+        if (!receiverId.equals(requesterId)) {
+            throw new BusinessException(
+                ErrorCode.FORBIDDEN
+            );
+        }
+
+        directMessageRepository.markAsReadIfUnread(
+            directMessageId,
+            conversationId,
+            Instant.now()
+        );
+    }
 }
