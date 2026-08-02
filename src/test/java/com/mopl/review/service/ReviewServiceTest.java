@@ -364,15 +364,18 @@ class ReviewServiceTest {
     }
 
     @Test
-    @DisplayName("페이지 안 리뷰의 작성자가 조회되지 않으면 RESOURCE_NOT_FOUND 예외가 발생한다")
-    void getList_fail_authorNotFound() {
+    @DisplayName("페이지 안 리뷰의 작성자가 조회되지 않으면 대체 요약값(알 수 없는 사용자)으로 채워진다")
+    void getList_authorNotFound_fallsBackToPlaceholder() {
         Review review = savedReview(UUID.randomUUID(), AUTHOR_ID, CONTENT_ID, "t1", new BigDecimal("3.0"));
         when(reviewRepository.findByCreatedAtDesc(any(), any(), any(), anyInt())).thenReturn(List.of(review));
+        when(reviewRepository.countByFilter(any())).thenReturn(1L);
         when(userRepository.findAllById(any())).thenReturn(List.of());
 
-        assertThatThrownBy(() -> reviewService.getList(null, null, null, 10, "createdAt", "DESCENDING"))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+        CursorResponse<ReviewDto> result = reviewService.getList(null, null, null, 10, "createdAt", "DESCENDING");
+
+        assertThat(result.data()).hasSize(1);
+        assertThat(result.data().get(0).author().userId()).isEqualTo(AUTHOR_ID);
+        assertThat(result.data().get(0).author().name()).isEqualTo("알 수 없는 사용자");
     }
 
     @Test

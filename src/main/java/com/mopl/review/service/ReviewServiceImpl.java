@@ -37,6 +37,7 @@ public class ReviewServiceImpl implements ReviewService {
     private static final String DIRECTION_ASC = "ASCENDING";
     private static final String DIRECTION_DESC = "DESCENDING";
     private static final String PG_UNIQUE_VIOLATION_SQLSTATE = "23505";
+    private static final String UNKNOWN_AUTHOR_NAME = "알 수 없는 사용자";
 
     private final ReviewRepository reviewRepository;
     private final ContentRepository contentRepository;
@@ -179,16 +180,14 @@ public class ReviewServiceImpl implements ReviewService {
                 .collect(Collectors.toMap(User::getId, user -> user));
 
         return reviews.stream()
-                .map(review -> ReviewDto.from(review, toUserSummary(requireUser(usersById, review.getAuthorId()))))
+                .map(review -> {
+                    User author = usersById.get(review.getAuthorId());
+                    UserSummary summary = (author != null)
+                            ? toUserSummary(author)
+                            : new UserSummary(review.getAuthorId(), UNKNOWN_AUTHOR_NAME, null);
+                    return ReviewDto.from(review, summary);
+                })
                 .toList();
-    }
-
-    private User requireUser(Map<UUID, User> usersById, UUID userId) {
-        User user = usersById.get(userId);
-        if (user == null) {
-            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
-        }
-        return user;
     }
 
     private UserSummary toUserSummary(User user) {
