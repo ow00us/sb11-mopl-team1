@@ -114,7 +114,9 @@ public class PlaylistController {
             @RequestParam(required = false) UUID idAfter,
             @RequestParam @Min(1) @Max(100) int limit,
             @RequestParam(defaultValue = "subscribedAt") @Pattern(regexp = "subscribedAt") String sortBy,
-            @RequestParam(defaultValue = "DESCENDING") @Pattern(regexp = "ASCENDING|DESCENDING") String sortDirection) {
+            @RequestParam(defaultValue = "DESCENDING") @Pattern(regexp = "DESCENDING") String sortDirection) {
+        // openapi 계약(BearerAuth) 을 준수하기 위해 SecurityConfig 와 무관하게 컨트롤러에서 인증을 강제한다.
+        resolveUserId();
         return playlistService.getSubscribers(playlistId, cursor, idAfter, limit, sortBy, sortDirection);
     }
 

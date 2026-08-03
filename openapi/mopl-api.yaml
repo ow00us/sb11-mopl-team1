@@ -597,8 +597,10 @@ paths:
           schema:
             type: "string"
             default: "DESCENDING"
+            description: |
+              현재 구독자 목록 조회는 최신순(DESCENDING)만 지원한다.
+              오래된 순 요청(ASCENDING)은 400 을 반환한다.
             enum:
-              - "ASCENDING"
               - "DESCENDING"
       responses:
         "200":

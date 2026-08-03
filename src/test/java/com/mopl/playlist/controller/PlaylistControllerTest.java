@@ -361,6 +361,7 @@ class PlaylistControllerTest {
     @Test
     @DisplayName("구독자 목록 조회 성공 시 200과 CursorResponse 를 반환한다")
     void getSubscribers_success() throws Exception {
+        setAuth(OTHER_ID);
         Instant now = Instant.parse("2026-08-01T10:00:00Z");
         UUID subscriptionId = UUID.fromString("11111111-1111-1111-1111-111111111111");
         CursorResponse<SubscriberItemDto> response = CursorResponse.of(
@@ -383,6 +384,7 @@ class PlaylistControllerTest {
     @Test
     @DisplayName("존재하지 않는 플레이리스트의 구독자 조회 시 404 를 반환한다")
     void getSubscribers_fail_notFound() throws Exception {
+        setAuth(OTHER_ID);
         when(playlistService.getSubscribers(eq(PLAYLIST_ID), any(), any(), eq(10),
                 any(), any()))
                 .thenThrow(new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
@@ -416,6 +418,26 @@ class PlaylistControllerTest {
                         .param("limit", "10")
                         .param("sortDirection", "WRONG"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("구독자 목록 조회 시 sortDirection=ASCENDING 은 현재 미지원이므로 400 과 INVALID_INPUT 을 반환한다")
+    void getSubscribers_fail_ascendingNotSupported() throws Exception {
+        mockMvc.perform(get("/api/playlists/{playlistId}/subscribers", PLAYLIST_ID)
+                        .param("limit", "10")
+                        .param("sortDirection", "ASCENDING"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
+    }
+
+    @Test
+    @DisplayName("미인증 상태에서 구독자 목록 조회 시 401 을 반환한다")
+    void getSubscribers_fail_unauthorized() throws Exception {
+        mockMvc.perform(get("/api/playlists/{playlistId}/subscribers", PLAYLIST_ID)
+                        .param("limit", "10"))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(playlistService);
     }
 
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
