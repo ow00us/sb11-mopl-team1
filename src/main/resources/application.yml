@@ -13,7 +13,9 @@ spring:
   flyway:
     postgresql:
       # V4 의 CREATE INDEX CONCURRENTLY 는 트랜잭션 밖 실행이 필요.
-      # Flyway 기본 세션 advisory lock 이 트랜잭션 획득을 시도해 CONCURRENTLY 와 충돌하면 hang.
+      # Flyway 는 기본적으로 transactional advisory lock 을 사용하는데, 이 락이 트랜잭션 안에서
+      # 획득되므로 CONCURRENTLY 와 충돌해 hang 이 발생한다. false 로 두면 session-level
+      # advisory lock 을 사용해 트랜잭션 밖 실행과 공존할 수 있다.
       transactional-lock: false
 
 management:
