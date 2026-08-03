@@ -54,8 +54,10 @@ public class WebSocketStompErrorHandler extends StompSubProtocolErrorHandler {
         accessor.setMessage(message);
         accessor.setLeaveMutable(true);
 
-        StompHeaderAccessor clientHeaderAccessor = MessageHeaderAccessor.getAccessor(
-            clientMessage, StompHeaderAccessor.class);
+        StompHeaderAccessor clientHeaderAccessor = (clientMessage != null)
+            ? MessageHeaderAccessor.getAccessor(clientMessage, StompHeaderAccessor.class)
+            : null;
+
         if (clientHeaderAccessor != null) {
             String receiptId = clientHeaderAccessor.getReceipt();
             if (receiptId != null) {
