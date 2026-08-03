@@ -478,4 +478,134 @@ class ContentRepositoryTest {
                 .setParameter("id", contentId)
                 .executeUpdate();
     }
+
+    // ── findByIdForUpdate ────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("findByIdForUpdate는 존재하는 콘텐츠를 락과 함께 조회한다")
+    void findByIdForUpdate_existingContent_returnsContent() {
+        Content content = entityManager.persistAndFlush(movie().build());
+
+        Optional<Content> result = contentRepository.findByIdForUpdate(content.getId());
+
+        assertThat(result).isPresent();
+        assertThat(result.get().getId()).isEqualTo(content.getId());
+    }
+
+    @Test
+    @DisplayName("findByIdForUpdate는 소프트 삭제된 콘텐츠에 대해 빈 Optional을 반환한다")
+    void findByIdForUpdate_softDeletedContent_returnsEmpty() {
+        Content content = entityManager.persistAndFlush(movie().build());
+        markDeleted(content.getId());
+        entityManager.clear();
+
+        Optional<Content> result = contentRepository.findByIdForUpdate(content.getId());
+
+        assertThat(result).isEmpty();
+    }
+
+    // ── findByIdForUpdateWithLockTimeout ────────────────────────────────────
+
+    @Test
+    @DisplayName("findByIdForUpdateWithLockTimeout는 락 타임아웃 설정 후 콘텐츠를 락과 함께 조회한다")
+    void findByIdForUpdateWithLockTimeout_returnsContent() {
+        Content content = entityManager.persistAndFlush(movie().build());
+
+        Optional<Content> result = contentRepository.findByIdForUpdateWithLockTimeout(content.getId());
+
+        assertThat(result).isPresent();
+        assertThat(result.get().getId()).isEqualTo(content.getId());
+    }
+
+    // ── refreshReviewAggregate ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("리뷰가 없으면 refreshReviewAggregate는 평균 0.0, 개수 0으로 반영한다")
+    void refreshReviewAggregate_noReviews_setsZero() {
+        Content content = entityManager.persistAndFlush(movie().build());
+
+        contentRepository.refreshReviewAggregate(content.getId());
+        entityManager.clear();
+
+        Content result = contentRepository.findById(content.getId()).orElseThrow();
+        assertThat(result.getAverageRating()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(result.getReviewCount()).isEqualTo(0L);
+    }
+
+    @Test
+    @DisplayName("리뷰가 있으면 refreshReviewAggregate는 평균과 개수를 정확히 반영한다")
+    void refreshReviewAggregate_withReviews_setsAverageAndCount() {
+        Content content = entityManager.persistAndFlush(movie().build());
+        insertReview(content.getId(), new BigDecimal("3.0"));
+        insertReview(content.getId(), new BigDecimal("4.0"));
+        insertReview(content.getId(), new BigDecimal("5.0"));
+
+        contentRepository.refreshReviewAggregate(content.getId());
+        entityManager.clear();
+
+        Content result = contentRepository.findById(content.getId()).orElseThrow();
+        assertThat(result.getAverageRating()).isEqualByComparingTo("4.0");
+        assertThat(result.getReviewCount()).isEqualTo(3L);
+    }
+
+    @Test
+    @DisplayName("소수 둘째 자리 이하 평균은 반올림 경계값(x.x5)에서 HALF_UP으로 올림된다")
+    void refreshReviewAggregate_halfUpBoundary_roundsUp() {
+        Content content = entityManager.persistAndFlush(movie().build());
+        insertReview(content.getId(), new BigDecimal("4.0"));
+        insertReview(content.getId(), new BigDecimal("4.0"));
+        insertReview(content.getId(), new BigDecimal("4.0"));
+        insertReview(content.getId(), new BigDecimal("5.0"));
+        // 평균 = (4+4+4+5)/4 = 4.25 → 반올림 시 4.3
+
+        contentRepository.refreshReviewAggregate(content.getId());
+        entityManager.clear();
+
+        Content result = contentRepository.findById(content.getId()).orElseThrow();
+        assertThat(result.getAverageRating()).isEqualByComparingTo("4.3");
+    }
+
+    @Test
+    @DisplayName("소프트 삭제된 콘텐츠는 refreshReviewAggregate가 갱신하지 않는다")
+    void refreshReviewAggregate_softDeletedContent_skipsUpdate() {
+        Content content = entityManager.persistAndFlush(movie().build());
+        UUID contentId = content.getId();
+        insertReview(contentId, new BigDecimal("5.0"));
+        entityManager.getEntityManager()
+                .createNativeQuery("UPDATE contents SET deleted_at = now() WHERE id = :id")
+                .setParameter("id", contentId)
+                .executeUpdate();
+        entityManager.clear();
+
+        contentRepository.refreshReviewAggregate(contentId);
+
+        Content result = (Content) entityManager.getEntityManager()
+                .createNativeQuery("SELECT * FROM contents WHERE id = :id", Content.class)
+                .setParameter("id", contentId)
+                .getSingleResult();
+        assertThat(result.getReviewCount()).isEqualTo(0L);
+        assertThat(result.getAverageRating()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    private UUID insertReview(UUID contentId, BigDecimal rating) {
+        UUID authorId = UUID.randomUUID();
+        entityManager.getEntityManager()
+                .createNativeQuery("INSERT INTO users "
+                        + "(id, created_at, updated_at, email, password_hash, name, role) "
+                        + "VALUES (:id, now(), now(), :email, 'hash', 'tester', 'USER')")
+                .setParameter("id", authorId)
+                .setParameter("email", authorId + "@test.com")
+                .executeUpdate();
+        UUID reviewId = UUID.randomUUID();
+        entityManager.getEntityManager()
+                .createNativeQuery("INSERT INTO reviews "
+                        + "(id, created_at, updated_at, author_id, content_id, text, rating) "
+                        + "VALUES (:id, now(), now(), :authorId, :contentId, 'text', :rating)")
+                .setParameter("id", reviewId)
+                .setParameter("authorId", authorId)
+                .setParameter("contentId", contentId)
+                .setParameter("rating", rating)
+                .executeUpdate();
+        return reviewId;
+    }
 }
