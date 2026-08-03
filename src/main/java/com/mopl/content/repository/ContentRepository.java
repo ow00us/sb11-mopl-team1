@@ -229,6 +229,14 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
     // 그 사이 커밋된 다른 리뷰들을 못 보고 집계를 계산해 값이 유실될 수 있다.
     // 락 선점을 별도 문으로 분리하면, 락 획득 후 실행되는 refreshReviewAggregate()는
     // 새 문(statement)으로서 그 시점까지 커밋된 최신 상태를 스냅샷으로 사용하므로 정확하다.
+
+    // 콘텐츠 행 락 대기 시간을 제한한다. SET LOCAL이라 현재 트랜잭션에만 적용되고 커밋/롤백 시 자동 해제된다.
+    // 이 값이 없으면 락을 쥔 트랜잭션이 끝나지 않을 때 요청 스레드와 DB 커넥션이 무한정 점유될 수 있다.
+    // 반드시 findByIdForUpdate()보다 먼저, 같은 트랜잭션 안에서 호출해야 한다.
+    @Modifying
+    @Query(value = "SET LOCAL lock_timeout = '5s'", nativeQuery = true)
+    void setLockTimeoutForReviewAggregateLock();
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT c FROM Content c WHERE c.id = :contentId")
     Optional<Content> findByIdForUpdate(@Param("contentId") UUID contentId);

@@ -162,6 +162,7 @@ public class ReviewServiceImpl implements ReviewService {
     // 콘텐츠 행 락을 먼저 선점(findByIdForUpdate)한 뒤 별도 문으로 집계를 갱신해야
     // 락 대기 중 커밋된 다른 리뷰까지 정확히 반영된다. ContentRepository.findByIdForUpdate 참고.
     private void refreshContentAggregate(UUID contentId) {
+        contentRepository.setLockTimeoutForReviewAggregateLock();
         contentRepository.findByIdForUpdate(contentId)
                 .ifPresent(content -> contentRepository.refreshReviewAggregate(contentId));
     }
