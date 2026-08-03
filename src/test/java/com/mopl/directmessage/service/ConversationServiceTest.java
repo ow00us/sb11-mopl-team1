@@ -8,6 +8,7 @@ import static org.mockito.Mockito.*;
 
 import com.mopl.directmessage.dto.ConversationCreateRequest;
 import com.mopl.directmessage.dto.ConversationCreateResult;
+import com.mopl.directmessage.dto.ConversationDto;
 import com.mopl.directmessage.entity.Conversation;
 import com.mopl.directmessage.entity.ConversationParticipant;
 import com.mopl.directmessage.entity.ParticipantSlot;
@@ -372,5 +373,305 @@ class ConversationServiceTest {
                             ErrorCode.DIRECT_MESSAGE_INVALID_STATE
                         )
             );
+    }
+
+    @Test
+    @DisplayName("대화 참여자는 대화 ID로 대화를 조회")
+    void getConversation_participant_returnsConversation() {
+        // given
+        Conversation conversation =
+            Conversation.create();
+
+        ReflectionTestUtils.setField(
+            conversation,
+            "id",
+            CONVERSATION_ID
+        );
+
+        ConversationParticipant requester =
+            ConversationParticipant.create(
+                CONVERSATION_ID,
+                REQUESTER_ID,
+                ParticipantSlot.FIRST
+            );
+
+        ConversationParticipant withUser =
+            ConversationParticipant.create(
+                CONVERSATION_ID,
+                WITH_USER_ID,
+                ParticipantSlot.SECOND
+            );
+
+        User requesterUser =
+            createUser(
+                REQUESTER_ID,
+                "요청 사용자"
+            );
+
+        User otherUser =
+            createUser(
+                WITH_USER_ID,
+                "상대 사용자"
+            );
+
+        when(
+            conversationRepository.findById(
+                CONVERSATION_ID
+            )
+        ).thenReturn(
+            Optional.of(conversation)
+        );
+
+        when(
+            participantRepository.findAllByConversationId(
+                CONVERSATION_ID
+            )
+        ).thenReturn(
+            List.of(
+                requester,
+                withUser
+            )
+        );
+
+        when(
+            userRepository.findAllById(
+                List.of(
+                    REQUESTER_ID,
+                    WITH_USER_ID
+                )
+            )
+        ).thenReturn(
+            List.of(
+                requesterUser,
+                otherUser
+            )
+        );
+
+        when(
+            directMessageRepository
+                .findFirstByConversationIdOrderByCreatedAtDescIdDesc(
+                    CONVERSATION_ID
+                )
+        ).thenReturn(Optional.empty());
+
+        when(
+            directMessageRepository
+                .existsByConversationIdAndSenderIdNotAndReadAtIsNull(
+                    CONVERSATION_ID,
+                    REQUESTER_ID
+                )
+        ).thenReturn(false);
+
+        // when
+        ConversationDto result =
+            conversationService.getConversation(
+                REQUESTER_ID,
+                CONVERSATION_ID
+            );
+
+        // then
+        assertThat(result.id())
+            .isEqualTo(CONVERSATION_ID);
+
+        assertThat(result.with().userId())
+            .isEqualTo(WITH_USER_ID);
+
+        assertThat(result.latestMessage())
+            .isNull();
+
+        assertThat(result.hasUnread())
+            .isFalse();
+    }
+
+    @Test
+    @DisplayName("대화 참여자가 없으면 대화를 찾을 수 없음")
+    void getConversation_noParticipants_fails() {
+        // given
+        when(
+            participantRepository.findAllByConversationId(
+                CONVERSATION_ID
+            )
+        ).thenReturn(List.of());
+
+        // when & then
+        assertThatThrownBy(() ->
+            conversationService.getConversation(
+                REQUESTER_ID,
+                CONVERSATION_ID
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(
+                        exception.getErrorCode()
+                    ).isEqualTo(
+                        ErrorCode.RESOURCE_NOT_FOUND
+                    )
+            );
+    }
+
+    @Test
+    @DisplayName("1대1 대화의 참여자가 정확히 두 명이 아니면 실패")
+    void getConversation_invalidParticipantCount_fails() {
+        // given
+        ConversationParticipant requester =
+            ConversationParticipant.create(
+                CONVERSATION_ID,
+                REQUESTER_ID,
+                ParticipantSlot.FIRST
+            );
+
+        when(
+            participantRepository.findAllByConversationId(
+                CONVERSATION_ID
+            )
+        ).thenReturn(
+            List.of(requester)
+        );
+
+        // when & then
+        assertThatThrownBy(() ->
+            conversationService.getConversation(
+                REQUESTER_ID,
+                CONVERSATION_ID
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception -> {
+                    assertThat(
+                        exception.getErrorCode()
+                    ).isEqualTo(
+                        ErrorCode.DIRECT_MESSAGE_INVALID_STATE
+                    );
+
+                    assertThat(
+                        exception.getMessage()
+                    ).isEqualTo(
+                        "1:1 대화의 참여자는 정확히 2명이어야 합니다."
+                    );
+                }
+            );
+    }
+
+    @Test
+    @DisplayName("대화에 참여하지 않은 사용자는 대화를 조회할 수 없음")
+    void getConversation_nonParticipant_fails() {
+        // given
+        UUID otherUserId =
+            UUID.randomUUID();
+
+        ConversationParticipant first =
+            ConversationParticipant.create(
+                CONVERSATION_ID,
+                WITH_USER_ID,
+                ParticipantSlot.FIRST
+            );
+
+        ConversationParticipant second =
+            ConversationParticipant.create(
+                CONVERSATION_ID,
+                otherUserId,
+                ParticipantSlot.SECOND
+            );
+
+        when(
+            participantRepository.findAllByConversationId(
+                CONVERSATION_ID
+            )
+        ).thenReturn(
+            List.of(first, second)
+        );
+
+        // when & then
+        assertThatThrownBy(() ->
+            conversationService.getConversation(
+                REQUESTER_ID,
+                CONVERSATION_ID
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(
+                        exception.getErrorCode()
+                    ).isEqualTo(
+                        ErrorCode.RESOURCE_NOT_FOUND
+                    )
+            );
+    }
+
+    @Test
+    @DisplayName("특정 사용자와의 대화가 없으면 사용자 존재 여부와 관계없이 실패")
+    void getConversationWithUser_notFound_fails() {
+        // given
+        when(
+            participantRepository
+                .findConversationIdsByUserPair(
+                    REQUESTER_ID,
+                    WITH_USER_ID
+                )
+        ).thenReturn(List.of());
+
+        // when & then
+        assertThatThrownBy(() ->
+            conversationService
+                .getConversationWithUser(
+                    REQUESTER_ID,
+                    WITH_USER_ID
+                )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(
+                        exception.getErrorCode()
+                    ).isEqualTo(
+                        ErrorCode.RESOURCE_NOT_FOUND
+                    )
+            );
+
+        verifyNoInteractions(
+            userRepository,
+            conversationRepository,
+            directMessageRepository
+        );
+    }
+
+    @Test
+    @DisplayName("자기 자신과의 대화를 조회하면 조회 문맥의 메시지로 실패")
+    void getConversationWithUser_self_fails() {
+        // when & then
+        assertThatThrownBy(() ->
+            conversationService
+                .getConversationWithUser(
+                    REQUESTER_ID,
+                    REQUESTER_ID
+                )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception -> {
+                    assertThat(
+                        exception.getErrorCode()
+                    ).isEqualTo(
+                        ErrorCode.INVALID_INPUT
+                    );
+
+                    assertThat(
+                        exception.getMessage()
+                    ).isEqualTo(
+                        "자기 자신과의 대화를 조회할 수 없습니다."
+                    );
+                }
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            userRepository,
+            conversationRepository,
+            directMessageRepository
+        );
     }
 }
