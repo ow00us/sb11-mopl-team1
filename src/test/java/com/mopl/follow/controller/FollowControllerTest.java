@@ -3,8 +3,11 @@ package com.mopl.follow.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.follow.dto.FollowDto;
 import com.mopl.follow.dto.FollowRequest;
+import com.mopl.follow.dto.FollowUserItemDto;
 import com.mopl.follow.service.FollowResult;
 import com.mopl.follow.service.FollowService;
+import com.mopl.global.common.CursorResponse;
+import com.mopl.global.common.UserSummary;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import org.junit.jupiter.api.AfterEach;
@@ -19,6 +22,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -191,6 +195,148 @@ class FollowControllerTest {
         mockMvc.perform(get("/api/follows/followed-by-me")
                         .param("followeeId", FOLLOWEE_ID.toString()))
                 .andExpect(status().isNotFound());
+    }
+
+    // ── GET /api/follows/followers ────────────────────────────────────────────
+
+    @Test
+    @DisplayName("팔로워 목록 조회 성공 시 200과 hasNext/nextCursor/nextIdAfter 포함한 CursorResponse 를 반환한다")
+    void getFollowers_success() throws Exception {
+        Instant now  = Instant.parse("2026-08-01T10:00:00Z");
+        Instant next = Instant.parse("2026-08-01T09:00:00Z");
+        UUID otherFollowerId = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        UUID nextIdAfter = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        String nextCursor = "encoded-cursor-token";
+
+        CursorResponse<FollowUserItemDto> response = CursorResponse.of(
+                List.of(
+                        new FollowUserItemDto(FOLLOW_ID, new UserSummary(FOLLOWER_ID, null, null), now),
+                        new FollowUserItemDto(nextIdAfter, new UserSummary(otherFollowerId, null, null), next)
+                ),
+                nextCursor, nextIdAfter, true, 5L, "followedAt", "DESCENDING");
+        when(followService.getFollowers(eq(FOLLOWEE_ID), any(), any(), eq(2),
+                eq("followedAt"), eq("DESCENDING"))).thenReturn(response);
+
+        mockMvc.perform(get("/api/follows/followers")
+                        .param("followeeId", FOLLOWEE_ID.toString())
+                        .param("limit", "2")
+                        .param("sortBy", "followedAt")
+                        .param("sortDirection", "DESCENDING"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].followId").value(FOLLOW_ID.toString()))
+                .andExpect(jsonPath("$.data[0].user.userId").value(FOLLOWER_ID.toString()))
+                .andExpect(jsonPath("$.data[0].followedAt").value(now.toString()))
+                .andExpect(jsonPath("$.data[1].followId").value(nextIdAfter.toString()))
+                .andExpect(jsonPath("$.data[1].followedAt").value(next.toString()))
+                .andExpect(jsonPath("$.hasNext").value(true))
+                .andExpect(jsonPath("$.nextCursor").value(nextCursor))
+                .andExpect(jsonPath("$.nextIdAfter").value(nextIdAfter.toString()))
+                .andExpect(jsonPath("$.totalCount").value(5));
+    }
+
+    @Test
+    @DisplayName("팔로워 목록 조회 시 limit 이 0 이하면 400 을 반환한다")
+    void getFollowers_fail_invalidLimit() throws Exception {
+        mockMvc.perform(get("/api/follows/followers")
+                        .param("followeeId", FOLLOWEE_ID.toString())
+                        .param("limit", "0"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("팔로워 목록 조회 시 limit 이 100 초과면 400 을 반환한다")
+    void getFollowers_fail_limitExceedsMax() throws Exception {
+        mockMvc.perform(get("/api/follows/followers")
+                        .param("followeeId", FOLLOWEE_ID.toString())
+                        .param("limit", "101"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("팔로워 목록 조회 시 sortDirection 이 허용값이 아니면 400 을 반환한다")
+    void getFollowers_fail_invalidSortDirection() throws Exception {
+        mockMvc.perform(get("/api/follows/followers")
+                        .param("followeeId", FOLLOWEE_ID.toString())
+                        .param("limit", "10")
+                        .param("sortDirection", "WRONG"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("팔로워 목록 조회 시 sortDirection=ASCENDING 은 현재 미지원이므로 400 과 INVALID_INPUT 을 반환한다")
+    void getFollowers_fail_ascendingNotSupported() throws Exception {
+        mockMvc.perform(get("/api/follows/followers")
+                        .param("followeeId", FOLLOWEE_ID.toString())
+                        .param("limit", "10")
+                        .param("sortDirection", "ASCENDING"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
+    }
+
+    @Test
+    @DisplayName("팔로워 목록 조회 시 followeeId 파라미터가 없으면 400 을 반환한다")
+    void getFollowers_fail_missingFolloweeId() throws Exception {
+        mockMvc.perform(get("/api/follows/followers")
+                        .param("limit", "10"))
+                .andExpect(status().isBadRequest());
+    }
+
+    // ── GET /api/follows/followings ───────────────────────────────────────────
+
+    @Test
+    @DisplayName("팔로잉 목록 조회 성공 시 200과 hasNext/nextCursor/nextIdAfter/totalCount 포함한 CursorResponse 를 반환한다")
+    void getFollowings_success() throws Exception {
+        Instant now  = Instant.parse("2026-08-01T10:00:00Z");
+        Instant next = Instant.parse("2026-08-01T09:00:00Z");
+        UUID otherFolloweeId = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        UUID nextIdAfter = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        String nextCursor = "encoded-cursor-token";
+
+        CursorResponse<FollowUserItemDto> response = CursorResponse.of(
+                List.of(
+                        new FollowUserItemDto(FOLLOW_ID, new UserSummary(FOLLOWEE_ID, null, null), now),
+                        new FollowUserItemDto(nextIdAfter, new UserSummary(otherFolloweeId, null, null), next)
+                ),
+                nextCursor, nextIdAfter, true, 3L, "followedAt", "DESCENDING");
+        when(followService.getFollowings(eq(FOLLOWER_ID), any(), any(), eq(2),
+                eq("followedAt"), eq("DESCENDING"))).thenReturn(response);
+
+        mockMvc.perform(get("/api/follows/followings")
+                        .param("followerId", FOLLOWER_ID.toString())
+                        .param("limit", "2")
+                        .param("sortBy", "followedAt")
+                        .param("sortDirection", "DESCENDING"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].followId").value(FOLLOW_ID.toString()))
+                .andExpect(jsonPath("$.data[0].user.userId").value(FOLLOWEE_ID.toString()))
+                .andExpect(jsonPath("$.data[0].followedAt").value(now.toString()))
+                .andExpect(jsonPath("$.data[1].followId").value(nextIdAfter.toString()))
+                .andExpect(jsonPath("$.data[1].followedAt").value(next.toString()))
+                .andExpect(jsonPath("$.hasNext").value(true))
+                .andExpect(jsonPath("$.nextCursor").value(nextCursor))
+                .andExpect(jsonPath("$.nextIdAfter").value(nextIdAfter.toString()))
+                .andExpect(jsonPath("$.totalCount").value(3));
+    }
+
+    @Test
+    @DisplayName("팔로잉 목록 조회 시 followerId 가 없으면 400 을 반환한다")
+    void getFollowings_fail_missingFollowerId() throws Exception {
+        mockMvc.perform(get("/api/follows/followings")
+                        .param("limit", "10"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("팔로잉 목록 조회 시 sortDirection=ASCENDING 은 현재 미지원이므로 400 과 INVALID_INPUT 을 반환한다")
+    void getFollowings_fail_ascendingNotSupported() throws Exception {
+        mockMvc.perform(get("/api/follows/followings")
+                        .param("followerId", FOLLOWER_ID.toString())
+                        .param("limit", "10")
+                        .param("sortDirection", "ASCENDING"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
     }
 
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
