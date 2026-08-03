@@ -39,6 +39,15 @@ public interface DirectMessageRepository
         UUID conversationId
     );
 
+    Optional<DirectMessage> findFirstByConversationIdOrderByCreatedAtDescIdDesc(
+        UUID conversationId
+    );
+
+    boolean existsByConversationIdAndSenderIdNotAndReadAtIsNull(
+        UUID conversationID,
+        UUID senderId
+    );
+
     @Modifying(
         flushAutomatically = true,
         clearAutomatically = true
