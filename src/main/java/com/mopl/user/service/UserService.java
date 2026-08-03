@@ -8,6 +8,7 @@ import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
 import java.util.Locale;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -70,4 +71,53 @@ public class UserService {
         return email.strip().toLowerCase(Locale.ROOT);
     }
 
+
+    /**
+     * 사용자 UUID로 사용자 상세 정보를 조회
+     *
+     * Swagger에 정의된 GET /api/users/{userId} 요청에서 전달받은
+     * 사용자 UUID를 기준으로 데이터베이스의 사용자 정보를 조회
+     *
+     * 사용자 계정이 존재하지 않으면 RESOURCE_NOT_FOUND 예외를 발생
+     *
+     * @param userId 조회할 사용자 UUID
+     * @return 비밀번호 해시를 제외한 사용자 상세 정보
+     * @throws BusinessException 사용자가 존재하지 않는 경우
+     */
+    public UserDto findUser(UUID userId) {
+        User user = userRepository.findById(userId)
+            .orElseThrow(() ->
+                new BusinessException(ErrorCode.RESOURCE_NOT_FOUND)
+            );
+
+        return UserDto.from(user);
+    }
+
+    /*
+    // GET /api/users/me 부분. 추후 선택기능 개발 과정에서 살릴 부분임.
+
+    /**
+     * 인증된 사용자의 UUID로 자신의 프로필을 조회
+     *
+     * JWT 인증이 완료되면 Authentication principal에 사용자 UUID가 저장
+     * Controller는 해당 UUID를 이 메서드에 전달하고,
+     * Service는 데이터베이스에서 현재 사용자 정보를 조회한 뒤 UserDto로 변환
+     *
+     * JWT가 발급된 이후 사용자가 탈퇴하거나 삭제되었을 수도 있으므로,
+     * 토큰에 UUID가 존재하더라도 데이터베이스 조회 결과가 없으면
+     * RESOURCE_NOT_FOUND 예외를 발생
+     *
+     * @param userId JWT 인증 정보에서 가져온 사용자 UUID
+     * @return 비밀번호 해시를 제외한 자신의 프로필 정보
+     * @throws BusinessException 사용자 계정이 존재하지 않는 경우
+
+    public UserDto getMyProfile(UUID userId) {
+        User user = userRepository.findById(userId)
+            .orElseThrow(() ->
+                new BusinessException(ErrorCode.RESOURCE_NOT_FOUND)
+            );
+
+        return UserDto.from(user);
+    }
+*/
 }
