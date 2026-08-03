@@ -166,42 +166,6 @@ class ReviewRepositoryTest {
         assertThat(reviewRepository.existsByAuthorIdAndContentId(authorId, UUID.randomUUID())).isFalse();
     }
 
-    // ── aggregateByContentId ─────────────────────────────────────────────────
-
-    @Test
-    @DisplayName("리뷰가 없으면 aggregateByContentId는 평균 0.0, 개수 0을 반환한다")
-    void aggregateByContentId_noReviews_returnsZero() {
-        // given
-        UUID contentId = insertContent();
-
-        // when
-        ReviewRepository.ReviewAggregate aggregate = reviewRepository.aggregateByContentId(contentId);
-
-        // then
-        assertThat(aggregate.getAverageRating()).isEqualByComparingTo(BigDecimal.ZERO);
-        assertThat(aggregate.getReviewCount()).isEqualTo(0L);
-    }
-
-    @Test
-    @DisplayName("리뷰가 여러 개면 aggregateByContentId는 정확한 평균과 개수를 반환한다")
-    void aggregateByContentId_multipleReviews_returnsAverageAndCount() {
-        // given
-        UUID contentId = insertContent();
-        entityManager.persistAndFlush(Review.builder()
-                .authorId(insertUser()).contentId(contentId).text("t1").rating(new BigDecimal("3.0")).build());
-        entityManager.persistAndFlush(Review.builder()
-                .authorId(insertUser()).contentId(contentId).text("t2").rating(new BigDecimal("4.0")).build());
-        entityManager.persistAndFlush(Review.builder()
-                .authorId(insertUser()).contentId(contentId).text("t3").rating(new BigDecimal("5.0")).build());
-
-        // when
-        ReviewRepository.ReviewAggregate aggregate = reviewRepository.aggregateByContentId(contentId);
-
-        // then
-        assertThat(aggregate.getAverageRating()).isEqualByComparingTo("4.0");
-        assertThat(aggregate.getReviewCount()).isEqualTo(3L);
-    }
-
     // ── countByFilter ──────────────────────────────────────────────────────
 
     @Test

@@ -12,7 +12,6 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.HashSet;
@@ -110,11 +109,6 @@ public class Content extends BaseEntity {
 
     public void updateThumbnail(String thumbnailUrl) {
         this.thumbnailUrl = thumbnailUrl;
-    }
-
-    public void updateReviewAggregate(BigDecimal averageRating, long reviewCount) {
-        this.averageRating = (averageRating != null ? averageRating : BigDecimal.ZERO).setScale(1, RoundingMode.HALF_UP);
-        this.reviewCount = reviewCount;
     }
 
     public boolean addTag(String rawTag) {

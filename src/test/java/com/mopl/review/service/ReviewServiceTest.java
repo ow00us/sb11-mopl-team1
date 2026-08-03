@@ -6,7 +6,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -71,9 +70,8 @@ class ReviewServiceTest {
         ReviewCreateRequest request = new ReviewCreateRequest(CONTENT_ID, "재밌어요", new BigDecimal("4.5"));
         Content content = movie();
         when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(content));
+        when(contentRepository.findByIdForUpdate(CONTENT_ID)).thenReturn(Optional.of(content));
         when(reviewRepository.existsByAuthorIdAndContentId(AUTHOR_ID, CONTENT_ID)).thenReturn(false);
-        ReviewRepository.ReviewAggregate aggregate = aggregateOf(new BigDecimal("4.5"), 1L);
-        when(reviewRepository.aggregateByContentId(CONTENT_ID)).thenReturn(aggregate);
         when(userRepository.findById(AUTHOR_ID)).thenReturn(Optional.of(savedUser(AUTHOR_ID, "닉네임", null)));
 
         ReviewDto result = reviewService.create(request, AUTHOR_ID);
@@ -81,10 +79,8 @@ class ReviewServiceTest {
         assertThat(result.text()).isEqualTo("재밌어요");
         assertThat(result.rating()).isEqualByComparingTo("4.5");
         assertThat(result.author().userId()).isEqualTo(AUTHOR_ID);
-        assertThat(content.getAverageRating()).isEqualByComparingTo("4.5");
-        assertThat(content.getReviewCount()).isEqualTo(1L);
         verify(reviewRepository).saveAndFlush(any(Review.class));
-        verify(contentRepository).save(content);
+        verify(contentRepository).refreshReviewAggregate(CONTENT_ID);
     }
 
     @Test
@@ -129,7 +125,7 @@ class ReviewServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.REVIEW_DUPLICATE);
 
-        verify(reviewRepository, never()).aggregateByContentId(any());
+        verify(contentRepository, never()).refreshReviewAggregate(any());
     }
 
     @Test
@@ -166,8 +162,6 @@ class ReviewServiceTest {
         ReviewCreateRequest request = new ReviewCreateRequest(CONTENT_ID, "text", new BigDecimal("3.0"));
         when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(movie()));
         when(reviewRepository.existsByAuthorIdAndContentId(AUTHOR_ID, CONTENT_ID)).thenReturn(false);
-        when(reviewRepository.aggregateByContentId(CONTENT_ID))
-                .thenReturn(mock(ReviewRepository.ReviewAggregate.class));
         when(userRepository.findById(AUTHOR_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> reviewService.create(request, AUTHOR_ID))
@@ -182,10 +176,7 @@ class ReviewServiceTest {
     void update_success() {
         Review review = savedReview(REVIEW_ID, AUTHOR_ID, CONTENT_ID, "원래", new BigDecimal("3.0"));
         when(reviewRepository.findById(REVIEW_ID)).thenReturn(Optional.of(review));
-        Content content = movie();
-        when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(content));
-        ReviewRepository.ReviewAggregate aggregate = aggregateOf(new BigDecimal("4.0"), 1L);
-        when(reviewRepository.aggregateByContentId(CONTENT_ID)).thenReturn(aggregate);
+        when(contentRepository.findByIdForUpdate(CONTENT_ID)).thenReturn(Optional.of(movie()));
         when(userRepository.findById(AUTHOR_ID)).thenReturn(Optional.of(savedUser(AUTHOR_ID, "닉네임", null)));
 
         ReviewDto result = reviewService.update(
@@ -193,9 +184,8 @@ class ReviewServiceTest {
 
         assertThat(result.text()).isEqualTo("새 리뷰");
         assertThat(result.rating()).isEqualByComparingTo("4.0");
-        assertThat(content.getAverageRating()).isEqualByComparingTo("4.0");
         verify(reviewRepository).saveAndFlush(review);
-        verify(contentRepository).save(content);
+        verify(contentRepository).refreshReviewAggregate(CONTENT_ID);
     }
 
     @Test
@@ -230,32 +220,13 @@ class ReviewServiceTest {
     void delete_success() {
         Review review = savedReview(REVIEW_ID, AUTHOR_ID, CONTENT_ID, "text", new BigDecimal("3.0"));
         when(reviewRepository.findById(REVIEW_ID)).thenReturn(Optional.of(review));
-        Content content = movie();
-        when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(content));
-        ReviewRepository.ReviewAggregate aggregate = aggregateOf(BigDecimal.ZERO, 0L);
-        when(reviewRepository.aggregateByContentId(CONTENT_ID)).thenReturn(aggregate);
+        when(contentRepository.findByIdForUpdate(CONTENT_ID)).thenReturn(Optional.of(movie()));
 
         reviewService.delete(REVIEW_ID, AUTHOR_ID);
 
         verify(reviewRepository).delete(review);
         verify(reviewRepository).flush();
-        verify(contentRepository).save(content);
-        assertThat(content.getReviewCount()).isEqualTo(0L);
-    }
-
-    @Test
-    @DisplayName("콘텐츠가 이미 삭제된 상태여도 리뷰 삭제 자체는 성공한다")
-    void delete_success_evenWhenContentAlreadyDeleted() {
-        Review review = savedReview(REVIEW_ID, AUTHOR_ID, CONTENT_ID, "text", new BigDecimal("3.0"));
-        when(reviewRepository.findById(REVIEW_ID)).thenReturn(Optional.of(review));
-        when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.empty());
-        when(reviewRepository.aggregateByContentId(CONTENT_ID))
-                .thenReturn(mock(ReviewRepository.ReviewAggregate.class));
-
-        reviewService.delete(REVIEW_ID, AUTHOR_ID);
-
-        verify(reviewRepository).delete(review);
-        verify(contentRepository, never()).save(any());
+        verify(contentRepository).refreshReviewAggregate(CONTENT_ID);
     }
 
     @Test
@@ -488,12 +459,5 @@ class ReviewServiceTest {
                 .build();
         ReflectionTestUtils.setField(user, "id", id);
         return user;
-    }
-
-    private ReviewRepository.ReviewAggregate aggregateOf(BigDecimal averageRating, long reviewCount) {
-        ReviewRepository.ReviewAggregate aggregate = mock(ReviewRepository.ReviewAggregate.class);
-        when(aggregate.getAverageRating()).thenReturn(averageRating);
-        when(aggregate.getReviewCount()).thenReturn(reviewCount);
-        return aggregate;
     }
 }

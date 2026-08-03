@@ -14,18 +14,6 @@ public interface ReviewRepository extends JpaRepository<Review, UUID> {
     boolean existsByAuthorIdAndContentId(UUID authorId, UUID contentId);
 
     @Query(value = """
-            SELECT COALESCE(AVG(rating), 0.0) AS averageRating, COUNT(*) AS reviewCount
-            FROM reviews
-            WHERE content_id = CAST(:contentId AS uuid)
-            """, nativeQuery = true)
-    ReviewAggregate aggregateByContentId(@Param("contentId") UUID contentId);
-
-    interface ReviewAggregate {
-        BigDecimal getAverageRating();
-        long getReviewCount();
-    }
-
-    @Query(value = """
             SELECT COUNT(*) FROM reviews
             WHERE (CAST(:contentId AS uuid) IS NULL OR content_id = CAST(:contentId AS uuid))
             """, nativeQuery = true)

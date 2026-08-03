@@ -157,14 +157,13 @@ public class ReviewServiceImpl implements ReviewService {
                 && PG_UNIQUE_VIOLATION_SQLSTATE.equals(sql.getSQLState());
     }
 
-    // 리뷰 변경사항이 이미 flush 되어 있어야 이 집계 쿼리(네이티브)에 반영된다.
+    // 리뷰 변경사항이 이미 flush 되어 있어야 이 원자적 갱신 쿼리에 반영된다.
     // create/update/delete 각각 saveAndFlush/flush 호출 이후에만 이 메서드를 호출할 것.
+    // 콘텐츠 행 락을 먼저 선점(findByIdForUpdate)한 뒤 별도 문으로 집계를 갱신해야
+    // 락 대기 중 커밋된 다른 리뷰까지 정확히 반영된다. ContentRepository.findByIdForUpdate 참고.
     private void refreshContentAggregate(UUID contentId) {
-        ReviewRepository.ReviewAggregate aggregate = reviewRepository.aggregateByContentId(contentId);
-        contentRepository.findById(contentId).ifPresent(content -> {
-            content.updateReviewAggregate(aggregate.getAverageRating(), aggregate.getReviewCount());
-            contentRepository.save(content);
-        });
+        contentRepository.findByIdForUpdate(contentId)
+                .ifPresent(content -> contentRepository.refreshReviewAggregate(contentId));
     }
 
     private UserSummary toUserSummary(UUID userId) {
