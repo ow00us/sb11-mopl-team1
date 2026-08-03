@@ -15,6 +15,7 @@ import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -150,6 +151,78 @@ class UserServiceTest {
             .isInstanceOf(BusinessException.class)
             .extracting("errorCode")
             .isEqualTo(ErrorCode.EMAIL_DUPLICATE);
+    }
+
+    @Test
+    // @DisplayName("인증된 사용자 ID로 자신의 프로필을 조회한다")
+    @DisplayName("사용자 ID로 사용자 상세 정보를 조회한다")
+        // void getMyProfile_success() { /api/users/me 변환
+    void findUser_success() {
+        // // given: JWT 인증 정보에서 꺼냈다고 가정하는 사용자 UUID (/users/me)
+        // given: 조회할 사용자의 UUID
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        Instant createdAt =
+            Instant.parse("2026-07-28T03:00:00Z");
+
+        // Repository가 반환할 사용자 엔티티를 준비합니다.
+        User user = User.builder()
+            .email("user@example.com")
+            .passwordHash("encoded-password")
+            .name("테스트 사용자")
+            .profileImageUrl("https://example.com/profile.png")
+            .role(UserRole.USER)
+            .locked(false)
+            .build();
+
+        // id와 createdAt은 실제 환경에서는 JPA와 BaseEntity가 설정
+        // 이 테스트에서는 DB를 사용하지 않으므로 테스트용 값을 직접 주입
+        ReflectionTestUtils.setField(user, "id", userId);
+        ReflectionTestUtils.setField(user, "createdAt", createdAt);
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        // when: 인증된 사용자의 UUID로 자신의 프로필을 조회
+        // UserDto response = userService.getMyProfile(userId);
+        UserDto response = userService.findUser(userId);
+
+        // then: 비밀번호 해시를 제외한 사용자 정보가 UserDto로 반환
+        assertThat(response.id()).isEqualTo(userId);
+        assertThat(response.createdAt()).isEqualTo(createdAt);
+        assertThat(response.email()).isEqualTo("user@example.com");
+        assertThat(response.name()).isEqualTo("테스트 사용자");
+        assertThat(response.profileImageUrl())
+            .isEqualTo("https://example.com/profile.png");
+        assertThat(response.role()).isEqualTo(UserRole.USER);
+        assertThat(response.locked()).isFalse();
+
+        // 전달받은 인증 사용자 ID로 한 번 조회했는지 확인
+        verify(userRepository).findById(userId);
+    }
+
+    @Test
+    // @DisplayName("인증된 사용자 ID에 해당하는 계정이 없으면 조회에 실패한다")
+    @DisplayName("사용자 ID에 해당하는 계정이 없으면 조회에 실패한다")
+        // void getMyProfile_fail_whenUserDoesNotExist() { /users/me
+    void findUser_fail_whenUserDoesNotExist() {
+        // given: JWT는 유효하지만 해당 사용자가 이미 탈퇴·삭제된 상황을 가정
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.empty());
+
+        // when & then: 존재하지 않는 사용자이므로 404에 대응하는 예외가 발생
+        // assertThatThrownBy(() -> userService.getMyProfile(userId))
+        assertThatThrownBy(() -> userService.findUser(userId))
+
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+
+        verify(userRepository).findById(userId);
     }
 
 }

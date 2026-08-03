@@ -4,6 +4,7 @@ import com.mopl.global.common.CursorResponse;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
+import com.mopl.playlist.dto.SubscriberItemDto;
 
 import java.util.UUID;
 
@@ -43,4 +44,14 @@ public interface PlaylistService {
 
     /** 플레이리스트에서 콘텐츠를 삭제합니다. 소유자가 아니면 403, 없으면 404 를 발생시킵니다. */
     void removeContent(UUID playlistId, UUID contentId, UUID requesterId);
+
+    /** 특정 플레이리스트의 구독자 목록을 커서 페이지네이션으로 조회합니다. 없는 플레이리스트면 404. */
+    CursorResponse<SubscriberItemDto> getSubscribers(
+            UUID playlistId,
+            String cursor,
+            UUID idAfter,
+            int limit,
+            String sortBy,
+            String sortDirection
+    );
 }

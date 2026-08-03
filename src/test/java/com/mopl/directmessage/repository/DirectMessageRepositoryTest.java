@@ -29,6 +29,14 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @DataJpaTest
 @ActiveProfiles("test")
@@ -64,6 +72,9 @@ public class DirectMessageRepositoryTest {
 
     @Autowired
     DirectMessageRepository directMessageRepository;
+
+    @Autowired
+    PlatformTransactionManager transactionManager;
 
     private void insertUser(
         UUID userId,
@@ -178,6 +189,118 @@ public class DirectMessageRepositoryTest {
     }
 
     @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("동시에 DM을 읽음 처리하면 최초 요청 하나만 readAt을 기록")
+    void markAsReadIfUnread_concurrent_updatesOnce() throws Exception {
+        // given
+        Conversation conversation =
+            conversationRepository.save(Conversation.create());
+
+        participantRepository.save(
+            ConversationParticipant.create(
+                conversation.getId(),
+                USER_ID_1,
+                ParticipantSlot.FIRST
+            )
+        );
+
+        DirectMessage message =
+            directMessageRepository.save(
+                DirectMessage.create(
+                    conversation.getId(),
+                    USER_ID_1,
+                    "동시 읽음 테스트"
+                )
+            );
+
+        Instant firstReadAt =
+            Instant.parse("2026-07-31T01:00:00Z");
+
+        Instant secondReadAt =
+            Instant.parse("2026-07-31T02:00:00Z");
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        TransactionTemplate transactionTemplate =
+            new TransactionTemplate(transactionManager);
+
+        ExecutorService executor =
+            Executors.newFixedThreadPool(2);
+
+        try {
+            Future<Integer> firstResult =
+                executor.submit(() -> {
+                    ready.countDown();
+                    start.await();
+
+                    return transactionTemplate.execute(status ->
+                        directMessageRepository.markAsReadIfUnread(
+                            message.getId(),
+                            conversation.getId(),
+                            firstReadAt
+                        )
+                    );
+                });
+
+            Future<Integer> secondResult =
+                executor.submit(() -> {
+                    ready.countDown();
+                    start.await();
+
+                    return transactionTemplate.execute(status ->
+                        directMessageRepository.markAsReadIfUnread(
+                            message.getId(),
+                            conversation.getId(),
+                            secondReadAt
+                        )
+                    );
+                });
+
+            ready.await();
+            start.countDown();
+
+            int firstUpdated = firstResult.get();
+            int secondUpdated = secondResult.get();
+
+            DirectMessage found =
+                directMessageRepository.findById(message.getId())
+                    .orElseThrow();
+
+            Instant expectedReadAt =
+                firstUpdated == 1
+                    ? firstReadAt
+                    : secondReadAt;
+
+            // then
+            assertThat(firstUpdated + secondUpdated)
+                .isEqualTo(1);
+            assertThat(found.getReadAt())
+                .isEqualTo(expectedReadAt);
+        } finally {
+            executor.shutdown();
+
+            jdbcTemplate.update(
+                "DELETE FROM direct_messages WHERE conversation_id = ?",
+                conversation.getId()
+            );
+            jdbcTemplate.update(
+                "DELETE FROM conversation_participants WHERE conversation_id = ?",
+                conversation.getId()
+            );
+            jdbcTemplate.update(
+                "DELETE FROM conversations WHERE id = ?",
+                conversation.getId()
+            );
+            jdbcTemplate.update(
+                "DELETE FROM users WHERE id IN (?, ?)",
+                USER_ID_1,
+                USER_ID_2
+            );
+        }
+    }
+
+    @Test
     @DisplayName("대화 참여자가 아닌 사용자는 DM을 저장할 수 없음")
     void saveDirectMessageByNonParticipantFails() {
         // given
@@ -286,6 +409,10 @@ public class DirectMessageRepositoryTest {
                 PageRequest.of(0, 10)
             );
 
+        long totalCount = directMessageRepository.countByConversationId(
+            conversation.getId()
+        );
+
         // then
         assertThat(descending)
             .extracting(DirectMessage::getId)
@@ -302,5 +429,7 @@ public class DirectMessageRepositoryTest {
         assertThat(ascendingAfterCursor)
             .extracting(DirectMessage::getId)
             .containsExactly(messageId3);
+
+        assertThat(totalCount).isEqualTo(3L);
     }
 }

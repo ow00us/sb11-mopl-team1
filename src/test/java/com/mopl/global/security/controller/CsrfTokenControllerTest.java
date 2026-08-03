@@ -1,6 +1,7 @@
 package com.mopl.global.security.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -61,7 +62,8 @@ class CsrfTokenControllerTest {
 
         mockMvc.perform(post("/test/csrf-protected")
                 .cookie(csrfCookie)
-                .header(CSRF_HEADER_NAME, csrfCookie.getValue()))
+                .header(CSRF_HEADER_NAME, csrfCookie.getValue())
+                .with(user("csrf-test-user")))
             .andExpect(status().isNoContent());
     }
 
