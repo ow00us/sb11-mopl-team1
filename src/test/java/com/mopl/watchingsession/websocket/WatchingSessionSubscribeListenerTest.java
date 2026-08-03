@@ -1,6 +1,7 @@
 package com.mopl.watchingsession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -167,5 +168,60 @@ public class WatchingSessionSubscribeListenerTest {
 
         // then
         verify(watchingSessionService, never()).start(any(), any());
+    }
+
+    @Test
+    @DisplayName("WebSocket 세션 속성이 없으면 매핑 실패로 간주하고 로직 중단")
+    void onSubscribe_failsMapping_whenSessionAttributesIsNull() {
+        // given: SessionAttributes가 null인 비정상 이벤트
+        StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        accessor.setDestination("/sub/contents/" + CONTENT_ID + "/watch");
+        accessor.setSubscriptionId("sub-0");
+        accessor.setUser(principalOf(WATCHER_ID));
+        Message<byte[]> message = MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
+        SessionSubscribeEvent event = new SessionSubscribeEvent(this, message);
+
+        // when
+        listener.onSubscribe(event);
+
+        // then
+        verify(watchingSessionService, never()).start(any(), any());
+        verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());
+    }
+
+    @Test
+    @DisplayName("SubscriptionId 헤더가 없으면 매핑 실패로 간주하고 로직 중단")
+    void onSubscribe_failsMapping_whenSubscriptionIdIsMissing() {
+        // given: subscriptionId로 null 주입
+        SessionSubscribeEvent event = subscribeEvent(
+            "/sub/contents/" + CONTENT_ID + "/watch", null, principalOf(WATCHER_ID));
+
+        // when
+        listener.onSubscribe(event);
+
+        // then
+        verify(watchingSessionService, never()).start(any(), any());
+        verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());
+    }
+
+    @Test
+    @DisplayName("start() 처리 중 예외 발생 시 STOMP 예외 전파를 막고 인메모리 및 DB 정리 수행")
+    void onSubscribe_rollback_whenStartThrowsException() {
+        // given
+        SessionSubscribeEvent event = subscribeEvent(
+            "/sub/contents/" + CONTENT_ID + "/watch", "sub-123", principalOf(WATCHER_ID));
+
+        // start() 호출 시 예외 던지도록 모킹
+        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID))
+            .thenThrow(new RuntimeException("시청 세션 시작 실패 흉내"));
+
+        // when: 예외가 밖으로 던져지지 않고 내부에서 무사히 삼켜지는지 검증
+        assertDoesNotThrow(() -> listener.onSubscribe(event));
+
+        // then
+        verify(watchingSessionService).end(WATCHER_ID);
+        verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());
+        StompHeaderAccessor lookupAccessor = StompHeaderAccessor.wrap(event.getMessage());
+        assertThat(WatchSubscriptionAttributes.remove(lookupAccessor)).isNull();
     }
 }

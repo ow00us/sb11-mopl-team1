@@ -51,15 +51,33 @@ public class WatchingSessionSubscribeListener {
             return;
         }
 
-        // DB 쓰기 이후에 저장하면 start는 성공했는데 put이 실패하면 DB엔 세션이 있지만 매핑이 없어 나중에 end()가 절대 호출되지 않음
-        // 매핑을 먼저 저장해두면 최악의 경우에도 매핑은 있는데 db세션은 없는 상태기 되고 end()는 멱등이라 안전하게 무시됨
-        WatchSubscriptionAttributes.put(accessor, contentId);
+        // 유틸 내부에서 subscriptionId null 체크 및 맵 null 체크 후 매핑 시도
+        boolean isMapped = WatchSubscriptionAttributes.put(accessor, contentId);
 
-        // 세션 생성/갱신 + enrich된 dto 반환
-        WatchingSessionDto session = watchingSessionService.start(watcherId, contentId);
+        // 매핑 실패 시 DB 로직 강행 차단
+        if (!isMapped) {
+            log.warn("구독 매핑 불가 상태(subscriptionId 누락 또는 세션 이상). DB 세션 생성을 취소합니다.");
+            return;
+        }
+
+        // DB 세션 시작
+        WatchingSessionDto session;
+        try {
+            session = watchingSessionService.start(watcherId, contentId);
+        } catch (RuntimeException e) {
+            log.warn("시청 세션 시작 실패, 구독 매핑 및 DB 세션 정리: watcherId={}, contentId={}, cause={}",
+                watcherId, contentId, e.getMessage());
+
+            // 인메모리 매핑 정리
+            WatchSubscriptionAttributes.remove(accessor);
+
+            // DB 세션 정리 (멱등성 보장)
+            watchingSessionService.end(watcherId);
+
+            return;
+        }
 
         watchingSessionBroadcaster.broadcastJoin(session, contentId);
-
     }
 
     private UUID extractContentId(String destination) {
