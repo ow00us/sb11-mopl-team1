@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 
 import com.mopl.directmessage.dto.ConversationCreateRequest;
 import com.mopl.directmessage.dto.ConversationCreateResult;
@@ -12,14 +15,18 @@ import com.mopl.directmessage.dto.ConversationDto;
 import com.mopl.directmessage.entity.Conversation;
 import com.mopl.directmessage.entity.ConversationParticipant;
 import com.mopl.directmessage.entity.ParticipantSlot;
+import com.mopl.directmessage.entity.DirectMessage;
+import com.mopl.directmessage.repository.ConversationListItemProjection;
 import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.directmessage.repository.ConversationRepository;
 import com.mopl.directmessage.repository.DirectMessageRepository;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.common.CursorResponse;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -47,6 +54,21 @@ class ConversationServiceTest {
     private static final UUID CONVERSATION_ID =
         UUID.fromString(
             "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        );
+
+    private static final UUID WITH_USER_ID_2 =
+        UUID.fromString(
+            "33333333-3333-3333-3333-333333333333"
+        );
+
+    private static final UUID CONVERSATION_ID_2 =
+        UUID.fromString(
+            "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        );
+
+    private static final UUID MESSAGE_ID =
+        UUID.fromString(
+            "cccccccc-cccc-cccc-cccc-cccccccccccc"
         );
 
     @Mock
@@ -672,6 +694,347 @@ class ConversationServiceTest {
             userRepository,
             conversationRepository,
             directMessageRepository
+        );
+    }
+
+    @Test
+    @DisplayName("대화 목록을 최근 메시지와 미읽음 상태를 포함해 조회")
+    void getConversations_success() {
+        // given
+        Instant firstCreatedAt =
+            Instant.parse("2026-08-01T01:00:00Z");
+
+        ConversationListItemProjection firstItem =
+            mock(ConversationListItemProjection.class);
+
+        ConversationListItemProjection secondItem =
+            mock(ConversationListItemProjection.class);
+
+        when(firstItem.getConversationId())
+            .thenReturn(CONVERSATION_ID);
+
+        when(firstItem.getCreatedAt())
+            .thenReturn(firstCreatedAt);
+
+        when(firstItem.getWithUserId())
+            .thenReturn(WITH_USER_ID);
+
+        when(
+            participantRepository.findFirstConversationListDesc(
+                eq(REQUESTER_ID),
+                isNull(),
+                any()
+            )
+        ).thenReturn(
+            List.of(
+                firstItem,
+                secondItem
+            )
+        );
+
+        when(
+            participantRepository.countConversationList(
+                REQUESTER_ID,
+                null
+            )
+        ).thenReturn(2L);
+
+        DirectMessage latestMessage =
+            DirectMessage.create(
+                CONVERSATION_ID,
+                WITH_USER_ID,
+                "최근 메시지"
+            );
+
+        ReflectionTestUtils.setField(
+            latestMessage,
+            "id",
+            MESSAGE_ID
+        );
+
+        ReflectionTestUtils.setField(
+            latestMessage,
+            "createdAt",
+            firstCreatedAt
+        );
+
+        when(
+            directMessageRepository
+                .findLatestMessagesByConversationIds(
+                    List.of(CONVERSATION_ID)
+                )
+        ).thenReturn(
+            List.of(latestMessage)
+        );
+
+        when(
+            directMessageRepository
+                .findUnreadConversationIds(
+                    List.of(CONVERSATION_ID),
+                    REQUESTER_ID
+                )
+        ).thenReturn(
+            List.of(CONVERSATION_ID)
+        );
+
+        User requester =
+            createUser(
+                REQUESTER_ID,
+                "요청 사용자"
+            );
+
+        User withUser =
+            createUser(
+                WITH_USER_ID,
+                "상대 사용자"
+            );
+
+        when(
+            userRepository.findAllById(
+                anyCollection()
+            )
+        ).thenReturn(
+            List.of(
+                requester,
+                withUser
+            )
+        );
+
+        // when
+        CursorResponse<ConversationDto> result =
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                null,
+                null,
+                1,
+                "DESCENDING",
+                "createdAt"
+            );
+
+        // then
+        assertThat(result.data())
+            .hasSize(1);
+
+        ConversationDto conversation =
+            result.data().get(0);
+
+        assertThat(conversation.id())
+            .isEqualTo(CONVERSATION_ID);
+
+        assertThat(conversation.with().userId())
+            .isEqualTo(WITH_USER_ID);
+
+        assertThat(conversation.latestMessage())
+            .isNotNull();
+
+        assertThat(
+            conversation.latestMessage().id()
+        ).isEqualTo(MESSAGE_ID);
+
+        assertThat(conversation.hasUnread())
+            .isTrue();
+
+        assertThat(result.hasNext())
+            .isTrue();
+
+        assertThat(result.nextCursor())
+            .isEqualTo(
+                firstCreatedAt.toString()
+            );
+
+        assertThat(result.nextIdAfter())
+            .isEqualTo(CONVERSATION_ID);
+
+        assertThat(result.totalCount())
+            .isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("조회할 대화가 없으면 빈 커서 응답을 반환")
+    void getConversations_empty_returnsEmptyResponse() {
+        // given
+        when(
+            participantRepository.findFirstConversationListDesc(
+                eq(REQUESTER_ID),
+                isNull(),
+                any()
+            )
+        ).thenReturn(List.of());
+
+        when(
+            participantRepository.countConversationList(
+                REQUESTER_ID,
+                null
+            )
+        ).thenReturn(0L);
+
+        // when
+        CursorResponse<ConversationDto> result =
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                null,
+                null,
+                20,
+                "DESCENDING",
+                "createdAt"
+            );
+
+        // then
+        assertThat(result.data())
+            .isEmpty();
+
+        assertThat(result.hasNext())
+            .isFalse();
+
+        assertThat(result.nextCursor())
+            .isNull();
+
+        assertThat(result.nextIdAfter())
+            .isNull();
+
+        assertThat(result.totalCount())
+            .isZero();
+
+        verifyNoInteractions(
+            directMessageRepository,
+            userRepository
+        );
+    }
+
+    @Test
+    @DisplayName("ASCENDING 요청은 오름차순 Repository를 사용")
+    void getConversations_ascending_usesAscendingQuery() {
+        // given
+        ConversationListItemProjection item =
+            mock(ConversationListItemProjection.class);
+
+        when(item.getConversationId())
+            .thenReturn(CONVERSATION_ID);
+
+        when(item.getWithUserId())
+            .thenReturn(WITH_USER_ID);
+
+        when(
+            participantRepository.findFirstConversationListAsc(
+                eq(REQUESTER_ID),
+                isNull(),
+                any()
+            )
+        ).thenReturn(
+            List.of(item)
+        );
+
+        when(
+            participantRepository.countConversationList(
+                REQUESTER_ID,
+                null
+            )
+        ).thenReturn(1L);
+
+        when(
+            directMessageRepository
+                .findLatestMessagesByConversationIds(
+                    List.of(CONVERSATION_ID)
+                )
+        ).thenReturn(List.of());
+
+        when(
+            directMessageRepository
+                .findUnreadConversationIds(
+                    List.of(CONVERSATION_ID),
+                    REQUESTER_ID
+                )
+        ).thenReturn(List.of());
+
+        User requester =
+            createUser(
+                REQUESTER_ID,
+                "요청 사용자"
+            );
+
+        User withUser =
+            createUser(
+                WITH_USER_ID,
+                "상대 사용자"
+            );
+
+        when(
+            userRepository.findAllById(
+                anyCollection()
+            )
+        ).thenReturn(
+            List.of(
+                requester,
+                withUser
+            )
+        );
+
+        // when
+        CursorResponse<ConversationDto> result =
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                null,
+                null,
+                20,
+                "ASCENDING",
+                "createdAt"
+            );
+
+        // then
+        assertThat(result.data())
+            .hasSize(1);
+
+        assertThat(
+            result.data().get(0).latestMessage()
+        ).isNull();
+
+        assertThat(
+            result.data().get(0).hasUnread()
+        ).isFalse();
+
+        assertThat(result.hasNext())
+            .isFalse();
+
+        verify(participantRepository)
+            .findFirstConversationListAsc(
+                eq(REQUESTER_ID),
+                isNull(),
+                any()
+            );
+    }
+
+    @Test
+    @DisplayName("cursor와 idAfter 중 하나만 전달하면 실패")
+    void getConversations_invalidCursorPair_fails() {
+        // when & then
+        assertThatThrownBy(() ->
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                null,
+                CONVERSATION_ID,
+                20,
+                "DESCENDING",
+                "createdAt"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(
+                        exception.getErrorCode()
+                    ).isEqualTo(
+                        ErrorCode.INVALID_INPUT
+                    )
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            directMessageRepository,
+            userRepository
         );
     }
 }
