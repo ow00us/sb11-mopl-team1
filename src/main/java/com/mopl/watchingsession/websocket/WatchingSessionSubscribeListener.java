@@ -1,0 +1,91 @@
+package com.mopl.watchingsession.websocket;
+
+import com.mopl.watchingsession.dto.WatchingSessionDto;
+import com.mopl.watchingsession.service.WatchingSessionService;
+import java.security.Principal;
+import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.event.EventListener;
+import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
+import org.springframework.stereotype.Component;
+import org.springframework.web.socket.messaging.SessionSubscribeEvent;
+
+/**
+ * 클라이언트가 /sub/contents/{contentId}/watch 토픽을 SUBSCRIBE하는 시점을 "입장"으로 간주한다.
+ * 클라이언트는 별도의 시작 메시지를 보낼 필요가 없고, 구독 자체가 입장 신호가 된다.
+ *
+ * STOMP UNSUBSCRIBE 프레임은 destination 없이 subscriptionId만 담아 오므로,
+ * 여기서(SUBSCRIBE 시점) 세션 attribute에 subscriptionId -> contentId 매핑을 저장해두고
+ * WatchingSessionUnsubscribeListener에서 그 매핑을 꺼내 쓴다.
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class WatchingSessionSubscribeListener {
+
+    // /sub/content/{contentId}/watch 에서 contentId만 추출
+    private static final Pattern WATCH_DESTINATION_PATTERN =
+        Pattern.compile("^/sub/contents/([0-9a-fA-F-]{36})/watch$");
+    private final WatchingSessionService watchingSessionService;
+    private final WatchingSessionBroadcaster watchingSessionBroadcaster;
+
+    @EventListener
+    public void onSubscribe(SessionSubscribeEvent event) {
+        StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
+        String destination = accessor.getDestination();
+
+        UUID contentId = extractContentId(destination);
+        if (contentId == null) {
+            // 시청 토픽 구독이 아니면 이 리스너는 관여하지 않음
+            return;
+        }
+
+        UUID watcherId = extractWatcherId(accessor.getUser());
+        if (watcherId == null) {
+            // CONNECT 시점에 이미 인증을 강제 -> Principal 없는 경우는 비정상
+            // 로그만 남기고 종료
+            log.warn("인증 정보 없이 토픽 구독 시도: destination={}", destination);
+            return;
+        }
+
+        // DB 쓰기 이후에 저장하면 start는 성공했는데 put이 실패하면 DB엔 세션이 있지만 매핑이 없어 나중에 end()가 절대 호출되지 않음
+        // 매핑을 먼저 저장해두면 최악의 경우에도 매핑은 있는데 db세션은 없는 상태기 되고 end()는 멱등이라 안전하게 무시됨
+        WatchSubscriptionAttributes.put(accessor, contentId);
+
+        // 세션 생성/갱신 + enrich된 dto 반환
+        WatchingSessionDto session = watchingSessionService.start(watcherId, contentId);
+
+        watchingSessionBroadcaster.broadcastJoin(session, contentId);
+
+    }
+
+    private UUID extractContentId(String destination) {
+        if (destination == null) {
+            return null;
+        }
+        Matcher matcher = WATCH_DESTINATION_PATTERN.matcher(destination);
+        if (!matcher.matches()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(matcher.group(1));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private UUID extractWatcherId(Principal principal) {
+        if (principal == null) {
+            return null;
+        }
+        try {
+            return UUID.fromString(principal.getName());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+}

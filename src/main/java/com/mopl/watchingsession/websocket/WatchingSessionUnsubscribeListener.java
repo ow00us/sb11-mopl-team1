@@ -1,0 +1,73 @@
+package com.mopl.watchingsession.websocket;
+
+import com.mopl.watchingsession.dto.WatchingSessionDto;
+import com.mopl.watchingsession.service.WatchingSessionService;
+import java.security.Principal;
+import java.util.UUID;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.event.EventListener;
+import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
+import org.springframework.stereotype.Component;
+import org.springframework.web.socket.messaging.SessionUnsubscribeEvent;
+
+/**
+ * 클라이언트가 /sub/contents/{contentId}/watch 토픽을 명시적으로 UNSUBSCRIBE하는 시점을
+ * "정상 퇴장"으로 간주한다. (연결은 유지된 채 구독만 해제하는 경우)
+ * 연결 자체가 끊기는 비정상 종료는 SessionDisconnectEvent 리스너에서 별도 처리한다.
+ *
+ * UNSUBSCRIBE 프레임에는 destination이 없고 subscriptionId만 있으므로,
+ * 입장 시점(WatchingSessionSubscribeListener)에서 세션 attribute에 저장해둔
+ * subscriptionId -> contentId 매핑(WatchSubscriptionAttributes)을 여기서 조회해 복원한다.
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class WatchingSessionUnsubscribeListener {
+
+    private final WatchingSessionService watchingSessionService;
+    private final WatchingSessionBroadcaster watchingSessionBroadcaster;
+
+    @EventListener
+    public void onUnsubscribe(SessionUnsubscribeEvent event) {
+        StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
+
+        // 입장 시점에 저장해둔 매핑에서 contentId를 복원
+        // 매핑이 없으면 시청 토픽 구독 해제가 아니었다는 뜻이므로 관여하지 않음
+        UUID contentId = WatchSubscriptionAttributes.remove(accessor);
+        if (contentId == null) {
+            return;
+        }
+
+        UUID watcherId = extractWatcherId(accessor.getUser());
+        if (watcherId == null) {
+            log.warn("인증 정보 없이 시청 토픽 구독 해제 처리 시도: contentId={}", contentId);
+            return;
+        }
+
+        // end()가 DB에서 세션을 지우기 전에 브로드캐스트에 필요한 세션정보 먼저 확보
+        WatchingSessionDto session = watchingSessionService.get(watcherId).orElse(null);
+
+        // 현재 활성화된 세션이 없거나, 해제하려는 구독의 contentId와 다르면 무시
+        // 매핑에 저장된 contentId와 db에서 조회한 활성 세션의 콘텐츠가 다른 케이스 방어
+        // 어느 destination으로 보내도 payload와 대상이 어긋나므로 브로드캐스트 생략
+        if (session == null || !contentId.equals(session.content().id())) {
+            return;
+        }
+
+        // watcherId 기준 활성 세션 삭제 및 브로드캐스트
+        watchingSessionService.end(watcherId);
+        watchingSessionBroadcaster.broadcastLeave(session, contentId);
+
+    }
+
+    private UUID extractWatcherId(Principal principal) {
+        if (principal == null) return null;
+        try {
+            return UUID.fromString(principal.getName());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+}
