@@ -17,6 +17,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.http.InvalidMediaTypeException;
+import org.springframework.http.MediaType;
 
 // 사용자 회원가입과 관련된 비즈니스 규칙 처리
 @Service
@@ -186,6 +188,7 @@ public class UserService {
         String profileImageUrl = null;
 
         if (image != null && !image.isEmpty()) {
+            validateProfileImage(image);
             profileImageUrl = profileImageStorage.upload(image);
         }
 
@@ -200,5 +203,37 @@ public class UserService {
         );
 
         return UserDto.from(user);
+    }
+
+    /**
+     * 업로드 파일의 Content-Type이 이미지 형식인지 검증
+     *
+     * multipart 요청의 image 파트에는 이미지 파일만 전달되어야 하므로,
+     * Content-Type이 없거나 image 타입이 아니면 잘못된 입력으로 처리
+     *
+     * 이 검증은 클라이언트가 전달한 MIME 타입을 기준으로 하는 기본 검증
+     * 실제 파일 내용과 확장자가 일치하는지는 실제 이미지 저장소 연동 시
+     * 파일 시그니처 검증 등을 통해 추가로 확인할 수 있다.
+     *
+     * @param image 검증할 프로필 이미지 파일
+     * @throws BusinessException MIME 타입이 없거나 이미지가 아닌 경우
+     */
+    private void validateProfileImage(MultipartFile image) {
+        String contentType = image.getContentType();
+
+        if (contentType == null) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        try {
+            MediaType mediaType =
+                MediaType.parseMediaType(contentType);
+
+            if (!"image".equalsIgnoreCase(mediaType.getType())) {
+                throw new BusinessException(ErrorCode.INVALID_INPUT);
+            }
+        } catch (InvalidMediaTypeException exception) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
     }
 }

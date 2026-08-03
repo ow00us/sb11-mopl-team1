@@ -487,4 +487,99 @@ class UserServiceTest {
         return user;
     }
 
+    @Test
+    @DisplayName("이미지가 아닌 파일이면 프로필 수정에 실패한다")
+    void updateUser_fail_whenFileIsNotImage() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        User user = createUserFixture(userId);
+
+        UserUpdateRequest request =
+            new UserUpdateRequest("변경된 사용자");
+
+        MockMultipartFile textFile = new MockMultipartFile(
+            "image",
+            "profile.txt",
+            "text/plain",
+            "not-image".getBytes()
+        );
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.updateUser(
+                userId,
+                userId,
+                request,
+                textFile
+            )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.INVALID_INPUT);
+
+        /*
+         * 이미지가 아닌 파일은 실제 저장소로 전달되면 안 됩니다.
+         */
+        verifyNoInteractions(profileImageStorage);
+
+        /*
+         * 파일 검증에 실패했으므로 사용자 정보도 변경되면 안 됩니다.
+         */
+        assertThat(user.getName())
+            .isEqualTo("기존 사용자");
+
+        assertThat(user.getProfileImageUrl())
+            .isEqualTo("https://example.com/old-profile.png");
+    }
+
+    @Test
+    @DisplayName("파일의 Content-Type이 없으면 프로필 수정에 실패한다")
+    void updateUser_fail_whenImageContentTypeDoesNotExist() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        User user = createUserFixture(userId);
+
+        UserUpdateRequest request =
+            new UserUpdateRequest("변경된 사용자");
+
+        MockMultipartFile fileWithoutContentType =
+            new MockMultipartFile(
+                "image",
+                "profile.png",
+                null,
+                new byte[]{1, 2, 3}
+            );
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.updateUser(
+                userId,
+                userId,
+                request,
+                fileWithoutContentType
+            )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.INVALID_INPUT);
+
+        verifyNoInteractions(profileImageStorage);
+
+        assertThat(user.getName())
+            .isEqualTo("기존 사용자");
+
+        assertThat(user.getProfileImageUrl())
+            .isEqualTo("https://example.com/old-profile.png");
+    }
+
 }
