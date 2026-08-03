@@ -6,6 +6,8 @@ import com.mopl.directmessage.dto.ConversationDto;
 import com.mopl.directmessage.service.ConversationService;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -26,6 +28,10 @@ public class ConversationController {
     private final ConversationService conversationService;
 
     @PostMapping
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "기존 대화 반환"),
+        @ApiResponse(responseCode = "201", description = "대화 생성 성공")
+    })
     public ResponseEntity<ConversationDto> create(
         @Valid @RequestBody
         ConversationCreateRequest request,

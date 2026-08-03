@@ -9,6 +9,8 @@ import com.mopl.follow.service.FollowService;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -32,6 +34,10 @@ public class FollowController {
     private final FollowService followService;
 
     @PostMapping
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "기존 팔로우 반환"),
+        @ApiResponse(responseCode = "201", description = "팔로우 생성 성공")
+    })
     public ResponseEntity<FollowDto> follow(@Valid @RequestBody FollowRequest request) {
         UUID followerId = resolveUserId();
         FollowResult result = followService.follow(followerId, request.followeeId());
@@ -40,6 +46,7 @@ public class FollowController {
     }
 
     @DeleteMapping("/{followId}")
+    @ApiResponse(responseCode = "204", description = "팔로우 취소 성공")
     public ResponseEntity<Void> unfollow(@PathVariable UUID followId) {
         UUID requesterId = resolveUserId();
         followService.unfollow(followId, requesterId);

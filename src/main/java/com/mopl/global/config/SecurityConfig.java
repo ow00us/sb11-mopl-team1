@@ -63,6 +63,14 @@ public class SecurityConfig {
             "/ws/**"
     };
 
+    static boolean isPublicPostPath(String path) {
+        return Arrays.asList(PUBLIC_POST_PATHS).contains(path);
+    }
+
+    static boolean isPublicGetPath(String path) {
+        return Arrays.asList(PUBLIC_GET_PATHS).contains(path);
+    }
+
     @Bean
     public SecurityErrorResponseWriter securityErrorResponseWriter(
         ObjectMapper objectMapper

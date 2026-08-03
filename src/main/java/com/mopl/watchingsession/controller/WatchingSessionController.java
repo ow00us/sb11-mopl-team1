@@ -37,6 +37,7 @@ public class WatchingSessionController {
     )
     @ApiResponses({
         @ApiResponse(responseCode = "200", description = "성공"),
+        @ApiResponse(responseCode = "204", description = "현재 시청 세션 없음"),
         @ApiResponse(responseCode = "400", description = "잘못된 요청"),
         @ApiResponse(responseCode = "401", description = "인증 오류"),
         @ApiResponse(responseCode = "500", description = "서버 오류")
