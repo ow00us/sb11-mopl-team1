@@ -282,6 +282,13 @@ public class ConversationService {
                 conversationId
             );
 
+        boolean isParticipant =
+            participants.stream()
+                .anyMatch(participant ->
+                    participant.getUserId()
+                        .equals(requesterId)
+                );
+
         if (participants.isEmpty()) {
             throw new BusinessException(
                 ErrorCode.RESOURCE_NOT_FOUND
@@ -294,13 +301,6 @@ public class ConversationService {
                 "1:1 대화의 참여자는 정확히 2명이어야 합니다."
             );
         }
-
-        boolean isParticipant =
-            participants.stream()
-                .anyMatch(participant ->
-                    participant.getUserId()
-                        .equals(requesterId)
-                );
 
         if (!isParticipant) {
             throw new BusinessException(
