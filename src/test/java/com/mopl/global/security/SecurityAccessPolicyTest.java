@@ -5,7 +5,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -21,6 +23,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -34,6 +37,7 @@ import org.springframework.test.web.servlet.MockMvc;
 class SecurityAccessPolicyTest {
 
     private static final String USER_ID = "11111111-1111-1111-1111-111111111111";
+    private static final String ALLOWED_ORIGIN = "http://localhost:5173";
 
     @Autowired
     MockMvc mockMvc;
@@ -74,6 +78,57 @@ class SecurityAccessPolicyTest {
     void webSocketHandshake_doesNotRequireJwtOrCsrf() throws Exception {
         mockMvc.perform(post("/ws/security-policy"))
             .andExpect(status().isNoContent());
+    }
+
+    @Test
+    @DisplayName("허용된 origin의 preflight 요청에는 CORS 응답 헤더를 반환한다")
+    void preflight_withAllowedOrigin_returnsCorsHeaders() throws Exception {
+        mockMvc.perform(options("/api/security-policy/protected")
+                .header(HttpHeaders.ORIGIN, ALLOWED_ORIGIN)
+                .header(
+                    HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD,
+                    HttpMethod.GET.name()
+                )
+                .header(
+                    HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS,
+                    "Authorization,X-XSRF-TOKEN"
+                ))
+            .andExpect(status().isOk())
+            .andExpect(header().string(
+                HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN,
+                ALLOWED_ORIGIN
+            ))
+            .andExpect(header().string(
+                HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS,
+                "true"
+            ))
+            .andExpect(header().string(
+                HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS,
+                org.hamcrest.Matchers.containsString(HttpMethod.GET.name())
+            ))
+            .andExpect(header().string(
+                HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS,
+                org.hamcrest.Matchers.containsString("Authorization")
+            ))
+            .andExpect(header().string(
+                HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS,
+                org.hamcrest.Matchers.containsString("X-XSRF-TOKEN")
+            ));
+    }
+
+    @Test
+    @DisplayName("허용되지 않은 origin의 preflight 요청은 거부한다")
+    void preflight_withDisallowedOrigin_returnsForbidden() throws Exception {
+        mockMvc.perform(options("/api/security-policy/protected")
+                .header(HttpHeaders.ORIGIN, "https://evil.example")
+                .header(
+                    HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD,
+                    HttpMethod.GET.name()
+                ))
+            .andExpect(status().isForbidden())
+            .andExpect(header().doesNotExist(
+                HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN
+            ));
     }
 
     @Test
