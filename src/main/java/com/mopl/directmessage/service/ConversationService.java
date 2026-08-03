@@ -145,6 +145,18 @@ public class ConversationService {
         }
     }
 
+    private void validateConversationLookup(
+        UUID requesterId,
+        UUID withUserId
+    ) {
+        if (requesterId.equals(withUserId)) {
+            throw new BusinessException(
+                ErrorCode.INVALID_INPUT,
+                "자기 자신과의 대화를 조회할 수 없습니다."
+            );
+        }
+    }
+
     private Map<UUID, User> getUsers(
         UUID requesterId,
         UUID withUserId
@@ -348,16 +360,10 @@ public class ConversationService {
         UUID requesterId,
         UUID withUserId
     ) {
-        validateUsers(
+        validateConversationLookup(
             requesterId,
             withUserId
         );
-
-        Map<UUID, User> users =
-            getUsers(
-                requesterId,
-                withUserId
-            );
 
         List<UUID> conversationIds =
             participantRepository.findConversationIdsByUserPair(
@@ -386,6 +392,12 @@ public class ConversationService {
                         ErrorCode.RESOURCE_NOT_FOUND
                     )
                 );
+
+        Map<UUID, User> users =
+            getUsers(
+                requesterId,
+                withUserId
+            );
 
         return toDto(
             conversation,

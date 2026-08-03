@@ -603,35 +603,9 @@ class ConversationServiceTest {
     }
 
     @Test
-    @DisplayName("특정 사용자와의 대화가 없으면 실패")
+    @DisplayName("특정 사용자와의 대화가 없으면 사용자 존재 여부와 관계없이 실패")
     void getConversationWithUser_notFound_fails() {
         // given
-        User requesterUser =
-            createUser(
-                REQUESTER_ID,
-                "요청 사용자"
-            );
-
-        User otherUser =
-            createUser(
-                WITH_USER_ID,
-                "상대 사용자"
-            );
-
-        when(
-            userRepository.findAllById(
-                List.of(
-                    REQUESTER_ID,
-                    WITH_USER_ID
-                )
-            )
-        ).thenReturn(
-            List.of(
-                requesterUser,
-                otherUser
-            )
-        );
-
         when(
             participantRepository
                 .findConversationIdsByUserPair(
@@ -642,10 +616,11 @@ class ConversationServiceTest {
 
         // when & then
         assertThatThrownBy(() ->
-            conversationService.getConversationWithUser(
-                REQUESTER_ID,
-                WITH_USER_ID
-            )
+            conversationService
+                .getConversationWithUser(
+                    REQUESTER_ID,
+                    WITH_USER_ID
+                )
         )
             .isInstanceOfSatisfying(
                 BusinessException.class,
@@ -656,5 +631,47 @@ class ConversationServiceTest {
                         ErrorCode.RESOURCE_NOT_FOUND
                     )
             );
+
+        verifyNoInteractions(
+            userRepository,
+            conversationRepository,
+            directMessageRepository
+        );
+    }
+
+    @Test
+    @DisplayName("자기 자신과의 대화를 조회하면 조회 문맥의 메시지로 실패")
+    void getConversationWithUser_self_fails() {
+        // when & then
+        assertThatThrownBy(() ->
+            conversationService
+                .getConversationWithUser(
+                    REQUESTER_ID,
+                    REQUESTER_ID
+                )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception -> {
+                    assertThat(
+                        exception.getErrorCode()
+                    ).isEqualTo(
+                        ErrorCode.INVALID_INPUT
+                    );
+
+                    assertThat(
+                        exception.getMessage()
+                    ).isEqualTo(
+                        "자기 자신과의 대화를 조회할 수 없습니다."
+                    );
+                }
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            userRepository,
+            conversationRepository,
+            directMessageRepository
+        );
     }
 }
