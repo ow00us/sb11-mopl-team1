@@ -325,7 +325,26 @@ public class ConversationService {
 
         List<ConversationListItemProjection> items;
 
-        if (ASCENDING.equals(sortDirection)) {
+        if (
+            cursorInstant == null
+                && ASCENDING.equals(sortDirection)
+        ) {
+            items =
+                participantRepository
+                    .findFirstConversationListAsc(
+                        requesterId,
+                        normalizedKeyword,
+                        pageRequest
+                    );
+        } else if (cursorInstant == null) {
+            items =
+                participantRepository
+                    .findFirstConversationListDesc(
+                        requesterId,
+                        normalizedKeyword,
+                        pageRequest
+                    );
+        } else if (ASCENDING.equals(sortDirection)) {
             items =
                 participantRepository.findConversationListAsc(
                     requesterId,

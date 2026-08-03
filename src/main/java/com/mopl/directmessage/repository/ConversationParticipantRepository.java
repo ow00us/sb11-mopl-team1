@@ -47,13 +47,55 @@ public interface ConversationParticipantRepository
             AND other.userId <> :requesterId
             AND withUser.id = other.userId
             AND (
-                :keywordLike IS NULL
+                CAST(:keywordLike AS string) IS NULL
                 OR LOWER(withUser.name) LIKE
-                    LOWER(CONCAT('%', CONCAT(:keywordLike, '%')))
+                    LOWER(
+                        CONCAT(
+                            '%',
+                            CONCAT(
+                                CAST(:keywordLike AS string),
+                                '%'
+                            )
+                        )
+                    )
+            )
+        ORDER BY conversation.createdAt ASC, conversation.id ASC
+        """)
+    List<ConversationListItemProjection> findFirstConversationListAsc(
+        @Param("requesterId") UUID requesterId,
+        @Param("keywordLike") String keywordLike,
+        Pageable pageable
+    );
+
+    @Query("""
+        SELECT
+            conversation.id AS conversationId,
+            conversation.createdAt AS createdAt,
+            other.userId AS withUserId
+        FROM Conversation conversation,
+             ConversationParticipant requester,
+             ConversationParticipant other,
+             User withUser
+        WHERE requester.conversationId = conversation.id
+            AND requester.userId = :requesterId
+            AND other.conversationId = conversation.id
+            AND other.userId <> :requesterId
+            AND withUser.id = other.userId
+            AND (
+                CAST(:keywordLike AS string) IS NULL
+                OR LOWER(withUser.name) LIKE
+                    LOWER(
+                        CONCAT(
+                            '%',
+                            CONCAT(
+                                CAST(:keywordLike AS string),
+                                '%'
+                            )
+                        )
+                    )
             )
             AND (
-                :cursor IS NULL
-                OR conversation.createdAt > :cursor
+                conversation.createdAt > :cursor
                 OR (
                     conversation.createdAt = :cursor
                     AND conversation.id > :idAfter
@@ -84,13 +126,55 @@ public interface ConversationParticipantRepository
             AND other.userId <> :requesterId
             AND withUser.id = other.userId
             AND (
-                :keywordLike IS NULL
+                CAST(:keywordLike AS string) IS NULL
                 OR LOWER(withUser.name) LIKE
-                    LOWER(CONCAT('%', CONCAT(:keywordLike, '%')))
+                    LOWER(
+                        CONCAT(
+                            '%',
+                            CONCAT(
+                                CAST(:keywordLike AS string),
+                                '%'
+                            )
+                        )
+                    )
             )
+        ORDER BY conversation.createdAt DESC, conversation.id DESC
+        """)
+    List<ConversationListItemProjection> findFirstConversationListDesc(
+        @Param("requesterId") UUID requesterId,
+        @Param("keywordLike") String keywordLike,
+        Pageable pageable
+    );
+
+    @Query("""
+        SELECT
+            conversation.id AS conversationId,
+            conversation.createdAt AS createdAt,
+            other.userId AS withUserId
+        FROM Conversation conversation,
+             ConversationParticipant requester,
+             ConversationParticipant other,
+             User withUser
+        WHERE requester.conversationId = conversation.id
+            AND requester.userId = :requesterId
+            AND other.conversationId = conversation.id
+            AND other.userId <> :requesterId
+            AND withUser.id = other.userId
             AND (
-                :cursor IS NULL
-                OR conversation.createdAt < :cursor
+                 CAST(:keywordLike AS string) IS NULL
+                 OR LOWER(withUser.name) LIKE
+                     LOWER(
+                         CONCAT(
+                             '%',
+                             CONCAT(
+                                 CAST(:keywordLike AS string),
+                                 '%'
+                             )
+                         )
+                     )
+             )
+            AND (
+                conversation.createdAt < :cursor
                 OR (
                     conversation.createdAt = :cursor
                     AND conversation.id < :idAfter
@@ -118,10 +202,18 @@ public interface ConversationParticipantRepository
             AND other.userId <> :requesterId
             AND withUser.id = other.userId
             AND (
-                :keywordLike IS NULL
-                OR LOWER(withUser.name) LIKE
-                    LOWER(CONCAT('%', CONCAT(:keywordLike, '%')))
-            )
+                 CAST(:keywordLike AS string) IS NULL
+                 OR LOWER(withUser.name) LIKE
+                     LOWER(
+                         CONCAT(
+                             '%',
+                             CONCAT(
+                                 CAST(:keywordLike AS string),
+                                 '%'
+                             )
+                         )
+                     )
+             )
         """)
     long countConversationList(
         @Param("requesterId") UUID requesterId,
