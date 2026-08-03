@@ -130,4 +130,44 @@ public interface DirectMessageRepository
             pageable
         );
     }
+
+    @Query("""
+    SELECT message
+    FROM DirectMessage message
+    WHERE message.conversationId IN :conversationIds
+        AND NOT EXISTS (
+            SELECT newerMessage.id
+            FROM DirectMessage newerMessage
+            WHERE newerMessage.conversationId =
+                message.conversationId
+                AND (
+                    newerMessage.createdAt >
+                        message.createdAt
+                    OR (
+                        newerMessage.createdAt =
+                            message.createdAt
+                        AND newerMessage.id >
+                            message.id
+                    )
+                )
+        )
+    """)
+    List<DirectMessage> findLatestMessagesByConversationIds(
+        @Param("conversationIds")
+        List<UUID> conversationIds
+    );
+
+    @Query("""
+    SELECT DISTINCT message.conversationId
+    FROM DirectMessage message
+    WHERE message.conversationId IN :conversationIds
+        AND message.senderId <> :requesterId
+        AND message.readAt IS NULL
+    """)
+    List<UUID> findUnreadConversationIds(
+        @Param("conversationIds")
+        List<UUID> conversationIds,
+        @Param("requesterId")
+        UUID requesterId
+    );
 }
