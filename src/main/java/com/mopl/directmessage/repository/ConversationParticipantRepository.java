@@ -21,7 +21,7 @@ public interface ConversationParticipantRepository
                 SELECT other.id
                 FROM ConversationParticipant other
                 WHERE other.conversationId = participant.conversationId
-                    And other.userId = :withUserId
+                    AND other.userId = :withUserId
       )
     """)
 

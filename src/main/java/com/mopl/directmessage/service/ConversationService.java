@@ -165,9 +165,17 @@ public class ConversationService {
                     )
                 );
 
-        if (users.size() != 2) {
+        if (!users.containsKey(requesterId)) {
             throw new BusinessException(
-                ErrorCode.RESOURCE_NOT_FOUND
+                ErrorCode.DIRECT_MESSAGE_INVALID_STATE,
+                "인증 사용자 정보를 찾을 수 없습니다."
+            );
+        }
+
+        if (!users.containsKey(withUserId)) {
+            throw new BusinessException(
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "대화 상대 사용자를 찾을 수 없습니다."
             );
         }
 
