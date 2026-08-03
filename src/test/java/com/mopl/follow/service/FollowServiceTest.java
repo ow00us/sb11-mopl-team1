@@ -1,10 +1,13 @@
 package com.mopl.follow.service;
 
 import com.mopl.follow.dto.FollowDto;
+import com.mopl.follow.dto.FollowUserItemDto;
 import com.mopl.follow.entity.Follow;
 import com.mopl.follow.repository.FollowRepository;
+import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.util.CursorUtils;
 import com.mopl.user.repository.UserRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,12 +17,15 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -203,11 +209,116 @@ class FollowServiceTest {
                 .extracting("errorCode").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
     }
 
+    // ── getFollowers ──────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("getFollowers 는 최근순 정렬 결과를 CursorResponse 로 매핑한다 (hasNext=false)")
+    void getFollowers_firstPage_noNext() {
+        Instant t1 = Instant.parse("2026-08-01T10:00:00Z");
+        Instant t2 = Instant.parse("2026-08-01T11:00:00Z");
+        UUID follower1 = UUID.randomUUID();
+        UUID follower2 = UUID.randomUUID();
+        Follow f1 = savedFollowWithCreatedAt(UUID.randomUUID(), follower1, FOLLOWEE_ID, t2);
+        Follow f2 = savedFollowWithCreatedAt(UUID.randomUUID(), follower2, FOLLOWEE_ID, t1);
+
+        when(followRepository.findFollowersByFolloweeIdDesc(
+                eq(FOLLOWEE_ID.toString()), any(), any(), eq(11)))
+                .thenReturn(List.of(f1, f2));
+        when(followRepository.countByFolloweeId(FOLLOWEE_ID)).thenReturn(2L);
+
+        CursorResponse<FollowUserItemDto> result = followService.getFollowers(
+                FOLLOWEE_ID, null, null, 10, "followedAt", "DESCENDING");
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.data().get(0).followId()).isEqualTo(f1.getId());
+        assertThat(result.data().get(0).user().userId()).isEqualTo(follower1);
+        assertThat(result.data().get(0).followedAt()).isEqualTo(t2);
+        assertThat(result.hasNext()).isFalse();
+        assertThat(result.nextCursor()).isNull();
+        assertThat(result.nextIdAfter()).isNull();
+        assertThat(result.totalCount()).isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("getFollowers 는 결과 수가 limit+1 이면 hasNext=true 와 nextCursor 를 설정한다")
+    void getFollowers_hasNext() {
+        Instant base = Instant.parse("2026-08-01T10:00:00Z");
+        Follow f1 = savedFollowWithCreatedAt(UUID.randomUUID(), UUID.randomUUID(), FOLLOWEE_ID, base.plusSeconds(30));
+        Follow f2 = savedFollowWithCreatedAt(UUID.randomUUID(), UUID.randomUUID(), FOLLOWEE_ID, base.plusSeconds(20));
+        Follow f3 = savedFollowWithCreatedAt(UUID.randomUUID(), UUID.randomUUID(), FOLLOWEE_ID, base.plusSeconds(10));
+
+        when(followRepository.findFollowersByFolloweeIdDesc(
+                eq(FOLLOWEE_ID.toString()), any(), any(), eq(3)))
+                .thenReturn(List.of(f1, f2, f3));
+        when(followRepository.countByFolloweeId(FOLLOWEE_ID)).thenReturn(5L);
+
+        CursorResponse<FollowUserItemDto> result = followService.getFollowers(
+                FOLLOWEE_ID, null, null, 2, "followedAt", "DESCENDING");
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.hasNext()).isTrue();
+        // limit=2 로 잘렸으므로 마지막은 f2
+        assertThat(result.nextCursor()).isEqualTo(CursorUtils.encodeInstant(f2.getCreatedAt()));
+        assertThat(result.nextIdAfter()).isEqualTo(f2.getId());
+        assertThat(result.totalCount()).isEqualTo(5L);
+    }
+
+    @Test
+    @DisplayName("getFollowers 에 cursor 만 있고 idAfter 가 없으면 INVALID_INPUT 예외가 발생한다")
+    void getFollowers_fail_cursorWithoutIdAfter() {
+        String validCursor = CursorUtils.encodeInstant(Instant.now());
+
+        assertThatThrownBy(() -> followService.getFollowers(
+                FOLLOWEE_ID, validCursor, null, 10, "followedAt", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
+    @DisplayName("getFollowers 에 잘못된 cursor 값이 들어오면 INVALID_INPUT 예외가 발생한다")
+    void getFollowers_fail_invalidCursor() {
+        assertThatThrownBy(() -> followService.getFollowers(
+                FOLLOWEE_ID, "not-base64!!", UUID.randomUUID(), 10, "followedAt", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    // ── getFollowings ─────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("getFollowings 는 최근순 정렬 결과를 CursorResponse 로 매핑한다 (hasNext=false)")
+    void getFollowings_firstPage_noNext() {
+        Instant t1 = Instant.parse("2026-08-01T10:00:00Z");
+        UUID followee1 = UUID.randomUUID();
+        Follow f1 = savedFollowWithCreatedAt(UUID.randomUUID(), FOLLOWER_ID, followee1, t1);
+
+        when(followRepository.findFollowingsByFollowerIdDesc(
+                eq(FOLLOWER_ID.toString()), any(), any(), eq(11)))
+                .thenReturn(List.of(f1));
+        when(followRepository.countByFollowerId(FOLLOWER_ID)).thenReturn(1L);
+
+        CursorResponse<FollowUserItemDto> result = followService.getFollowings(
+                FOLLOWER_ID, null, null, 10, "followedAt", "DESCENDING");
+
+        assertThat(result.data()).hasSize(1);
+        assertThat(result.data().get(0).followId()).isEqualTo(f1.getId());
+        assertThat(result.data().get(0).user().userId()).isEqualTo(followee1);
+        assertThat(result.data().get(0).followedAt()).isEqualTo(t1);
+        assertThat(result.hasNext()).isFalse();
+        assertThat(result.totalCount()).isEqualTo(1L);
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
     private Follow savedFollow(UUID id, UUID followerId, UUID followeeId) {
         Follow f = Follow.builder().followerId(followerId).followeeId(followeeId).build();
         ReflectionTestUtils.setField(f, "id", id);
+        return f;
+    }
+
+    private Follow savedFollowWithCreatedAt(UUID id, UUID followerId, UUID followeeId, Instant createdAt) {
+        Follow f = savedFollow(id, followerId, followeeId);
+        ReflectionTestUtils.setField(f, "createdAt", createdAt);
         return f;
     }
 }
