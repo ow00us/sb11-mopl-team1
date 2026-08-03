@@ -305,15 +305,15 @@ class PlaylistControllerTest {
     }
 
     @Test
-    @DisplayName("중복 구독 시도 시 409 를 반환한다")
-    void subscribe_fail_duplicate() throws Exception {
+    @DisplayName("중복 구독 시도 시에도 204 를 반환한다 (ADR 2 계약, 서비스는 no-op)")
+    void subscribe_duplicate_returns204() throws Exception {
         setAuth(OTHER_ID);
-        doThrow(new BusinessException(ErrorCode.SUBSCRIPTION_DUPLICATE))
-                .when(playlistService).subscribe(PLAYLIST_ID, OTHER_ID);
+        doNothing().when(playlistService).subscribe(PLAYLIST_ID, OTHER_ID);
 
         mockMvc.perform(post("/api/playlists/{playlistId}/subscription", PLAYLIST_ID))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.errorCode").value("PLAYLIST_409_1"));
+                .andExpect(status().isNoContent());
+
+        verify(playlistService).subscribe(PLAYLIST_ID, OTHER_ID);
     }
 
     @Test
