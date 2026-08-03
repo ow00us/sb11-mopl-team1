@@ -6,6 +6,7 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
+import com.mopl.playlist.dto.SubscriberItemDto;
 import com.mopl.playlist.service.PlaylistService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -104,6 +105,19 @@ public class PlaylistController {
         UUID requesterId = resolveUserId();
         playlistService.removeContent(playlistId, contentId, requesterId);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{playlistId}/subscribers")
+    public CursorResponse<SubscriberItemDto> getSubscribers(
+            @PathVariable UUID playlistId,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false) UUID idAfter,
+            @RequestParam @Min(1) @Max(100) int limit,
+            @RequestParam(defaultValue = "subscribedAt") @Pattern(regexp = "subscribedAt") String sortBy,
+            @RequestParam(defaultValue = "DESCENDING") @Pattern(regexp = "DESCENDING") String sortDirection) {
+        // openapi 계약(BearerAuth) 을 준수하기 위해 SecurityConfig 와 무관하게 컨트롤러에서 인증을 강제한다.
+        resolveUserId();
+        return playlistService.getSubscribers(playlistId, cursor, idAfter, limit, sortBy, sortDirection);
     }
 
     /** 인증된 사용자 ID를 추출합니다. 미인증 시 UNAUTHORIZED 를 발생시킵니다. */
