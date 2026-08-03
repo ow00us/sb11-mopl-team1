@@ -44,14 +44,14 @@ public class WatchingSessionDisconnectListener {
         // end()가 DB에서 세션을 지우기 전에 브로드 캐스트에 필요한 세션 정보 확보
         WatchingSessionDto session = watchingSessionService.get(watcherId).orElse(null);
 
-        // watcherId 기준 활성 세션 삭제 (세션 없어도 멱등)
-        watchingSessionService.end(watcherId);
-
-        // 활성 세션이 없었으면(이미 만료됐거나 애초에 시청 중이 아니었으면) 브로드캐스트할 대상 없음
-        if (session != null) {
-            UUID contentId = session.content().id();
-            watchingSessionBroadcaster.broadcastLeave(session, contentId);
+        // 이미 없는 걸 알고있으니 불필요한 DB 호출 없게 얼리 리턴으로 정리
+        if (session == null) {
+            return;
         }
+
+        // watcherId 기준 활성 세션 삭제
+        watchingSessionService.end(watcherId);
+        watchingSessionBroadcaster.broadcastLeave(session, session.content().id());
     }
 
     private UUID extractWatcherId(Principal principal) {
