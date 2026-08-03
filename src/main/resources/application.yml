@@ -10,6 +10,11 @@ spring:
     properties:
       hibernate:
         format_sql: true
+  flyway:
+    postgresql:
+      # V4 의 CREATE INDEX CONCURRENTLY 는 트랜잭션 밖 실행이 필요.
+      # Flyway 기본 세션 advisory lock 이 트랜잭션 획득을 시도해 CONCURRENTLY 와 충돌하면 hang.
+      transactional-lock: false
 
 management:
   endpoints:
