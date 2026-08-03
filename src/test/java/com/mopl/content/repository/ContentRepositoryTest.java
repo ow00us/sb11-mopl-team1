@@ -504,6 +504,19 @@ class ContentRepositoryTest {
         assertThat(result).isEmpty();
     }
 
+    // ── findByIdForUpdateWithLockTimeout ────────────────────────────────────
+
+    @Test
+    @DisplayName("findByIdForUpdateWithLockTimeout는 락 타임아웃 설정 후 콘텐츠를 락과 함께 조회한다")
+    void findByIdForUpdateWithLockTimeout_returnsContent() {
+        Content content = entityManager.persistAndFlush(movie().build());
+
+        Optional<Content> result = contentRepository.findByIdForUpdateWithLockTimeout(content.getId());
+
+        assertThat(result).isPresent();
+        assertThat(result.get().getId()).isEqualTo(content.getId());
+    }
+
     // ── refreshReviewAggregate ─────────────────────────────────────────────
 
     @Test

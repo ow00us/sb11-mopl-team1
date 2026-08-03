@@ -70,7 +70,7 @@ class ReviewServiceTest {
         ReviewCreateRequest request = new ReviewCreateRequest(CONTENT_ID, "재밌어요", new BigDecimal("4.5"));
         Content content = movie();
         when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(content));
-        when(contentRepository.findByIdForUpdate(CONTENT_ID)).thenReturn(Optional.of(content));
+        when(contentRepository.findByIdForUpdateWithLockTimeout(CONTENT_ID)).thenReturn(Optional.of(content));
         when(reviewRepository.existsByAuthorIdAndContentId(AUTHOR_ID, CONTENT_ID)).thenReturn(false);
         when(userRepository.findById(AUTHOR_ID)).thenReturn(Optional.of(savedUser(AUTHOR_ID, "닉네임", null)));
 
@@ -176,7 +176,7 @@ class ReviewServiceTest {
     void update_success() {
         Review review = savedReview(REVIEW_ID, AUTHOR_ID, CONTENT_ID, "원래", new BigDecimal("3.0"));
         when(reviewRepository.findById(REVIEW_ID)).thenReturn(Optional.of(review));
-        when(contentRepository.findByIdForUpdate(CONTENT_ID)).thenReturn(Optional.of(movie()));
+        when(contentRepository.findByIdForUpdateWithLockTimeout(CONTENT_ID)).thenReturn(Optional.of(movie()));
         when(userRepository.findById(AUTHOR_ID)).thenReturn(Optional.of(savedUser(AUTHOR_ID, "닉네임", null)));
 
         ReviewDto result = reviewService.update(
@@ -220,7 +220,7 @@ class ReviewServiceTest {
     void delete_success() {
         Review review = savedReview(REVIEW_ID, AUTHOR_ID, CONTENT_ID, "text", new BigDecimal("3.0"));
         when(reviewRepository.findById(REVIEW_ID)).thenReturn(Optional.of(review));
-        when(contentRepository.findByIdForUpdate(CONTENT_ID)).thenReturn(Optional.of(movie()));
+        when(contentRepository.findByIdForUpdateWithLockTimeout(CONTENT_ID)).thenReturn(Optional.of(movie()));
 
         reviewService.delete(REVIEW_ID, AUTHOR_ID);
 

@@ -233,13 +233,22 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
     // 콘텐츠 행 락 대기 시간을 제한한다. SET LOCAL이라 현재 트랜잭션에만 적용되고 커밋/롤백 시 자동 해제된다.
     // 이 값이 없으면 락을 쥔 트랜잭션이 끝나지 않을 때 요청 스레드와 DB 커넥션이 무한정 점유될 수 있다.
     // 반드시 findByIdForUpdate()보다 먼저, 같은 트랜잭션 안에서 호출해야 한다.
+    // 직접 호출하지 말고 findByIdForUpdateWithLockTimeout()을 사용할 것.
     @Modifying
     @Query(value = "SET LOCAL lock_timeout = '5s'", nativeQuery = true)
     void setLockTimeoutForReviewAggregateLock();
 
+    // 직접 호출하지 말고 findByIdForUpdateWithLockTimeout()을 사용할 것.
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT c FROM Content c WHERE c.id = :contentId")
     Optional<Content> findByIdForUpdate(@Param("contentId") UUID contentId);
+
+    // setLockTimeoutForReviewAggregateLock()과 findByIdForUpdate()를 항상 이 순서로 호출하도록 강제한다.
+    // 콘텐츠 행 락이 필요한 곳에서는 findByIdForUpdate()를 직접 호출하지 말고 이 메서드를 사용할 것.
+    default Optional<Content> findByIdForUpdateWithLockTimeout(UUID contentId) {
+        setLockTimeoutForReviewAggregateLock();
+        return findByIdForUpdate(contentId);
+    }
 
     // 리뷰 반영 시 콘텐츠의 평균 평점·리뷰 수를 한 번의 UPDATE로 원자적으로 재계산한다.
     // 소프트 삭제된 콘텐츠(deleted_at IS NOT NULL)는 조건에 걸려 갱신되지 않는다.

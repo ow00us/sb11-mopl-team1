@@ -159,11 +159,10 @@ public class ReviewServiceImpl implements ReviewService {
 
     // 리뷰 변경사항이 이미 flush 되어 있어야 이 원자적 갱신 쿼리에 반영된다.
     // create/update/delete 각각 saveAndFlush/flush 호출 이후에만 이 메서드를 호출할 것.
-    // 콘텐츠 행 락을 먼저 선점(findByIdForUpdate)한 뒤 별도 문으로 집계를 갱신해야
-    // 락 대기 중 커밋된 다른 리뷰까지 정확히 반영된다. ContentRepository.findByIdForUpdate 참고.
+    // 콘텐츠 행 락을 먼저 선점(findByIdForUpdateWithLockTimeout)한 뒤 별도 문으로 집계를 갱신해야
+    // 락 대기 중 커밋된 다른 리뷰까지 정확히 반영된다. ContentRepository.findByIdForUpdateWithLockTimeout 참고.
     private void refreshContentAggregate(UUID contentId) {
-        contentRepository.setLockTimeoutForReviewAggregateLock();
-        contentRepository.findByIdForUpdate(contentId)
+        contentRepository.findByIdForUpdateWithLockTimeout(contentId)
                 .ifPresent(content -> contentRepository.refreshReviewAggregate(contentId));
     }
 
