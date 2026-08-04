@@ -38,7 +38,7 @@ public class ContentChatService {
         // TODO: [성능 최적화] 채팅 발송마다 User를 조회하므로 부하 위험.
         //  STOMP CONNECT시 세션에 UserInfo를 캐싱하는 방식 고려
         User sender = userRepository.findById(senderId)
-            .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "존재하지 않는 사용자입니다."));
+            .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED, "유효하지 않은 계정입니다."));
 
         // 브로드캐스트
         ContentChatDto chatDto = ContentChatDto.from(sender, content);
