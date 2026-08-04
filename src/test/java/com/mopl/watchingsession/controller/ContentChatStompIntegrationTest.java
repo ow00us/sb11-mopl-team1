@@ -12,7 +12,11 @@ import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.ContentChatDto;
+import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
+import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.lang.reflect.Type;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -79,6 +83,9 @@ public class ContentChatStompIntegrationTest {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired
+    private WatchingSessionSnapshotRepository snapshotRepository;
+
     private WebSocketStompClient stompClient;
     private ThreadPoolTaskScheduler taskScheduler;
     private StompSession session;
@@ -106,6 +113,12 @@ public class ContentChatStompIntegrationTest {
             .description("설명")
             .build());
         contentId = content.getId();
+
+        snapshotRepository.save(WatchingSessionSnapshot.builder()
+            .watcherId(senderId)
+            .contentId(contentId)
+            .expiresAt(Instant.now().plus(1, ChronoUnit.HOURS))
+            .build());
     }
 
     @AfterEach

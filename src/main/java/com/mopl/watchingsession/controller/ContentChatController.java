@@ -1,9 +1,11 @@
 package com.mopl.watchingsession.controller;
 
+import com.mopl.global.common.UserSummary;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.watchingsession.dto.ContentChatSendRequest;
 import com.mopl.watchingsession.service.ContentChatService;
+import com.mopl.watchingsession.websocket.ChatSenderCache;
 import jakarta.validation.Valid;
 import java.security.Principal;
 import java.util.UUID;
@@ -11,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
+import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.stereotype.Controller;
 
 @Controller
@@ -23,10 +26,15 @@ public class ContentChatController {
     public void sendChat(
         @DestinationVariable UUID contentId,
         @Payload @Valid ContentChatSendRequest request,
-        Principal principal
+        Principal principal,
+        SimpMessageHeaderAccessor accessor
     ) {
         UUID senderId = extractSenderId(principal);
-        contentChatService.sendAndBroadcast(senderId, contentId, request.content());
+
+        // 캐시 미스 시 null 반환
+        UserSummary sender = ChatSenderCache.get(accessor);
+
+        contentChatService.sendAndBroadcast(senderId, contentId, sender, request.content());
     }
 
     private UUID extractSenderId(Principal principal) {
