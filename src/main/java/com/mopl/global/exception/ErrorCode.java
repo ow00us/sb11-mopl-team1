@@ -22,6 +22,8 @@ public enum ErrorCode {
     FOLLOW_SELF(HttpStatus.BAD_REQUEST, "FOLLOW_400_1", "자기 자신은 팔로우할 수 없습니다."),
     REQUEST_CONFLICT(HttpStatus.CONFLICT, "COMMON_409_1", "요청이 다른 처리와 충돌했습니다."),
     EMAIL_DUPLICATE(HttpStatus.CONFLICT, "USER_409_1", "이미 사용 중인 이메일입니다."),
+    REVIEW_NOT_FOUND(HttpStatus.NOT_FOUND, "REVIEW_404_1", "존재하지 않는 리뷰입니다."),
+    REVIEW_DUPLICATE(HttpStatus.CONFLICT, "REVIEW_409_1", "이미 작성한 리뷰가 존재합니다."),
     DIRECT_MESSAGE_INVALID_STATE(HttpStatus.INTERNAL_SERVER_ERROR, "DM_500_1", "DM 데이터 상태가 올바르지 않습니다."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "COMMON_500_1", "서버 오류가 발생했습니다.");
 
