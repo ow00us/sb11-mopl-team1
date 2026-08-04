@@ -235,4 +235,9 @@ public interface ConversationParticipantRepository
         @Param("requesterId") UUID requesterId,
         @Param("keywordLike") String keywordLike
     );
+
+    boolean existsByConversationIdAndUserId(
+        UUID conversationId,
+        UUID userId
+    );
 }
