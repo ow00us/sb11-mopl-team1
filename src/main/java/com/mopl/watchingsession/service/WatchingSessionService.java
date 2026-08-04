@@ -83,8 +83,13 @@ public class WatchingSessionService {
             activeSessions.put(watcherId, sessionId);
         }
 
-        // 락 해제 후 enrich 수행
-        return enrich(snapshot);
+        try {
+            return enrich(snapshot);
+        } catch (RuntimeException e) {
+            // 계약 분리: 새 상태가 반영된 후 실패했다면, 스스로 롤백하여 원자성 보장
+            end(watcherId, sessionId);
+            throw e;
+        }
     }
 
     // delete 성격의 메서드

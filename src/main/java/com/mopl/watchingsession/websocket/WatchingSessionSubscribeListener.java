@@ -76,15 +76,11 @@ public class WatchingSessionSubscribeListener {
         try {
             session = watchingSessionService.start(watcherId, contentId, sessionId);
         } catch (RuntimeException e) {
-            log.warn("시청 세션 시작 실패, 구독 매핑 및 DB 세션 정리: watcherId={}, contentId={}, cause={}",
+            log.warn("시청 세션 시작 실패, 구독 매핑 정리: watcherId={}, contentId={}, cause={}",
                 watcherId, contentId, e.getMessage());
 
             // 인메모리 매핑 정리
             WatchSubscriptionAttributes.remove(accessor);
-
-            // DB 세션 정리 (멱등성 보장)
-            watchingSessionService.end(watcherId, sessionId);
-
             return;
         }
 

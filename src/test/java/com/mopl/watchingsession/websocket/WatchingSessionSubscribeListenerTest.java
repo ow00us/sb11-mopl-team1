@@ -142,8 +142,8 @@ public class WatchingSessionSubscribeListenerTest {
         verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());
 
-        // 롤백 로직은 정상 동작해야 함
-        verify(watchingSessionService).end(WATCHER_ID, SESSION_ID);
+        // 리스너가 기존 세션을 맹목적으로 날려버리지 않아야 함 (기존 스냅샷 유지)
+        verify(watchingSessionService, never()).end(any(), any());
     }
 
     @Test
@@ -299,7 +299,7 @@ public class WatchingSessionSubscribeListenerTest {
     }
 
     @Test
-    @DisplayName("start() 처리 중 예외 발생 시 STOMP 예외 전파를 막고 인메모리 및 DB 정리 수행")
+    @DisplayName("start() 처리 중 예외 발생 시 STOMP 예외 전파를 막고 인메모리만 정리 수행")
     void onSubscribe_rollback_whenStartThrowsException() {
         // given
         SessionSubscribeEvent event = subscribeEvent(
@@ -312,8 +312,8 @@ public class WatchingSessionSubscribeListenerTest {
         assertDoesNotThrow(() -> listener.onSubscribe(event));
 
         // then
-        // 예외 발생 시 end에도 sessionId가 정확히 넘어가는지 검증
-        verify(watchingSessionService).end(WATCHER_ID, SESSION_ID);
+        // 리스너 단에서 end() 호출하지 않음
+        verify(watchingSessionService, never()).end(any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());
 
         StompHeaderAccessor lookupAccessor = StompHeaderAccessor.wrap(event.getMessage());

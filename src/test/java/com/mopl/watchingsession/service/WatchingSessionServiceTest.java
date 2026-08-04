@@ -36,6 +36,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -812,7 +813,7 @@ public class WatchingSessionServiceTest {
         watchingSessionService.start(WATCHER_ID, CONTENT_ID, S1);
 
         // 실행 순서 추적을 위한 스레드 안전 리스트
-        java.util.List<String> executionOrder = synchronizedList(new ArrayList<>());
+        List<String> executionOrder = synchronizedList(new ArrayList<>());
 
         // S1의 deleteByWatcherId 처리에 의도적 지연(100ms) 추가
         doAnswer(invocation -> {
@@ -828,42 +829,59 @@ public class WatchingSessionServiceTest {
             Thread.sleep(50);
             executionOrder.add("UPSERT_END");
             return createSnapshotFixture(NEW_CONTENT_ID, Instant.now(), Instant.now(), Instant.now());
-        }).when(watchingSessionSnapshotWriter).upsert(any(), any(), any());
+        }).when(watchingSessionSnapshotWriter).upsert(eq(WATCHER_ID), eq(NEW_CONTENT_ID), any());
 
         ExecutorService executor = newFixedThreadPool(2);
-        CountDownLatch startLatch = new java.util.concurrent.CountDownLatch(1);
-        CountDownLatch doneLatch = new java.util.concurrent.CountDownLatch(2);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch doneLatch = new CountDownLatch(2);
 
         // when
         // Thread 1: S1의 end 호출
-        executor.submit(() -> {
-            try {
-                startLatch.await(); // 동시 출발
-                watchingSessionService.end(WATCHER_ID, S1);
-            } catch (Exception ignored) {}
-            finally { doneLatch.countDown(); }
-        });
+        try {
+            executor.submit(() -> {
+                try {
+                    startLatch.await(); // 동시 출발
+                    watchingSessionService.end(WATCHER_ID, S1);
+                } catch (Exception ignored) {
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
 
-        // Thread 2: S2의 start 호출
-        executor.submit(() -> {
-            try {
-                startLatch.await(); // 동시 출발
-                watchingSessionService.start(WATCHER_ID, NEW_CONTENT_ID, S2);
-            } catch (Exception ignored) {}
-            finally { doneLatch.countDown(); }
-        });
+            // Thread 2: S2의 start 호출
+            executor.submit(() -> {
+                try {
+                    startLatch.await(); // 동시 출발
+                    watchingSessionService.start(WATCHER_ID, NEW_CONTENT_ID, S2);
+                } catch (Exception ignored) {
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
 
-        startLatch.countDown(); // 두 스레드 동시 실행 시작
-        doneLatch.await();      // 모두 완료될 때까지 대기
-        executor.shutdown();
+            startLatch.countDown(); // 두 스레드 동시 실행 시작
+
+            // 무한 대기(Deadlock) 방지를 위해 Timeout(3초) 설정 및 검증
+            boolean completed = doneLatch.await(3, TimeUnit.SECONDS);
+            assertThat(completed)
+                .as("교착 상태(Deadlock) 발생: 제한 시간(3초) 내에 스레드 작업이 완료되지 않았습니다.")
+                .isTrue();
+        } finally {
+            executor.shutdown();
+        }
 
         // then
         // 락(Lock)에 의해 둘 중 하나가 완전히 끝난 후 다음 작업이 실행되어야 함
         // (DELETE와 UPSERT 중간에 다른 로직이 끼어들지 않음)
         String joinedOrder = String.join(",", executionOrder);
 
+        // 시나리오 1: Thread 1(end)이 락을 먼저 획득
+        // S1이 정상 삭제된 후, S2가 새로 생성됨
         boolean atomicOrder1 = joinedOrder.equals("DELETE_START,DELETE_END,UPSERT_START,UPSERT_END");
-        boolean atomicOrder2 = joinedOrder.equals("UPSERT_START,UPSERT_END,DELETE_START,DELETE_END");
+
+        // 시나리오 2: Thread 2(start)가 락을 먼저 획득
+        // S2가 소유권을 덮어버림 -> 뒤늦게 락을 얻은 Thread 1(S1 end)은 소유권 불일치로 삭제를 스킵함!
+        boolean atomicOrder2 = joinedOrder.equals("UPSERT_START,UPSERT_END");
 
         assertThat(atomicOrder1 || atomicOrder2)
             .as("작업이 원자적으로 실행되지 않고 중간에 섞임. 실행 로그: " + joinedOrder)
