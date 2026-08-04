@@ -4,6 +4,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -15,17 +17,21 @@ import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserDto;
+import com.mopl.user.dto.UserUpdateRequest;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.service.UserService;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
-// import java.util.List;
+import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-// import org.junit.jupiter.api.AfterEach;
-// import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-// import org.springframework.security.core.context.SecurityContextHolder;
+import org.junit.jupiter.api.AfterEach;
+import org.springframework.http.HttpMethod;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -49,6 +55,19 @@ class UserControllerTest {
 
     @MockitoBean
     UserService userService;
+
+    /**
+     * 테스트 종료 후 인증 정보 제거
+     *
+     * SecurityContextHolder는 현재 테스트 스레드에 인증 정보를 저장
+     *
+     * 테스트가 끝난 뒤 인증 정보를 제거하지 않으면 다음 테스트가
+     * 이전 테스트의 사용자로 인증된 것처럼 실행될 수 있다.
+     */
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
+    }
 
     /*      users/me
     /**
@@ -255,4 +274,237 @@ class UserControllerTest {
         );
     }
     */
+
+    // 프로필 수정 성공 테스트
+    @Test
+    @DisplayName("본인은 이름과 프로필 이미지를 수정할 수 있다")
+    void updateUser_success_whenNameAndImageAreProvided()
+        throws Exception {
+
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        Instant createdAt =
+            Instant.parse("2026-08-01T03:00:00Z");
+
+        setAuthenticatedUser(userId);
+
+        /*
+         * multipart/form-data의 request 파트
+         *
+         * UserUpdateRequest는 JSON DTO이므로
+         * Content-Type을 application/json으로 지정
+         */
+        MockMultipartFile requestPart = new MockMultipartFile(
+            "request",
+            "",
+            "application/json",
+            objectMapper.writeValueAsBytes(
+                new UserUpdateRequest("변경된 사용자")
+            )
+        );
+
+        /*
+         * multipart/form-data의 image 파트
+         *
+         * 실제 이미지 파일 대신 테스트용 바이트 데이터를 사용
+         */
+        MockMultipartFile imagePart = new MockMultipartFile(
+            "image",
+            "profile.png",
+            "image/png",
+            new byte[]{1, 2, 3}
+        );
+
+        UserDto response = new UserDto(
+            userId,
+            createdAt,
+            "user@example.com",
+            "변경된 사용자",
+            "https://placeholder.mopl.local/profile-images/new-profile.png",
+            UserRole.USER,
+            false
+        );
+
+        when(userService.updateUser(
+            eq(userId),
+            eq(userId),
+            eq(new UserUpdateRequest("변경된 사용자")),
+            any(MultipartFile.class)
+        )).thenReturn(response);
+
+        // when & then
+        mockMvc.perform(
+                multipart(
+                    HttpMethod.PATCH,
+                    "/api/users/{userId}",
+                    userId
+                )
+                    .file(requestPart)
+                    .file(imagePart)
+            )
+            .andExpect(status().isOk())
+            .andExpect(content().contentType("application/json"))
+            .andExpect(jsonPath("$.id").value(userId.toString()))
+            .andExpect(jsonPath("$.createdAt")
+                .value(createdAt.toString()))
+            .andExpect(jsonPath("$.email")
+                .value("user@example.com"))
+            .andExpect(jsonPath("$.name")
+                .value("변경된 사용자"))
+            .andExpect(jsonPath("$.profileImageUrl")
+                .value(
+                    "https://placeholder.mopl.local/"
+                        + "profile-images/new-profile.png"
+                ))
+            .andExpect(jsonPath("$.role").value("USER"))
+            .andExpect(jsonPath("$.locked").value(false))
+            .andExpect(jsonPath("$.password").doesNotExist())
+            .andExpect(jsonPath("$.passwordHash").doesNotExist());
+
+        /*
+         * URL의 userId뿐만 아니라 JWT 인증 정보에서 가져온 UUID도
+         * Service에 함께 전달됐는지 확인
+         */
+        verify(userService).updateUser(
+            eq(userId),
+            eq(userId),
+            eq(new UserUpdateRequest("변경된 사용자")),
+            any(MultipartFile.class)
+        );
+    }
+
+    // 이미지 없이 이름만 수정하는 테스트
+    @Test
+    @DisplayName("프로필 이미지 없이 이름만 수정할 수 있다")
+    void updateUser_success_whenImageIsNotProvided()
+        throws Exception {
+
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        Instant createdAt =
+            Instant.parse("2026-08-01T03:00:00Z");
+
+        setAuthenticatedUser(userId);
+
+        MockMultipartFile requestPart = new MockMultipartFile(
+            "request",
+            "",
+            "application/json",
+            objectMapper.writeValueAsBytes(
+                new UserUpdateRequest("변경된 사용자")
+            )
+        );
+
+        UserDto response = new UserDto(
+            userId,
+            createdAt,
+            "user@example.com",
+            "변경된 사용자",
+            "https://example.com/old-profile.png",
+            UserRole.USER,
+            false
+        );
+
+        when(userService.updateUser(
+            userId,
+            userId,
+            new UserUpdateRequest("변경된 사용자"),
+            null
+        )).thenReturn(response);
+
+        // when & then
+        mockMvc.perform(
+                multipart(
+                    HttpMethod.PATCH,
+                    "/api/users/{userId}",
+                    userId
+                )
+                    .file(requestPart)
+            )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.name")
+                .value("변경된 사용자"))
+            .andExpect(jsonPath("$.profileImageUrl")
+                .value("https://example.com/old-profile.png"));
+
+        /*
+         * image 파트를 전달하지 않았으므로 Controller는
+         * Service의 image 매개변수에 null을 전달해야 한다.
+         */
+        verify(userService).updateUser(
+            userId,
+            userId,
+            new UserUpdateRequest("변경된 사용자"),
+            null
+        );
+    }
+
+    // 잘못된 이름 검증 테스트
+    @Test
+    @DisplayName("수정할 이름이 공백이면 400을 반환한다")
+    void updateUser_fail_whenNameIsBlank()
+        throws Exception {
+
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        setAuthenticatedUser(userId);
+
+        MockMultipartFile requestPart = new MockMultipartFile(
+            "request",
+            "",
+            "application/json",
+            objectMapper.writeValueAsBytes(
+                new UserUpdateRequest("   ")
+            )
+        );
+
+        // when & then
+        mockMvc.perform(
+                multipart(
+                    HttpMethod.PATCH,
+                    "/api/users/{userId}",
+                    userId
+                )
+                    .file(requestPart)
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.errorCode")
+                .value("COMMON_400_1"))
+            .andExpect(jsonPath("$.details.name").exists());
+
+        /*
+         * Controller 입력 검증에서 실패했으므로
+         * Service는 호출되면 안 된다.
+         */
+        verifyNoInteractions(userService);
+    }
+
+    /**
+     * 인증 사용자 설정 메서드
+     *
+     * JWT 인증 필터가 성공적으로 인증을 처리한 상태를 구성
+     *
+     * 실제 요청에서는 JwtAuthenticationFilter가 액세스 토큰의
+     * subject에서 사용자 UUID를 추출해 Authentication principal에 저장
+     *
+     * 이 테스트는 Controller 단위 테스트이고 Security Filter가 비활성화되어
+     * 있으므로 같은 형태의 인증 정보를 직접 SecurityContext에 설정
+     *
+     * @param userId 현재 인증된 사용자의 UUID
+     */
+    private void setAuthenticatedUser(UUID userId) {
+        SecurityContextHolder.getContext().setAuthentication(
+            UsernamePasswordAuthenticationToken.authenticated(
+                userId,
+                null,
+                List.of()
+            )
+        );
+    }
 }

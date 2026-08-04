@@ -1,6 +1,7 @@
 package com.mopl.user.controller;
 
 import com.mopl.user.dto.UserCreateRequest;
+import com.mopl.user.dto.UserUpdateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.service.UserService;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -9,14 +10,18 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.MediaType;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.PathVariable;
-// /api/users/me 로 변환할 때 살릴 임포트
-// import org.springframework.security.core.annotation.AuthenticationPrincipal;
+
 
 /**
  * 사용자 회원가입 HTTP API를 처리하는 Controller
@@ -90,5 +95,44 @@ public class UserController {
         return ResponseEntity.ok(response);
     }
     */
+
+    /**
+     * 사용자의 프로필 정보를 변경
+     *
+     * Swagger에 정의된 PATCH /api/users/{userId} 계약을 따르며,
+     * 요청 형식은 multipart/form-data
+     *
+     * request 파트에는 변경할 이름을 JSON으로 전달하고,
+     * image 파트에는 변경할 프로필 이미지 파일을 선택적으로 전달
+     *
+     * 실제 수정 권한 확인과 사용자 조회, 이미지 업로드 및
+     * 엔티티 변경은 UserService에 위임
+     *
+     * @param authenticatedUserId JWT 인증 정보에서 가져온 현재 사용자 UUID
+     * @param userId URL 경로로 전달된 수정 대상 사용자 UUID
+     * @param request 변경할 프로필 정보를 담은 JSON 요청
+     * @param image 새 프로필 이미지 파일, 전달하지 않으면 null
+     * @return 수정된 사용자 정보와 200 OK
+     */
+    @PatchMapping(
+        value = "/{userId}",
+        consumes = MediaType.MULTIPART_FORM_DATA_VALUE
+    )
+    public ResponseEntity<UserDto> updateUser(
+        @AuthenticationPrincipal UUID authenticatedUserId,
+        @PathVariable UUID userId,
+        @Valid @RequestPart("request") UserUpdateRequest request,
+        @RequestPart(value = "image", required = false)
+        MultipartFile image
+    ) {
+        UserDto response = userService.updateUser(
+            authenticatedUserId,
+            userId,
+            request,
+            image
+        );
+
+        return ResponseEntity.ok(response);
+    }
 
 }

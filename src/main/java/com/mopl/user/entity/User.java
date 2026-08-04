@@ -82,4 +82,31 @@ public class User extends BaseEntity {
         this.role = role;
         this.locked = locked;
     }
+
+    /**
+     * 사용자의 프로필 정보를 변경
+     *
+     * PATCH 요청에서는 이름과 프로필 이미지가 선택적으로 전달될 수 있으므로,
+     * 전달된 값만 변경하고 null인 값은 기존 정보를 유지
+     *
+     * 프로필 이미지 파일 자체는 Service에서 저장소에 업로드하고,
+     * 이 메서드는 업로드 결과로 받은 URL만 엔티티에 반영
+     *
+     * @param name 변경할 사용자 이름, null이면 기존 이름 유지
+     * @param profileImageUrl 변경할 프로필 이미지 URL, null이면 기존 이미지 유지
+     *
+     * 필드에 setter를 열어두지 않고 프로필 변경이라는 의미가 드러나는 메서드를 통해서만 상태를 바꾸기 위함.
+     */
+    public void updateProfile(
+        String name,
+        String profileImageUrl
+    ) {
+        if (name != null) {
+            this.name = name;
+        }
+
+        if (profileImageUrl != null) {
+            this.profileImageUrl = profileImageUrl;
+        }
+    }
 }
