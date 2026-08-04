@@ -22,3 +22,30 @@
 5. 계약 검증 테스트를 통과시킨 뒤 병합합니다.
 
 `reference/provided-openapi.json`은 변경하지 않습니다.
+
+## 런타임 계약 검증
+
+`OpenApiRuntimeContractTest`는 발표 대상 REST Controller로 생성한
+`/v3/api-docs`와 `mopl-api.yaml`을 비교합니다. Gradle 기본 테스트에 포함되므로
+별도 CI 명령 없이도 `build` 단계에서 계약 이탈을 차단합니다.
+
+현재 비교하는 항목은 다음과 같습니다.
+
+- 구현된 REST API의 경로와 HTTP 메서드
+- 요청 본문의 Content-Type
+- 2xx 성공 상태 코드
+- 204 응답에 본문이 문서화되지 않는지 여부
+- Bearer JWT와 CSRF 보안 요구
+
+정적 계약에만 있고 아직 구현되지 않은 API는 실패시키지 않습니다. 운영 REST
+Controller 목록과 `OpenApiRuntimeContractTest`의 `@WebMvcTest` 대상은 테스트가
+자동으로 대조합니다. 새 Controller가 누락되면 테스트가 실패하며, 해당 Controller와
+Mock 의존성을 등록해야 합니다. 구현 API를 추가하거나 제거할 때는
+`EXPECTED_IMPLEMENTED_OPERATIONS`도 함께 갱신해 변경이 명시적으로 검토되도록
+합니다. 샘플 API와 WebSocket·STOMP·SSE 계약, DTO 스키마 전체 비교는 이 검증의
+대상이 아닙니다.
+
+불일치를 예외 목록으로 숨기지 않습니다. 실제 동작이 맞다면 Controller의
+OpenAPI 응답 설명 또는 `mopl-api.yaml`을 같은 기능 PR에서 수정합니다. 어느 쪽이
+맞는지 합의되지 않았다면 계약을 임의로 바꾸지 않고 관련 도메인과 먼저
+확정합니다.
