@@ -1,13 +1,17 @@
 package com.mopl.content.repository;
 
 import com.mopl.content.entity.Content;
+import jakarta.persistence.LockModeType;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -213,4 +217,49 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
             @Param("tags") List<String> tags,
             @Param("tagCount") int tagCount
     );
+
+    // ── 리뷰 집계 원자적 갱신 ────────────────────────────────────────────────
+
+    // 콘텐츠 행에 대한 배타적 락을 선점한다.
+    //
+    // PostgreSQL READ COMMITTED에서는 UPDATE가 행 잠금 대기 후 재개되더라도,
+    // SET 절의 서브쿼리가 참조하는 "다른 테이블"(reviews)은 대기 시작 전 스냅샷을 그대로 사용한다
+    // (EvalPlanQual은 갱신 대상 행 자체만 재조회할 뿐, 문 전체의 스냅샷을 새로 뜨지 않는다).
+    // 따라서 락 선점과 집계 갱신을 하나의 UPDATE 문으로 합치면, 락 대기 후 재개된 트랜잭션이
+    // 그 사이 커밋된 다른 리뷰들을 못 보고 집계를 계산해 값이 유실될 수 있다.
+    // 락 선점을 별도 문으로 분리하면, 락 획득 후 실행되는 refreshReviewAggregate()는
+    // 새 문(statement)으로서 그 시점까지 커밋된 최신 상태를 스냅샷으로 사용하므로 정확하다.
+
+    // 콘텐츠 행 락 대기 시간을 제한한다. SET LOCAL이라 현재 트랜잭션에만 적용되고 커밋/롤백 시 자동 해제된다.
+    // 이 값이 없으면 락을 쥔 트랜잭션이 끝나지 않을 때 요청 스레드와 DB 커넥션이 무한정 점유될 수 있다.
+    // 반드시 findByIdForUpdate()보다 먼저, 같은 트랜잭션 안에서 호출해야 한다.
+    // 직접 호출하지 말고 findByIdForUpdateWithLockTimeout()을 사용할 것.
+    @Modifying
+    @Query(value = "SET LOCAL lock_timeout = '5s'", nativeQuery = true)
+    void setLockTimeoutForReviewAggregateLock();
+
+    // 직접 호출하지 말고 findByIdForUpdateWithLockTimeout()을 사용할 것.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT c FROM Content c WHERE c.id = :contentId")
+    Optional<Content> findByIdForUpdate(@Param("contentId") UUID contentId);
+
+    // setLockTimeoutForReviewAggregateLock()과 findByIdForUpdate()를 항상 이 순서로 호출하도록 강제한다.
+    // 콘텐츠 행 락이 필요한 곳에서는 findByIdForUpdate()를 직접 호출하지 말고 이 메서드를 사용할 것.
+    default Optional<Content> findByIdForUpdateWithLockTimeout(UUID contentId) {
+        setLockTimeoutForReviewAggregateLock();
+        return findByIdForUpdate(contentId);
+    }
+
+    // 리뷰 반영 시 콘텐츠의 평균 평점·리뷰 수를 한 번의 UPDATE로 원자적으로 재계산한다.
+    // 소프트 삭제된 콘텐츠(deleted_at IS NOT NULL)는 조건에 걸려 갱신되지 않는다.
+    // findByIdForUpdate()로 콘텐츠 행 락을 먼저 선점한 뒤 별도 문으로 호출해야 한다.
+    @Modifying(clearAutomatically = true)
+    @Query(value = """
+            UPDATE contents
+            SET average_rating = ROUND(COALESCE(
+                    (SELECT AVG(rating) FROM reviews WHERE content_id = CAST(:contentId AS uuid)), 0.0), 1),
+                review_count = (SELECT COUNT(*) FROM reviews WHERE content_id = CAST(:contentId AS uuid))
+            WHERE id = CAST(:contentId AS uuid) AND deleted_at IS NULL
+            """, nativeQuery = true)
+    void refreshReviewAggregate(@Param("contentId") UUID contentId);
 }

@@ -8,6 +8,7 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
+import com.mopl.playlist.dto.SubscriberItemDto;
 import com.mopl.playlist.service.PlaylistService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -353,6 +354,90 @@ class PlaylistControllerTest {
     void unsubscribe_fail_unauthorized() throws Exception {
         mockMvc.perform(delete("/api/playlists/{playlistId}/subscription", PLAYLIST_ID))
                 .andExpect(status().isUnauthorized());
+    }
+
+    // ── GET /api/playlists/{playlistId}/subscribers ────────────────────────────
+
+    @Test
+    @DisplayName("구독자 목록 조회 성공 시 200과 CursorResponse 를 반환한다")
+    void getSubscribers_success() throws Exception {
+        setAuth(OTHER_ID);
+        Instant now = Instant.parse("2026-08-01T10:00:00Z");
+        UUID subscriptionId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        CursorResponse<SubscriberItemDto> response = CursorResponse.of(
+                List.of(new SubscriberItemDto(subscriptionId, new UserSummary(OTHER_ID, null, null), now)),
+                null, null, false, 1L, "subscribedAt", "DESCENDING");
+        when(playlistService.getSubscribers(eq(PLAYLIST_ID), any(), any(), eq(10),
+                eq("subscribedAt"), eq("DESCENDING"))).thenReturn(response);
+
+        mockMvc.perform(get("/api/playlists/{playlistId}/subscribers", PLAYLIST_ID)
+                        .param("limit", "10")
+                        .param("sortBy", "subscribedAt")
+                        .param("sortDirection", "DESCENDING"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].subscriptionId").value(subscriptionId.toString()))
+                .andExpect(jsonPath("$.data[0].user.userId").value(OTHER_ID.toString()))
+                .andExpect(jsonPath("$.hasNext").value(false))
+                .andExpect(jsonPath("$.totalCount").value(1));
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 플레이리스트의 구독자 조회 시 404 를 반환한다")
+    void getSubscribers_fail_notFound() throws Exception {
+        setAuth(OTHER_ID);
+        when(playlistService.getSubscribers(eq(PLAYLIST_ID), any(), any(), eq(10),
+                any(), any()))
+                .thenThrow(new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
+
+        mockMvc.perform(get("/api/playlists/{playlistId}/subscribers", PLAYLIST_ID)
+                        .param("limit", "10"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_404_1"));
+    }
+
+    @Test
+    @DisplayName("구독자 목록 조회 시 limit 이 0 이하면 400 을 반환한다")
+    void getSubscribers_fail_invalidLimit() throws Exception {
+        mockMvc.perform(get("/api/playlists/{playlistId}/subscribers", PLAYLIST_ID)
+                        .param("limit", "0"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("구독자 목록 조회 시 limit 이 100 초과면 400 을 반환한다")
+    void getSubscribers_fail_limitExceedsMax() throws Exception {
+        mockMvc.perform(get("/api/playlists/{playlistId}/subscribers", PLAYLIST_ID)
+                        .param("limit", "101"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("구독자 목록 조회 시 sortDirection 이 허용값이 아니면 400 을 반환한다")
+    void getSubscribers_fail_invalidSortDirection() throws Exception {
+        mockMvc.perform(get("/api/playlists/{playlistId}/subscribers", PLAYLIST_ID)
+                        .param("limit", "10")
+                        .param("sortDirection", "WRONG"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("구독자 목록 조회 시 sortDirection=ASCENDING 은 현재 미지원이므로 400 과 INVALID_INPUT 을 반환한다")
+    void getSubscribers_fail_ascendingNotSupported() throws Exception {
+        mockMvc.perform(get("/api/playlists/{playlistId}/subscribers", PLAYLIST_ID)
+                        .param("limit", "10")
+                        .param("sortDirection", "ASCENDING"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
+    }
+
+    @Test
+    @DisplayName("미인증 상태에서 구독자 목록 조회 시 401 을 반환한다")
+    void getSubscribers_fail_unauthorized() throws Exception {
+        mockMvc.perform(get("/api/playlists/{playlistId}/subscribers", PLAYLIST_ID)
+                        .param("limit", "10"))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(playlistService);
     }
 
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────

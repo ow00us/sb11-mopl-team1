@@ -10,10 +10,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.security.Principal;
 import java.util.UUID;
@@ -65,5 +62,31 @@ public class ConversationController {
                 ErrorCode.UNAUTHORIZED
             );
         }
+    }
+
+    @GetMapping("/{conversationId}")
+    public ConversationDto getConversation(
+        @PathVariable UUID conversationId,
+        Principal principal
+    ) {
+        UUID requesterId = getRequesterId(principal);
+
+        return conversationService.getConversation(
+            requesterId,
+            conversationId
+        );
+    }
+
+    @GetMapping("/with")
+    public ConversationDto getConversationWithUser(
+        @RequestParam UUID userId,
+        Principal principal
+    ) {
+        UUID requesterId = getRequesterId(principal);
+
+        return conversationService.getConversationWithUser(
+            requesterId,
+            userId
+        );
     }
 }
