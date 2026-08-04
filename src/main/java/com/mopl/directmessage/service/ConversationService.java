@@ -16,6 +16,7 @@ import com.mopl.global.common.CursorResponse;
 import com.mopl.global.common.UserSummary;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.util.CursorUtils;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
 import java.time.Instant;
@@ -437,7 +438,9 @@ public class ConversationService {
                 page.get(page.size() - 1);
 
             nextCursor =
-                lastItem.getCreatedAt().toString();
+                CursorUtils.encodeInstant(
+                    lastItem.getCreatedAt()
+                );
 
             nextIdAfter =
                 lastItem.getConversationId();
@@ -622,16 +625,16 @@ public class ConversationService {
     }
 
     private String normalizeKeyword(
-        String keywordLike
+        String keyword
     ) {
-        if (
-            keywordLike == null
-                || keywordLike.isBlank()
-        ) {
+        if (keyword == null || keyword.isBlank()) {
             return null;
         }
 
-        return keywordLike.trim();
+        return keyword.trim()
+            .replace("!", "!!")
+            .replace("%", "!%")
+            .replace("_", "!_");
     }
 
     private Instant parseConversationCursor(
@@ -642,7 +645,7 @@ public class ConversationService {
         }
 
         try {
-            return Instant.parse(cursor);
+            return CursorUtils.decodeAsInstant(cursor);
         } catch (DateTimeParseException exception) {
             throw new BusinessException(
                 ErrorCode.INVALID_INPUT,
