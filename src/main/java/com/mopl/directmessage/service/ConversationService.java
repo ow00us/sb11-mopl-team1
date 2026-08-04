@@ -11,11 +11,18 @@ import com.mopl.directmessage.entity.ParticipantSlot;
 import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.directmessage.repository.ConversationRepository;
 import com.mopl.directmessage.repository.DirectMessageRepository;
+import com.mopl.directmessage.repository.ConversationListItemProjection;
+import com.mopl.global.common.CursorResponse;
 import com.mopl.global.common.UserSummary;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.util.CursorUtils;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -23,11 +30,17 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.domain.PageRequest;
 
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class ConversationService {
+
+    private static final String SORT_BY_CREATED_AT = "createdAt";
+    private static final String ASCENDING = "ASCENDING";
+    private static final String DESCENDING = "DESCENDING";
+    private static final int MAX_LIMIT = 100;
 
     private final ConversationRepository conversationRepository;
     private final ConversationParticipantRepository participantRepository;
@@ -285,6 +298,165 @@ public class ConversationService {
         );
     }
 
+    public CursorResponse<ConversationDto> getConversations(
+        UUID requesterId,
+        String keywordLike,
+        String cursor,
+        UUID idAfter,
+        int limit,
+        String sortDirection,
+        String sortBy
+    ) {
+        validateListRequest(
+            cursor,
+            idAfter,
+            limit,
+            sortDirection,
+            sortBy
+        );
+
+        String normalizedKeyword =
+            normalizeKeyword(keywordLike);
+
+        Instant cursorInstant =
+            parseConversationCursor(cursor);
+
+        PageRequest pageRequest =
+            PageRequest.of(0, limit + 1);
+
+        List<ConversationListItemProjection> items;
+
+        if (
+            cursorInstant == null
+                && ASCENDING.equals(sortDirection)
+        ) {
+            items =
+                participantRepository
+                    .findFirstConversationListAsc(
+                        requesterId,
+                        normalizedKeyword,
+                        pageRequest
+                    );
+        } else if (cursorInstant == null) {
+            items =
+                participantRepository
+                    .findFirstConversationListDesc(
+                        requesterId,
+                        normalizedKeyword,
+                        pageRequest
+                    );
+        } else if (ASCENDING.equals(sortDirection)) {
+            items =
+                participantRepository.findConversationListAsc(
+                    requesterId,
+                    normalizedKeyword,
+                    cursorInstant,
+                    idAfter,
+                    pageRequest
+                );
+        } else {
+            items =
+                participantRepository.findConversationListDesc(
+                    requesterId,
+                    normalizedKeyword,
+                    cursorInstant,
+                    idAfter,
+                    pageRequest
+                );
+        }
+
+        boolean hasNext =
+            items.size() > limit;
+
+        List<ConversationListItemProjection> page =
+            hasNext
+                ? items.subList(0, limit)
+                : items;
+
+        long totalCount =
+            participantRepository.countConversationList(
+                requesterId,
+                normalizedKeyword
+            );
+
+        if (page.isEmpty()) {
+            return CursorResponse.of(
+                List.of(),
+                null,
+                null,
+                false,
+                totalCount,
+                sortBy,
+                sortDirection
+            );
+        }
+
+        List<UUID> conversationIds =
+            page.stream()
+                .map(
+                    ConversationListItemProjection
+                        ::getConversationId
+                )
+                .toList();
+
+        Map<UUID, DirectMessage> latestMessageByConversationId =
+            getLatestMessageMap(conversationIds);
+
+        Set<UUID> unreadConversationIds =
+            new HashSet<>(
+                directMessageRepository
+                    .findUnreadConversationIds(
+                        conversationIds,
+                        requesterId
+                    )
+            );
+
+        Map<UUID, User> users =
+            getConversationListUsers(
+                requesterId,
+                page
+            );
+
+        List<ConversationDto> data =
+            page.stream()
+                .map(item ->
+                    toConversationListDto(
+                        item,
+                        requesterId,
+                        users,
+                        latestMessageByConversationId,
+                        unreadConversationIds
+                    )
+                )
+                .toList();
+
+        String nextCursor = null;
+        UUID nextIdAfter = null;
+
+        if (hasNext) {
+            ConversationListItemProjection lastItem =
+                page.get(page.size() - 1);
+
+            nextCursor =
+                CursorUtils.encodeInstant(
+                    lastItem.getCreatedAt()
+                );
+
+            nextIdAfter =
+                lastItem.getConversationId();
+        }
+
+        return CursorResponse.of(
+            data,
+            nextCursor,
+            nextIdAfter,
+            hasNext,
+            totalCount,
+            sortBy,
+            sortDirection
+        );
+    }
+
     public ConversationDto getConversation(
         UUID requesterId,
         UUID conversationId
@@ -404,6 +576,184 @@ public class ConversationService {
             requesterId,
             withUserId,
             users
+        );
+    }
+
+    private void validateListRequest(
+        String cursor,
+        UUID idAfter,
+        int limit,
+        String sortDirection,
+        String sortBy
+    ) {
+        boolean onlyCursorExists =
+            cursor != null && idAfter == null;
+
+        boolean onlyIdAfterExists =
+            cursor == null && idAfter != null;
+
+        if (onlyCursorExists || onlyIdAfterExists) {
+            throw new BusinessException(
+                ErrorCode.INVALID_INPUT,
+                "cursor와 idAfter는 함께 전달해야 합니다."
+            );
+        }
+
+        if (limit < 1 || limit > MAX_LIMIT) {
+            throw new BusinessException(
+                ErrorCode.INVALID_INPUT,
+                "limit은 1 이상 100 이하여야 합니다."
+            );
+        }
+
+        if (!SORT_BY_CREATED_AT.equals(sortBy)) {
+            throw new BusinessException(
+                ErrorCode.INVALID_INPUT,
+                "sortBy는 createdAt만 허용합니다."
+            );
+        }
+
+        if (
+            !ASCENDING.equals(sortDirection)
+                && !DESCENDING.equals(sortDirection)
+        ) {
+            throw new BusinessException(
+                ErrorCode.INVALID_INPUT,
+                "지원하지 않는 정렬 방향입니다."
+            );
+        }
+    }
+
+    private String normalizeKeyword(
+        String keyword
+    ) {
+        if (keyword == null || keyword.isBlank()) {
+            return null;
+        }
+
+        return keyword.trim()
+            .replace("!", "!!")
+            .replace("%", "!%")
+            .replace("_", "!_");
+    }
+
+    private Instant parseConversationCursor(
+        String cursor
+    ) {
+        if (cursor == null) {
+            return null;
+        }
+
+        try {
+            return CursorUtils.decodeAsInstant(cursor);
+        } catch (DateTimeParseException exception) {
+            throw new BusinessException(
+                ErrorCode.INVALID_INPUT,
+                "커서 형식이 올바르지 않습니다."
+            );
+        }
+    }
+
+    private Map<UUID, DirectMessage> getLatestMessageMap(
+        List<UUID> conversationIds
+    ) {
+        return directMessageRepository
+            .findLatestMessagesByConversationIds(
+                conversationIds
+            )
+            .stream()
+            .collect(
+                Collectors.toMap(
+                    DirectMessage::getConversationId,
+                    message -> message
+                )
+            );
+    }
+
+    private Map<UUID, User> getConversationListUsers(
+        UUID requesterId,
+        List<ConversationListItemProjection> page
+    ) {
+        Set<UUID> userIds =
+            page.stream()
+                .map(
+                    ConversationListItemProjection
+                        ::getWithUserId
+                )
+                .collect(Collectors.toSet());
+
+        userIds.add(requesterId);
+
+        Map<UUID, User> users =
+            userRepository
+                .findAllById(userIds)
+                .stream()
+                .collect(
+                    Collectors.toMap(
+                        User::getId,
+                        user -> user
+                    )
+                );
+
+        if (!users.containsKey(requesterId)) {
+            throw new BusinessException(
+                ErrorCode.DIRECT_MESSAGE_INVALID_STATE,
+                "인증 사용자 정보를 찾을 수 없습니다."
+            );
+        }
+
+        return users;
+    }
+
+    private ConversationDto toConversationListDto(
+        ConversationListItemProjection item,
+        UUID requesterId,
+        Map<UUID, User> users,
+        Map<UUID, DirectMessage>
+            latestMessageByConversationId,
+        Set<UUID> unreadConversationIds
+    ) {
+        UUID conversationId =
+            item.getConversationId();
+
+        UUID withUserId =
+            item.getWithUserId();
+
+        User withUser =
+            users.get(withUserId);
+
+        if (withUser == null) {
+            throw new BusinessException(
+                ErrorCode.DIRECT_MESSAGE_INVALID_STATE,
+                "대화 상대 사용자 정보를 찾을 수 없습니다."
+            );
+        }
+
+        DirectMessage latestMessage =
+            latestMessageByConversationId.get(
+                conversationId
+            );
+
+        DirectMessageDto latestMessageDto =
+            latestMessage == null
+                ? null
+                : toDirectMessageDto(
+                latestMessage,
+                requesterId,
+                withUserId,
+                users
+            );
+
+        boolean hasUnread =
+            unreadConversationIds.contains(
+                conversationId
+            );
+
+        return new ConversationDto(
+            conversationId,
+            toUserSummary(withUser),
+            latestMessageDto,
+            hasUnread
         );
     }
 }
