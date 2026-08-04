@@ -6,6 +6,7 @@ import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.service.UserService;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.util.UUID;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -153,10 +154,16 @@ public class UserController {
      * @return 응답 본문이 없는 204 No Content 응답
      */
     @PatchMapping("/{userId}/password")
-    @ApiResponse(
-        responseCode = "204",
-        description = "비밀번호 변경 성공"
-    )
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "204",
+            description = "비밀번호 변경 성공"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자를 찾을 수 없음"
+        )
+    })
     public ResponseEntity<Void> changePassword(
         @AuthenticationPrincipal UUID authenticatedUserId,
         @PathVariable UUID userId,
