@@ -1,5 +1,6 @@
 package com.mopl.global.config;
 
+import com.mopl.directmessage.websocket.DirectMessageAuthorizationInterceptor;
 import com.mopl.global.security.websocket.StompAuthChannelInterceptor;
 import com.mopl.global.security.websocket.WebSocketStompErrorHandler;
 import com.mopl.watchingsession.websocket.ChatSenderCachingInterceptor;
