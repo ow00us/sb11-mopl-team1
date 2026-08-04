@@ -14,6 +14,7 @@ import com.mopl.watchingsession.service.WatchingSessionService;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -43,6 +44,8 @@ public class WatchingSessionSubscribeListenerTest {
 
     private static final UUID WATCHER_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID CONTENT_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
+    private static final UUID PREV_CONTENT_ID = UUID.fromString("33333333-3333-3333-3333-333333333333");
+    private static final String SESSION_ID = "session-0";
 
     private WatchingSessionDto dtoFixture(UUID contentId) {
         return new WatchingSessionDto(
@@ -59,6 +62,7 @@ public class WatchingSessionSubscribeListenerTest {
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
         accessor.setDestination(destination);
         accessor.setSubscriptionId(subscriptionId);
+        accessor.setSessionId(SESSION_ID);
         accessor.setSessionAttributes(new HashMap<>());
         accessor.setLeaveMutable(true);
         if (principal != null) {
@@ -77,7 +81,7 @@ public class WatchingSessionSubscribeListenerTest {
     void onSubscribe_success_startsSessionAndBroadcastsJoin() {
         // given
         WatchingSessionDto dto = dtoFixture(CONTENT_ID);
-        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID)).thenReturn(dto);
+        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID)).thenReturn(dto);
 
         SessionSubscribeEvent event = subscribeEvent(
             "/sub/contents/" + CONTENT_ID + "/watch", "sub-0", principalOf(WATCHER_ID));
@@ -86,8 +90,54 @@ public class WatchingSessionSubscribeListenerTest {
         listener.onSubscribe(event);
 
         // then
-        verify(watchingSessionService).start(WATCHER_ID, CONTENT_ID);
+        verify(watchingSessionService).start(WATCHER_ID, CONTENT_ID, SESSION_ID);
         verify(watchingSessionBroadcaster).broadcastJoin(dto, CONTENT_ID);
+    }
+
+    @Test
+    @DisplayName("기존 활성 세션(A)이 있는 상태에서 다른 콘텐츠(B)를 구독하면 기존 방(A)에 퇴장 알림을 먼저 보냄")
+    void onSubscribe_broadcastsLeaveToPrevContent_whenSubscribingToNewContent() {
+        // given
+        // 기존에 보고 있던 A 콘텐츠(PREV_CONTENT_ID) 모킹
+        WatchingSessionDto prevSession = dtoFixture(PREV_CONTENT_ID);
+        when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.of(prevSession));
+
+        // 새롭게 구독하려는 B 콘텐츠(CONTENT_ID) 모킹
+        WatchingSessionDto newSession = dtoFixture(CONTENT_ID);
+        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID)).thenReturn(newSession);
+
+        SessionSubscribeEvent event = subscribeEvent(
+            "/sub/contents/" + CONTENT_ID + "/watch", "sub-0", principalOf(WATCHER_ID));
+
+        // when
+        listener.onSubscribe(event);
+
+        // then
+        // 이전 방(A)에 대해서 LEAVE가 먼저 나갔는지 검증
+        verify(watchingSessionBroadcaster).broadcastLeave(prevSession, PREV_CONTENT_ID);
+
+        // 새 방(B)에 대해서 DB 세션이 갱신되고 JOIN이 나갔는지 검증
+        verify(watchingSessionService).start(WATCHER_ID, CONTENT_ID, SESSION_ID);
+        verify(watchingSessionBroadcaster).broadcastJoin(newSession, CONTENT_ID);
+    }
+
+    @Test
+    @DisplayName("기존 활성 세션과 동일한 콘텐츠를 다시 구독하면 퇴장 알림을 보내지 않음")
+    void onSubscribe_skipsLeaveBroadcast_whenSubscribingToSameContent() {
+        // given
+        WatchingSessionDto currentSession = dtoFixture(CONTENT_ID);
+        when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.of(currentSession));
+        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID)).thenReturn(currentSession);
+
+        SessionSubscribeEvent event = subscribeEvent(
+            "/sub/contents/" + CONTENT_ID + "/watch", "sub-0", principalOf(WATCHER_ID));
+
+        // when
+        listener.onSubscribe(event);
+
+        // then
+        verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
+        verify(watchingSessionBroadcaster).broadcastJoin(currentSession, CONTENT_ID);
     }
 
     @Test
@@ -95,7 +145,7 @@ public class WatchingSessionSubscribeListenerTest {
     void onSubscribe_success_storesSubscriptionMapping() {
         // given
         WatchingSessionDto dto = dtoFixture(CONTENT_ID);
-        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID)).thenReturn(dto);
+        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID)).thenReturn(dto);
 
         SessionSubscribeEvent event = subscribeEvent(
             "/sub/contents/" + CONTENT_ID + "/watch", "sub-42", principalOf(WATCHER_ID));
@@ -119,7 +169,7 @@ public class WatchingSessionSubscribeListenerTest {
         listener.onSubscribe(event);
 
         // then
-        verify(watchingSessionService, never()).start(any(), any());
+        verify(watchingSessionService, never()).start(any(), any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());
     }
 
@@ -134,7 +184,7 @@ public class WatchingSessionSubscribeListenerTest {
         listener.onSubscribe(event);
 
         // then
-        verify(watchingSessionService, never()).start(any(), any());
+        verify(watchingSessionService, never()).start(any(), any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());
     }
 
@@ -150,7 +200,7 @@ public class WatchingSessionSubscribeListenerTest {
         listener.onSubscribe(event);
 
         // then
-        verify(watchingSessionService, never()).start(any(), any());
+        verify(watchingSessionService, never()).start(any(), any(), any());
     }
 
     @Test
@@ -167,7 +217,7 @@ public class WatchingSessionSubscribeListenerTest {
         listener.onSubscribe(event);
 
         // then
-        verify(watchingSessionService, never()).start(any(), any());
+        verify(watchingSessionService, never()).start(any(), any(), any());
     }
 
     @Test
@@ -185,7 +235,7 @@ public class WatchingSessionSubscribeListenerTest {
         listener.onSubscribe(event);
 
         // then
-        verify(watchingSessionService, never()).start(any(), any());
+        verify(watchingSessionService, never()).start(any(), any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());
     }
 
@@ -200,7 +250,7 @@ public class WatchingSessionSubscribeListenerTest {
         listener.onSubscribe(event);
 
         // then
-        verify(watchingSessionService, never()).start(any(), any());
+        verify(watchingSessionService, never()).start(any(), any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());
     }
 
@@ -211,16 +261,17 @@ public class WatchingSessionSubscribeListenerTest {
         SessionSubscribeEvent event = subscribeEvent(
             "/sub/contents/" + CONTENT_ID + "/watch", "sub-123", principalOf(WATCHER_ID));
 
-        // start() 호출 시 예외 던지도록 모킹
-        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID))
+        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID))
             .thenThrow(new RuntimeException("시청 세션 시작 실패 흉내"));
 
-        // when: 예외가 밖으로 던져지지 않고 내부에서 무사히 삼켜지는지 검증
+        // when
         assertDoesNotThrow(() -> listener.onSubscribe(event));
 
         // then
-        verify(watchingSessionService).end(WATCHER_ID);
+        // 예외 발생 시 end에도 sessionId가 정확히 넘어가는지 검증
+        verify(watchingSessionService).end(WATCHER_ID, SESSION_ID);
         verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());
+
         StompHeaderAccessor lookupAccessor = StompHeaderAccessor.wrap(event.getMessage());
         assertThat(WatchSubscriptionAttributes.remove(lookupAccessor)).isNull();
     }

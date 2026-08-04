@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -41,8 +42,22 @@ public class WatchingSessionService {
     private final UserRepository userRepository;
     private final WatchingSessionSnapshotWriter watchingSessionSnapshotWriter;
 
+    /**
+     * watcherId 기준 "지금 이 세션을 소유한 WebSocket 연결(sessionId)"을 추적한다.
+     * 다중 탭/새로고침 시 오래된 연결의 DISCONNECT가 새 연결의 세션을 잘못 지우는 것을 막기 위함.
+     *
+     * 주의: 이 맵은 단일 서버 인스턴스 전제의 인메모리 구조다. 서버 재시작 시 유실되고
+     * 다중 인스턴스 환경에서는 인스턴스마다 별도로 존재해 소유권 판정이 어긋난다.
+     * TODO(심화필수): Redis presence(사용자당 활성 세션 1개, 원본)로 이전하면서
+     * 이 소유권 판정 자체를 Redis 쪽 구조로 대체할 예정. 그 전까지는 단일 인스턴스 운영을 전제로 한다.
+     */
+    private final ConcurrentHashMap<UUID, String> activeSessions = new ConcurrentHashMap<>();
+
     // create + update 성격의 메서드 - 독립 트랜잭션을 위해 writer 호출
-    public WatchingSessionDto start(UUID watcherId, UUID contentId) {
+    public WatchingSessionDto start(UUID watcherId, UUID contentId, String sessionId) {
+
+        activeSessions.put(watcherId, sessionId);
+
         validateContentExists(contentId);
 
         Instant expiresAt = Instant.now().plus(DEFAULT_SESSION_TTL);
@@ -61,8 +76,15 @@ public class WatchingSessionService {
 
     // delete 성격의 메서드
     @Transactional
-    public void end(UUID watcherId) {
-        watchingSessionSnapshotRepository.deleteByWatcherId(watcherId);
+    public boolean end(UUID watcherId, String currentSessionId) {
+        boolean isOwner = activeSessions.remove(watcherId, currentSessionId);
+
+        if (isOwner) {
+            watchingSessionSnapshotRepository.deleteByWatcherId(watcherId);
+            return true;
+        }
+
+        return false;
     }
 
     // read 성격의 메서드

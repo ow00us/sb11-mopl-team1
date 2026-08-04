@@ -19,6 +19,8 @@ public class WatchingSessionBroadcaster {
     private final WatchingSessionSnapshotRepository watchingSessionSnapshotRepository;
 
     public void broadcastJoin(WatchingSessionDto watchingSession, UUID contentId) {
+        // 현재 매 이벤트마다 DB countByContentId 쿼리가 발생함
+        // TODO: Redis 기반 In-memory counter 또는 짧은 TTL 캐싱으로 조회 부하 최소화로 성능 개선
         broadcast(contentId, WatchingSessionChange.join(watchingSession, currentWatcherCount(contentId)));
     }
 

@@ -42,6 +42,7 @@ public class WatchingSessionDisconnectListenerTest {
 
     private static final UUID WATCHER_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID CONTENT_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
+    private static final String SESSION_ID = "session-0";
 
     private WatchingSessionDto dtoFixture(UUID contentId) {
         return new WatchingSessionDto(
@@ -58,7 +59,7 @@ public class WatchingSessionDisconnectListenerTest {
 
     private SessionDisconnectEvent disconnectEvent(Authentication principal) {
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.DISCONNECT);
-        accessor.setSessionId("session-0");
+        accessor.setSessionId(SESSION_ID);
         accessor.setLeaveMutable(true);
         if (principal != null) {
             accessor.setUser(principal);
@@ -68,11 +69,14 @@ public class WatchingSessionDisconnectListenerTest {
     }
 
     @Test
-    @DisplayName("연결이 끊기면 활성 시청 세션을 종료하고 LEAVE 브로드캐스트")
+    @DisplayName("연결이 끊기면 소유권을 확인하여 활성 세션을 종료하고 LEAVE 브로드캐스트")
     void onDisconnect_success_endsSessionAndBroadcastsLeave() {
         // given
         WatchingSessionDto dto = dtoFixture(CONTENT_ID);
         when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.of(dto));
+
+        // 원자적 삭제 성공 모킹
+        when(watchingSessionService.end(WATCHER_ID, SESSION_ID)).thenReturn(true);
 
         SessionDisconnectEvent event = disconnectEvent(principalOf(WATCHER_ID));
 
@@ -80,12 +84,32 @@ public class WatchingSessionDisconnectListenerTest {
         listener.onDisconnect(event);
 
         // then
-        verify(watchingSessionService).end(WATCHER_ID);
+        verify(watchingSessionService).end(WATCHER_ID, SESSION_ID);
         verify(watchingSessionBroadcaster).broadcastLeave(dto, CONTENT_ID);
     }
 
     @Test
-    @DisplayName("활성 시청 세션이 없으면 종료 처리 생략")
+    @DisplayName("세션 소유권이 다르면(삭제 실패) 삭제 알림 브로드캐스트를 건너뜀")
+    void onDisconnect_skipsBroadcast_whenActuallyDeletedIsFalse() {
+        // given
+        WatchingSessionDto dto = dtoFixture(CONTENT_ID);
+        when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.of(dto));
+
+        // 원자적 삭제 실패(다른 탭에서 덮어씌움 등) 모킹
+        when(watchingSessionService.end(WATCHER_ID, SESSION_ID)).thenReturn(false);
+
+        SessionDisconnectEvent event = disconnectEvent(principalOf(WATCHER_ID));
+
+        // when
+        listener.onDisconnect(event);
+
+        // then
+        verify(watchingSessionService).end(WATCHER_ID, SESSION_ID);
+        verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
+    }
+
+    @Test
+    @DisplayName("활성 시청 세션이 없으면 종료 처리(end 호출 자체)를 생략")
     void onDisconnect_success_skipsEndWhenNoActiveSession() {
         // given
         when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.empty());
@@ -95,8 +119,8 @@ public class WatchingSessionDisconnectListenerTest {
         // when
         listener.onDisconnect(event);
 
-        // then: end(), 브로드캐스트 모두 생략
-        verify(watchingSessionService, never()).end(any());
+        // then
+        verify(watchingSessionService, never()).end(any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
     }
 
@@ -111,7 +135,7 @@ public class WatchingSessionDisconnectListenerTest {
 
         // then
         verify(watchingSessionService, never()).get(any());
-        verify(watchingSessionService, never()).end(any());
+        verify(watchingSessionService, never()).end(any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
     }
 
@@ -129,7 +153,7 @@ public class WatchingSessionDisconnectListenerTest {
 
         // then
         verify(watchingSessionService, never()).get(any());
-        verify(watchingSessionService, never()).end(any());
+        verify(watchingSessionService, never()).end(any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
     }
 }

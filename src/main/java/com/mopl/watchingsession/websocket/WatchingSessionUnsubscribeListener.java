@@ -55,10 +55,12 @@ public class WatchingSessionUnsubscribeListener {
             return;
         }
 
-        // watcherId 기준 활성 세션 삭제 및 브로드캐스트
-        watchingSessionService.end(watcherId);
-        watchingSessionBroadcaster.broadcastLeave(session, contentId);
-
+        // watcherId 기준 활성 세션 삭제 및 브로드캐스트. sessionId가 일치할 때만
+        // 다른 연결로 이미 소유권이 넘어갔다면 이 UNSUBSCRIBE는 오래된 연결의 정리 시도이므로 삭제 안함
+        boolean actuallyDeleted = watchingSessionService.end(watcherId, accessor.getSessionId());
+        if (actuallyDeleted) {
+            watchingSessionBroadcaster.broadcastLeave(session, contentId);
+        }
     }
 
     private UUID extractWatcherId(Principal principal) {

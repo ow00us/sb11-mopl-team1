@@ -65,6 +65,8 @@ public class WatchingSessionServiceTest {
     private static final UUID CONTENT_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
     private static final UUID NEW_CONTENT_ID = UUID.fromString("33322222-2222-2222-2222-222222222222");
     private static final Instant FIRST_CREATED_AT = Instant.parse("2026-07-29T10:00:00Z");
+    private static final String SESSION_ID = "session-123";
+    private static final String OTHER_SESSION_ID = "session-999";
 
     // Content 도메인 전용 헬퍼
     private void mockContentExists(UUID contentId) {
@@ -121,7 +123,7 @@ public class WatchingSessionServiceTest {
         when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any())).thenReturn(created);
 
         // when
-        WatchingSessionDto response = watchingSessionService.start(WATCHER_ID, CONTENT_ID);
+        WatchingSessionDto response = watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID);
 
         // then
         assertThat(response.id()).isEqualTo(SNAPSHOT_ID);
@@ -148,7 +150,7 @@ public class WatchingSessionServiceTest {
             .thenReturn(afterRetry);
 
         // when
-        WatchingSessionDto response = watchingSessionService.start(WATCHER_ID, CONTENT_ID);
+        WatchingSessionDto response = watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID);
 
         // then
         assertThat(response.id()).isEqualTo(SNAPSHOT_ID);
@@ -177,7 +179,7 @@ public class WatchingSessionServiceTest {
             .thenReturn(upserted);
 
         // when
-        WatchingSessionDto response = watchingSessionService.start(WATCHER_ID, CONTENT_ID);
+        WatchingSessionDto response = watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID);
 
         // then - enrich되어 나오는지 확인
         assertThat(response.id()).isEqualTo(SNAPSHOT_ID);
@@ -195,7 +197,7 @@ public class WatchingSessionServiceTest {
         when(contentRepository.existsById(CONTENT_ID)).thenReturn(false);
 
         // when & then
-        assertThatThrownBy(() -> watchingSessionService.start(WATCHER_ID, CONTENT_ID))
+        assertThatThrownBy(() -> watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID))
             .isInstanceOf(BusinessException.class)
             .extracting("errorCode")
             .isEqualTo(ErrorCode.CONTENT_NOT_FOUND);
@@ -205,12 +207,52 @@ public class WatchingSessionServiceTest {
 
     /* --- end() 메서드 검증 --- */
     @Test
-    @DisplayName("종료 시 활성 세션 유무와 상관없이 예외 없이 삭제 시도")
-    void end_success_isIdempotent() {
-        // when & then
-        watchingSessionService.end(WATCHER_ID);
+    @DisplayName("종료 시 소유권(sessionId)이 일치하면 삭제를 수행하고 true를 반환")
+    void end_success_returnsTrueAndDeletes_whenSessionIdMatches() {
+        // given: 먼저 start를 호출하여 메모리에 소유권을 세팅함
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        when(watchingSessionSnapshotWriter.upsert(any(), any(), any()))
+            .thenReturn(createSnapshotFixture(CONTENT_ID, Instant.now(), Instant.now(), Instant.now()));
 
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID);
+
+        // when
+        boolean actuallyDeleted = watchingSessionService.end(WATCHER_ID, SESSION_ID);
+
+        // then
+        assertThat(actuallyDeleted).isTrue();
         verify(watchingSessionSnapshotRepository).deleteByWatcherId(WATCHER_ID);
+    }
+
+    @Test
+    @DisplayName("종료 시 소유권이 다르면(다른 탭으로 이동) 삭제를 수행하지 않고 false를 반환")
+    void end_success_returnsFalseAndSkipsDelete_whenSessionIdMismatches() {
+        // given: SESSION_ID로 세션을 시작함
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        when(watchingSessionSnapshotWriter.upsert(any(), any(), any()))
+            .thenReturn(createSnapshotFixture(CONTENT_ID, Instant.now(), Instant.now(), Instant.now()));
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID);
+
+        // when: 늦게 도착한 과거 탭(OTHER_SESSION_ID)의 종료 요청
+        boolean actuallyDeleted = watchingSessionService.end(WATCHER_ID, OTHER_SESSION_ID);
+
+        // then
+        assertThat(actuallyDeleted).isFalse();
+        // DB 삭제가 수행되지 않았음을 보장
+        verify(watchingSessionSnapshotRepository, never()).deleteByWatcherId(WATCHER_ID);
+    }
+
+    @Test
+    @DisplayName("종료 시 활성 세션(메모리 소유권)이 없으면 false를 반환하고 예외 없이 종료")
+    void end_success_returnsFalse_whenNoActiveSession() {
+        // when
+        boolean actuallyDeleted = watchingSessionService.end(WATCHER_ID, SESSION_ID);
+
+        // then
+        assertThat(actuallyDeleted).isFalse();
+        verify(watchingSessionSnapshotRepository, never()).deleteByWatcherId(any());
     }
 
     /* --- get() 메서드 검증 --- */

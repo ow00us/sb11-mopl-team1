@@ -45,6 +45,7 @@ public class WatchingSessionUnsubscribeListenerTest {
     private static final UUID WATCHER_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID CONTENT_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
     private static final UUID OTHER_CONTENT_ID = UUID.fromString("33333333-3333-3333-3333-333333333333");
+    private static final String SESSION_ID = "session-0";
 
     private WatchingSessionDto dtoFixture(UUID contentId) {
         return new WatchingSessionDto(
@@ -62,6 +63,7 @@ public class WatchingSessionUnsubscribeListenerTest {
     private SessionUnsubscribeEvent createUnsubscribeEvent(String subscriptionId, Authentication principal, Map<String, Object> sessionAttributes) {
         StompHeaderAccessor unsubscribeAccessor = StompHeaderAccessor.create(StompCommand.UNSUBSCRIBE);
         unsubscribeAccessor.setSubscriptionId(subscriptionId);
+        unsubscribeAccessor.setSessionId(SESSION_ID);
         unsubscribeAccessor.setSessionAttributes(sessionAttributes);
         unsubscribeAccessor.setLeaveMutable(true);
         if (principal != null) {
@@ -89,11 +91,14 @@ public class WatchingSessionUnsubscribeListenerTest {
     }
 
     @Test
-    @DisplayName("시청 토픽을 UNSUBSCRIBE하면 세션을 종료하고 LEAVE를 브로드캐스트")
+    @DisplayName("시청 토픽을 UNSUBSCRIBE하면 소유권 확인 후 세션을 종료하고 LEAVE를 브로드캐스트")
     void onUnsubscribe_success_endsSessionAndBroadcastsLeave() {
         // given
         WatchingSessionDto dto = dtoFixture(CONTENT_ID);
         when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.of(dto));
+
+        // 원자적 삭제 성공(true 반환) 모킹
+        when(watchingSessionService.end(WATCHER_ID, SESSION_ID)).thenReturn(true);
 
         SessionUnsubscribeEvent event = unsubscribeEventWithMapping(CONTENT_ID, "sub-0", principalOf(WATCHER_ID));
 
@@ -101,8 +106,28 @@ public class WatchingSessionUnsubscribeListenerTest {
         listener.onUnsubscribe(event);
 
         // then
-        verify(watchingSessionService).end(WATCHER_ID);
+        verify(watchingSessionService).end(WATCHER_ID, SESSION_ID);
         verify(watchingSessionBroadcaster).broadcastLeave(dto, CONTENT_ID);
+    }
+
+    @Test
+    @DisplayName("end()가 삭제에 실패(소유권 없음)하면 브로드캐스트를 전송하지 않음 (중복 알림 방어)")
+    void onUnsubscribe_skipsBroadcast_whenActuallyDeletedIsFalse() {
+        // given
+        WatchingSessionDto dto = dtoFixture(CONTENT_ID);
+        when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.of(dto));
+
+        // 원자적 삭제 실패(false 반환) 모킹 -> 다른 탭으로 덮어씌워짐 등을 모사
+        when(watchingSessionService.end(WATCHER_ID, SESSION_ID)).thenReturn(false);
+
+        SessionUnsubscribeEvent event = unsubscribeEventWithMapping(CONTENT_ID, "sub-0", principalOf(WATCHER_ID));
+
+        // when
+        listener.onUnsubscribe(event);
+
+        // then
+        verify(watchingSessionService).end(WATCHER_ID, SESSION_ID); // 호출은 됨
+        verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any()); // 알림은 안나감
     }
 
     @Test
@@ -116,7 +141,7 @@ public class WatchingSessionUnsubscribeListenerTest {
 
         // then
         verify(watchingSessionService, never()).get(any());
-        verify(watchingSessionService, never()).end(any());
+        verify(watchingSessionService, never()).end(any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
     }
 
@@ -130,7 +155,7 @@ public class WatchingSessionUnsubscribeListenerTest {
         listener.onUnsubscribe(event);
 
         // then
-        verify(watchingSessionService, never()).end(any());
+        verify(watchingSessionService, never()).end(any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
     }
 
@@ -146,7 +171,7 @@ public class WatchingSessionUnsubscribeListenerTest {
         listener.onUnsubscribe(event);
 
         // then
-        verify(watchingSessionService, never()).end(any());
+        verify(watchingSessionService, never()).end(any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
     }
 
@@ -163,7 +188,7 @@ public class WatchingSessionUnsubscribeListenerTest {
         listener.onUnsubscribe(event);
 
         // then
-        verify(watchingSessionService, never()).end(any());
+        verify(watchingSessionService, never()).end(any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
     }
 
@@ -179,7 +204,7 @@ public class WatchingSessionUnsubscribeListenerTest {
         listener.onUnsubscribe(event);
 
         // then
-        verify(watchingSessionService, never()).end(any());
+        verify(watchingSessionService, never()).end(any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
     }
 
@@ -193,6 +218,6 @@ public class WatchingSessionUnsubscribeListenerTest {
         listener.onUnsubscribe(event);
 
         // then
-        verify(watchingSessionService, never()).end(any());
+        verify(watchingSessionService, never()).end(any(), any());
     }
 }

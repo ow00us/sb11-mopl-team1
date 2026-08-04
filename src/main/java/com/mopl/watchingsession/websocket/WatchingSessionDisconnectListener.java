@@ -49,9 +49,14 @@ public class WatchingSessionDisconnectListener {
             return;
         }
 
-        // watcherId 기준 활성 세션 삭제
-        watchingSessionService.end(watcherId);
-        watchingSessionBroadcaster.broadcastLeave(session, session.content().id());
+        // 이 sessionId가 지금도 이 watcherId의 세션 소유자인 경우에만 실제로 삭제됨
+        // 이미 다른 연결로 소유권이 넘어갔다면 삭제/브로드캐스트 하지 않음
+        String currentSessionId = accessor.getSessionId();
+        boolean actuallyDeleted = watchingSessionService.end(watcherId, currentSessionId);
+
+        if (actuallyDeleted) {
+            watchingSessionBroadcaster.broadcastLeave(session, session.content().id());
+        }
     }
 
     private UUID extractWatcherId(Principal principal) {

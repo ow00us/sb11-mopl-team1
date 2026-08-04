@@ -26,7 +26,7 @@ import org.springframework.web.socket.messaging.SessionSubscribeEvent;
 @RequiredArgsConstructor
 public class WatchingSessionSubscribeListener {
 
-    // /sub/content/{contentId}/watch 에서 contentId만 추출
+    // /sub/contents/{contentId}/watch 에서 contentId만 추출
     private static final Pattern WATCH_DESTINATION_PATTERN =
         Pattern.compile("^/sub/contents/([0-9a-fA-F-]{36})/watch$");
     private final WatchingSessionService watchingSessionService;
@@ -51,19 +51,26 @@ public class WatchingSessionSubscribeListener {
             return;
         }
 
+        watchingSessionService.get(watcherId).ifPresent(prevSession -> {
+            if (!prevSession.content().id().equals(contentId)) {
+                watchingSessionBroadcaster.broadcastLeave(prevSession, prevSession.content().id());
+            }
+        });
+
         // 유틸 내부에서 subscriptionId null 체크 및 맵 null 체크 후 매핑 시도
         boolean isMapped = WatchSubscriptionAttributes.put(accessor, contentId);
 
         // 매핑 실패 시 DB 로직 강행 차단
         if (!isMapped) {
-            log.warn("구독 매핑 불가 상태(subscriptionId 누락 또는 세션 이상). DB 세션 생성을 취소합니다.");
+            log.warn("구독 매핑 불가 상태(subscriptionId 누락 또는 세션 이상). DB 세션 생성을 시작하지 않음: contentId={}",
+                contentId);
             return;
         }
 
         // DB 세션 시작
         WatchingSessionDto session;
         try {
-            session = watchingSessionService.start(watcherId, contentId);
+            session = watchingSessionService.start(watcherId, contentId, accessor.getSessionId());
         } catch (RuntimeException e) {
             log.warn("시청 세션 시작 실패, 구독 매핑 및 DB 세션 정리: watcherId={}, contentId={}, cause={}",
                 watcherId, contentId, e.getMessage());
@@ -72,7 +79,7 @@ public class WatchingSessionSubscribeListener {
             WatchSubscriptionAttributes.remove(accessor);
 
             // DB 세션 정리 (멱등성 보장)
-            watchingSessionService.end(watcherId);
+            watchingSessionService.end(watcherId, accessor.getSessionId());
 
             return;
         }
