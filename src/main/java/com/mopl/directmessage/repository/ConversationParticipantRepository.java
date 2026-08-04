@@ -100,7 +100,15 @@ public interface ConversationParticipantRepository
                     ) ESCAPE '!'
             )
         )
-        ORDER BY conversation.createdAt ASC, conversation.id ASC
+        AND (
+             conversation.createdAt > :cursor
+             OR (
+                 conversation.createdAt = :cursor
+                 AND conversation.id > :idAfter
+             )
+        )
+        ORDER BY conversation.createdAt ASC,
+                 conversation.id ASC
         """)
     List<ConversationListItemProjection> findConversationListAsc(
         @Param("requesterId") UUID requesterId,
