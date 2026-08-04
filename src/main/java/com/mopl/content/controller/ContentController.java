@@ -7,6 +7,7 @@ import com.mopl.content.service.ContentService;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import jakarta.validation.Validator;
@@ -47,6 +48,7 @@ public class ContentController {
 
     /** 콘텐츠를 생성합니다. 어드민만 호출 가능합니다. */
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ApiResponse(responseCode = "201", description = "콘텐츠 생성 성공")
     public ResponseEntity<ContentDto> create(
             @RequestPart("request") ContentCreateRequest request,
             @RequestPart(value = "thumbnail", required = false) MultipartFile thumbnail) {
@@ -89,6 +91,7 @@ public class ContentController {
 
     /** 콘텐츠를 삭제합니다. 어드민만 호출 가능합니다. */
     @DeleteMapping("/{contentId}")
+    @ApiResponse(responseCode = "204", description = "콘텐츠 삭제 성공")
     public ResponseEntity<Void> delete(@PathVariable UUID contentId) {
         requireAdmin();
         contentService.delete(contentId);

@@ -22,6 +22,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private final StompAuthChannelInterceptor stompAuthChannelInterceptor;
     private final WebSocketStompErrorHandler webSocketStompErrorHandler;
+    private final DirectMessageAuthorizationInterceptor directMessageAuthorizationInterceptor;
     private final ChatSenderCachingInterceptor chatSenderCachingInterceptor;
 
     @Value("${app.websocket.allowed-origins}")
@@ -46,7 +47,11 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void configureClientInboundChannel(ChannelRegistration registration) {
-        registration.interceptors(stompAuthChannelInterceptor, chatSenderCachingInterceptor);
+        registration.interceptors(
+            stompAuthChannelInterceptor,
+            chatSenderCachingInterceptor,
+            directMessageAuthorizationInterceptor
+        );
     }
 
     @Bean

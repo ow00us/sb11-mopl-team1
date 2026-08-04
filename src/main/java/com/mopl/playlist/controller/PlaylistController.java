@@ -8,6 +8,7 @@ import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.dto.PlaylistUpdateRequest;
 import com.mopl.playlist.dto.SubscriberItemDto;
 import com.mopl.playlist.service.PlaylistService;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -31,6 +32,7 @@ public class PlaylistController {
     private final PlaylistService playlistService;
 
     @PostMapping
+    @ApiResponse(responseCode = "201", description = "플레이리스트 생성 성공")
     public ResponseEntity<PlaylistDto> create(
             @Valid @RequestBody PlaylistCreateRequest request) {
         UUID ownerId = resolveUserId();
@@ -69,6 +71,7 @@ public class PlaylistController {
     }
 
     @DeleteMapping("/{playlistId}")
+    @ApiResponse(responseCode = "204", description = "플레이리스트 삭제 성공")
     public ResponseEntity<Void> delete(@PathVariable UUID playlistId) {
         UUID requesterId = resolveUserId();
         playlistService.delete(playlistId, requesterId);
@@ -76,6 +79,7 @@ public class PlaylistController {
     }
 
     @PostMapping("/{playlistId}/subscription")
+    @ApiResponse(responseCode = "204", description = "구독 완료")
     public ResponseEntity<Void> subscribe(@PathVariable UUID playlistId) {
         UUID subscriberId = resolveUserId();
         playlistService.subscribe(playlistId, subscriberId);
@@ -83,6 +87,7 @@ public class PlaylistController {
     }
 
     @DeleteMapping("/{playlistId}/subscription")
+    @ApiResponse(responseCode = "204", description = "구독 해지 완료")
     public ResponseEntity<Void> unsubscribe(@PathVariable UUID playlistId) {
         UUID subscriberId = resolveUserId();
         playlistService.unsubscribe(playlistId, subscriberId);
@@ -90,6 +95,7 @@ public class PlaylistController {
     }
 
     @PostMapping("/{playlistId}/contents/{contentId}")
+    @ApiResponse(responseCode = "204", description = "콘텐츠 추가 완료")
     public ResponseEntity<Void> addContent(
             @PathVariable UUID playlistId,
             @PathVariable UUID contentId) {
@@ -99,6 +105,7 @@ public class PlaylistController {
     }
 
     @DeleteMapping("/{playlistId}/contents/{contentId}")
+    @ApiResponse(responseCode = "204", description = "콘텐츠 제거 완료")
     public ResponseEntity<Void> removeContent(
             @PathVariable UUID playlistId,
             @PathVariable UUID contentId) {

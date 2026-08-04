@@ -4,6 +4,7 @@ import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserUpdateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.service.UserService;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import java.util.UUID;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -42,6 +43,7 @@ public class UserController {
      * 검증에 실패하면 UserService를 호출하지 않고 400 응답을 반환
      */
     @PostMapping
+    @ApiResponse(responseCode = "201", description = "사용자 생성 성공")
     public ResponseEntity<UserDto> signUp(
         @Valid @RequestBody UserCreateRequest request
     ) {

@@ -432,4 +432,121 @@ public class DirectMessageRepositoryTest {
 
         assertThat(totalCount).isEqualTo(3L);
     }
+
+    @Test
+    @DisplayName("여러 대화의 최근 메시지와 미읽음 대화 ID를 일괄 조회")
+    void findLatestMessagesAndUnreadConversationIds() {
+        // given
+        Conversation conversation1 =
+            conversationRepository.saveAndFlush(
+                Conversation.create()
+            );
+
+        Conversation conversation2 =
+            conversationRepository.saveAndFlush(
+                Conversation.create()
+            );
+
+        participantRepository.saveAllAndFlush(
+            List.of(
+                ConversationParticipant.create(
+                    conversation1.getId(),
+                    USER_ID_1,
+                    ParticipantSlot.FIRST
+                ),
+                ConversationParticipant.create(
+                    conversation1.getId(),
+                    USER_ID_2,
+                    ParticipantSlot.SECOND
+                ),
+                ConversationParticipant.create(
+                    conversation2.getId(),
+                    USER_ID_1,
+                    ParticipantSlot.FIRST
+                ),
+                ConversationParticipant.create(
+                    conversation2.getId(),
+                    USER_ID_2,
+                    ParticipantSlot.SECOND
+                )
+            )
+        );
+
+        UUID oldMessageId =
+            UUID.fromString(
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"
+            );
+
+        UUID latestMessageId =
+            UUID.fromString(
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2"
+            );
+
+        UUID secondConversationMessageId =
+            UUID.fromString(
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1"
+            );
+
+        Instant firstTime =
+            Instant.parse("2026-08-01T00:00:00Z");
+
+        Instant secondTime =
+            Instant.parse("2026-08-01T01:00:00Z");
+
+        insertDirectMessage(
+            oldMessageId,
+            conversation1.getId(),
+            USER_ID_1,
+            firstTime
+        );
+
+        insertDirectMessage(
+            latestMessageId,
+            conversation1.getId(),
+            USER_ID_2,
+            secondTime
+        );
+
+        insertDirectMessage(
+            secondConversationMessageId,
+            conversation2.getId(),
+            USER_ID_1,
+            secondTime
+        );
+
+        entityManager.clear();
+
+        List<UUID> conversationIds =
+            List.of(
+                conversation1.getId(),
+                conversation2.getId()
+            );
+
+        // when
+        List<DirectMessage> latestMessages =
+            directMessageRepository
+                .findLatestMessagesByConversationIds(
+                    conversationIds
+                );
+
+        List<UUID> unreadConversationIds =
+            directMessageRepository
+                .findUnreadConversationIds(
+                    conversationIds,
+                    USER_ID_1
+                );
+
+        // then
+        assertThat(latestMessages)
+            .extracting(DirectMessage::getId)
+            .containsExactlyInAnyOrder(
+                latestMessageId,
+                secondConversationMessageId
+            );
+
+        assertThat(unreadConversationIds)
+            .containsExactly(
+                conversation1.getId()
+            );
+    }
 }
