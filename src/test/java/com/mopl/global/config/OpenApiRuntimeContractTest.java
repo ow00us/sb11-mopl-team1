@@ -126,6 +126,7 @@ class OpenApiRuntimeContractTest {
         "PATCH /api/playlists/{playlistId}",
         "PATCH /api/reviews/{reviewId}",
         "PATCH /api/users/{userId}",
+        "PATCH /api/users/{userId}/password",
         "POST /api/auth/sign-in",
         "POST /api/contents",
         "POST /api/conversations",

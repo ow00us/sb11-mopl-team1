@@ -12,9 +12,10 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 /**
- * 사용자 계정을 표현하는 JPA 엔티티입니다.
+ * 사용자 계정을 표현하는 JPA 엔티티
  *
- * 이 클래스의 객체는 PostgreSQL의 {@code users} 테이블 행과 연결됩니다. 이메일, 비밀번호 해시, 이름, 프로필 이미지, 권한 및 잠금 상태를 관리합니다.
+ * 이 클래스의 객체는 PostgreSQL의 {@code users} 테이블 행과 연결
+ * 이메일, 비밀번호 해시, 이름, 프로필 이미지, 권한 및 잠금 상태를 관리
  */
 @Entity
 @Getter
@@ -108,5 +109,22 @@ public class User extends BaseEntity {
         if (profileImageUrl != null) {
             this.profileImageUrl = profileImageUrl;
         }
+    }
+
+    /**
+     * 사용자의 비밀번호 해시를 새로운 값으로 변경
+     *
+     * User 엔티티에는 비밀번호 원문을 저장하지 않는다.
+     * Service에서 PasswordEncoder로 인코딩한 결과만 이 메서드에 전달해야 한다.
+     *
+     * 범용 setter를 제공하지 않고 비밀번호 변경 목적이 드러나는
+     * 메서드를 통해서만 passwordHash를 변경
+     *
+     * @param encodedPassword 새 비밀번호를 인코딩한 해시
+     */
+    public void changePassword(
+        String encodedPassword
+    ) {
+        this.passwordHash = encodedPassword;
     }
 }
