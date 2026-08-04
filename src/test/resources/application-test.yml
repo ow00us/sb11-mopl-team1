@@ -12,6 +12,9 @@ spring:
     job:
       enabled: false
 
+jwt:
+  secret: MVB4n0vCRFADVbcto73tHp0Ghw2bWmriymBGLOuR2Q4=
+
 logging:
   level:
     root: warn
