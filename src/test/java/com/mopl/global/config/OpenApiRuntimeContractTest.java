@@ -21,6 +21,8 @@ import com.mopl.notification.controller.NotificationController;
 import com.mopl.notification.service.NotificationService;
 import com.mopl.playlist.controller.PlaylistController;
 import com.mopl.playlist.service.PlaylistService;
+import com.mopl.review.controller.ReviewController;
+import com.mopl.review.service.ReviewService;
 import com.mopl.user.controller.AuthController;
 import com.mopl.user.controller.UserController;
 import com.mopl.user.service.AuthService;
@@ -65,6 +67,7 @@ import org.yaml.snakeyaml.Yaml;
     FollowController.class,
     NotificationController.class,
     PlaylistController.class,
+    ReviewController.class,
     UserController.class,
     WatchingSessionController.class
 })
@@ -111,6 +114,9 @@ class OpenApiRuntimeContractTest {
 
     @MockitoBean
     PlaylistService playlistService;
+
+    @MockitoBean
+    ReviewService reviewService;
 
     @MockitoBean
     AuthService authService;
