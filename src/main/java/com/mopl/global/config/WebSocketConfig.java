@@ -1,5 +1,6 @@
 package com.mopl.global.config;
 
+import com.mopl.directmessage.websocket.DirectMessageAuthorizationInterceptor;
 import com.mopl.global.security.websocket.StompAuthChannelInterceptor;
 import com.mopl.global.security.websocket.StompDestinationAuthorizationInterceptor;
 import com.mopl.global.security.websocket.WebSocketStompErrorHandler;
@@ -23,6 +24,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final StompAuthChannelInterceptor stompAuthChannelInterceptor;
     private final StompDestinationAuthorizationInterceptor stompDestinationAuthorizationInterceptor;
     private final WebSocketStompErrorHandler webSocketStompErrorHandler;
+    private final DirectMessageAuthorizationInterceptor directMessageAuthorizationInterceptor;
 
     @Value("${app.websocket.allowed-origins}")
     private String[] allowedOrigins;
