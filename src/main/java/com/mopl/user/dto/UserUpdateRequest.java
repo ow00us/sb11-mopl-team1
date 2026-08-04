@@ -12,6 +12,11 @@ import jakarta.validation.constraints.Size;
  * name은 선택값
  * 프로필 이미지만 변경하는 요청도 가능해야 하므로 @NotBlank는 사용하지 않음
  * 다만 이름이 전달되었다면 공백으로만 구성된 값은 허용하지 않음
+ *
+ * 프로필 이미지 파일은 multipart/form-data의 별도 image 파트로 전달
+ *  * 현재 계약은 프로필 이미지의 등록과 교체만 지원
+ *  * image 파트가 없거나 빈 파일이면 기존 이미지를 유지하며,
+ *  * 프로필 이미지 삭제 기능은 지원하지 않음
  */
 public record UserUpdateRequest(
 

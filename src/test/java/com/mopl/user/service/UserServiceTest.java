@@ -582,4 +582,64 @@ class UserServiceTest {
             .isEqualTo("https://example.com/old-profile.png");
     }
 
+    @Test
+    @DisplayName("빈 이미지 파일이면 기존 프로필 이미지를 유지한다")
+    void updateUser_success_whenImageIsEmpty() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        User user = createUserFixture(userId);
+
+        /*
+         * 이름도 변경하지 않고 빈 이미지 파일만 전달되는 상황을 구성
+         *
+         * 현재 계약에서 빈 파일은 이미지 삭제 요청이 아니며,
+         * 기존 프로필 이미지를 유지한다는 의미로 처리
+         */
+        UserUpdateRequest request =
+            new UserUpdateRequest(null);
+
+        MockMultipartFile emptyImage = new MockMultipartFile(
+            "image",
+            "profile.png",
+            "image/png",
+            new byte[0]
+        );
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        // when
+        UserDto response = userService.updateUser(
+            userId,
+            userId,
+            request,
+            emptyImage
+        );
+
+        // then
+        assertThat(response.name())
+            .isEqualTo("기존 사용자");
+
+        assertThat(response.profileImageUrl())
+            .isEqualTo("https://example.com/old-profile.png");
+
+        /*
+         * 빈 파일은 새 이미지로 업로드하지 않는다.
+         */
+        verifyNoInteractions(profileImageStorage);
+
+        /*
+         * 사용자 엔티티의 기존 프로필 정보도 그대로 유지되어야 한다.
+         */
+        assertThat(user.getName())
+            .isEqualTo("기존 사용자");
+
+        assertThat(user.getProfileImageUrl())
+            .isEqualTo("https://example.com/old-profile.png");
+
+        verify(userRepository).findById(userId);
+    }
+
 }
