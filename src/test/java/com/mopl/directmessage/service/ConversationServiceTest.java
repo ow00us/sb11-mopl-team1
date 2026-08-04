@@ -23,6 +23,7 @@ import com.mopl.directmessage.repository.DirectMessageRepository;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.common.CursorResponse;
+import com.mopl.global.util.CursorUtils;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
@@ -840,7 +841,7 @@ class ConversationServiceTest {
 
         assertThat(result.nextCursor())
             .isEqualTo(
-                firstCreatedAt.toString()
+                CursorUtils.encodeInstant(firstCreatedAt)
             );
 
         assertThat(result.nextIdAfter())

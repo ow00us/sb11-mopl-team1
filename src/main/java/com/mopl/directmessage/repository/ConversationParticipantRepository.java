@@ -52,12 +52,15 @@ public interface ConversationParticipantRepository
                     WHERE withUser.id = other.userId
                         AND LOWER(withUser.name) LIKE
                             LOWER(
-                             CONCAT(
-                                '%',
-                                CONCAT(:keywordLike, '%')
+                                CONCAT(
+                                    '%',
+                                    CONCAT(
+                                       CAST(:keywordLike AS String),
+                                               '%'
+                                    )
                         )
                     ) ESCAPE '!'
-                )
+            )
         )
         ORDER BY conversation.createdAt ASC, conversation.id ASC
         """)
@@ -87,12 +90,15 @@ public interface ConversationParticipantRepository
                     WHERE withUser.id = other.userId
                         AND LOWER(withUser.name) LIKE
                             LOWER(
-                             CONCAT(
-                                '%',
-                                CONCAT(:keywordLike, '%')
+                                CONCAT(
+                                    '%',
+                                    CONCAT(
+                                       CAST(:keywordLike AS String),
+                                               '%'
+                                    )
                         )
                     ) ESCAPE '!'
-                )
+            )
         )
         ORDER BY conversation.createdAt ASC, conversation.id ASC
         """)
@@ -124,12 +130,15 @@ public interface ConversationParticipantRepository
                     WHERE withUser.id = other.userId
                         AND LOWER(withUser.name) LIKE
                             LOWER(
-                             CONCAT(
-                                '%',
-                                CONCAT(:keywordLike, '%')
+                                CONCAT(
+                                    '%',
+                                    CONCAT(
+                                         CAST(:keywordLike As String),
+                                    '%'
+                            )
                         )
                     ) ESCAPE '!'
-                )
+            )
         )
         ORDER BY conversation.createdAt DESC, conversation.id DESC
         """)
@@ -159,12 +168,15 @@ public interface ConversationParticipantRepository
                     WHERE withUser.id = other.userId
                         AND LOWER(withUser.name) LIKE
                             LOWER(
-                             CONCAT(
-                                '%',
-                                CONCAT(:keywordLike, '%')
+                                CONCAT(
+                                    '%',
+                                    CONCAT(
+                                       CAST(:keywordLike AS String),
+                                               '%'
+                                    )
                         )
                     ) ESCAPE '!'
-                )
+            )
         )
             AND (
                 conversation.createdAt < :cursor
@@ -200,12 +212,15 @@ public interface ConversationParticipantRepository
                     WHERE withUser.id = other.userId
                         AND LOWER(withUser.name) LIKE
                             LOWER(
-                             CONCAT(
-                                '%',
-                                CONCAT(:keywordLike, '%')
+                                CONCAT(
+                                    '%',
+                                    CONCAT(
+                                       CAST(:keywordLike AS String),
+                                               '%'
+                                    )
                         )
                     ) ESCAPE '!'
-                )
+            )
         )
         """)
     long countConversationList(
