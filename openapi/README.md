@@ -34,12 +34,16 @@
 - 구현된 REST API의 경로와 HTTP 메서드
 - 요청 본문의 Content-Type
 - 2xx 성공 상태 코드
+- 204 응답에 본문이 문서화되지 않는지 여부
 - Bearer JWT와 CSRF 보안 요구
 
-정적 계약에만 있고 아직 구현되지 않은 API는 실패시키지 않습니다. 새 REST
-Controller를 추가할 때는 `OpenApiRuntimeContractTest`의 `@WebMvcTest` 대상과 Mock
-의존성에 함께 등록해야 합니다. 샘플 API와 WebSocket·STOMP·SSE 계약, DTO 스키마
-전체 비교는 이 검증의 대상이 아닙니다.
+정적 계약에만 있고 아직 구현되지 않은 API는 실패시키지 않습니다. 운영 REST
+Controller 목록과 `OpenApiRuntimeContractTest`의 `@WebMvcTest` 대상은 테스트가
+자동으로 대조합니다. 새 Controller가 누락되면 테스트가 실패하며, 해당 Controller와
+Mock 의존성을 등록해야 합니다. 구현 API를 추가하거나 제거할 때는
+`EXPECTED_IMPLEMENTED_OPERATIONS`도 함께 갱신해 변경이 명시적으로 검토되도록
+합니다. 샘플 API와 WebSocket·STOMP·SSE 계약, DTO 스키마 전체 비교는 이 검증의
+대상이 아닙니다.
 
 불일치를 예외 목록으로 숨기지 않습니다. 실제 동작이 맞다면 Controller의
 OpenAPI 응답 설명 또는 `mopl-api.yaml`을 같은 기능 PR에서 수정합니다. 어느 쪽이

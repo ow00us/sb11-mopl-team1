@@ -3,11 +3,11 @@ package com.mopl.global.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mopl.MoplApplication;
 import com.mopl.content.controller.ContentController;
 import com.mopl.content.service.ContentService;
 import com.mopl.directmessage.controller.ConversationController;
@@ -23,6 +23,7 @@ import com.mopl.playlist.controller.PlaylistController;
 import com.mopl.playlist.service.PlaylistService;
 import com.mopl.review.controller.ReviewController;
 import com.mopl.review.service.ReviewService;
+import com.mopl.sample.controller.SampleController;
 import com.mopl.user.controller.AuthController;
 import com.mopl.user.controller.UserController;
 import com.mopl.user.service.AuthService;
@@ -34,11 +35,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springdoc.core.configuration.SpringDocConfiguration;
@@ -55,6 +60,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.bind.annotation.RestController;
 import org.yaml.snakeyaml.Yaml;
 
 /** 정적 합의 계약과 Spring MVC가 생성한 런타임 OpenAPI의 핵심 HTTP 계약을 대조합니다. */
@@ -88,6 +94,47 @@ class OpenApiRuntimeContractTest {
     private static final Path CONTRACT_PATH = Path.of("openapi/mopl-api.yaml");
     private static final Set<String> HTTP_METHODS = Set.of(
         "get", "post", "put", "patch", "delete"
+    );
+    private static final Set<String> EXPECTED_IMPLEMENTED_OPERATIONS = Set.of(
+        "DELETE /api/contents/{contentId}",
+        "DELETE /api/follows/{followId}",
+        "DELETE /api/notifications/{notificationId}",
+        "DELETE /api/playlists/{playlistId}",
+        "DELETE /api/playlists/{playlistId}/contents/{contentId}",
+        "DELETE /api/playlists/{playlistId}/subscription",
+        "DELETE /api/reviews/{reviewId}",
+        "GET /api/auth/csrf-token",
+        "GET /api/contents",
+        "GET /api/contents/{contentId}",
+        "GET /api/contents/{contentId}/watching-sessions",
+        "GET /api/conversations/with",
+        "GET /api/conversations/{conversationId}",
+        "GET /api/conversations/{conversationId}/direct-messages",
+        "GET /api/follows/count",
+        "GET /api/follows/followed-by-me",
+        "GET /api/follows/followers",
+        "GET /api/follows/followings",
+        "GET /api/notifications",
+        "GET /api/playlists",
+        "GET /api/playlists/{playlistId}",
+        "GET /api/playlists/{playlistId}/subscribers",
+        "GET /api/reviews",
+        "GET /api/users/{userId}",
+        "GET /api/users/{watcherId}/watching-sessions",
+        "PATCH /api/contents/{contentId}",
+        "PATCH /api/playlists/{playlistId}",
+        "PATCH /api/reviews/{reviewId}",
+        "PATCH /api/users/{userId}",
+        "POST /api/auth/sign-in",
+        "POST /api/contents",
+        "POST /api/conversations",
+        "POST /api/conversations/{conversationId}/direct-messages/{directMessageId}/read",
+        "POST /api/follows",
+        "POST /api/playlists",
+        "POST /api/playlists/{playlistId}/contents/{contentId}",
+        "POST /api/playlists/{playlistId}/subscription",
+        "POST /api/reviews",
+        "POST /api/users"
     );
     private static Map<String, Object> contract;
 
@@ -135,15 +182,24 @@ class OpenApiRuntimeContractTest {
     }
 
     @Test
-    void exposesOpenApi31DocumentWithCommonSecuritySchemes() throws Exception {
-        mockMvc.perform(get("/v3/api-docs"))
+    void commonDocumentMetadataMatchesTheAgreedContract() throws Exception {
+        String runtimeJson = mockMvc.perform(get("/v3/api-docs"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.openapi").value("3.1.0"))
-            .andExpect(jsonPath("$.info.title").value("모두의 플리 (Mopl) API"))
-            .andExpect(jsonPath("$.components.securitySchemes.BearerAuth.type")
-                .value("http"))
-            .andExpect(jsonPath("$.components.securitySchemes.CsrfToken.name")
-                .value("X-XSRF-TOKEN"));
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+        Map<String, Object> runtime = objectMapper.readValue(
+            runtimeJson,
+            new TypeReference<>() {
+            }
+        );
+
+        List<String> differences = compareCommonDocument(runtime, contract);
+
+        assertThat(differences)
+            .withFailMessage(() -> "OpenAPI 공통 정보 불일치:\n- "
+                + String.join("\n- ", differences))
+            .isEmpty();
     }
 
     @Test
@@ -151,6 +207,17 @@ class OpenApiRuntimeContractTest {
         mockMvc.perform(get("/swagger-ui.html"))
             .andExpect(status().is3xxRedirection())
             .andExpect(header().string("Location", "/swagger-ui/index.html"));
+    }
+
+    @Test
+    void includesEveryProductionRestController() throws Exception {
+        Set<Class<?>> configuredControllers = Set.of(
+            OpenApiRuntimeContractTest.class.getAnnotation(WebMvcTest.class).controllers()
+        );
+
+        assertThat(configuredControllers)
+            .as("새 운영 REST Controller는 계약 검증 대상에 등록되어야 합니다.")
+            .containsExactlyInAnyOrderElementsOf(productionRestControllers());
     }
 
     @Test
@@ -181,6 +248,8 @@ class OpenApiRuntimeContractTest {
         Map<String, Object> runtimePaths = map(runtime, "paths");
         Map<String, Object> agreedPaths = map(agreed, "paths");
 
+        compareOperationInventory(httpOperations(runtimePaths), differences);
+
         runtimePaths.forEach((path, runtimePathValue) -> {
             if (!path.startsWith("/api/")) {
                 return;
@@ -207,6 +276,117 @@ class OpenApiRuntimeContractTest {
         });
 
         return differences;
+    }
+
+    private static List<String> compareCommonDocument(
+        Map<String, Object> runtime,
+        Map<String, Object> agreed
+    ) {
+        List<String> differences = new ArrayList<>();
+        compareValue("OpenAPI 문서", "버전", runtime.get("openapi"),
+            agreed.get("openapi"), differences);
+        compareValue("OpenAPI 문서", "공통 정보", map(runtime, "info"),
+            map(agreed, "info"), differences);
+        compareValue("OpenAPI 문서", "서버", runtime.get("servers"),
+            agreed.get("servers"), differences);
+        compareValue("OpenAPI 문서", "보안 스키마", securitySchemes(runtime),
+            securitySchemes(agreed), differences);
+        compareValue("OpenAPI 문서", "전역 보안 요구", securityRequirements(runtime.get("security")),
+            securityRequirements(agreed.get("security")), differences);
+        return differences;
+    }
+
+    private static Set<String> httpOperations(Map<String, Object> paths) {
+        Set<String> operations = new TreeSet<>();
+        paths.forEach((path, pathValue) -> {
+            if (!path.startsWith("/api/")) {
+                return;
+            }
+            Map<String, Object> pathItem = asMap(pathValue);
+            HTTP_METHODS.stream()
+                .filter(pathItem::containsKey)
+                .map(method -> method.toUpperCase() + " " + path)
+                .forEach(operations::add);
+        });
+        return operations;
+    }
+
+    private static void compareOperationInventory(
+        Set<String> runtimeOperations,
+        List<String> differences
+    ) {
+        Set<String> missing = new TreeSet<>(EXPECTED_IMPLEMENTED_OPERATIONS);
+        missing.removeAll(runtimeOperations);
+        missing.forEach(operation ->
+            differences.add(operation + " 구현 대상 operation이 런타임 문서에서 사라짐"));
+
+        Set<String> unexpected = new TreeSet<>(runtimeOperations);
+        unexpected.removeAll(EXPECTED_IMPLEMENTED_OPERATIONS);
+        unexpected.forEach(operation ->
+            differences.add(operation + " 구현 대상 operation 목록에 등록되지 않음"));
+    }
+
+    private static Map<String, Object> securitySchemes(Map<String, Object> document) {
+        Map<String, Object> schemes = map(map(document, "components"), "securitySchemes");
+        return Map.of(
+            OpenApiConfig.BEARER_AUTH,
+            selectedValues(map(schemes, OpenApiConfig.BEARER_AUTH),
+                "type", "scheme", "bearerFormat"),
+            OpenApiConfig.CSRF_TOKEN,
+            selectedValues(map(schemes, OpenApiConfig.CSRF_TOKEN),
+                "type", "in", "name")
+        );
+    }
+
+    private static Map<String, Object> selectedValues(
+        Map<String, Object> source,
+        String... keys
+    ) {
+        Map<String, Object> selected = new LinkedHashMap<>();
+        Stream.of(keys).forEach(key -> selected.put(key, source.get(key)));
+        return selected;
+    }
+
+    private static Set<Class<?>> productionRestControllers() throws Exception {
+        Path classesRoot = Path.of(MoplApplication.class.getProtectionDomain()
+            .getCodeSource().getLocation().toURI());
+        Path packageRoot = classesRoot.resolve(Path.of("com", "mopl"));
+
+        try (Stream<Path> classFiles = Files.walk(packageRoot)) {
+            return classFiles
+                .filter(path -> path.toString().endsWith(".class"))
+                .filter(path -> !path.getFileName().toString().contains("$"))
+                .map(path -> loadClass(classesRoot, path))
+                .filter(type -> type.isAnnotationPresent(RestController.class))
+                .filter(type -> !type.equals(SampleController.class))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
+    }
+
+    private static Class<?> loadClass(Path classesRoot, Path classFile) {
+        String className = classesRoot.relativize(classFile).toString()
+            .replace(classFile.getFileSystem().getSeparator(), ".")
+            .replaceFirst("\\.class$", "");
+        try {
+            return Class.forName(className, false,
+                OpenApiRuntimeContractTest.class.getClassLoader());
+        } catch (ClassNotFoundException exception) {
+            throw new IllegalStateException("Controller class를 읽을 수 없습니다: " + className,
+                exception);
+        }
+    }
+
+    private static Set<String> securityRequirements(Object value) {
+        if (!(value instanceof Collection<?> requirements)) {
+            return Set.of();
+        }
+
+        Set<String> normalized = new LinkedHashSet<>();
+        for (Object requirementValue : requirements) {
+            Map<String, Object> requirement = asMap(requirementValue);
+            normalized.add(String.join("+", new TreeSet<>(requirement.keySet())));
+        }
+        return normalized;
     }
 
     private static void compareOperation(
@@ -246,6 +426,20 @@ class OpenApiRuntimeContractTest {
             effectiveSecurity(agreedDocument, agreedOperation),
             differences
         );
+        validateNoContentResponse(operationName, runtimeOperation, differences);
+    }
+
+    private static void validateNoContentResponse(
+        String operationName,
+        Map<String, Object> runtimeOperation,
+        List<String> differences
+    ) {
+        Map<String, Object> noContent = nullableMap(
+            map(runtimeOperation, "responses").get("204")
+        );
+        if (noContent != null && noContent.containsKey("content")) {
+            differences.add(operationName + " 204 응답에 본문 content가 문서화됨");
+        }
     }
 
     private static void compareValue(
@@ -255,7 +449,7 @@ class OpenApiRuntimeContractTest {
         Object agreed,
         List<String> differences
     ) {
-        if (!runtime.equals(agreed)) {
+        if (!Objects.equals(runtime, agreed)) {
             differences.add(operation + " " + field
                 + " 런타임=" + runtime + ", 계약=" + agreed);
         }
@@ -286,16 +480,7 @@ class OpenApiRuntimeContractTest {
         Object value = operation.containsKey("security")
             ? operation.get("security")
             : document.get("security");
-        if (!(value instanceof Collection<?> requirements)) {
-            return Set.of();
-        }
-
-        Set<String> normalized = new LinkedHashSet<>();
-        for (Object requirementValue : requirements) {
-            Map<String, Object> requirement = asMap(requirementValue);
-            normalized.add(String.join("+", new TreeSet<>(requirement.keySet())));
-        }
-        return normalized;
+        return securityRequirements(value);
     }
 
     @SuppressWarnings("unchecked")
