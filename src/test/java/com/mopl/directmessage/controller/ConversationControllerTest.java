@@ -1,8 +1,7 @@
 package com.mopl.directmessage.controller;
 
 import static org.hamcrest.Matchers.nullValue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -16,10 +15,14 @@ import com.mopl.directmessage.dto.ConversationCreateRequest;
 import com.mopl.directmessage.dto.ConversationCreateResult;
 import com.mopl.directmessage.dto.ConversationDto;
 import com.mopl.directmessage.service.ConversationService;
+import com.mopl.global.common.CursorResponse;
 import com.mopl.global.common.UserSummary;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.exception.GlobalExceptionHandler;
+
+import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -597,5 +600,255 @@ class ConversationControllerTest {
         verifyNoInteractions(
             conversationService
         );
+    }
+
+    @Test
+    @DisplayName("대화 목록 조회 성공 시 커서 응답을 반환")
+    void getConversations_success_returnsOk()
+        throws Exception {
+
+        // given
+        Instant createdAt =
+            Instant.parse("2026-08-01T01:00:00Z");
+
+        ConversationDto conversation =
+            createConversationDto();
+
+        CursorResponse<ConversationDto> response =
+            CursorResponse.of(
+                List.of(conversation),
+                createdAt.toString(),
+                CONVERSATION_ID,
+                true,
+                2L,
+                "createdAt",
+                "DESCENDING"
+            );
+
+        when(
+            conversationService.getConversations(
+                eq(REQUESTER_ID),
+                eq("상대"),
+                isNull(),
+                isNull(),
+                eq(1),
+                eq("DESCENDING"),
+                eq("createdAt")
+            )
+        ).thenReturn(response);
+
+        // when & then
+        mockMvc.perform(
+                get("/api/conversations")
+                    .param("keywordLike", "상대")
+                    .param("limit", "1")
+                    .param(
+                        "sortDirection",
+                        "DESCENDING"
+                    )
+                    .param(
+                        "sortBy",
+                        "createdAt"
+                    )
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isOk())
+            .andExpect(
+                jsonPath("$.data[0].id")
+                    .value(
+                        CONVERSATION_ID.toString()
+                    )
+            )
+            .andExpect(
+                jsonPath("$.data[0].with.userId")
+                    .value(
+                        WITH_USER_ID.toString()
+                    )
+            )
+            .andExpect(
+                jsonPath("$.data[0].latestMessage")
+                    .value(nullValue())
+            )
+            .andExpect(
+                jsonPath("$.data[0].hasUnread")
+                    .value(false)
+            )
+            .andExpect(
+                jsonPath("$.nextCursor")
+                    .value(createdAt.toString())
+            )
+            .andExpect(
+                jsonPath("$.nextIdAfter")
+                    .value(
+                        CONVERSATION_ID.toString()
+                    )
+            )
+            .andExpect(
+                jsonPath("$.hasNext")
+                    .value(true)
+            )
+            .andExpect(
+                jsonPath("$.totalCount")
+                    .value(2)
+            )
+            .andExpect(
+                jsonPath("$.sortBy")
+                    .value("createdAt")
+            )
+            .andExpect(
+                jsonPath("$.sortDirection")
+                    .value("DESCENDING")
+            );
+
+        verify(conversationService)
+            .getConversations(
+                eq(REQUESTER_ID),
+                eq("상대"),
+                isNull(),
+                isNull(),
+                eq(1),
+                eq("DESCENDING"),
+                eq("createdAt")
+            );
+    }
+
+    @Test
+    @DisplayName("limit이 100을 초과하면 400을 반환")
+    void getConversations_limitTooLarge_returnsBadRequest()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/api/conversations")
+                    .param("limit", "101")
+                    .param(
+                        "sortDirection",
+                        "DESCENDING"
+                    )
+                    .param(
+                        "sortBy",
+                        "createdAt"
+                    )
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            );
+
+        verifyNoInteractions(
+            conversationService
+        );
+    }
+
+    @Test
+    @DisplayName("잘못된 정렬 방향은 400을 반환")
+    void getConversations_invalidSortDirection_returnsBadRequest()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/api/conversations")
+                    .param("limit", "20")
+                    .param(
+                        "sortDirection",
+                        "INVALID"
+                    )
+                    .param(
+                        "sortBy",
+                        "createdAt"
+                    )
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            );
+
+        verifyNoInteractions(
+            conversationService
+        );
+    }
+
+    @Test
+    @DisplayName("sortBy가 누락되면 400을 반환")
+    void getConversations_missingSortBy_returnsBadRequest()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/api/conversations")
+                    .param("limit", "20")
+                    .param(
+                        "sortDirection",
+                        "DESCENDING"
+                    )
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            );
+
+        verifyNoInteractions(
+            conversationService
+        );
+    }
+
+    @Test
+    @DisplayName("cursor와 idAfter 중 하나만 전달하면 400을 반환")
+    void getConversations_invalidCursorPair_returnsBadRequest()
+        throws Exception {
+
+        when(
+            conversationService.getConversations(
+                eq(REQUESTER_ID),
+                isNull(),
+                eq(
+                    "2026-08-01T00:00:00Z"
+                ),
+                isNull(),
+                eq(20),
+                eq("DESCENDING"),
+                eq("createdAt")
+            )
+        ).thenThrow(
+            new BusinessException(
+                ErrorCode.INVALID_INPUT
+            )
+        );
+
+        mockMvc.perform(
+                get("/api/conversations")
+                    .param(
+                        "cursor",
+                        "2026-08-01T00:00:00Z"
+                    )
+                    .param("limit", "20")
+                    .param(
+                        "sortDirection",
+                        "DESCENDING"
+                    )
+                    .param(
+                        "sortBy",
+                        "createdAt"
+                    )
+                    .principal(
+                        () -> REQUESTER_ID.toString()
+                    )
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            );
     }
 }

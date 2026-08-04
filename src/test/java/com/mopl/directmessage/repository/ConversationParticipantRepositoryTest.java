@@ -21,6 +21,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -353,5 +354,236 @@ public class ConversationParticipantRepositoryTest {
         // then
         assertThat(conversationIds)
             .containsExactly(targetConversation.getId());
+    }
+
+    private void insertConversation(
+        UUID conversationId,
+        Instant createdAt
+    ) {
+        jdbcTemplate.update(
+            """
+            INSERT INTO conversations (
+                id,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?)
+            """,
+            conversationId,
+            Timestamp.from(createdAt),
+            Timestamp.from(createdAt)
+        );
+    }
+
+    private void insertParticipant(
+        UUID participantId,
+        UUID conversationId,
+        UUID userId,
+        ParticipantSlot slot,
+        Instant createdAt
+    ) {
+        jdbcTemplate.update(
+            """
+            INSERT INTO conversation_participants (
+                id,
+                created_at,
+                updated_at,
+                conversation_id,
+                user_id,
+                participant_slot
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            participantId,
+            Timestamp.from(createdAt),
+            Timestamp.from(createdAt),
+            conversationId,
+            userId,
+            slot.name()
+        );
+    }
+
+    @Test
+    @DisplayName("참여한 대화를 검색하고 생성 시간과 ID 커서로 조회")
+    void findConversationListByCursor() {
+        // given
+        UUID userId3 =
+            UUID.fromString(
+                "33333333-3333-3333-3333-333333333333"
+            );
+
+        insertUser(
+            userId3,
+            "third@example.com",
+            "third"
+        );
+
+        UUID conversationId1 =
+            UUID.fromString(
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"
+            );
+
+        UUID conversationId2 =
+            UUID.fromString(
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2"
+            );
+
+        UUID conversationId3 =
+            UUID.fromString(
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3"
+            );
+
+        Instant firstTime =
+            Instant.parse("2026-08-01T00:00:00Z");
+
+        Instant secondTime =
+            Instant.parse("2026-08-01T01:00:00Z");
+
+        insertConversation(
+            conversationId1,
+            firstTime
+        );
+
+        insertConversation(
+            conversationId2,
+            secondTime
+        );
+
+        insertConversation(
+            conversationId3,
+            secondTime
+        );
+
+        insertParticipant(
+            UUID.randomUUID(),
+            conversationId1,
+            USER_ID_1,
+            ParticipantSlot.FIRST,
+            firstTime
+        );
+
+        insertParticipant(
+            UUID.randomUUID(),
+            conversationId1,
+            USER_ID_2,
+            ParticipantSlot.SECOND,
+            firstTime
+        );
+
+        insertParticipant(
+            UUID.randomUUID(),
+            conversationId2,
+            USER_ID_1,
+            ParticipantSlot.FIRST,
+            secondTime
+        );
+
+        insertParticipant(
+            UUID.randomUUID(),
+            conversationId2,
+            userId3,
+            ParticipantSlot.SECOND,
+            secondTime
+        );
+
+        insertParticipant(
+            UUID.randomUUID(),
+            conversationId3,
+            USER_ID_1,
+            ParticipantSlot.FIRST,
+            secondTime
+        );
+
+        insertParticipant(
+            UUID.randomUUID(),
+            conversationId3,
+            USER_ID_2,
+            ParticipantSlot.SECOND,
+            secondTime
+        );
+
+        entityManager.clear();
+
+        // when
+        List<ConversationListItemProjection> descending =
+            participantRepository.findFirstConversationListDesc(
+                USER_ID_1,
+                null,
+                PageRequest.of(0, 10)
+            );
+
+        List<ConversationListItemProjection> afterCursor =
+            participantRepository.findConversationListDesc(
+                USER_ID_1,
+                null,
+                secondTime,
+                conversationId3,
+                PageRequest.of(0, 10)
+            );
+
+        List<ConversationListItemProjection> ascending =
+            participantRepository.findFirstConversationListAsc(
+                USER_ID_1,
+                null,
+                PageRequest.of(0, 10)
+            );
+
+        List<ConversationListItemProjection> keywordResult =
+            participantRepository.findFirstConversationListDesc(
+                USER_ID_1,
+                "third",
+                PageRequest.of(0, 10)
+            );
+
+        long totalCount =
+            participantRepository.countConversationList(
+                USER_ID_1,
+                null
+            );
+
+        // then
+        assertThat(descending)
+            .extracting(
+                ConversationListItemProjection
+                    ::getConversationId
+            )
+            .containsExactly(
+                conversationId3,
+                conversationId2,
+                conversationId1
+            );
+
+        assertThat(afterCursor)
+            .extracting(
+                ConversationListItemProjection
+                    ::getConversationId
+            )
+            .containsExactly(
+                conversationId2,
+                conversationId1
+            );
+
+        assertThat(ascending)
+            .extracting(
+                ConversationListItemProjection
+                    ::getConversationId
+            )
+            .containsExactly(
+                conversationId1,
+                conversationId2,
+                conversationId3
+            );
+
+        assertThat(keywordResult)
+            .extracting(
+                ConversationListItemProjection
+                    ::getConversationId
+            )
+            .containsExactly(
+                conversationId2
+            );
+
+        assertThat(totalCount)
+            .isEqualTo(3L);
     }
 }
