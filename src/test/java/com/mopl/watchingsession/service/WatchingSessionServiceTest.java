@@ -1,11 +1,14 @@
 package com.mopl.watchingsession.service;
 
 
+import static java.util.Collections.synchronizedList;
+import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -27,9 +30,12 @@ import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -756,5 +762,111 @@ public class WatchingSessionServiceTest {
 
         // then
         assertThat(result.sortDirection()).isEqualTo("ASCENDING");
+    }
+
+    @Test
+    @DisplayName("S2의 start가 존재하지 않는 콘텐츠로 실패하면, 기존 S1의 소유권이 보존되어야 함")
+    void start_failsValidation_doesNotChangeOwnership() {
+        // given
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        String S1 = "session-1";
+        String S2 = "session-2";
+
+        when(watchingSessionSnapshotWriter.upsert(any(), any(), any()))
+            .thenReturn(createSnapshotFixture(CONTENT_ID, Instant.now(), Instant.now(), Instant.now()));
+
+        // S1 정상 시작
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, S1);
+
+        // when: S2가 잘못된 콘텐츠로 시작을 시도하여 예외 발생
+        UUID invalidContentId = UUID.randomUUID();
+        when(contentRepository.existsById(invalidContentId)).thenReturn(false);
+
+        assertThatThrownBy(() -> watchingSessionService.start(WATCHER_ID, invalidContentId, S2))
+            .isInstanceOf(BusinessException.class);
+
+        // then: S2의 에러 핸들링으로 end(S2)가 호출되더라도 DB는 삭제되지 않아야 함 (S1 보호)
+        boolean s2Ended = watchingSessionService.end(WATCHER_ID, S2);
+        assertThat(s2Ended).isFalse();
+        verify(watchingSessionSnapshotRepository, never()).deleteByWatcherId(WATCHER_ID);
+
+        // S1은 여전히 소유자이므로 정상 종료가 가능해야 함
+        boolean s1Ended = watchingSessionService.end(WATCHER_ID, S1);
+        assertThat(s1Ended).isTrue();
+        verify(watchingSessionSnapshotRepository).deleteByWatcherId(WATCHER_ID);
+    }
+
+    @Test
+    @DisplayName("동시성: S1 종료(end)와 S2 시작(start) 경합 시 임계구역 락에 의해 실행이 섞이지 않아야 한다")
+    void concurrentEndAndStart_doesNotInterleave() throws Exception {
+        // given
+        String S1 = "session-1";
+        String S2 = "session-2";
+        mockContentExists(CONTENT_ID);
+        mockContentExists(NEW_CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(createSnapshotFixture(CONTENT_ID, Instant.now(), Instant.now(), Instant.now()));
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, S1);
+
+        // 실행 순서 추적을 위한 스레드 안전 리스트
+        java.util.List<String> executionOrder = synchronizedList(new ArrayList<>());
+
+        // S1의 deleteByWatcherId 처리에 의도적 지연(100ms) 추가
+        doAnswer(invocation -> {
+            executionOrder.add("DELETE_START");
+            Thread.sleep(100);
+            executionOrder.add("DELETE_END");
+            return null;
+        }).when(watchingSessionSnapshotRepository).deleteByWatcherId(WATCHER_ID);
+
+        // S2의 upsert 처리
+        doAnswer(invocation -> {
+            executionOrder.add("UPSERT_START");
+            Thread.sleep(50);
+            executionOrder.add("UPSERT_END");
+            return createSnapshotFixture(NEW_CONTENT_ID, Instant.now(), Instant.now(), Instant.now());
+        }).when(watchingSessionSnapshotWriter).upsert(any(), any(), any());
+
+        ExecutorService executor = newFixedThreadPool(2);
+        CountDownLatch startLatch = new java.util.concurrent.CountDownLatch(1);
+        CountDownLatch doneLatch = new java.util.concurrent.CountDownLatch(2);
+
+        // when
+        // Thread 1: S1의 end 호출
+        executor.submit(() -> {
+            try {
+                startLatch.await(); // 동시 출발
+                watchingSessionService.end(WATCHER_ID, S1);
+            } catch (Exception ignored) {}
+            finally { doneLatch.countDown(); }
+        });
+
+        // Thread 2: S2의 start 호출
+        executor.submit(() -> {
+            try {
+                startLatch.await(); // 동시 출발
+                watchingSessionService.start(WATCHER_ID, NEW_CONTENT_ID, S2);
+            } catch (Exception ignored) {}
+            finally { doneLatch.countDown(); }
+        });
+
+        startLatch.countDown(); // 두 스레드 동시 실행 시작
+        doneLatch.await();      // 모두 완료될 때까지 대기
+        executor.shutdown();
+
+        // then
+        // 락(Lock)에 의해 둘 중 하나가 완전히 끝난 후 다음 작업이 실행되어야 함
+        // (DELETE와 UPSERT 중간에 다른 로직이 끼어들지 않음)
+        String joinedOrder = String.join(",", executionOrder);
+
+        boolean atomicOrder1 = joinedOrder.equals("DELETE_START,DELETE_END,UPSERT_START,UPSERT_END");
+        boolean atomicOrder2 = joinedOrder.equals("UPSERT_START,UPSERT_END,DELETE_START,DELETE_END");
+
+        assertThat(atomicOrder1 || atomicOrder2)
+            .as("작업이 원자적으로 실행되지 않고 중간에 섞임. 실행 로그: " + joinedOrder)
+            .isTrue();
     }
 }

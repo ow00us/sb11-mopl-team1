@@ -53,38 +53,55 @@ public class WatchingSessionService {
      */
     private final ConcurrentHashMap<UUID, String> activeSessions = new ConcurrentHashMap<>();
 
+    // ★ 추가됨: Watcher 단위로 독립적인 원자성을 보장하기 위한 락 맵
+    private final ConcurrentHashMap<UUID, Object> watcherLocks = new ConcurrentHashMap<>();
+
+    private Object getWatcherLock(UUID watcherId) {
+        return watcherLocks.computeIfAbsent(watcherId, k -> new Object());
+    }
+
     // create + update 성격의 메서드 - 독립 트랜잭션을 위해 writer 호출
     public WatchingSessionDto start(UUID watcherId, UUID contentId, String sessionId) {
 
-        activeSessions.put(watcherId, sessionId);
-
-        validateContentExists(contentId);
-
-        Instant expiresAt = Instant.now().plus(DEFAULT_SESSION_TTL);
-
         WatchingSessionSnapshot snapshot;
-        // 스냅샷이 있으면 기존 세션 갱신, 없으면 생성
-        try {
-            snapshot = watchingSessionSnapshotWriter.upsert(watcherId, contentId, expiresAt);
-        } catch (DataIntegrityViolationException e) {
-            // 동시 요청이 먼저 삽입에 성공한 경우 새 트랜잭션에서 한번만 재시도
-            snapshot = watchingSessionSnapshotWriter.upsert(watcherId, contentId, expiresAt);
+
+        // ★ 임계 구역 시작: 검증, DB 반영, 소유권 갱신을 묶어 원자적으로 처리
+        synchronized (getWatcherLock(watcherId)) {
+            // 검증 먼저 진행 (실패 시 소유권 변경이나 DB 터치 없음)
+            validateContentExists(contentId);
+
+            Instant expiresAt = Instant.now().plus(DEFAULT_SESSION_TTL);
+
+            // DB 스냅샷 갱신
+            try {
+                snapshot = watchingSessionSnapshotWriter.upsert(watcherId, contentId, expiresAt);
+            } catch (DataIntegrityViolationException e) {
+                snapshot = watchingSessionSnapshotWriter.upsert(watcherId, contentId, expiresAt);
+            }
+
+            // DB 반영까지 안전하게 성공했을 때 비로소 소유권을 갱신
+            activeSessions.put(watcherId, sessionId);
         }
 
+        // 락 해제 후 enrich 수행
         return enrich(snapshot);
     }
 
     // delete 성격의 메서드
-    @Transactional
     public boolean end(UUID watcherId, String currentSessionId) {
-        boolean isOwner = activeSessions.remove(watcherId, currentSessionId);
+        synchronized (getWatcherLock(watcherId)) {
+            // 확인만 먼저 수행 (메모리에서 지우지는 않음)
+            if (!currentSessionId.equals(activeSessions.get(watcherId))) {
+                return false;
+            }
 
-        if (isOwner) {
+            // DB 삭제 (여기서 예외가 터지면 소유권은 그대로 유지됨)
             watchingSessionSnapshotRepository.deleteByWatcherId(watcherId);
+
+            // DB 삭제까지 완벽히 성공한 후 메모리 소유권 정리
+            activeSessions.remove(watcherId);
             return true;
         }
-
-        return false;
     }
 
     // read 성격의 메서드

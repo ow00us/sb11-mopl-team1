@@ -51,11 +51,15 @@ public class WatchingSessionSubscribeListener {
             return;
         }
 
-        watchingSessionService.get(watcherId).ifPresent(prevSession -> {
-            if (!prevSession.content().id().equals(contentId)) {
-                watchingSessionBroadcaster.broadcastLeave(prevSession, prevSession.content().id());
-            }
-        });
+        // sessionId Null 체크
+        String sessionId = accessor.getSessionId();
+        if (sessionId == null) {
+            log.warn("WebSocket sessionId가 존재하지 않습니다. 구독 처리를 중단합니다: destination={}", destination);
+            return;
+        }
+
+        // 퇴장 알림을 먼저 보내지 않고, 이전 세션 정보를 조회만 해 둠
+        WatchingSessionDto prevSession = watchingSessionService.get(watcherId).orElse(null);
 
         // 유틸 내부에서 subscriptionId null 체크 및 맵 null 체크 후 매핑 시도
         boolean isMapped = WatchSubscriptionAttributes.put(accessor, contentId);
@@ -70,7 +74,7 @@ public class WatchingSessionSubscribeListener {
         // DB 세션 시작
         WatchingSessionDto session;
         try {
-            session = watchingSessionService.start(watcherId, contentId, accessor.getSessionId());
+            session = watchingSessionService.start(watcherId, contentId, sessionId);
         } catch (RuntimeException e) {
             log.warn("시청 세션 시작 실패, 구독 매핑 및 DB 세션 정리: watcherId={}, contentId={}, cause={}",
                 watcherId, contentId, e.getMessage());
@@ -79,9 +83,14 @@ public class WatchingSessionSubscribeListener {
             WatchSubscriptionAttributes.remove(accessor);
 
             // DB 세션 정리 (멱등성 보장)
-            watchingSessionService.end(watcherId, accessor.getSessionId());
+            watchingSessionService.end(watcherId, sessionId);
 
             return;
+        }
+
+        // start()가 완벽하게 성공한 후에만 이전 세션에 대한 LEAVE 알림 전송
+        if (prevSession != null && !prevSession.content().id().equals(contentId)) {
+            watchingSessionBroadcaster.broadcastLeave(prevSession, prevSession.content().id());
         }
 
         watchingSessionBroadcaster.broadcastJoin(session, contentId);

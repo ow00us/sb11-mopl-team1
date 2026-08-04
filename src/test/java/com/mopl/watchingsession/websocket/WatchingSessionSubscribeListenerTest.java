@@ -95,7 +95,7 @@ public class WatchingSessionSubscribeListenerTest {
     }
 
     @Test
-    @DisplayName("기존 활성 세션(A)이 있는 상태에서 다른 콘텐츠(B)를 구독하면 기존 방(A)에 퇴장 알림을 먼저 보냄")
+    @DisplayName("기존 활성 세션(A)이 있는 상태에서 다른 콘텐츠(B)를 구독 성공 시 기존 방(A)에 퇴장 알림을 먼저 보냄")
     void onSubscribe_broadcastsLeaveToPrevContent_whenSubscribingToNewContent() {
         // given
         // 기존에 보고 있던 A 콘텐츠(PREV_CONTENT_ID) 모킹
@@ -119,6 +119,50 @@ public class WatchingSessionSubscribeListenerTest {
         // 새 방(B)에 대해서 DB 세션이 갱신되고 JOIN이 나갔는지 검증
         verify(watchingSessionService).start(WATCHER_ID, CONTENT_ID, SESSION_ID);
         verify(watchingSessionBroadcaster).broadcastJoin(newSession, CONTENT_ID);
+    }
+
+    @Test
+    @DisplayName("A 콘텐츠 시청 중 B 콘텐츠로 환승을 시도했으나 start()가 실패하면, 기존 A 콘텐츠에 LEAVE 알림을 보내지 않음")
+    void onSubscribe_skipsLeaveBroadcastForPrevContent_whenStartFails() {
+        // given
+        WatchingSessionDto prevSession = dtoFixture(PREV_CONTENT_ID);
+        when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.of(prevSession));
+
+        SessionSubscribeEvent event = subscribeEvent(
+            "/sub/contents/" + CONTENT_ID + "/watch", "sub-123", principalOf(WATCHER_ID));
+
+        // start() 시 예외 발생 유도
+        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID))
+            .thenThrow(new RuntimeException("새 세션 시작 실패"));
+
+        // when
+        assertDoesNotThrow(() -> listener.onSubscribe(event));
+
+        // then: 실패 시 LEAVE도 JOIN도 나가지 않고 기존 세션 정보 유지
+        verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
+        verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());
+
+        // 롤백 로직은 정상 동작해야 함
+        verify(watchingSessionService).end(WATCHER_ID, SESSION_ID);
+    }
+
+    @Test
+    @DisplayName("A 콘텐츠 시청 중 B 콘텐츠로 환승을 시도했으나 매핑이 실패하면, 기존 A 콘텐츠에 LEAVE 알림을 보내지 않음")
+    void onSubscribe_skipsLeaveBroadcastForPrevContent_whenMappingFails() {
+        // given
+        WatchingSessionDto prevSession = dtoFixture(PREV_CONTENT_ID);
+        when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.of(prevSession));
+
+        // subscriptionId 누락으로 인한 매핑 실패 유도
+        SessionSubscribeEvent event = subscribeEvent(
+            "/sub/contents/" + CONTENT_ID + "/watch", null, principalOf(WATCHER_ID));
+
+        // when
+        listener.onSubscribe(event);
+
+        // then: DB 시작 시도조차 하지 않으며, LEAVE 알림도 보내지 않음
+        verify(watchingSessionService, never()).start(any(), any(), any());
+        verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
     }
 
     @Test

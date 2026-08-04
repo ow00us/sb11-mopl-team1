@@ -41,6 +41,13 @@ public class WatchingSessionDisconnectListener {
             return;
         }
 
+        // sessionId Null 체크
+        String sessionId = accessor.getSessionId();
+        if (sessionId == null) {
+            log.warn("WebSocket sessionId가 존재하지 않아 종료 처리를 중단합니다.");
+            return;
+        }
+
         // end()가 DB에서 세션을 지우기 전에 브로드 캐스트에 필요한 세션 정보 확보
         WatchingSessionDto session = watchingSessionService.get(watcherId).orElse(null);
 
@@ -51,8 +58,7 @@ public class WatchingSessionDisconnectListener {
 
         // 이 sessionId가 지금도 이 watcherId의 세션 소유자인 경우에만 실제로 삭제됨
         // 이미 다른 연결로 소유권이 넘어갔다면 삭제/브로드캐스트 하지 않음
-        String currentSessionId = accessor.getSessionId();
-        boolean actuallyDeleted = watchingSessionService.end(watcherId, currentSessionId);
+        boolean actuallyDeleted = watchingSessionService.end(watcherId, sessionId);
 
         if (actuallyDeleted) {
             watchingSessionBroadcaster.broadcastLeave(session, session.content().id());
