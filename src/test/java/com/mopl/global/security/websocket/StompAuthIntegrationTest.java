@@ -25,6 +25,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.converter.StringMessageConverter;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.simp.stomp.ConnectionLostException;
@@ -56,6 +57,7 @@ public class StompAuthIntegrationTest {
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
 
     private static final long[] CLIENT_HEARTBEAT = {4000, 4000};
+    private static final String VALID_TOKEN = "valid-token";
 
     @LocalServerPort
     private int port;
@@ -106,7 +108,11 @@ public class StompAuthIntegrationTest {
     @AfterEach
     void tearDown() {
         if (session != null && session.isConnected()) {
-            session.disconnect();
+            try {
+                session.disconnect();
+            } catch (MessageDeliveryException ignored) {
+                // ERROR 프레임 처리 직후 서버가 먼저 연결을 닫을 수 있습니다.
+            }
         }
         if (stompClient != null) {
             stompClient.stop();
@@ -241,7 +247,7 @@ public class StompAuthIntegrationTest {
     @Test
     @DisplayName("SockJs 전체 경로로 CONNECT해도 인증이 작동")
     void connectViaSockJs_withValidToken_succeeds() throws Exception {
-        String token = "valid-token";
+        String token = VALID_TOKEN;
         Authentication authentication = UsernamePasswordAuthenticationToken.authenticated(
             "user-id", null, List.of());
         when(jwtProvider.validate(token)).thenReturn(true);
@@ -260,5 +266,97 @@ public class StompAuthIntegrationTest {
             .get(5, TimeUnit.SECONDS);
 
         assertThat(session.isConnected()).isTrue();
+    }
+
+    @Test
+    @DisplayName("등록되지 않은 목적지를 구독하면 FORBIDDEN ERROR 프레임 반환")
+    void subscribeUnknownDestination_returnsForbiddenError() throws Exception {
+        CompletableFuture<ErrorResponse> errorResponseFuture = new CompletableFuture<>();
+        session = connectWithValidToken(errorCapturingHandler(errorResponseFuture));
+
+        session.subscribe("/sub/verification/private", new StompFrameHandler() {
+            @Override
+            public Type getPayloadType(StompHeaders headers) {
+                return String.class;
+            }
+
+            @Override
+            public void handleFrame(StompHeaders headers, Object payload) {
+                // 권한 검증에서 구독이 거부되므로 메시지를 수신하지 않습니다.
+            }
+        });
+
+        assertForbidden(errorResponseFuture);
+    }
+
+    @Test
+    @DisplayName("클라이언트가 브로커 목적지로 직접 송신하면 FORBIDDEN ERROR 프레임 반환")
+    void sendDirectlyToBrokerDestination_returnsForbiddenError() throws Exception {
+        CompletableFuture<ErrorResponse> errorResponseFuture = new CompletableFuture<>();
+        session = connectWithValidToken(errorCapturingHandler(errorResponseFuture));
+
+        session.send(
+            "/sub/contents/00000000-0000-0000-0000-000000000000/chat",
+            "forged-message"
+        );
+
+        assertForbidden(errorResponseFuture);
+    }
+
+    @Test
+    @DisplayName("등록되지 않은 애플리케이션 목적지로 송신하면 FORBIDDEN ERROR 프레임 반환")
+    void sendUnknownApplicationDestination_returnsForbiddenError() throws Exception {
+        CompletableFuture<ErrorResponse> errorResponseFuture = new CompletableFuture<>();
+        session = connectWithValidToken(errorCapturingHandler(errorResponseFuture));
+
+        session.send("/pub/verification/anything", "payload");
+
+        assertForbidden(errorResponseFuture);
+    }
+
+    private StompSession connectWithValidToken(StompSessionHandler handler) throws Exception {
+        Authentication authentication = UsernamePasswordAuthenticationToken.authenticated(
+            "00000000-0000-0000-0000-000000000001",
+            null,
+            List.of()
+        );
+        when(jwtProvider.validate(VALID_TOKEN)).thenReturn(true);
+        when(jwtProvider.getAuthentication(VALID_TOKEN)).thenReturn(authentication);
+
+        StompHeaders connectHeaders = new StompHeaders();
+        connectHeaders.add("Authorization", "Bearer " + VALID_TOKEN);
+
+        return stompClient
+            .connectAsync(wsUrl(), (WebSocketHttpHeaders) null, connectHeaders, handler)
+            .get(5, TimeUnit.SECONDS);
+    }
+
+    private StompSessionHandler errorCapturingHandler(
+        CompletableFuture<ErrorResponse> errorResponseFuture
+    ) {
+        return new StompSessionHandlerAdapter() {
+            @Override
+            public Type getPayloadType(StompHeaders headers) {
+                return String.class;
+            }
+
+            @Override
+            public void handleFrame(StompHeaders headers, Object payload) {
+                try {
+                    errorResponseFuture.complete(
+                        objectMapper.readValue((String) payload, ErrorResponse.class)
+                    );
+                } catch (IOException exception) {
+                    errorResponseFuture.completeExceptionally(exception);
+                }
+            }
+        };
+    }
+
+    private void assertForbidden(
+        CompletableFuture<ErrorResponse> errorResponseFuture
+    ) throws Exception {
+        ErrorResponse errorResponse = errorResponseFuture.get(5, TimeUnit.SECONDS);
+        assertThat(errorResponse.errorCode()).isEqualTo(ErrorCode.FORBIDDEN.getCode());
     }
 }
