@@ -221,6 +221,26 @@ class OpenApiRuntimeContractTest {
     }
 
     @Test
+    void rejectsContentInAgreedNoContentResponse() {
+        Map<String, Object> agreedOperation = Map.of(
+            "responses",
+            Map.of("204", Map.of("content", Map.of()))
+        );
+        List<String> differences = new ArrayList<>();
+
+        validateNoContentResponse(
+            "GET /api/example",
+            "정적 계약",
+            agreedOperation,
+            differences
+        );
+
+        assertThat(differences).containsExactly(
+            "GET /api/example 정적 계약 204 응답에 본문 content가 문서화됨"
+        );
+    }
+
+    @Test
     void implementedHttpOperationsMatchTheAgreedContract() throws Exception {
         String runtimeJson = mockMvc.perform(get("/v3/api-docs"))
             .andExpect(status().isOk())
@@ -426,19 +446,32 @@ class OpenApiRuntimeContractTest {
             effectiveSecurity(agreedDocument, agreedOperation),
             differences
         );
-        validateNoContentResponse(operationName, runtimeOperation, differences);
+        validateNoContentResponse(
+            operationName,
+            "런타임",
+            runtimeOperation,
+            differences
+        );
+        validateNoContentResponse(
+            operationName,
+            "정적 계약",
+            agreedOperation,
+            differences
+        );
     }
 
     private static void validateNoContentResponse(
         String operationName,
-        Map<String, Object> runtimeOperation,
+        String source,
+        Map<String, Object> operation,
         List<String> differences
     ) {
         Map<String, Object> noContent = nullableMap(
-            map(runtimeOperation, "responses").get("204")
+            map(operation, "responses").get("204")
         );
         if (noContent != null && noContent.containsKey("content")) {
-            differences.add(operationName + " 204 응답에 본문 content가 문서화됨");
+            differences.add(operationName + " " + source
+                + " 204 응답에 본문 content가 문서화됨");
         }
     }
 
