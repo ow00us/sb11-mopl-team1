@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -41,28 +42,71 @@ public class WatchingSessionService {
     private final UserRepository userRepository;
     private final WatchingSessionSnapshotWriter watchingSessionSnapshotWriter;
 
-    // create + update 성격의 메서드 - 독립 트랜잭션을 위해 writer 호출
-    public WatchingSessionDto start(UUID watcherId, UUID contentId) {
-        validateContentExists(contentId);
+    /**
+     * watcherId 기준 "지금 이 세션을 소유한 WebSocket 연결(sessionId)"을 추적한다.
+     * 다중 탭/새로고침 시 오래된 연결의 DISCONNECT가 새 연결의 세션을 잘못 지우는 것을 막기 위함.
+     *
+     * 주의: 이 맵은 단일 서버 인스턴스 전제의 인메모리 구조다. 서버 재시작 시 유실되고
+     * 다중 인스턴스 환경에서는 인스턴스마다 별도로 존재해 소유권 판정이 어긋난다.
+     * TODO(심화필수): Redis presence(사용자당 활성 세션 1개, 원본)로 이전하면서
+     * 이 소유권 판정 자체를 Redis 쪽 구조로 대체할 예정. 그 전까지는 단일 인스턴스 운영을 전제로 한다.
+     */
+    private final ConcurrentHashMap<UUID, String> activeSessions = new ConcurrentHashMap<>();
 
-        Instant expiresAt = Instant.now().plus(DEFAULT_SESSION_TTL);
+    // ★ 추가됨: Watcher 단위로 독립적인 원자성을 보장하기 위한 락 맵
+    private final ConcurrentHashMap<UUID, Object> watcherLocks = new ConcurrentHashMap<>();
+
+    private Object getWatcherLock(UUID watcherId) {
+        return watcherLocks.computeIfAbsent(watcherId, k -> new Object());
+    }
+
+    // create + update 성격의 메서드 - 독립 트랜잭션을 위해 writer 호출
+    public WatchingSessionDto start(UUID watcherId, UUID contentId, String sessionId) {
 
         WatchingSessionSnapshot snapshot;
-        // 스냅샷이 있으면 기존 세션 갱신, 없으면 생성
-        try {
-            snapshot = watchingSessionSnapshotWriter.upsert(watcherId, contentId, expiresAt);
-        } catch (DataIntegrityViolationException e) {
-            // 동시 요청이 먼저 삽입에 성공한 경우 새 트랜잭션에서 한번만 재시도
-            snapshot = watchingSessionSnapshotWriter.upsert(watcherId, contentId, expiresAt);
+
+        // ★ 임계 구역 시작: 검증, DB 반영, 소유권 갱신을 묶어 원자적으로 처리
+        synchronized (getWatcherLock(watcherId)) {
+            // 검증 먼저 진행 (실패 시 소유권 변경이나 DB 터치 없음)
+            validateContentExists(contentId);
+
+            Instant expiresAt = Instant.now().plus(DEFAULT_SESSION_TTL);
+
+            // DB 스냅샷 갱신
+            try {
+                snapshot = watchingSessionSnapshotWriter.upsert(watcherId, contentId, expiresAt);
+            } catch (DataIntegrityViolationException e) {
+                snapshot = watchingSessionSnapshotWriter.upsert(watcherId, contentId, expiresAt);
+            }
+
+            // DB 반영까지 안전하게 성공했을 때 비로소 소유권을 갱신
+            activeSessions.put(watcherId, sessionId);
         }
 
-        return enrich(snapshot);
+        try {
+            return enrich(snapshot);
+        } catch (RuntimeException e) {
+            // 계약 분리: 새 상태가 반영된 후 실패했다면, 스스로 롤백하여 원자성 보장
+            end(watcherId, sessionId);
+            throw e;
+        }
     }
 
     // delete 성격의 메서드
-    @Transactional
-    public void end(UUID watcherId) {
-        watchingSessionSnapshotRepository.deleteByWatcherId(watcherId);
+    public boolean end(UUID watcherId, String currentSessionId) {
+        synchronized (getWatcherLock(watcherId)) {
+            // 확인만 먼저 수행 (메모리에서 지우지는 않음)
+            if (!currentSessionId.equals(activeSessions.get(watcherId))) {
+                return false;
+            }
+
+            // DB 삭제 (여기서 예외가 터지면 소유권은 그대로 유지됨)
+            watchingSessionSnapshotRepository.deleteByWatcherId(watcherId);
+
+            // DB 삭제까지 완벽히 성공한 후 메모리 소유권 정리
+            activeSessions.remove(watcherId);
+            return true;
+        }
     }
 
     // read 성격의 메서드
