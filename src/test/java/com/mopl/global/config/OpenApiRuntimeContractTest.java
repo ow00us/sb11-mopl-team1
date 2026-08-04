@@ -107,6 +107,7 @@ class OpenApiRuntimeContractTest {
         "GET /api/contents",
         "GET /api/contents/{contentId}",
         "GET /api/contents/{contentId}/watching-sessions",
+        "GET /api/conversations",
         "GET /api/conversations/with",
         "GET /api/conversations/{conversationId}",
         "GET /api/conversations/{conversationId}/direct-messages",
