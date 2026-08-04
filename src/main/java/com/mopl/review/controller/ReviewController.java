@@ -7,6 +7,7 @@ import com.mopl.review.dto.ReviewCreateRequest;
 import com.mopl.review.dto.ReviewDto;
 import com.mopl.review.dto.ReviewUpdateRequest;
 import com.mopl.review.service.ReviewService;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -39,6 +40,7 @@ public class ReviewController {
 
     /** 리뷰를 생성합니다. 인증된 사용자만 호출 가능합니다. */
     @PostMapping
+    @ApiResponse(responseCode = "201", description = "리뷰 생성 성공")
     public ResponseEntity<ReviewDto> create(@Valid @RequestBody ReviewCreateRequest request) {
         UUID authorId = resolveUserId();
         return ResponseEntity.status(HttpStatus.CREATED).body(reviewService.create(request, authorId));
@@ -65,6 +67,7 @@ public class ReviewController {
 
     /** 리뷰를 삭제합니다. 작성자만 호출 가능합니다. */
     @DeleteMapping("/{reviewId}")
+    @ApiResponse(responseCode = "204", description = "리뷰 삭제 성공")
     public ResponseEntity<Void> delete(@PathVariable UUID reviewId) {
         UUID requesterId = resolveUserId();
         reviewService.delete(reviewId, requesterId);
