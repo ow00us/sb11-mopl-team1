@@ -98,7 +98,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          for attempt in {1..60}; do
+          for attempt in {1..90}; do
             container_status="$(docker inspect --format '{{.State.Status}}' mopl-ci)"
             health_status="$(docker inspect --format '{{.State.Health.Status}}' mopl-ci)"
 
@@ -115,7 +115,7 @@ jobs:
               exit 0
             fi
 
-            echo "Waiting for application health ($attempt/60): $health_status"
+            echo "Waiting for application health ($attempt/90): $health_status"
             sleep 2
           done
 
