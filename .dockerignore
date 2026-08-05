@@ -1,0 +1,34 @@
+# 빌드 산출물 — 이미지 안에서 다시 만듭니다.
+build/
+out/
+bin/
+
+# Gradle 로컬 캐시와 상태
+.gradle/
+
+# 버전 관리와 개발 환경
+.git/
+.github/
+.idea/
+.vscode/
+*.iml
+
+# 문서와 계약 — 실행에 필요하지 않습니다.
+docs/
+openapi/
+*.md
+
+# 리뷰용 임시 디렉터리
+.review-*/
+.review-*.tar
+.codex-worktrees/
+.agents/
+
+# 로컬 실행 설정
+docker-compose.yml
+
+# 비밀 값이 들어갈 수 있는 파일
+.env
+.env.*
+*.pem
+*.key
