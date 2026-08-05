@@ -200,4 +200,39 @@ class DirectMessageWebSocketControllerTest {
             "실시간 메시지"
         );
     }
+
+    @Test
+    @DisplayName("인증 사용자 이름이 없으면 WebSocket DM을 전송할 수 없다")
+    void send_nullPrincipalName_fails() {
+        // given
+        DirectMessageSendRequest request =
+            new DirectMessageSendRequest(
+                "실시간 메시지"
+            );
+
+        Principal principal =
+            () -> null;
+
+        // when & then
+        assertThatThrownBy(() ->
+            controller.send(
+                CONVERSATION_ID,
+                request,
+                principal
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(
+                            ErrorCode.UNAUTHORIZED
+                        )
+            );
+
+        verifyNoInteractions(
+            directMessageService,
+            broadcaster
+        );
+    }
 }

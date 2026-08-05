@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
+import org.springframework.security.core.parameters.P;
 import org.springframework.stereotype.Controller;
 
 import java.security.Principal;
@@ -44,6 +45,14 @@ public class DirectMessageWebSocketController {
 
     private UUID getSenderId(Principal principal) {
         if (principal == null) {
+            throw new BusinessException(
+                ErrorCode.UNAUTHORIZED
+            );
+        }
+
+        String principalName = principal.getName();
+
+        if (principalName == null) {
             throw new BusinessException(
                 ErrorCode.UNAUTHORIZED
             );
