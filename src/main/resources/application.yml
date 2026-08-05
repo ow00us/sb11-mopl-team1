@@ -32,6 +32,7 @@ jwt:
 tmdb:
   base-url: https://api.themoviedb.org/3
   access-token: ${TMDB_ACCESS_TOKEN}
+  image-base-url: https://image.tmdb.org/t/p/w500
 
 sportsdb:
   base-url: https://www.thesportsdb.com/api/v1/json

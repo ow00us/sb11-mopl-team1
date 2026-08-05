@@ -5,5 +5,5 @@ import org.springframework.stereotype.Component;
 
 @Component
 @ConfigurationProperties(prefix = "tmdb")
-public record TmdbProperties(String baseUrl, String accessToken) {
+public record TmdbProperties(String baseUrl, String accessToken, String imageBaseUrl) {
 }

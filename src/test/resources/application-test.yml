@@ -17,6 +17,7 @@ jwt:
 
 tmdb:
   access-token: test-dummy-token
+  image-base-url: https://image.tmdb.org/t/p/w500
 
 sportsdb:
   api-key: test-dummy-key
