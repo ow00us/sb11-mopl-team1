@@ -1,14 +1,18 @@
 package com.mopl.global.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.directmessage.websocket.DirectMessageAuthorizationInterceptor;
 import com.mopl.global.security.websocket.StompAuthChannelInterceptor;
 import com.mopl.global.security.websocket.StompDestinationAuthorizationInterceptor;
+import com.mopl.global.security.websocket.StompMessagingControllerAdvice;
 import com.mopl.global.security.websocket.WebSocketStompErrorHandler;
 import com.mopl.watchingsession.websocket.ChatSenderCachingInterceptor;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.scheduling.TaskScheduler;

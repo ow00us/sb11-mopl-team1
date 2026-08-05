@@ -55,3 +55,19 @@ curl --fail http://localhost:8080/actuator/health
 ```
 
 정상 응답은 `{"status":"UP"}`이며, Docker 컨테이너 상태도 `healthy`로 전환되어야 합니다.
+
+## CI 컨테이너 smoke 검증
+
+`develop` 또는 `main` 대상 PR과 두 브랜치의 push에서는 Gradle 빌드·테스트가
+통과한 뒤 운영 이미지 smoke 검증을 실행합니다.
+
+CI는 PostgreSQL 16과 Redis 7을 준비하고 다음 항목을 자동으로 확인합니다.
+
+- 저장소의 Dockerfile로 운영 이미지를 빌드할 수 있다.
+- 실행 이미지의 기본 사용자가 비특권 사용자 `mopl`이다.
+- 빈 PostgreSQL에 Flyway 마이그레이션을 적용하고 Redis에 연결한다.
+- prod 프로파일 애플리케이션의 Docker health status가 `healthy`가 된다.
+- `/actuator/health`가 `UP` 상태를 반환한다.
+
+이 단계에서 사용하는 DB 자격값과 JWT Secret은 격리된 CI 실행에서만 쓰는 테스트
+값입니다. 이미지를 레지스트리에 게시하거나 실제 운영 환경에 배포하지 않습니다.
