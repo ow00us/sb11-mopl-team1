@@ -6,12 +6,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.exception.ErrorResponse;
 import com.mopl.global.security.JwtProvider;
 import java.io.IOException;
 import java.lang.reflect.Type;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -64,6 +66,9 @@ public class StompAuthIntegrationTest {
 
     @MockitoBean
     private JwtProvider jwtProvider;
+
+    @MockitoBean
+    private ConversationParticipantRepository conversationParticipantRepository;
 
     private WebSocketStompClient stompClient;
     private ThreadPoolTaskScheduler taskScheduler;
@@ -286,7 +291,7 @@ public class StompAuthIntegrationTest {
             }
         });
 
-        assertForbidden(errorResponseFuture);
+        assertErrorAndDisconnected(errorResponseFuture, ErrorCode.FORBIDDEN);
     }
 
     @Test
@@ -300,7 +305,7 @@ public class StompAuthIntegrationTest {
             "forged-message"
         );
 
-        assertForbidden(errorResponseFuture);
+        assertErrorAndDisconnected(errorResponseFuture, ErrorCode.FORBIDDEN);
     }
 
     @Test
@@ -311,7 +316,38 @@ public class StompAuthIntegrationTest {
 
         session.send("/pub/verification/anything", "payload");
 
-        assertForbidden(errorResponseFuture);
+        assertErrorAndDisconnected(errorResponseFuture, ErrorCode.FORBIDDEN);
+    }
+
+    @Test
+    @DisplayName("대화 비참여자가 형식상 유효한 DM 목적지를 구독하면 거부")
+    void subscribeDirectMessageAsNonParticipant_returnsNotFoundError() throws Exception {
+        UUID conversationId = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        UUID requesterId = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        when(conversationParticipantRepository.existsByConversationIdAndUserId(
+            conversationId,
+            requesterId
+        )).thenReturn(false);
+
+        CompletableFuture<ErrorResponse> errorResponseFuture = new CompletableFuture<>();
+        session = connectWithValidToken(errorCapturingHandler(errorResponseFuture));
+
+        session.subscribe(
+            "/sub/conversations/" + conversationId + "/direct-messages",
+            new StompFrameHandler() {
+                @Override
+                public Type getPayloadType(StompHeaders headers) {
+                    return String.class;
+                }
+
+                @Override
+                public void handleFrame(StompHeaders headers, Object payload) {
+                    // 참여자 인가에서 구독이 거부되므로 메시지를 수신하지 않습니다.
+                }
+            }
+        );
+
+        assertErrorAndDisconnected(errorResponseFuture, ErrorCode.RESOURCE_NOT_FOUND);
     }
 
     private StompSession connectWithValidToken(StompSessionHandler handler) throws Exception {
@@ -353,10 +389,17 @@ public class StompAuthIntegrationTest {
         };
     }
 
-    private void assertForbidden(
-        CompletableFuture<ErrorResponse> errorResponseFuture
+    private void assertErrorAndDisconnected(
+        CompletableFuture<ErrorResponse> errorResponseFuture,
+        ErrorCode expectedErrorCode
     ) throws Exception {
         ErrorResponse errorResponse = errorResponseFuture.get(5, TimeUnit.SECONDS);
-        assertThat(errorResponse.errorCode()).isEqualTo(ErrorCode.FORBIDDEN.getCode());
+        assertThat(errorResponse.errorCode()).isEqualTo(expectedErrorCode.getCode());
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (session.isConnected() && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+        assertThat(session.isConnected()).isFalse();
     }
 }
