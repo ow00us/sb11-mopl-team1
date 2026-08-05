@@ -81,16 +81,18 @@ public class ContentChatServiceTest {
     }
 
     @Test
-    @DisplayName("시청 중이고 캐시 히트면 DB 조회 없이 해당 콘텐츠 채팅 destination으로 브로드캐스트")
+    @DisplayName("시청 중이고 캐시 히트면 해당 콘텐츠 채팅 destination으로 브로드캐스트")
     void sendAndBroadcast_success_withCacheHit_zeroDbQueries() {
         // given
         UserSummary cachedSender = createCachedSender();
         WatchingSessionSnapshot validSnapshot = watchingSessionSnapshot(CONTENT_ID, Instant.now().plus(1, ChronoUnit.HOURS));
 
+        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
         when(watchingSessionSnapshotRepository.findByWatcherId(SENDER_ID)).thenReturn(Optional.of(validSnapshot));
 
         // when
         contentChatService.sendAndBroadcast(SENDER_ID, CONTENT_ID, cachedSender, "안녕하세요");
+
         // then
         ArgumentCaptor<String> destinationCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<ContentChatDto> payloadCaptor = ArgumentCaptor.forClass(ContentChatDto.class);
@@ -100,7 +102,6 @@ public class ContentChatServiceTest {
         assertThat(payloadCaptor.getValue().content()).isEqualTo("안녕하세요");
         assertThat(payloadCaptor.getValue().sender().name()).isEqualTo("우디");
 
-        verify(contentRepository, never()).existsById(any());
         verify(userRepository, never()).findById(any());
     }
 
@@ -110,6 +111,7 @@ public class ContentChatServiceTest {
         // given
         WatchingSessionSnapshot validSnapshot = watchingSessionSnapshot(CONTENT_ID, Instant.now().plus(1, ChronoUnit.HOURS));
 
+        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
         when(watchingSessionSnapshotRepository.findByWatcherId(SENDER_ID)).thenReturn(Optional.of(validSnapshot));
         when(userRepository.findById(SENDER_ID)).thenReturn(Optional.of(mockUserEntity()));
 
@@ -122,16 +124,13 @@ public class ContentChatServiceTest {
 
         assertThat(payloadCaptor.getValue().sender().name()).isEqualTo("우디(DB)");
 
-        // User는 조회했지만, Content 존재 여부는 여전히 0회 호출되어야 함
         verify(userRepository).findById(SENDER_ID);
-        verify(contentRepository, never()).existsById(any());
     }
 
     @Test
     @DisplayName("존재하지 않는 콘텐츠면 CONTENT_NOT_FOUND 예외를 던지고 브로드캐스트하지 않음")
     void sendAndBroadcast_contentNotFound_throwsAndSkipsBroadcast() {
         // given
-        when(watchingSessionSnapshotRepository.findByWatcherId(SENDER_ID)).thenReturn(Optional.empty());
         when(contentRepository.existsById(CONTENT_ID)).thenReturn(false);
 
         // when & then
@@ -139,6 +138,7 @@ public class ContentChatServiceTest {
             .isInstanceOfSatisfying(BusinessException.class,
                 e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.CONTENT_NOT_FOUND));
 
+        verify(watchingSessionSnapshotRepository, never()).findByWatcherId(any());
         verify(userRepository, never()).findById(any());
         verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));
     }
@@ -149,8 +149,8 @@ public class ContentChatServiceTest {
         // given: 다른 콘텐츠 시청 중
         WatchingSessionSnapshot snapshotOther = watchingSessionSnapshot(OTHER_CONTENT_ID, Instant.now().plus(1, ChronoUnit.HOURS));
 
+        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
         when(watchingSessionSnapshotRepository.findByWatcherId(SENDER_ID)).thenReturn(Optional.of(snapshotOther));
-        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true); // 콘텐츠 자체는 존재함
 
         // when & then
         assertThatThrownBy(() -> contentChatService.sendAndBroadcast(SENDER_ID, CONTENT_ID, createCachedSender(), "도배 시도"))
@@ -166,8 +166,8 @@ public class ContentChatServiceTest {
         // given: 해당 콘텐츠를 시청했으나 만료됨
         WatchingSessionSnapshot expiredSnapshot = watchingSessionSnapshot(CONTENT_ID, Instant.now().minus(1, ChronoUnit.HOURS));
 
-        when(watchingSessionSnapshotRepository.findByWatcherId(SENDER_ID)).thenReturn(Optional.of(expiredSnapshot));
         when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+        when(watchingSessionSnapshotRepository.findByWatcherId(SENDER_ID)).thenReturn(Optional.of(expiredSnapshot));
 
         // when & then
         assertThatThrownBy(() -> contentChatService.sendAndBroadcast(SENDER_ID, CONTENT_ID, createCachedSender(), "안녕하세요"))
@@ -183,6 +183,7 @@ public class ContentChatServiceTest {
         // given
         WatchingSessionSnapshot validSnapshot = watchingSessionSnapshot(CONTENT_ID, Instant.now().plus(1, ChronoUnit.HOURS));
 
+        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
         when(watchingSessionSnapshotRepository.findByWatcherId(SENDER_ID)).thenReturn(Optional.of(validSnapshot));
         when(userRepository.findById(SENDER_ID)).thenReturn(Optional.empty()); // DB에 유저 없음
 

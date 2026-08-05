@@ -14,10 +14,10 @@ import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.watchingsession.dto.ContentChatSendRequest;
 import com.mopl.watchingsession.service.ContentChatService;
+import com.mopl.watchingsession.websocket.ChatSenderCache;
 import java.security.Principal;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -39,7 +39,6 @@ public class ContentChatControllerTest {
 
     private static final UUID SENDER_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID CONTENT_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
-    private static final String CACHE_ATTRIBUTE_KEY = "watchingSession.chatSender";
 
     private Principal principalOf(UUID userId) {
         return UsernamePasswordAuthenticationToken.authenticated(userId.toString(), null, java.util.List.of());
@@ -48,11 +47,10 @@ public class ContentChatControllerTest {
     // STOMP 세션 속성(캐시)을 포함한 Accessor 생성 헬퍼 메서드
     private SimpMessageHeaderAccessor createAccessorWithCache(UserSummary summary) {
         SimpMessageHeaderAccessor accessor = SimpMessageHeaderAccessor.create();
-        Map<String, Object> attributes = new HashMap<>();
+        accessor.setSessionAttributes(new HashMap<>());
         if (summary != null) {
-            attributes.put(CACHE_ATTRIBUTE_KEY, summary);
+            ChatSenderCache.put(accessor, summary);
         }
-        accessor.setSessionAttributes(attributes);
         return accessor;
     }
 

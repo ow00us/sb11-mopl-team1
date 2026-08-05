@@ -131,4 +131,48 @@ public class ChatSenderCachingInterceptorTest {
         verify(userRepository, never()).findById(any());
     }
 
+    @Test
+    @DisplayName("CONNECT 명령어지만 Principal 이름이 UUID 형식이 아니면 캐싱을 건너뜀")
+    void preSend_connectWithInvalidUuidPrincipal_skipsCaching() {
+        // given
+        Principal invalidPrincipal = UsernamePasswordAuthenticationToken
+            .authenticated("invalid-uuid-string", null, java.util.List.of());
+        Message<?> message = createMessage(StompCommand.CONNECT, invalidPrincipal);
+
+        // when
+        Message<?> result = interceptor.preSend(message, mock(MessageChannel.class));
+
+        // then
+        assertThat(result).isNotNull();
+        verify(userRepository, never()).findById(any());
+
+        StompHeaderAccessor resultAccessor = StompHeaderAccessor.getAccessor(result, StompHeaderAccessor.class);
+        assertThat(java.util.Objects.requireNonNull(resultAccessor)).isNotNull();
+        assertThat(ChatSenderCache.get(resultAccessor)).isNull();
+    }
+
+    @Test
+    @DisplayName("STOMP 명령어 프레임으로 연결을 시도해도 유저를 조회해 세션에 캐싱")
+    void preSend_stompCommandWithValidPrincipal_cachesUserSummary() {
+        // given
+        Message<?> message = createMessage(StompCommand.STOMP, principalOf(USER_ID)); // CONNECT 대신 STOMP 사용
+
+        User mockUser = mock(User.class);
+        when(mockUser.getId()).thenReturn(USER_ID);
+        when(mockUser.getName()).thenReturn("우디");
+
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(mockUser));
+
+        // when
+        Message<?> result = interceptor.preSend(message, mock(MessageChannel.class));
+
+        // then
+        assertThat(result).isNotNull();
+        StompHeaderAccessor resultAccessor = StompHeaderAccessor.getAccessor(result, StompHeaderAccessor.class);
+        UserSummary cachedSender = ChatSenderCache.get(java.util.Objects.requireNonNull(resultAccessor));
+
+        assertThat(cachedSender).isNotNull();
+        assertThat(cachedSender.name()).isEqualTo("우디");
+    }
+
 }

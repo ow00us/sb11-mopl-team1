@@ -15,7 +15,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.lang.Nullable;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 콘텐츠 실시간 채팅 처리 서비스
@@ -32,7 +31,6 @@ public class ContentChatService {
     private final SimpMessagingTemplate messagingTemplate;
     private final WatchingSessionSnapshotRepository watchingSessionSnapshotRepository;
 
-    @Transactional(readOnly = true)
     public void sendAndBroadcast(UUID senderId, UUID contentId, @Nullable UserSummary sender, String content) {
         // 시청 검증 수행 -> 정상 시청 중이면 콘텐츠 존재 여부 쿼리 생략
         // TODO: [성능 최적화] 추후 Redis 전환 시 Redis Presence 확인 로직으로 대체
@@ -53,20 +51,21 @@ public class ContentChatService {
     }
 
     private void validateWatchingAndContent(UUID senderId, UUID contentId) {
-        // 발신자의 시청 스냅샷 조회
-        WatchingSessionSnapshot snapshot = watchingSessionSnapshotRepository.findByWatcherId(senderId).orElse(null);
-
-        // 유저가 해당 콘텐츠를 시청중이고 세션이 만료되지 않았다면 통과
-        // 세션이 존재하므로 콘텐츠는 당연히 존재함.
-        if (snapshot != null && contentId.equals(snapshot.getContentId()) && !snapshot.isExpired(Instant.now())) {
-            return;
-        }
-
-        // 유저가 시청 중이 아니거나 이상한 곳에 채팅을 보냄
-        // 콘텐츠가 없으면 404, 권한이 없으면 403
+        // 콘텐츠는 @SQLDelete로 논리 삭제되어도 시청 세션 FK 행은 그대로 남을 수 있으므로,
+        // 스냅샷 유효성과 무관하게 콘텐츠 존재 여부를 항상 먼저 확인한다.
+        // (스냅샷만 보고 존재 쿼리를 생략하면, 콘텐츠 삭제 후에도 세션 만료 전까지 채팅이 가능해지는 구멍이 생김)
         if (!contentRepository.existsById(contentId)) {
             throw new BusinessException(ErrorCode.CONTENT_NOT_FOUND);
         }
-        throw new BusinessException(ErrorCode.FORBIDDEN, "시청 중인 콘텐츠에서만 채팅을 보낼 수 있습니다.");
+
+        WatchingSessionSnapshot snapshot = watchingSessionSnapshotRepository.findByWatcherId(senderId).orElse(null);
+
+        boolean isWatchingThisContent = snapshot != null
+            && contentId.equals(snapshot.getContentId())
+            && !snapshot.isExpired(Instant.now());
+
+        if (!isWatchingThisContent) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "시청 중인 콘텐츠에서만 채팅을 보낼 수 있습니다.");
+        }
     }
 }

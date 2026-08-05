@@ -28,6 +28,10 @@ import org.springframework.stereotype.Component;
  * User 조회에 실패해도(극단적으로 탈퇴 등) 여기서 연결 자체를 거부하지 않는다.
  * 인증은 이미 통과했으므로 CONNECT 자체는 성공시키고, 캐싱만 건너뛴다.
  * 이 경우 채팅 전송 시점에 ContentChatService가 캐시 미스를 감지해 처리한다.
+ *
+ * 캐시된 발신자 정보(UserSummary)는 연결 수명 동안 갱신되지 않아
+ * 사용자가 프로필을 변경하더라도 표시 정보 지연이 있음.
+ * TODO: TTL 및 무효화 로직은 현재 이슈 범위 밖이라고 판단, 추후 심화에 REDIS 도입 후 추가 예정
  */
 @Slf4j
 @Component
@@ -40,7 +44,12 @@ public class ChatSenderCachingInterceptor implements ChannelInterceptor {
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
         StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
 
-        if (accessor == null || !StompCommand.CONNECT.equals(accessor.getCommand())) {
+        if (accessor == null) {
+            return message;
+        }
+
+        StompCommand command = accessor.getCommand();
+        if (command != StompCommand.CONNECT && command != StompCommand.STOMP) {
             return message;
         }
 
