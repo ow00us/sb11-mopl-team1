@@ -30,7 +30,9 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
-        if (!StompCommand.CONNECT.equals(StompHeaderAccessor.wrap(message).getCommand())) {
+        StompCommand command = StompHeaderAccessor.wrap(message).getCommand();
+
+        if (!isConnectCommand(command)) {
             return message;
         }
 
@@ -43,6 +45,10 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
 
         accessor.setUser(authenticate(accessor));
         return message;
+    }
+
+    private boolean isConnectCommand(StompCommand command) {
+        return StompCommand.CONNECT.equals(command) || StompCommand.STOMP.equals(command);
     }
 
     private Authentication authenticate(StompHeaderAccessor accessor) {
