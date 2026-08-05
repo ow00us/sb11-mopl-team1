@@ -16,6 +16,7 @@ public class ContentUpsertService {
     private static final String PG_UNIQUE_VIOLATION_SQLSTATE = "23505";
 
     private final ContentRepository contentRepository;
+    private final ContentInsertExecutor contentInsertExecutor;
 
     @Transactional
     public Content upsert(ExternalContentDraft draft) {
@@ -32,17 +33,10 @@ public class ContentUpsertService {
 
     private Content createOrRecoverFromRace(ExternalContentDraft draft) {
         try {
-            Content content = Content.builder()
-                    .type(draft.type())
-                    .source(draft.source())
-                    .externalId(draft.externalId())
-                    .title(draft.title())
-                    .description(draft.description())
-                    .thumbnailUrl(draft.thumbnailUrl())
-                    .build();
-            draft.tags().forEach(content::addTag);
-
-            return contentRepository.saveAndFlush(content);
+            // 별도 트랜잭션(REQUIRES_NEW)에서 삽입을 시도한다.
+            // 유니크 제약 위반이 발생해도 그 트랜잭션만 롤백되고, 호출자의 트랜잭션은
+            // 영향받지 않으므로 아래 재조회를 안전하게 수행할 수 있다.
+            return contentInsertExecutor.insert(draft);
         } catch (DataIntegrityViolationException e) {
             if (!isDuplicateKeyViolation(e)) {
                 throw e;

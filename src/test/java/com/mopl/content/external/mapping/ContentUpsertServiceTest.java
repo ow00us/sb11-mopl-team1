@@ -31,6 +31,9 @@ class ContentUpsertServiceTest {
     @Mock
     ContentRepository contentRepository;
 
+    @Mock
+    ContentInsertExecutor contentInsertExecutor;
+
     @InjectMocks
     ContentUpsertService contentUpsertService;
 
@@ -42,18 +45,33 @@ class ContentUpsertServiceTest {
     @DisplayName("기존 콘텐츠가 없으면 새로 생성해서 저장한다")
     void upsert_newContent_createsAndSaves() {
         when(contentRepository.findBySourceAndExternalId(ContentSource.TMDB, "1")).thenReturn(Optional.empty());
-        when(contentRepository.saveAndFlush(any(Content.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(contentInsertExecutor.insert(any(ExternalContentDraft.class))).thenAnswer(invocation -> {
+            ExternalContentDraft draft = invocation.getArgument(0);
+            Content content = Content.builder()
+                    .type(draft.type())
+                    .source(draft.source())
+                    .externalId(draft.externalId())
+                    .title(draft.title())
+                    .description(draft.description())
+                    .thumbnailUrl(draft.thumbnailUrl())
+                    .build();
+            draft.tags().forEach(content::addTag);
+            return content;
+        });
 
         Content result = contentUpsertService.upsert(DRAFT);
 
-        ArgumentCaptor<Content> captor = ArgumentCaptor.forClass(Content.class);
-        verify(contentRepository).saveAndFlush(captor.capture());
-        Content saved = captor.getValue();
-        assertThat(saved.getTitle()).isEqualTo("제목");
-        assertThat(saved.getDescription()).isEqualTo("줄거리");
-        assertThat(saved.getThumbnailUrl()).isEqualTo("https://thumb.jpg");
-        assertThat(saved.getTags()).containsExactly("action");
-        assertThat(result).isSameAs(saved);
+        ArgumentCaptor<ExternalContentDraft> captor = ArgumentCaptor.forClass(ExternalContentDraft.class);
+        verify(contentInsertExecutor).insert(captor.capture());
+        ExternalContentDraft insertedDraft = captor.getValue();
+        assertThat(insertedDraft.title()).isEqualTo("제목");
+        assertThat(insertedDraft.description()).isEqualTo("줄거리");
+        assertThat(insertedDraft.thumbnailUrl()).isEqualTo("https://thumb.jpg");
+        assertThat(insertedDraft.tags()).containsExactly("Action");
+        assertThat(result.getTitle()).isEqualTo("제목");
+        assertThat(result.getDescription()).isEqualTo("줄거리");
+        assertThat(result.getThumbnailUrl()).isEqualTo("https://thumb.jpg");
+        assertThat(result.getTags()).containsExactly("action");
     }
 
     @Test
@@ -70,7 +88,7 @@ class ContentUpsertServiceTest {
         assertThat(existing.getThumbnailUrl()).isEqualTo("https://thumb.jpg");
         assertThat(existing.getTags()).containsExactly("action");
         verify(contentRepository, never()).save(any());
-        verify(contentRepository, never()).saveAndFlush(any());
+        verify(contentInsertExecutor, never()).insert(any());
     }
 
     @Test
@@ -80,7 +98,7 @@ class ContentUpsertServiceTest {
         when(contentRepository.findBySourceAndExternalId(ContentSource.TMDB, "1"))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(existing));
-        when(contentRepository.saveAndFlush(any(Content.class))).thenThrow(new DuplicateKeyException("dup"));
+        when(contentInsertExecutor.insert(any(ExternalContentDraft.class))).thenThrow(new DuplicateKeyException("dup"));
 
         Content result = contentUpsertService.upsert(DRAFT);
 
@@ -94,7 +112,7 @@ class ContentUpsertServiceTest {
     void upsert_saveThrowsNonDuplicateConstraintViolation_propagatesException() {
         when(contentRepository.findBySourceAndExternalId(ContentSource.TMDB, "1")).thenReturn(Optional.empty());
         SQLException checkViolation = new SQLException("check", "23514");
-        when(contentRepository.saveAndFlush(any(Content.class)))
+        when(contentInsertExecutor.insert(any(ExternalContentDraft.class)))
                 .thenThrow(new DataIntegrityViolationException("check", checkViolation));
 
         assertThatThrownBy(() -> contentUpsertService.upsert(DRAFT))
