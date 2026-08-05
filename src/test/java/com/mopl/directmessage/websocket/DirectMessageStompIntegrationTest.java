@@ -2,7 +2,13 @@ package com.mopl.directmessage.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 
+import com.mopl.directmessage.dto.DirectMessageDto;
+import com.mopl.directmessage.dto.DirectMessageSendRequest;
 import com.mopl.directmessage.entity.Conversation;
 import com.mopl.directmessage.entity.ConversationParticipant;
 import com.mopl.directmessage.entity.ParticipantSlot;
@@ -10,12 +16,17 @@ import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.directmessage.repository.ConversationRepository;
 import com.mopl.directmessage.repository.DirectMessageRepository;
 import com.mopl.global.security.JwtProvider;
+import com.mopl.global.exception.ErrorResponse;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.lang.reflect.Type;
+import java.security.Principal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,6 +39,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
+import org.springframework.messaging.simp.stomp.StompFrameHandler;
 import org.springframework.messaging.simp.stomp.StompHeaders;
 import org.springframework.messaging.simp.stomp.StompSession;
 import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
@@ -36,6 +48,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
@@ -63,12 +76,23 @@ class DirectMessageStompIntegrationTest {
         4000
     };
 
+    // SUBSCRIBE 요청이 Simple Broker에 반영될 시간을 확보한다.
+    private static final long SUBSCRIBE_SETTLE_MILLIS =
+        300;
+
     @LocalServerPort
     private int port;
 
     // 실제 JWT 문자열을 만들지 않고 인증 결과만 테스트한다.
     @MockitoBean
     private JwtProvider jwtProvider;
+
+    // 실제 Broadcaster를 사용하되, 실패 테스트에서만 예외를 설정한다.
+    @MockitoSpyBean
+    private DirectMessageBroadcaster broadcaster;
+
+    @Autowired
+    private DirectMessageWebSocketController controller;
 
     @Autowired
     private UserRepository userRepository;
@@ -82,6 +106,9 @@ class DirectMessageStompIntegrationTest {
 
     @Autowired
     private DirectMessageRepository directMessageRepository;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     private WebSocketStompClient stompClient;
     private ThreadPoolTaskScheduler taskScheduler;
@@ -189,6 +216,16 @@ class DirectMessageStompIntegrationTest {
     private StompSession connectAs(
         UUID userId
     ) throws Exception {
+        return connectAs(
+            userId,
+            null
+        );
+    }
+
+    private StompSession connectAs(
+        UUID userId,
+        CompletableFuture<ErrorResponse> errorReceived
+    ) throws Exception {
         // 사용자마다 구분되는 테스트용 토큰을 만든다.
         String token =
             "valid-token-" + userId;
@@ -224,6 +261,30 @@ class DirectMessageStompIntegrationTest {
                     (WebSocketHttpHeaders) null,
                     connectHeaders,
                     new StompSessionHandlerAdapter() {
+
+                        @Override
+                        public Type getPayloadType(
+                            StompHeaders headers
+                        ) {
+                            // 서버가 보낸 STOMP ERROR JSON를
+                            // ErrorResponse로 변환한다.
+                            return ErrorResponse.class;
+                        }
+
+                        @Override
+                        public void handleFrame(
+                            StompHeaders headers,
+                            Object payload
+                        ) {
+                            if (
+                                errorReceived != null
+                                && payload != null
+                            ) {
+                                errorReceived.complete(
+                                    (ErrorResponse) payload
+                                );
+                            }
+                        }
                     }
                 )
                 .get(
@@ -236,17 +297,222 @@ class DirectMessageStompIntegrationTest {
         return session;
     }
 
+    private CompletableFuture<DirectMessageDto>
+    subscribeDirectMessages(
+        StompSession session
+    ) throws InterruptedException {
+
+        CompletableFuture<DirectMessageDto> received =
+            new CompletableFuture<>();
+
+        String destination =
+            "/sub/conversations/"
+                + conversationId
+                + "/direct-messages";
+
+        session.subscribe(
+            destination,
+            new StompFrameHandler() {
+
+                @Override
+                public Type getPayloadType(
+                    StompHeaders headers
+                ) {
+                    // 수신한 JSON을 DirectMessageDto로 변환한다.
+                    return DirectMessageDto.class;
+                }
+
+                @Override
+                public void handleFrame(
+                    StompHeaders headers,
+                    Object payload
+                ) {
+                    received.complete(
+                        (DirectMessageDto) payload
+                    );
+                }
+            }
+        );
+
+        // Simple Broker는 SUBSCRIBE RECEIPT를 자동으로 보내지 않으므로
+        // 구독 정보가 등록될 짧은 시간을 확보한다.
+        Thread.sleep(
+            SUBSCRIBE_SETTLE_MILLIS
+        );
+
+        return received;
+    }
+
+    @Test
+    @DisplayName("참여자가 보낸 DM을 저장하고 구독자에게 실시간으로 전달한다")
+    void send_participant_savesAndBroadcasts()
+        throws Exception {
+
+        // given
+        CompletableFuture<ErrorResponse> errorReceived =
+            new CompletableFuture<>();
+
+        StompSession senderSession =
+            connectAs(
+                senderId,
+                errorReceived
+            );
+
+        StompSession receiverSession =
+            connectAs(receiverId);
+
+        CompletableFuture<DirectMessageDto> received =
+            subscribeDirectMessages(
+                receiverSession
+            );
+
+        DirectMessageSendRequest request =
+            new DirectMessageSendRequest(
+                "통합 테스트 메시지"
+            );
+
+        // when
+        senderSession.send(
+            "/pub/conversations/"
+                + conversationId
+                + "/direct-messages",
+            request
+        );
+
+        // 정상 메시지와 STOMP ERROR 중 먼저 도착한 결과를 받는다.
+        Object result =
+            CompletableFuture
+                .anyOf(
+                    received,
+                    errorReceived
+                )
+                .get(
+                    5,
+                    TimeUnit.SECONDS
+                );
+
+        // ErrorResponse가 왔다면 여기서 실제 오류 내용이 출력된다.
+        assertThat(result)
+            .as(
+                "정상 DirectMessageDto 대신 STOMP ERROR가 수신되었습니다.: %s",
+                result
+            )
+            .isInstanceOf(
+                DirectMessageDto.class
+            );
+
+        DirectMessageDto response =
+            (DirectMessageDto) result;
+
+        // then
+        assertThat(response.conversationId())
+            .isEqualTo(conversationId);
+
+        assertThat(response.sender().userId())
+            .isEqualTo(senderId);
+
+        assertThat(response.receiver().userId())
+            .isEqualTo(receiverId);
+
+        assertThat(response.content())
+            .isEqualTo(
+                "통합 테스트 메시지"
+            );
+
+        // WebSocket으로 받은 메시지가 실제 DB에도 저장되었는지 확인한다.
+        var savedMessages =
+            directMessageRepository.findAll();
+
+        assertThat(savedMessages)
+            .hasSize(1);
+
+        assertThat(savedMessages.get(0).getConversationId())
+            .isEqualTo(conversationId);
+
+        assertThat(savedMessages.get(0).getSenderId())
+            .isEqualTo(senderId);
+
+        assertThat(savedMessages.get(0).getContent())
+            .isEqualTo(
+                "통합 테스트 메시지"
+            );
+
+        // 아직 수신자가 읽음 처리하지 않았으므로 null이다.
+        assertThat(savedMessages.get(0).getReadAt())
+            .isNull();
+    }
+
+    @Test
+    @DisplayName("WebSocket 전송이 실패해도 커밋된 DM은 DB에 유지된다")
+    void send_broadcastFailure_preservesSavedMessage() {
+        // given
+        DirectMessageSendRequest request =
+            new DirectMessageSendRequest(
+                "전송 실패 메시지"
+            );
+
+        Principal principal =
+            () -> senderId.toString();
+
+        // Broadcaster가 호출되면 WebSocket 전송 예외를 발생시킨다.
+        doThrow(
+            new MessageDeliveryException(
+                "WebSocket 전송 실패"
+            )
+        ).when(broadcaster)
+            .broadcast(
+                eq(conversationId),
+                any(DirectMessageDto.class)
+            );
+
+        // when & then
+        assertThatThrownBy(() ->
+            controller.send(
+                conversationId,
+                request,
+                principal
+            )
+        ).isInstanceOf(
+            MessageDeliveryException.class
+        );
+
+        // Controller에 예외가 발생했지만 Service 트랜잭션은
+        // Broadcaster 호출 전에 이미 완료되었다.
+        var savedMessages =
+            directMessageRepository.findAll();
+
+        assertThat(savedMessages)
+            .hasSize(1);
+
+        assertThat(savedMessages.get(0).getConversationId())
+            .isEqualTo(conversationId);
+
+        assertThat(savedMessages.get(0).getSenderId())
+            .isEqualTo(senderId);
+
+        assertThat(savedMessages.get(0).getContent())
+            .isEqualTo(
+                "전송 실패 메시지"
+            );
+
+        assertThat(savedMessages.get(0).getReadAt())
+            .isNull();
+    }
+
     private WebSocketStompClient createStompClient() {
         WebSocketStompClient client =
             new WebSocketStompClient(
                 new StandardWebSocketClient()
             );
 
-        // JSON 요청과 DirectMessageDto 응답을 Java 객체로 변환한다.
-        client.setMessageConverter(
-            new MappingJackson2MessageConverter()
-        );
+        MappingJackson2MessageConverter converter =
+            new MappingJackson2MessageConverter();
 
+        // Spring Boot가 설정한 ObjectMapper를 사용해
+        // Instant와 record DTO를 변환한다.
+        converter.setObjectMapper(objectMapper);
+
+        client.setMessageConverter(converter);
         client.setTaskScheduler(taskScheduler);
         client.setDefaultHeartbeat(CLIENT_HEARTBEAT);
 
