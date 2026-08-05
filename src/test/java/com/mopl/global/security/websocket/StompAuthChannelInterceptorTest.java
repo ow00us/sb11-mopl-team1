@@ -11,6 +11,8 @@ import com.mopl.global.security.JwtProvider;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
@@ -23,16 +25,17 @@ public class StompAuthChannelInterceptorTest {
     private final JwtProvider jwtProvider = mock(JwtProvider.class);
     private final StompAuthChannelInterceptor interceptor = new StompAuthChannelInterceptor(jwtProvider);
 
-    @Test
-    @DisplayName("유효한 Bearer 토큰으로 CONNECT하면 Principal이 바인딩됨")
-    void connect_withValidToken_bindsPrincipal() {
+    @ParameterizedTest
+    @EnumSource(value = StompCommand.class, names = {"CONNECT", "STOMP"})
+    @DisplayName("유효한 Bearer 토큰으로 연결하면 Principal이 바인딩됨")
+    void connect_withValidToken_bindsPrincipal(StompCommand command) {
         String token = "valid-token";
         Authentication authentication = UsernamePasswordAuthenticationToken.authenticated(
             "user-id", null, List.of());
         when(jwtProvider.validate(token)).thenReturn(true);
         when(jwtProvider.getAuthentication(token)).thenReturn(authentication);
 
-        Message<?> connectMessage = connectMessageWithAuthorizationHeader("Bearer " + token);
+        Message<?> connectMessage = connectMessageWithAuthorizationHeader(command, "Bearer " + token);
 
         interceptor.preSend(connectMessage, null);
 
@@ -40,10 +43,11 @@ public class StompAuthChannelInterceptorTest {
         assertThat(accessor.getUser()).isEqualTo(authentication);
     }
 
-    @Test
-    @DisplayName("Authorization 헤더가 없으면 UNAUTHORIZED 예외 발생")
-    void connect_withoutAuthorizationHeader_throwsUnauthorized() {
-        StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.CONNECT);
+    @ParameterizedTest
+    @EnumSource(value = StompCommand.class, names = {"CONNECT", "STOMP"})
+    @DisplayName("연결 명령에 Authorization 헤더가 없으면 UNAUTHORIZED 예외 발생")
+    void connect_withoutAuthorizationHeader_throwsUnauthorized(StompCommand command) {
+        StompHeaderAccessor accessor = StompHeaderAccessor.create(command);
         Message<?> connectMessage = MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
 
         assertThatThrownBy(() -> interceptor.preSend(connectMessage, null))
@@ -63,12 +67,13 @@ public class StompAuthChannelInterceptorTest {
         assertThat(result).isEqualTo(sendMessage);
     }
 
-    @Test
-    @DisplayName("유효하지 않은 토큰이면 UNAUTHORIZED 예외 발생")
-    void connect_withInvalidToken_throwsUnauthorized() {
+    @ParameterizedTest
+    @EnumSource(value = StompCommand.class, names = {"CONNECT", "STOMP"})
+    @DisplayName("연결 명령에 유효하지 않은 토큰이 있으면 UNAUTHORIZED 예외 발생")
+    void connect_withInvalidToken_throwsUnauthorized(StompCommand command) {
         String token = "invalid-token";
         when(jwtProvider.validate(token)).thenReturn(false);
-        Message<?> connectMessage = connectMessageWithAuthorizationHeader("Bearer " + token);
+        Message<?> connectMessage = connectMessageWithAuthorizationHeader(command, "Bearer " + token);
 
         assertThatThrownBy(() -> interceptor.preSend(connectMessage, null))
             .isInstanceOf(BusinessException.class)
@@ -76,10 +81,11 @@ public class StompAuthChannelInterceptorTest {
             .isEqualTo(ErrorCode.UNAUTHORIZED);
     }
 
-    @Test
-    @DisplayName("Bearer prefix가 없으면 UNAUTHORIZED 예외 발생")
-    void connect_withoutBearerPrefix_throwsUnauthorized() {
-        Message<?> connectMessage = connectMessageWithAuthorizationHeader("token-only");
+    @ParameterizedTest
+    @EnumSource(value = StompCommand.class, names = {"CONNECT", "STOMP"})
+    @DisplayName("연결 명령에 Bearer prefix가 없으면 UNAUTHORIZED 예외 발생")
+    void connect_withoutBearerPrefix_throwsUnauthorized(StompCommand command) {
+        Message<?> connectMessage = connectMessageWithAuthorizationHeader(command, "token-only");
 
         assertThatThrownBy(() -> interceptor.preSend(connectMessage, null))
             .isInstanceOf(BusinessException.class)
@@ -87,8 +93,8 @@ public class StompAuthChannelInterceptorTest {
             .isEqualTo(ErrorCode.UNAUTHORIZED);
     }
 
-    private Message<?> connectMessageWithAuthorizationHeader(String value) {
-        StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.CONNECT);
+    private Message<?> connectMessageWithAuthorizationHeader(StompCommand command, String value) {
+        StompHeaderAccessor accessor = StompHeaderAccessor.create(command);
         accessor.setNativeHeader("Authorization", value);
         accessor.setLeaveMutable(true); // 실제 STOMP 처리 흐름과 동일하게 mutable 유지
         return MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());

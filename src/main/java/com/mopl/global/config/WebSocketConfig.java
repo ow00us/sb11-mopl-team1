@@ -2,6 +2,7 @@ package com.mopl.global.config;
 
 import com.mopl.directmessage.websocket.DirectMessageAuthorizationInterceptor;
 import com.mopl.global.security.websocket.StompAuthChannelInterceptor;
+import com.mopl.global.security.websocket.StompDestinationAuthorizationInterceptor;
 import com.mopl.global.security.websocket.WebSocketStompErrorHandler;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,6 +22,7 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private final StompAuthChannelInterceptor stompAuthChannelInterceptor;
+    private final StompDestinationAuthorizationInterceptor stompDestinationAuthorizationInterceptor;
     private final WebSocketStompErrorHandler webSocketStompErrorHandler;
     private final DirectMessageAuthorizationInterceptor directMessageAuthorizationInterceptor;
 
@@ -48,6 +50,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     public void configureClientInboundChannel(ChannelRegistration registration) {
         registration.interceptors(
             stompAuthChannelInterceptor,
+            stompDestinationAuthorizationInterceptor,
             directMessageAuthorizationInterceptor
         );
     }
