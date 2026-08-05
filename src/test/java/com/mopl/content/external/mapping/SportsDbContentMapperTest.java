@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.mopl.content.entity.ContentSource;
 import com.mopl.content.entity.ContentType;
 import com.mopl.content.external.sportsdb.dto.SportsDbEventSummary;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -19,7 +20,7 @@ class SportsDbContentMapperTest {
                 "1", "Chelsea vs Juventus", "Club Friendlies", "Soccer",
                 "2026-08-05", "https://thumb.jpg", "Club Friendlies 2026-08-05 Chelsea vs Juventus");
 
-        ExternalContentDraft draft = mapper.toDraft(event);
+        ExternalContentDraft draft = mapper.toDraft(event).orElseThrow();
 
         assertThat(draft.type()).isEqualTo(ContentType.SPORT);
         assertThat(draft.source()).isEqualTo(ContentSource.SPORTS_DB);
@@ -38,19 +39,30 @@ class SportsDbContentMapperTest {
         SportsDbEventSummary blankFilename = new SportsDbEventSummary(
                 "1", "Chelsea vs Juventus", "Club Friendlies", "Soccer", "2026-08-05", "https://thumb.jpg", "  ");
 
-        assertThat(mapper.toDraft(nullFilename).description()).isEqualTo("Chelsea vs Juventus");
-        assertThat(mapper.toDraft(blankFilename).description()).isEqualTo("Chelsea vs Juventus");
+        assertThat(mapper.toDraft(nullFilename).orElseThrow().description()).isEqualTo("Chelsea vs Juventus");
+        assertThat(mapper.toDraft(blankFilename).orElseThrow().description()).isEqualTo("Chelsea vs Juventus");
     }
 
     @Test
-    @DisplayName("eventName과 filename이 모두 null이면 description은 빈 문자열로 매핑된다")
-    void toDraft_nullEventNameAndFilename_mapsToEmptyDescription() {
+    @DisplayName("eventName이 null이면 draft를 만들지 않고 건너뛴다")
+    void toDraft_nullEventName_returnsEmpty() {
         SportsDbEventSummary event = new SportsDbEventSummary(
-                "1", null, "Club Friendlies", "Soccer", "2026-08-05", "https://thumb.jpg", null);
+                "1", null, "Club Friendlies", "Soccer", "2026-08-05", "https://thumb.jpg", "filename");
 
-        ExternalContentDraft draft = mapper.toDraft(event);
+        Optional<ExternalContentDraft> draft = mapper.toDraft(event);
 
-        assertThat(draft.description()).isEmpty();
+        assertThat(draft).isEmpty();
+    }
+
+    @Test
+    @DisplayName("eventName이 공백이면 draft를 만들지 않고 건너뛴다")
+    void toDraft_blankEventName_returnsEmpty() {
+        SportsDbEventSummary event = new SportsDbEventSummary(
+                "1", "  ", "Club Friendlies", "Soccer", "2026-08-05", "https://thumb.jpg", "filename");
+
+        Optional<ExternalContentDraft> draft = mapper.toDraft(event);
+
+        assertThat(draft).isEmpty();
     }
 
     @Test
@@ -59,7 +71,7 @@ class SportsDbContentMapperTest {
         SportsDbEventSummary event = new SportsDbEventSummary(
                 "1", "Chelsea vs Juventus", "", null, "2026-08-05", "https://thumb.jpg", "filename");
 
-        ExternalContentDraft draft = mapper.toDraft(event);
+        ExternalContentDraft draft = mapper.toDraft(event).orElseThrow();
 
         assertThat(draft.tags()).isEmpty();
     }

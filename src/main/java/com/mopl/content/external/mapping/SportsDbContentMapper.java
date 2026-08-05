@@ -4,13 +4,18 @@ import com.mopl.content.entity.ContentSource;
 import com.mopl.content.entity.ContentType;
 import com.mopl.content.external.sportsdb.dto.SportsDbEventSummary;
 import java.util.HashSet;
+import java.util.Optional;
 import java.util.Set;
 import org.springframework.stereotype.Component;
 
 @Component
 public class SportsDbContentMapper {
 
-    public ExternalContentDraft toDraft(SportsDbEventSummary event) {
+    public Optional<ExternalContentDraft> toDraft(SportsDbEventSummary event) {
+        if (event.eventName() == null || event.eventName().isBlank()) {
+            return Optional.empty();
+        }
+
         Set<String> tags = new HashSet<>();
         if (event.sport() != null && !event.sport().isBlank()) {
             tags.add(event.sport());
@@ -23,14 +28,14 @@ public class SportsDbContentMapper {
                 ? event.filename()
                 : event.eventName();
 
-        return new ExternalContentDraft(
+        return Optional.of(new ExternalContentDraft(
                 ContentType.SPORT,
                 ContentSource.SPORTS_DB,
                 event.idEvent(),
                 event.eventName(),
-                description == null ? "" : description,
+                description,
                 event.thumbnail(),
                 tags
-        );
+        ));
     }
 }
