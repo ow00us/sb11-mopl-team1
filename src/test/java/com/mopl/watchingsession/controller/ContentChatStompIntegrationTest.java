@@ -301,4 +301,41 @@ public class ContentChatStompIntegrationTest {
         assertThatThrownBy(() -> received.get(2, TimeUnit.SECONDS))
             .isInstanceOf(TimeoutException.class);
     }
+
+    @Test
+    @DisplayName("잘못된 contentId로 SEND 시 ERROR 프레임은 발신자 세션에만 전달되고 다른 세션에는 전달되지 않음")
+    void sendChat_invalidContentId_errorFrameIsolatedToSenderSession() throws Exception {
+        // given: 발신자 세션과 아무 요청도 보내지 않는 관찰자 세션을 별도로 연결
+        CompletableFuture<String> senderErrorReceived = new CompletableFuture<>();
+        session = connectAs(senderId, senderErrorReceived);
+
+        User observer = userRepository.save(User.builder()
+            .email("chat-observer-" + UUID.randomUUID() + "@test.com")
+            .passwordHash("hash")
+            .name("관찰자")
+            .role(UserRole.USER)
+            .locked(false)
+            .build());
+        CompletableFuture<String> observerErrorReceived = new CompletableFuture<>();
+        StompSession observerSession = connectAs(observer.getId(), observerErrorReceived);
+
+        UUID nonExistentContentId = UUID.randomUUID();
+
+        try {
+            // when: 발신자만 잘못된 contentId로 SEND
+            session.send("/pub/contents/" + nonExistentContentId + "/chat", Map.of("content", "도배 시도"));
+
+            // then: 발신자 세션에는 ERROR 프레임이 도착
+            String senderPayload = senderErrorReceived.get(5, TimeUnit.SECONDS);
+            assertThat(senderPayload).contains(ErrorCode.CONTENT_NOT_FOUND.getCode());
+
+            // then: 관찰자 세션에는 아무것도 도착하지 않아야 함
+            assertThatThrownBy(() -> observerErrorReceived.get(2, TimeUnit.SECONDS))
+                .isInstanceOf(TimeoutException.class);
+        } finally {
+            if (observerSession.isConnected()) {
+                observerSession.disconnect();
+            }
+        }
+    }
 }
