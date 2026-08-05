@@ -17,12 +17,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.MethodParameter;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.handler.annotation.support.MethodArgumentNotValidException;
+import org.springframework.messaging.simp.SimpMessageType;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.MessageBuilder;
@@ -43,6 +45,9 @@ import org.springframework.validation.FieldError;
 public class StompMessagingControllerAdviceTest {
     @Mock
     private MessageChannel clientOutboundChannel;
+
+    @Captor
+    private ArgumentCaptor<Message<byte[]>> messageCaptor;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -76,10 +81,9 @@ public class StompMessagingControllerAdviceTest {
         advice.handleBusinessException(originalMessage, exception);
 
         // then
-        ArgumentCaptor<Message<byte[]>> captor = ArgumentCaptor.forClass(Message.class);
-        verify(clientOutboundChannel).send(captor.capture());
+        verify(clientOutboundChannel).send(messageCaptor.capture());
 
-        Message<byte[]> sent = captor.getValue();
+        Message<byte[]> sent = messageCaptor.getValue();
         StompHeaderAccessor sentAccessor = StompHeaderAccessor.wrap(sent);
         assertThat(sentAccessor.getCommand()).isEqualTo(StompCommand.ERROR);
         assertThat(sentAccessor.getSessionId()).isEqualTo(sessionId);
@@ -88,6 +92,7 @@ public class StompMessagingControllerAdviceTest {
         assertThat(body.errorCode()).isEqualTo(ErrorCode.CONTENT_NOT_FOUND.getCode());
         assertThat(body.message()).isEqualTo(ErrorCode.CONTENT_NOT_FOUND.getMessage());
         assertThat(body.exceptionName()).isEqualTo("BusinessException");
+        assertThat(sentAccessor.getMessageType()).isEqualTo(SimpMessageType.MESSAGE);
     }
 
     @Test
@@ -102,10 +107,9 @@ public class StompMessagingControllerAdviceTest {
         advice.handleBusinessException(originalMessage, exception);
 
         // then
-        ArgumentCaptor<Message<byte[]>> captor = ArgumentCaptor.forClass(Message.class);
-        verify(clientOutboundChannel).send(captor.capture());
+        verify(clientOutboundChannel).send(messageCaptor.capture());
 
-        StompHeaderAccessor sentAccessor = StompHeaderAccessor.wrap(captor.getValue());
+        StompHeaderAccessor sentAccessor = StompHeaderAccessor.wrap(messageCaptor.getValue());
         assertThat(sentAccessor.getReceiptId()).isEqualTo(receiptId);
     }
 
@@ -128,10 +132,9 @@ public class StompMessagingControllerAdviceTest {
         advice.handleValidationException(originalMessage, exception);
 
         // then
-        ArgumentCaptor<Message<byte[]>> captor = ArgumentCaptor.forClass(Message.class);
-        verify(clientOutboundChannel).send(captor.capture());
+        verify(clientOutboundChannel).send(messageCaptor.capture());
 
-        ErrorResponse body = objectMapper.readValue(captor.getValue().getPayload(), ErrorResponse.class);
+        ErrorResponse body = objectMapper.readValue(messageCaptor.getValue().getPayload(), ErrorResponse.class);
         assertThat(body.errorCode()).isEqualTo(ErrorCode.INVALID_INPUT.getCode());
         assertThat(body.details()).containsEntry("content", "500자를 초과할 수 없습니다.");
     }
@@ -147,10 +150,9 @@ public class StompMessagingControllerAdviceTest {
         advice.handleUnknownException(originalMessage, exception);
 
         // then
-        ArgumentCaptor<Message<byte[]>> captor = ArgumentCaptor.forClass(Message.class);
-        verify(clientOutboundChannel).send(captor.capture());
+        verify(clientOutboundChannel).send(messageCaptor.capture());
 
-        ErrorResponse body = objectMapper.readValue(captor.getValue().getPayload(), ErrorResponse.class);
+        ErrorResponse body = objectMapper.readValue(messageCaptor.getValue().getPayload(), ErrorResponse.class);
         assertThat(body.errorCode()).isEqualTo(ErrorCode.INTERNAL_ERROR.getCode());
         assertThat(body.exceptionName()).isEqualTo("RuntimeException");
     }
@@ -172,10 +174,9 @@ public class StompMessagingControllerAdviceTest {
         failingAdvice.handleBusinessException(originalMessage, exception);
 
         // then: fallback 문자열이 그대로 전송되는지 확인 (INTERNAL_ERROR 코드 포함)
-        ArgumentCaptor<Message<byte[]>> captor = ArgumentCaptor.forClass(Message.class);
-        verify(clientOutboundChannel).send(captor.capture());
+        verify(clientOutboundChannel).send(messageCaptor.capture());
 
-        String payload = new String(captor.getValue().getPayload());
+        String payload = new String(messageCaptor.getValue().getPayload());
         assertThat(payload).contains(ErrorCode.INTERNAL_ERROR.getCode());
         assertThat(payload).contains("SerializationFailure");
     }
