@@ -11,18 +11,21 @@ import com.mopl.directmessage.dto.DirectMessageDto;
 import com.mopl.directmessage.dto.DirectMessageSendRequest;
 import com.mopl.directmessage.entity.Conversation;
 import com.mopl.directmessage.entity.ConversationParticipant;
+import com.mopl.directmessage.entity.DirectMessage;
 import com.mopl.directmessage.entity.ParticipantSlot;
 import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.directmessage.repository.ConversationRepository;
 import com.mopl.directmessage.repository.DirectMessageRepository;
 import com.mopl.global.security.JwtProvider;
 import com.mopl.global.exception.ErrorResponse;
+import com.mopl.global.common.CursorResponse;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.lang.reflect.Type;
 import java.security.Principal;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -36,7 +39,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
@@ -52,9 +57,16 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
+import org.springframework.web.util.UriComponentsBuilder;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 
 @Testcontainers
 @ActiveProfiles("test")
@@ -109,6 +121,9 @@ class DirectMessageStompIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private TestRestTemplate restTemplate;
 
     private WebSocketStompClient stompClient;
     private ThreadPoolTaskScheduler taskScheduler;
@@ -555,5 +570,205 @@ class DirectMessageStompIntegrationTest {
             .role(UserRole.USER)
             .locked(false)
             .build();
+    }
+
+    private List<DirectMessage> waitForMessageCount(
+        int expectedCount
+    ) throws InterruptedException {
+        long deadline =
+            System.nanoTime()
+                + TimeUnit.SECONDS.toNanos(5);
+
+        List<DirectMessage> messages =
+            directMessageRepository.findAll();
+
+        while (
+            messages.size() != expectedCount
+                && System.nanoTime() < deadline
+        ) {
+            Thread.sleep(50);
+
+            messages =
+                directMessageRepository.findAll();
+        }
+
+        assertThat(messages)
+            .as(
+                "제한 시간 안에 저장된 DM 개수가 %d개가 되어야 한다.",
+                expectedCount
+            )
+            .hasSize(expectedCount);
+
+        return messages;
+    }
+
+    @Test
+    @DisplayName("재접속 후 REST 복합 커서 조회로 놓친 DM을 복구한다")
+    void reconnect_recoversMissedMessageByRestCursor()
+        throws Exception {
+
+        // given: 발신자와 수신자가 WebSocket에 연결한다.
+        StompSession senderSession =
+            connectAs(senderId);
+
+        StompSession receiverSession =
+            connectAs(receiverId);
+
+        // 수신자가 해당 대화방의 실시간 DM을 구독한다.
+        CompletableFuture<DirectMessageDto> received =
+            subscribeDirectMessages(
+                receiverSession
+            );
+
+        // 수신자가 연결된 상태에서 첫 번째 메시지를 전송한다.
+        senderSession.send(
+            "/pub/conversations/"
+                + conversationId
+                + "/direct-messages",
+            new DirectMessageSendRequest(
+                "연결 중 메시지"
+            )
+        );
+
+        DirectMessageDto firstMessage =
+            received.get(
+                5,
+                TimeUnit.SECONDS
+            );
+
+        waitForMessageCount(1);
+
+        // 첫 번째 메시지의 위치를 마지막으로 확인한 커서로 사용한다.
+        String lastCursor =
+            firstMessage.createdAt().toString();
+
+        UUID lastMessageId =
+            firstMessage.id();
+
+        // 수신자의 WebSocket 연결을 종료해 오프라인 상태를 만든다.
+        receiverSession.disconnect();
+
+        // Simple Broker가 연결 종료와 구독 해제를 처리할 시간을 준다.
+        Thread.sleep(
+            SUBSCRIBE_SETTLE_MILLIS
+        );
+
+        // when: 수신자가 연결되지 않은 동안 두 번째 DM을 전송한다.
+        senderSession.send(
+            "/pub/conversations/"
+                + conversationId
+                + "/direct-messages",
+            new DirectMessageSendRequest(
+                "오프라인 메시지"
+            )
+        );
+
+        // 실시간 수신자가 없어도 메시지는 DB에 저장되어야 한다.
+        waitForMessageCount(2);
+
+        // 수신자가 WebSocket에 다시 연결한다.
+        StompSession reconnectedSession =
+            connectAs(receiverId);
+
+        assertThat(reconnectedSession.isConnected())
+            .isTrue();
+
+        // 첫 번째 메시지 이후에 저장된 메시지만 조회하도록
+        // createdAt과 id를 복합 커서로 전달한다.
+        URI recoveryUri =
+            UriComponentsBuilder
+                .fromUriString(
+                    "http://localhost:" + port
+                )
+                .path(
+                    "/api/conversations/"
+                        + conversationId
+                        + "/direct-messages"
+                )
+                .queryParam(
+                    "cursor",
+                    lastCursor
+                )
+                .queryParam(
+                    "idAfter",
+                    lastMessageId
+                )
+                .queryParam(
+                    "limit",
+                    10
+                )
+                .queryParam(
+                    "sortDirection",
+                    "ASCENDING"
+                )
+                .queryParam(
+                    "sortBy",
+                    "createdAt"
+                )
+                .build()
+                .encode()
+                .toUri();
+
+        HttpHeaders headers =
+            new HttpHeaders();
+
+        // WebSocket 재연결에 사용한 사용자와 같은 인증 토큰으로
+        // REST 복구 API를 호출한다.
+        headers.setBearerAuth(
+            "valid-token-" + receiverId
+        );
+
+        HttpEntity<Void> request =
+            new HttpEntity<>(headers);
+
+        ResponseEntity<
+            CursorResponse<DirectMessageDto>
+            > response =
+            restTemplate.exchange(
+                recoveryUri,
+                HttpMethod.GET,
+                request,
+                new ParameterizedTypeReference<
+                    CursorResponse<DirectMessageDto>
+                    >() {
+                }
+            );
+
+        // then
+        assertThat(response.getStatusCode())
+            .isEqualTo(HttpStatus.OK);
+
+        CursorResponse<DirectMessageDto> body =
+            response.getBody();
+
+        assertThat(body)
+            .isNotNull();
+
+        // 첫 번째 메시지는 커서 이전이므로 제외되고
+        // 오프라인 중 저장된 두 번째 메시지만 반환되어야 한다.
+        assertThat(body.data())
+            .hasSize(1);
+
+        DirectMessageDto recoveredMessage =
+            body.data().get(0);
+
+        assertThat(recoveredMessage.content())
+            .isEqualTo(
+                "오프라인 메시지"
+            );
+
+        assertThat(recoveredMessage.sender().userId())
+            .isEqualTo(senderId);
+
+        assertThat(recoveredMessage.receiver().userId())
+            .isEqualTo(receiverId);
+
+        // totalCount는 커서 이후 개수가 아니라
+        // 해당 대화에 저장된 전체 메시지 개수다.
+        assertThat(body.totalCount())
+            .isEqualTo(2L);
+
+        assertThat(body.hasNext())
+            .isFalse();
     }
 }
