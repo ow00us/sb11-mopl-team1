@@ -517,6 +517,42 @@ class ContentRepositoryTest {
         assertThat(result.get().getId()).isEqualTo(content.getId());
     }
 
+    // ── findBySourceAndExternalId ────────────────────────────────────────────
+
+    @Test
+    @DisplayName("findBySourceAndExternalId는 저장된 (source, externalId) 조합의 콘텐츠를 반환한다")
+    void findBySourceAndExternalId_existingContent_returnsContent() {
+        Content content = entityManager.persistAndFlush(
+                movie().source(ContentSource.TMDB).externalId("603").build());
+        entityManager.clear();
+
+        Optional<Content> result = contentRepository.findBySourceAndExternalId(ContentSource.TMDB, "603");
+
+        assertThat(result).isPresent();
+        assertThat(result.get().getId()).isEqualTo(content.getId());
+    }
+
+    @Test
+    @DisplayName("findBySourceAndExternalId는 존재하지 않는 조합이면 빈 Optional을 반환한다")
+    void findBySourceAndExternalId_notFound_returnsEmpty() {
+        Optional<Content> result = contentRepository.findBySourceAndExternalId(ContentSource.TMDB, "no-such-id");
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("findBySourceAndExternalId는 소프트 삭제된 콘텐츠에 대해 빈 Optional을 반환한다")
+    void findBySourceAndExternalId_softDeletedContent_returnsEmpty() {
+        Content content = entityManager.persistAndFlush(
+                movie().source(ContentSource.TMDB).externalId("603").build());
+        markDeleted(content.getId());
+        entityManager.clear();
+
+        Optional<Content> result = contentRepository.findBySourceAndExternalId(ContentSource.TMDB, "603");
+
+        assertThat(result).isEmpty();
+    }
+
     // ── refreshReviewAggregate ─────────────────────────────────────────────
 
     @Test
