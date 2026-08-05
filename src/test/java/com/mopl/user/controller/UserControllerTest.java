@@ -19,6 +19,7 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserUpdateRequest;
+import com.mopl.user.dto.UserLockUpdateRequest;
 import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.service.UserService;
@@ -32,6 +33,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.springframework.http.HttpMethod;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -583,6 +585,196 @@ class UserControllerTest {
          * 비밀번호 암호화와 DB 조회를 담당하는 Service는 호출되면 안된다.
          */
         verifyNoInteractions(userService);
+    }
+
+    /**
+     * ROLE_ADMIN 권한을 가진 사용자가 계정 잠금 상태를 변경하면
+     * Service에 대상 사용자와 요청이 전달되고 204를 반환하는지 검증
+     */
+    @Test
+    @DisplayName("관리자는 사용자 계정을 잠글 수 있다")
+    void updateLocked_success_whenRequesterIsAdmin() throws Exception {
+        // given
+        UUID adminId =
+            UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+
+        UUID targetUserId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        /*
+         * 실제 요청에서는 JwtProviderImpl이 JWT의 ADMIN role을
+         * ROLE_ADMIN GrantedAuthority로 변환
+         */
+        setAuthenticatedUser(
+            adminId,
+            UserRole.ADMIN
+        );
+
+        UserLockUpdateRequest request =
+            new UserLockUpdateRequest(true);
+
+        // when & then
+        mockMvc.perform(
+                patch(
+                    "/api/users/{userId}/locked",
+                    targetUserId
+                )
+                    .contentType("application/json")
+                    .content(objectMapper.writeValueAsString(request))
+            )
+            .andExpect(status().isNoContent())
+            .andExpect(content().string(""));
+
+        verify(userService).updateLocked(
+            targetUserId,
+            new UserLockUpdateRequest(true)
+        );
+    }
+
+    /**
+     * 인증은 완료됐지만 ROLE_ADMIN 권한이 없는 사용자는
+     * 관리자 전용 API를 호출할 수 없는지 검증
+     */
+    @Test
+    @DisplayName("일반 사용자는 계정 잠금 상태를 변경할 수 없다")
+    void updateLocked_fail_whenRequesterIsNotAdmin() throws Exception {
+        // given
+        UUID requesterId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        UUID targetUserId =
+            UUID.fromString("22222222-2222-2222-2222-222222222222");
+
+        setAuthenticatedUser(
+            requesterId,
+            UserRole.USER
+        );
+
+        UserLockUpdateRequest request =
+            new UserLockUpdateRequest(true);
+
+        // when & then
+        mockMvc.perform(
+                patch(
+                    "/api/users/{userId}/locked",
+                    targetUserId
+                )
+                    .contentType("application/json")
+                    .content(objectMapper.writeValueAsString(request))
+            )
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.errorCode")
+                .value("COMMON_403_1"));
+
+        /*
+         * 관리자 권한 검증에서 요청이 중단됐으므로
+         * 사용자 조회와 상태 변경을 담당하는 Service는 호출되면 안됨.
+         */
+        verifyNoInteractions(userService);
+    }
+
+    /**
+     * SecurityContext에 인증 정보가 없다면 관리자 여부를 확인할 수 없으므로
+     * 401 Unauthorized를 반환하는지 검증
+     */
+    @Test
+    @DisplayName("인증되지 않은 사용자는 계정 잠금 상태를 변경할 수 없다")
+    void updateLocked_fail_whenAuthenticationDoesNotExist() throws Exception {
+        // given
+        UUID targetUserId =
+            UUID.fromString("22222222-2222-2222-2222-222222222222");
+
+        UserLockUpdateRequest request =
+            new UserLockUpdateRequest(true);
+
+        /*
+         * 이 테스트에서는 setAuthenticatedUser()를 호출하지 않는다.
+         * @AfterEach에서 SecurityContext가 초기화되므로 인증 정보가 없음.
+         */
+
+        // when & then
+        mockMvc.perform(
+                patch(
+                    "/api/users/{userId}/locked",
+                    targetUserId
+                )
+                    .contentType("application/json")
+                    .content(objectMapper.writeValueAsString(request))
+            )
+            .andExpect(status().isUnauthorized())
+            .andExpect(jsonPath("$.errorCode")
+                .value("COMMON_401_1"));
+
+        verifyNoInteractions(userService);
+    }
+
+    /**
+     * locked 값이 null이면 DTO Bean Validation에서 요청을 거절하고
+     * 관리자 권한 검사와 Service 호출까지 진행하지 않는지 검증
+     */
+    @Test
+    @DisplayName("계정 잠금 상태가 누락되면 400을 반환한다")
+    void updateLocked_fail_whenLockedIsNull() throws Exception {
+        // given
+        UUID adminId =
+            UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+
+        UUID targetUserId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        setAuthenticatedUser(
+            adminId,
+            UserRole.ADMIN
+        );
+
+        UserLockUpdateRequest request =
+            new UserLockUpdateRequest(null);
+
+        // when & then
+        mockMvc.perform(
+                patch(
+                    "/api/users/{userId}/locked",
+                    targetUserId
+                )
+                    .contentType("application/json")
+                    .content(objectMapper.writeValueAsString(request))
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.errorCode")
+                .value("COMMON_400_1"))
+            .andExpect(jsonPath("$.details.locked").exists());
+
+        /*
+         * @Valid 검증이 Controller 메서드 실행 전에 실패하므로
+         * Service는 호출되지 않는다.
+         */
+        verifyNoInteractions(userService);
+    }
+
+    /**
+     * 테스트 SecurityContext에 역할이 포함된 인증 정보를 설정
+     *
+     * JwtProviderImpl이 실제 JWT 인증 성공 시 생성하는 것과 동일하게
+     * ROLE_USER 또는 ROLE_ADMIN 형식의 권한을 저장
+     *
+     * @param userId 인증된 사용자의 UUID
+     * @param role 인증된 사용자의 역할
+     */
+    private void setAuthenticatedUser(
+        UUID userId,
+        UserRole role
+    ) {
+        SecurityContextHolder.getContext().setAuthentication(
+            UsernamePasswordAuthenticationToken.authenticated(
+                userId,
+                null,
+                List.of(
+                    new SimpleGrantedAuthority(
+                        "ROLE_" + role.name()
+                    )
+                )
+            )
+        );
     }
 
     /**

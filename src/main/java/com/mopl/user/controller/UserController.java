@@ -1,7 +1,10 @@
 package com.mopl.user.controller;
 
+import com.mopl.global.exception.BusinessException;
+import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserUpdateRequest;
+import com.mopl.user.dto.UserLockUpdateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.service.UserService;
@@ -14,6 +17,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.multipart.MultipartFile;
@@ -176,6 +181,94 @@ public class UserController {
         );
 
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 관리자가 사용자 계정의 잠금 상태를 변경
+     *
+     * JWT 인증 정보에 ROLE_ADMIN 권한이 있는지 먼저 확인한 뒤
+     * 대상 사용자 UUID와 변경할 잠금 상태를 UserService에 전달
+     *
+     * locked가 true이면 계정을 잠그고,
+     * false이면 기존 계정 잠금을 해제
+     *
+     * 변경이 완료되면 응답 본문 없이 204 No Content를 반환
+     *
+     * @param userId 잠금 상태를 변경할 대상 사용자의 UUID
+     * @param request 새 잠금 상태가 담긴 요청
+     * @return 응답 본문이 없는 204 No Content 응답
+     */
+    @PatchMapping("/{userId}/locked")
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "204",
+            description = "계정 잠금 상태 변경 성공"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자를 찾을 수 없음"
+        )
+    })
+    public ResponseEntity<Void> updateLocked(
+        @PathVariable UUID userId,
+        @Valid @RequestBody UserLockUpdateRequest request
+    ) {
+        /*
+         * 사용자 조회나 상태 변경 전에 관리자 권한부터 확인
+         *
+         * 권한이 없는 요청이 대상 사용자의 존재 여부를 확인하거나
+         * Service 로직을 실행하지 못하도록 한다.
+         */
+        requireAdmin();
+
+        userService.updateLocked(
+            userId,
+            request
+        );
+
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 현재 요청 사용자가 인증된 관리자인지 확인
+     *
+     * JwtAuthenticationFilter가 유효한 JWT를 검증하면
+     * Authentication의 authorities에 ROLE_USER 또는 ROLE_ADMIN을 저장
+     *
+     * 인증 정보가 없으면 401 Unauthorized,
+     * 인증됐지만 ROLE_ADMIN이 없으면 403 Forbidden을 발생
+     */
+    private void requireAdmin() {
+        Authentication authentication =
+            SecurityContextHolder.getContext().getAuthentication();
+
+        /*
+         * 인증 정보가 없거나 인증이 완료되지 않은 경우
+         *
+         * anonymousUser 검사도 함께 수행하여 익명 인증 객체가 들어온 경우를
+         * 실제 로그인 사용자로 처리하지 않도록 한다.
+         */
+        if (
+            authentication == null
+                || !authentication.isAuthenticated()
+                || "anonymousUser".equals(authentication.getPrincipal())
+        ) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
+
+        /*
+         * JwtProviderImpl은 JWT의 role 클레임을 읽어
+         * ROLE_USER 또는 ROLE_ADMIN 형식의 GrantedAuthority를 생성
+         */
+        boolean isAdmin = authentication.getAuthorities()
+            .stream()
+            .anyMatch(authority ->
+                "ROLE_ADMIN".equals(authority.getAuthority())
+            );
+
+        if (!isAdmin) {
+            throw new BusinessException(ErrorCode.FORBIDDEN);
+        }
     }
 
 }
