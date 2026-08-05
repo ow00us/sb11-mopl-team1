@@ -5,4 +5,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "sportsdb")
 public record SportsDbProperties(String baseUrl, String apiKey, List<Integer> leagueIds) {
+
+    public SportsDbProperties {
+        if (baseUrl != null && !baseUrl.startsWith("https://")) {
+            throw new IllegalStateException(
+                    "sportsdb.base-url must use HTTPS to avoid sending the API key in cleartext: " + baseUrl);
+        }
+    }
 }
