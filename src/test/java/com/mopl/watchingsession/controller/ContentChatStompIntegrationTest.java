@@ -192,7 +192,7 @@ public class ContentChatStompIntegrationTest {
                 @Override
                 public void handleException(StompSession session, StompCommand command,
                     StompHeaders headers, byte[] payload, Throwable exception) {
-                    if (errorFuture != null) {
+                    if (errorFuture != null && command == StompCommand.ERROR) {
                         errorFuture.complete(new String(payload, StandardCharsets.UTF_8));
                     }
                 }
