@@ -127,4 +127,21 @@ public class User extends BaseEntity {
     ) {
         this.passwordHash = encodedPassword;
     }
+
+    /**
+     * 관리자의 요청에 따라 사용자 계정의 잠금 상태를 변경
+     *
+     * true를 전달하면 계정을 잠그고,
+     * false를 전달하면 기존 계정 잠금을 해제
+     *
+     * locked 필드에 범용 setter를 제공하지 않고
+     * 계정 잠금 상태 변경이라는 목적이 드러나는 메서드를 통해서만 값을 변경
+     *
+     * @param locked 새로 적용할 계정 잠금 상태
+     */
+    public void updateLocked(
+        boolean locked
+    ) {
+        this.locked = locked;
+    }
 }

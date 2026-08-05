@@ -13,6 +13,7 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserUpdateRequest;
+import com.mopl.user.dto.UserLockUpdateRequest;
 import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.storage.ProfileImageStorage;
 import com.mopl.user.entity.User;
@@ -603,6 +604,124 @@ class UserServiceTest {
          * 수행하면 안 됩니다.
          */
         verifyNoInteractions(passwordEncoder);
+    }
+
+    @Test
+    @DisplayName("관리자는 사용자 계정을 잠글 수 있다")
+    void updateLocked_success_whenLockingUser() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        /*
+         * createUserFixture()는 locked가 false인 사용자를 생성
+         * 따라서 잠기지 않은 계정을 잠그는 상황
+         */
+        User user = createUserFixture(userId);
+
+        UserLockUpdateRequest request =
+            new UserLockUpdateRequest(true);
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        // when
+        userService.updateLocked(
+            userId,
+            request
+        );
+
+        // then
+        assertThat(user.isLocked()).isTrue();
+
+        /*
+         * 대상 사용자는 한 번만 조회해야 한다.
+         */
+        verify(userRepository).findById(userId);
+
+        /*
+         * 조회한 User는 영속 엔티티이므로 JPA 변경 감지를 사용
+         * 따라서 save()를 명시적으로 호출하지 않아야 한다.
+         */
+        verify(userRepository, never())
+            .save(any(User.class));
+    }
+
+    @Test
+    @DisplayName("관리자는 사용자 계정 잠금을 해제할 수 있다")
+    void updateLocked_success_whenUnlockingUser() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        User user = createUserFixture(userId);
+
+        /*
+         * createUserFixture()는 기본적으로 잠기지 않은 사용자를 만든다.
+         *
+         * 테스트 대상인 updateLocked()를 준비 과정에서 먼저 호출하면
+         * 같은 메서드가 정상 동작한다고 가정하는 테스트가 되므로,
+         * 테스트 준비 단계에서는 ReflectionTestUtils로 잠금 상태를 설정
+         */
+        ReflectionTestUtils.setField(
+            user,
+            "locked",
+            true
+        );
+
+        UserLockUpdateRequest request =
+            new UserLockUpdateRequest(false);
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        // when
+        userService.updateLocked(
+            userId,
+            request
+        );
+
+        // then
+        assertThat(user.isLocked()).isFalse();
+
+        verify(userRepository).findById(userId);
+
+        verify(userRepository, never())
+            .save(any(User.class));
+    }
+
+    @Test
+    @DisplayName("잠금 상태를 변경할 사용자가 없으면 실패한다")
+    void updateLocked_fail_whenUserDoesNotExist() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        UserLockUpdateRequest request =
+            new UserLockUpdateRequest(true);
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.updateLocked(
+                userId,
+                request
+            )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+
+        verify(userRepository).findById(userId);
+
+        /*
+         * 사용자가 존재하지 않으므로 저장 또는 상태 변경과 관련된
+         * 추가 Repository 작업이 발생하면 안된다.
+         */
+        verify(userRepository, never())
+            .save(any(User.class));
     }
 
     /**
