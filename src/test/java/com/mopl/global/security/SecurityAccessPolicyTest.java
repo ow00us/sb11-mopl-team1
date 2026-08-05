@@ -292,4 +292,48 @@ class SecurityAccessPolicyTest {
         verify(jwtProvider).getAuthentication("admin-token");
     }
 
+    @Test
+    @DisplayName("인증되지 않은 사용자가 계정 잠금 API에 잘못된 본문을 보내도 401을 반환한다")
+    void updateLocked_unauthenticatedWithInvalidBody_returnsUnauthorized()
+        throws Exception {
+
+        // given
+        /*
+         * Authorization 헤더를 전달하지 않아 인증 정보가 없는 요청을 구성한다.
+         *
+         * 빈 JSON 본문은 locked 값이 없어 DTO 검증에 실패할 요청이지만,
+         * 인증되지 않은 요청은 본문 검증보다 먼저 SecurityFilterChain에서
+         * 401 Unauthorized로 차단되어야 한다.
+         */
+
+        // when & then
+        /*
+         * 유효한 CSRF 토큰을 포함해야 CSRF 실패로 인한 403과
+         * 인증 실패로 인한 401을 정확하게 구분할 수 있다.
+         */
+        mockMvc.perform(
+                patch(
+                    "/api/users/{userId}/locked",
+                    USER_ID
+                )
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}")
+            )
+            .andExpect(status().isUnauthorized())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_401_1")
+            );
+
+        /*
+         * Bearer 토큰이 전달되지 않았으므로 JwtProvider를 통한
+         * 토큰 검증도 실행되지 않아야 한다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(org.mockito.ArgumentMatchers.anyString());
+    }
+
 }

@@ -625,7 +625,7 @@ class UserControllerTest {
 
     /**
      * locked 값이 null이면 DTO Bean Validation에서 요청을 거절하고
-     * 관리자 권한 검사와 Service 호출까지 진행하지 않는지 검증
+     * Controller 메서드와 Service 호출까지 진행하지 않는지 검증
      */
     @Test
     @DisplayName("계정 잠금 상태가 누락되면 400을 반환한다")
