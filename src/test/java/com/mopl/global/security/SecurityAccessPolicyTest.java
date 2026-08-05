@@ -30,8 +30,10 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.context.ActiveProfiles;
 
 @WebMvcTest(SecurityPolicyProbeController.class)
+@ActiveProfiles({"test", "security-policy-test"})
 @Import({
     SecurityConfig.class,
     CsrfTokenController.class
