@@ -332,6 +332,54 @@ public class DirectMessageService {
     }
 
     @Transactional
+    public DirectMessageDto create(
+        UUID senderId,
+        UUID conversationId,
+        String content
+    ) {
+        validateContent(content);
+
+        List<ConversationParticipant> participants =
+            getParticipants(
+                conversationId,
+                senderId
+            );
+
+        Map<UUID, UUID> receiverIdBySenderId =
+            createReceiverIdMap(participants);
+
+        Map<UUID, UserSummary> userSummaries =
+            getUserSummaries(participants);
+
+        DirectMessage directMessage =
+            DirectMessage.create(
+                conversationId,
+                senderId,
+                content
+            );
+
+        DirectMessage savedMessage =
+            directMessageRepository.save(
+                directMessage
+            );
+
+        return toDto(
+            savedMessage,
+            receiverIdBySenderId,
+            userSummaries
+        );
+    }
+
+    private void validateContent(String content) {
+        if (content == null || content.isBlank()) {
+            throw new BusinessException(
+                ErrorCode.INVALID_INPUT,
+                "메시지 내용은 필수입니다."
+            );
+        }
+    }
+
+    @Transactional
     public void read(
         UUID requesterId,
         UUID conversationId,
