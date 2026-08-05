@@ -75,7 +75,6 @@ import org.springframework.http.ResponseEntity;
 )
 class DirectMessageStompIntegrationTest {
 
-    // 실제 PostgreSQL에서 Repository와 트랜잭션을 검증한다.
     @Container
     @ServiceConnection
     static PostgreSQLContainer<?> postgres =
@@ -95,7 +94,6 @@ class DirectMessageStompIntegrationTest {
     @LocalServerPort
     private int port;
 
-    // 실제 JWT 문자열을 만들지 않고 인증 결과만 테스트한다.
     @MockitoBean
     private JwtProvider jwtProvider;
 
@@ -128,7 +126,6 @@ class DirectMessageStompIntegrationTest {
     private WebSocketStompClient stompClient;
     private ThreadPoolTaskScheduler taskScheduler;
 
-    // 이후 발신자와 수신자 세션을 모두 정리하기 위해 List로 관리한다.
     private final List<StompSession> sessions =
         new ArrayList<>();
 
@@ -138,15 +135,12 @@ class DirectMessageStompIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        // WebSocket 클라이언트의 heartbeat 작업을 실행할 스케줄러다.
         taskScheduler =
             createTaskScheduler();
 
-        // 실제 서버에 연결할 테스트용 STOMP 클라이언트를 만든다.
         stompClient =
             createStompClient();
 
-        // 테스트에 사용할 사용자 두 명을 실제 DB에 저장한다.
         User sender =
             userRepository.save(
                 createUser("발신자")
@@ -160,7 +154,6 @@ class DirectMessageStompIntegrationTest {
         senderId = sender.getId();
         receiverId = receiver.getId();
 
-        // 1:1 DM 대화방을 실제 DB에 저장한다.
         Conversation conversation =
             conversationRepository.save(
                 Conversation.create()
@@ -169,7 +162,6 @@ class DirectMessageStompIntegrationTest {
         conversationId =
             conversation.getId();
 
-        // 저장된 대화에 발신자와 수신자를 참여자로 등록한다.
         participantRepository.saveAll(
             List.of(
                 ConversationParticipant.create(
@@ -188,7 +180,6 @@ class DirectMessageStompIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        // 테스트에서 만든 모든 WebSocket 연결을 종료한다.
         sessions.forEach(session -> {
             if (session.isConnected()) {
                 try {
@@ -241,11 +232,9 @@ class DirectMessageStompIntegrationTest {
         UUID userId,
         CompletableFuture<ErrorResponse> errorReceived
     ) throws Exception {
-        // 사용자마다 구분되는 테스트용 토큰을 만든다.
         String token =
             "valid-token-" + userId;
 
-        // STOMP 인증 Interceptor가 반환받을 인증 객체다.
         Authentication authentication =
             UsernamePasswordAuthenticationToken
                 .authenticated(
@@ -260,7 +249,6 @@ class DirectMessageStompIntegrationTest {
         when(jwtProvider.getAuthentication(token))
             .thenReturn(authentication);
 
-        // STOMP CONNECT 프레임에 Authorization 헤더를 넣는다.
         StompHeaders connectHeaders =
             new StompHeaders();
 
@@ -333,7 +321,6 @@ class DirectMessageStompIntegrationTest {
                 public Type getPayloadType(
                     StompHeaders headers
                 ) {
-                    // 수신한 JSON을 DirectMessageDto로 변환한다.
                     return DirectMessageDto.class;
                 }
 
@@ -406,7 +393,6 @@ class DirectMessageStompIntegrationTest {
                     TimeUnit.SECONDS
                 );
 
-        // ErrorResponse가 왔다면 여기서 실제 오류 내용이 출력된다.
         assertThat(result)
             .as(
                 "정상 DirectMessageDto 대신 STOMP ERROR가 수신되었습니다.: %s",
@@ -434,7 +420,6 @@ class DirectMessageStompIntegrationTest {
                 "통합 테스트 메시지"
             );
 
-        // WebSocket으로 받은 메시지가 실제 DB에도 저장되었는지 확인한다.
         var savedMessages =
             directMessageRepository.findAll();
 
@@ -469,7 +454,6 @@ class DirectMessageStompIntegrationTest {
         Principal principal =
             () -> senderId.toString();
 
-        // Broadcaster가 호출되면 WebSocket 전송 예외를 발생시킨다.
         doThrow(
             new MessageDeliveryException(
                 "WebSocket 전송 실패"
@@ -607,20 +591,18 @@ class DirectMessageStompIntegrationTest {
     void reconnect_recoversMissedMessageByRestCursor()
         throws Exception {
 
-        // given: 발신자와 수신자가 WebSocket에 연결한다.
+        // given: 연결 상태에서 첫 메시지를 수신하고 복구 기준 커서를 저장한다.
         StompSession senderSession =
             connectAs(senderId);
 
         StompSession receiverSession =
             connectAs(receiverId);
 
-        // 수신자가 해당 대화방의 실시간 DM을 구독한다.
         CompletableFuture<DirectMessageDto> received =
             subscribeDirectMessages(
                 receiverSession
             );
 
-        // 수신자가 연결된 상태에서 첫 번째 메시지를 전송한다.
         senderSession.send(
             "/pub/conversations/"
                 + conversationId
@@ -638,14 +620,13 @@ class DirectMessageStompIntegrationTest {
 
         waitForMessageCount(1);
 
-        // 첫 번째 메시지의 위치를 마지막으로 확인한 커서로 사용한다.
         String lastCursor =
             firstMessage.createdAt().toString();
 
         UUID lastMessageId =
             firstMessage.id();
 
-        // 수신자의 WebSocket 연결을 종료해 오프라인 상태를 만든다.
+        // when: 수신자 연결이 끊긴 동안 두 번째 메시지를 전송한다.
         receiverSession.disconnect();
 
         // Simple Broker가 연결 종료와 구독 해제를 처리할 시간을 준다.
@@ -653,7 +634,6 @@ class DirectMessageStompIntegrationTest {
             SUBSCRIBE_SETTLE_MILLIS
         );
 
-        // when: 수신자가 연결되지 않은 동안 두 번째 DM을 전송한다.
         senderSession.send(
             "/pub/conversations/"
                 + conversationId
@@ -663,18 +643,15 @@ class DirectMessageStompIntegrationTest {
             )
         );
 
-        // 실시간 수신자가 없어도 메시지는 DB에 저장되어야 한다.
         waitForMessageCount(2);
 
-        // 수신자가 WebSocket에 다시 연결한다.
         StompSession reconnectedSession =
             connectAs(receiverId);
 
         assertThat(reconnectedSession.isConnected())
             .isTrue();
 
-        // 첫 번째 메시지 이후에 저장된 메시지만 조회하도록
-        // createdAt과 id를 복합 커서로 전달한다.
+        // then: 재접속 후 REST 복합 커서 조회로 놓친 메시지만 복구한다.
         URI recoveryUri =
             UriComponentsBuilder
                 .fromUriString(
@@ -712,8 +689,6 @@ class DirectMessageStompIntegrationTest {
         HttpHeaders headers =
             new HttpHeaders();
 
-        // WebSocket 재연결에 사용한 사용자와 같은 인증 토큰으로
-        // REST 복구 API를 호출한다.
         headers.setBearerAuth(
             "valid-token-" + receiverId
         );
@@ -734,7 +709,6 @@ class DirectMessageStompIntegrationTest {
                 }
             );
 
-        // then
         assertThat(response.getStatusCode())
             .isEqualTo(HttpStatus.OK);
 
@@ -744,8 +718,6 @@ class DirectMessageStompIntegrationTest {
         assertThat(body)
             .isNotNull();
 
-        // 첫 번째 메시지는 커서 이전이므로 제외되고
-        // 오프라인 중 저장된 두 번째 메시지만 반환되어야 한다.
         assertThat(body.data())
             .hasSize(1);
 
