@@ -1,6 +1,7 @@
 package com.mopl.content.repository;
 
 import com.mopl.content.entity.Content;
+import com.mopl.content.entity.ContentSource;
 import jakarta.persistence.LockModeType;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -23,6 +24,9 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
     // 콘텐츠당 태그 배치 지연 로딩을 없앤다. 페이지 단위 콘텐츠 조회에 사용한다.
     @EntityGraph(attributePaths = {"tags"})
     List<Content> findAllWithTagsByIdIn(Collection<UUID> ids);
+
+    // 외부 API 수집 upsert 시 (source, external_id) 기준으로 기존 콘텐츠를 조회한다.
+    Optional<Content> findBySourceAndExternalId(ContentSource source, String externalId);
 
     // ── createdAt 정렬 ──────────────────────────────────────────────────────
 
