@@ -148,4 +148,38 @@ public class StompErrorFrameSenderTest {
         assertThat(payload).contains(ErrorCode.INTERNAL_ERROR.getCode());
         assertThat(payload).contains("SerializationFailure");
     }
+
+    @Test
+    @DisplayName("originalMessage가 null이면 sessionId/receipt 없이 ERROR 프레임을 생성하고 전송한다 (NPE 없이)")
+    void send_handlesNullOriginalMessage_withoutSessionIdOrReceipt() throws Exception {
+        // when
+        sender.send(null, "BusinessException", ErrorCode.CONTENT_NOT_FOUND,
+            ErrorCode.CONTENT_NOT_FOUND.getMessage(), Map.of());
+
+        // then
+        verify(clientOutboundChannel).send(messageCaptor.capture());
+
+        Message<byte[]> sent = messageCaptor.getValue();
+        StompHeaderAccessor sentAccessor = StompHeaderAccessor.wrap(sent);
+        assertThat(sentAccessor.getCommand()).isEqualTo(StompCommand.ERROR);
+        assertThat(sentAccessor.getSessionId()).isNull();
+        assertThat(sentAccessor.getReceiptId()).isNull();
+
+        ErrorResponse body = objectMapper.readValue(sent.getPayload(), ErrorResponse.class);
+        assertThat(body.errorCode()).isEqualTo(ErrorCode.CONTENT_NOT_FOUND.getCode());
+    }
+
+    @Test
+    @DisplayName("build()도 originalMessage가 null이면 NPE 없이 프레임을 반환")
+    void build_handlesNullOriginalMessage_withoutThrowing() {
+        // when & then: 예외 없이 정상 반환되어야 함
+        Message<byte[]> built = sender.build(null, "BusinessException",
+            ErrorCode.CONTENT_NOT_FOUND, ErrorCode.CONTENT_NOT_FOUND.getMessage(), Map.of());
+
+        StompHeaderAccessor builtAccessor = StompHeaderAccessor.wrap(built);
+        assertThat(builtAccessor.getCommand()).isEqualTo(StompCommand.ERROR);
+        assertThat(builtAccessor.getSessionId()).isNull();
+
+        Mockito.verifyNoInteractions(clientOutboundChannel);
+    }
 }

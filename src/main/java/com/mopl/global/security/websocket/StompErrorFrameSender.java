@@ -61,17 +61,19 @@ public class StompErrorFrameSender {
     public Message<byte[]> build(Message<?> originalMessage, String exceptionName, ErrorCode errorCode, String message, Map<String, String> details) {
         ErrorResponse body = ErrorResponse.of(exceptionName, errorCode, message, details);
 
-        StompHeaderAccessor originalAccessor = StompHeaderAccessor.wrap(originalMessage);
-
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.ERROR);
         accessor.setMessage(message);
-        accessor.setSessionId(originalAccessor.getSessionId());
         accessor.setHeader(SimpMessageHeaderAccessor.MESSAGE_TYPE_HEADER, SimpMessageType.MESSAGE);
         accessor.setLeaveMutable(true);
 
-        String receiptId = originalAccessor.getReceipt();
-        if (receiptId != null) {
-            accessor.setReceiptId(receiptId);
+        if (originalMessage != null) {
+            StompHeaderAccessor originalAccessor = StompHeaderAccessor.wrap(originalMessage);
+            accessor.setSessionId(originalAccessor.getSessionId());
+
+            String receiptId = originalAccessor.getReceipt();
+            if (receiptId != null) {
+                accessor.setReceiptId(receiptId);
+            }
         }
 
         byte[] payload = writeAsBytes(body);
@@ -93,6 +95,4 @@ public class StompErrorFrameSender {
             return json.getBytes(StandardCharsets.UTF_8);
         }
     }
-
-
 }
