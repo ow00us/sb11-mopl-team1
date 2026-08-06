@@ -6,6 +6,7 @@ import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentSource;
 import com.mopl.content.entity.ContentType;
 import com.mopl.content.repository.ContentRepository;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -48,12 +49,12 @@ class ContentUpsertConcurrencyIntegrationTest {
         CountDownLatch go = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(2);
 
-        Future<Content> f1 = executor.submit(() -> {
+        Future<Optional<Content>> f1 = executor.submit(() -> {
             ready.countDown();
             go.await();
             return contentUpsertService.upsert(draft);
         });
-        Future<Content> f2 = executor.submit(() -> {
+        Future<Optional<Content>> f2 = executor.submit(() -> {
             ready.countDown();
             go.await();
             return contentUpsertService.upsert(draft);
@@ -64,8 +65,8 @@ class ContentUpsertConcurrencyIntegrationTest {
 
         // 수정 전 코드였다면 패자 쪽에서 "current transaction is aborted" 예외가 던져져
         // get()이 ExecutionException으로 실패했을 것이다. 여기서는 둘 다 정상 완료되어야 한다.
-        Content result1 = f1.get(10, TimeUnit.SECONDS);
-        Content result2 = f2.get(10, TimeUnit.SECONDS);
+        Content result1 = f1.get(10, TimeUnit.SECONDS).orElseThrow();
+        Content result2 = f2.get(10, TimeUnit.SECONDS).orElseThrow();
         executor.shutdown();
 
         assertThat(result1.getId()).isNotNull();

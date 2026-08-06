@@ -553,6 +553,46 @@ class ContentRepositoryTest {
         assertThat(result).isEmpty();
     }
 
+    // ── findBySourceAndExternalIdIncludingDeleted ───────────────────────────
+
+    @Test
+    @DisplayName("findBySourceAndExternalIdIncludingDeleted는 삭제되지 않은 콘텐츠를 반환한다")
+    void findBySourceAndExternalIdIncludingDeleted_activeContent_returnsContent() {
+        Content content = entityManager.persistAndFlush(
+                movie().source(ContentSource.TMDB).externalId("603").build());
+        entityManager.clear();
+
+        Optional<Content> result = contentRepository.findBySourceAndExternalIdIncludingDeleted(
+                ContentSource.TMDB.name(), "603");
+
+        assertThat(result).isPresent();
+        assertThat(result.get().getId()).isEqualTo(content.getId());
+    }
+
+    @Test
+    @DisplayName("findBySourceAndExternalIdIncludingDeleted는 소프트 삭제된 콘텐츠도 반환한다")
+    void findBySourceAndExternalIdIncludingDeleted_softDeletedContent_returnsContent() {
+        Content content = entityManager.persistAndFlush(
+                movie().source(ContentSource.TMDB).externalId("603").build());
+        markDeleted(content.getId());
+        entityManager.clear();
+
+        Optional<Content> result = contentRepository.findBySourceAndExternalIdIncludingDeleted(
+                ContentSource.TMDB.name(), "603");
+
+        assertThat(result).isPresent();
+        assertThat(result.get().getDeletedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("findBySourceAndExternalIdIncludingDeleted는 존재하지 않는 조합이면 빈 Optional을 반환한다")
+    void findBySourceAndExternalIdIncludingDeleted_notFound_returnsEmpty() {
+        Optional<Content> result = contentRepository.findBySourceAndExternalIdIncludingDeleted(
+                ContentSource.TMDB.name(), "no-such-id");
+
+        assertThat(result).isEmpty();
+    }
+
     // ── refreshReviewAggregate ─────────────────────────────────────────────
 
     @Test
