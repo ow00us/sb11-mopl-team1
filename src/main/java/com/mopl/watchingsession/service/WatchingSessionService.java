@@ -25,6 +25,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -93,6 +94,7 @@ public class WatchingSessionService {
     }
 
     // delete 성격의 메서드
+    @Transactional(propagation = Propagation.NOT_SUPPORTED) // 클래스 레벨의 트랜잭션을 무시하고 트랜잭션 없이 실행
     public boolean end(UUID watcherId, String currentSessionId) {
         synchronized (getWatcherLock(watcherId)) {
             // 확인만 먼저 수행 (메모리에서 지우지는 않음)
