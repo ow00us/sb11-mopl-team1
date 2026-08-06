@@ -27,10 +27,16 @@ class SportsDbPropertiesTest {
     }
 
     @Test
-    @DisplayName("baseUrl이 null이면 검증을 건너뛰고 그대로 생성된다")
-    void constructor_nullBaseUrl_doesNotThrow() {
-        SportsDbProperties properties = new SportsDbProperties(null, "123", List.of(4569));
+    @DisplayName("baseUrl이 null이면 예외를 던진다")
+    void constructor_nullBaseUrl_throwsException() {
+        assertThatThrownBy(() -> new SportsDbProperties(null, "123", List.of(4569)))
+                .isInstanceOf(IllegalStateException.class);
+    }
 
-        assertThat(properties.baseUrl()).isNull();
+    @Test
+    @DisplayName("baseUrl이 공백이면 예외를 던진다")
+    void constructor_blankBaseUrl_throwsException() {
+        assertThatThrownBy(() -> new SportsDbProperties("   ", "123", List.of(4569)))
+                .isInstanceOf(IllegalStateException.class);
     }
 }
