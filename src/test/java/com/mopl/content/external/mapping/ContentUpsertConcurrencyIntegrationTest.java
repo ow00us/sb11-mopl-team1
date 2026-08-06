@@ -49,36 +49,40 @@ class ContentUpsertConcurrencyIntegrationTest {
         CountDownLatch go = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(2);
 
-        Future<Optional<Content>> f1 = executor.submit(() -> {
-            ready.countDown();
-            go.await();
-            return contentUpsertService.upsert(draft);
-        });
-        Future<Optional<Content>> f2 = executor.submit(() -> {
-            ready.countDown();
-            go.await();
-            return contentUpsertService.upsert(draft);
-        });
+        try {
+            Future<Optional<Content>> f1 = executor.submit(() -> {
+                ready.countDown();
+                go.await();
+                return contentUpsertService.upsert(draft);
+            });
+            Future<Optional<Content>> f2 = executor.submit(() -> {
+                ready.countDown();
+                go.await();
+                return contentUpsertService.upsert(draft);
+            });
 
-        assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
-        go.countDown();
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            go.countDown();
 
-        // 수정 전 코드였다면 패자 쪽에서 "current transaction is aborted" 예외가 던져져
-        // get()이 ExecutionException으로 실패했을 것이다. 여기서는 둘 다 정상 완료되어야 한다.
-        Content result1 = f1.get(10, TimeUnit.SECONDS).orElseThrow();
-        Content result2 = f2.get(10, TimeUnit.SECONDS).orElseThrow();
-        executor.shutdown();
+            // 수정 전 코드였다면 패자 쪽에서 "current transaction is aborted" 예외가 던져져
+            // get()이 ExecutionException으로 실패했을 것이다. 여기서는 둘 다 정상 완료되어야 한다.
+            Content result1 = f1.get(10, TimeUnit.SECONDS).orElseThrow();
+            Content result2 = f2.get(10, TimeUnit.SECONDS).orElseThrow();
 
-        assertThat(result1.getId()).isNotNull();
-        assertThat(result2.getId()).isNotNull();
+            assertThat(result1.getId()).isNotNull();
+            assertThat(result2.getId()).isNotNull();
 
-        Content persisted = contentRepository.findBySourceAndExternalId(ContentSource.TMDB, "race-1")
-                .orElseThrow();
-        assertThat(persisted.getTitle()).isEqualTo("제목");
+            Content persisted = contentRepository.findBySourceAndExternalId(ContentSource.TMDB, "race-1")
+                    .orElseThrow();
+            assertThat(persisted.getTitle()).isEqualTo("제목");
 
-        long count = contentRepository.findAll().stream()
-                .filter(c -> c.getSource() == ContentSource.TMDB && "race-1".equals(c.getExternalId()))
-                .count();
-        assertThat(count).isEqualTo(1L);
+            long count = contentRepository.findAll().stream()
+                    .filter(c -> c.getSource() == ContentSource.TMDB && "race-1".equals(c.getExternalId()))
+                    .count();
+            assertThat(count).isEqualTo(1L);
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
     }
 }
