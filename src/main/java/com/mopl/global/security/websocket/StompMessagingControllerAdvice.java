@@ -4,8 +4,8 @@ import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import java.util.HashMap;
 import java.util.Map;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.handler.annotation.MessageExceptionHandler;
 import org.springframework.messaging.handler.annotation.support.MethodArgumentNotValidException;
@@ -32,10 +32,13 @@ import org.springframework.web.bind.annotation.ControllerAdvice;
  */
 @Slf4j
 @ControllerAdvice
-@RequiredArgsConstructor
 public class StompMessagingControllerAdvice {
 
     private final StompErrorFrameSender errorFrameSender;
+
+    public StompMessagingControllerAdvice(@Lazy StompErrorFrameSender errorFrameSender) {
+        this.errorFrameSender = errorFrameSender;
+    }
 
     @MessageExceptionHandler(BusinessException.class)
     public void handleBusinessException(Message<?> originalMessage, BusinessException e) {
