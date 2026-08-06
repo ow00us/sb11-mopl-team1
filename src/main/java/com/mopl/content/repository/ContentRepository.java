@@ -28,6 +28,14 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
     // 외부 API 수집 upsert 시 (source, external_id) 기준으로 기존 콘텐츠를 조회한다.
     Optional<Content> findBySourceAndExternalId(ContentSource source, String externalId);
 
+    // (source, external_id) 기준으로 소프트 삭제 여부와 무관하게 콘텐츠를 조회한다.
+    // 삭제된 외부 콘텐츠를 재수집할 때 unique index 충돌을 사전에 감지하기 위해 사용한다.
+    // @SQLRestriction은 네이티브 쿼리에 자동 적용되지 않으므로 deleted_at 조건을 의도적으로 넣지 않았다.
+    @Query(value = "SELECT * FROM contents WHERE source = :source AND external_id = :externalId",
+            nativeQuery = true)
+    Optional<Content> findBySourceAndExternalIdIncludingDeleted(
+            @Param("source") String source, @Param("externalId") String externalId);
+
     // ── createdAt 정렬 ──────────────────────────────────────────────────────
 
     @Query(value = """

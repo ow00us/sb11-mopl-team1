@@ -3,6 +3,7 @@ package com.mopl.content.external.mapping;
 import com.mopl.content.entity.Content;
 import com.mopl.content.repository.ContentRepository;
 import java.sql.SQLException;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
@@ -19,10 +20,25 @@ public class ContentUpsertService {
     private final ContentInsertExecutor contentInsertExecutor;
 
     @Transactional
-    public Content upsert(ExternalContentDraft draft) {
-        return contentRepository.findBySourceAndExternalId(draft.source(), draft.externalId())
+    public Optional<Content> upsert(ExternalContentDraft draft) {
+        if (isAlreadyDeleted(draft)) {
+            // 관리자가 명시적으로 삭제한 콘텐츠는 외부 동기화가 되살리지 않는다.
+            return Optional.empty();
+        }
+        Content result = contentRepository.findBySourceAndExternalId(draft.source(), draft.externalId())
                 .map(existing -> applyUpdate(existing, draft))
                 .orElseGet(() -> createOrRecoverFromRace(draft));
+        return Optional.of(result);
+    }
+
+    private boolean isAlreadyDeleted(ExternalContentDraft draft) {
+        if (draft.source() == null || draft.externalId() == null) {
+            return false;
+        }
+        return contentRepository
+                .findBySourceAndExternalIdIncludingDeleted(draft.source().name(), draft.externalId())
+                .map(content -> content.getDeletedAt() != null)
+                .orElse(false);
     }
 
     private Content applyUpdate(Content existing, ExternalContentDraft draft) {
