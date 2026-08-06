@@ -24,6 +24,14 @@ management:
       exposure:
         include: health, info, metrics, prometheus
 
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+    version: OPENAPI_3_1
+  swagger-ui:
+    path: /swagger-ui.html
+    disable-swagger-default-url: true
+
 jwt:
   issuer: mopl
   secret: ${JWT_SECRET}

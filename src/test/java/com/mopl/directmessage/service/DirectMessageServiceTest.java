@@ -27,9 +27,10 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.Optional;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -763,6 +764,115 @@ class DirectMessageServiceTest {
             );
 
         verifyNoInteractions(
+            directMessageRepository
+        );
+    }
+
+    @Test
+    @DisplayName("대화 참여자가 DM를 전송하면 메시지를 저장하고 DTO를 반환한다.")
+    void create_participant_savesMessageAndReturnsDto() {
+        // given
+        stubParticipantsAndUsers();
+
+        UUID messageId =
+            UUID.fromString(
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            );
+
+        Instant createdAt =
+            Instant.parse("2026-08-04T01:00:00Z");
+
+        when(
+            directMessageRepository.save(
+                any(DirectMessage.class)
+            )
+        ).thenAnswer(invocation -> {
+            DirectMessage message =
+                invocation.getArgument(0);
+
+            ReflectionTestUtils.setField(
+                message,
+                "id",
+                messageId
+            );
+
+            ReflectionTestUtils.setField(
+                message,
+                "createdAt",
+                createdAt
+            );
+
+            return message;
+        });
+
+        // when
+        DirectMessageDto result =
+            directMessageService.create(
+                USER_ID_1,
+                CONVERSATION_ID,
+                "반가워요!"
+            );
+
+        // then
+        ArgumentCaptor<DirectMessage> messageCaptor =
+            ArgumentCaptor.forClass(
+                DirectMessage.class
+            );
+
+        verify(directMessageRepository)
+            .save(messageCaptor.capture());
+
+        DirectMessage savedMessage =
+            messageCaptor.getValue();
+
+        assertThat(savedMessage.getConversationId())
+            .isEqualTo(CONVERSATION_ID);
+
+        assertThat(savedMessage.getSenderId())
+            .isEqualTo(USER_ID_1);
+
+        assertThat(savedMessage.getContent())
+            .isEqualTo("반가워요!");
+
+        assertThat(savedMessage.getReadAt())
+            .isNull();
+
+        assertThat(result.id())
+            .isEqualTo(messageId);
+
+        assertThat(result.sender().userId())
+            .isEqualTo(USER_ID_1);
+
+        assertThat(result.receiver().userId())
+            .isEqualTo(USER_ID_2);
+
+        assertThat(result.content())
+            .isEqualTo("반가워요!");
+    }
+
+    @Test
+    @DisplayName("내용이 비어 있는 DM은 저장할 수 없다.")
+    void create_blankContent_fails() {
+        // when & then
+        assertThatThrownBy(() ->
+            directMessageService.create(
+                USER_ID_1,
+                CONVERSATION_ID,
+                " "
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(
+                            ErrorCode.INVALID_INPUT
+                        )
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            userRepository,
             directMessageRepository
         );
     }

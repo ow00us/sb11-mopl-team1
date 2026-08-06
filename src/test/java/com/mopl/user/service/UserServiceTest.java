@@ -13,6 +13,8 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserUpdateRequest;
+import com.mopl.user.dto.UserLockUpdateRequest;
+import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.storage.ProfileImageStorage;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
@@ -451,6 +453,275 @@ class UserServiceTest {
          * 사용되지 않는 이미지가 저장소에 남을 수 있다.
          */
         verifyNoInteractions(profileImageStorage);
+    }
+
+    @Test
+    @DisplayName("본인은 새 비밀번호를 인코딩하여 변경할 수 있다")
+    void changePassword_success() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        User user = createUserFixture(userId);
+
+        ChangePasswordRequest request =
+            new ChangePasswordRequest("newPassword1!");
+
+        String encodedPassword =
+            "$2a$10$new-encoded-password";
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        when(passwordEncoder.encode("newPassword1!"))
+            .thenReturn(encodedPassword);
+
+        // when
+        userService.changePassword(
+            userId,
+            userId,
+            request
+        );
+
+        // then
+        /*
+         * User 엔티티에는 요청으로 전달된 비밀번호 원문이 아니라
+         * PasswordEncoder가 반환한 해시만 저장되어야 함.
+         */
+        assertThat(user.getPasswordHash())
+            .isEqualTo(encodedPassword);
+
+        assertThat(user.getPasswordHash())
+            .isNotEqualTo("newPassword1!");
+
+        verify(userRepository).findById(userId);
+        verify(passwordEncoder).encode("newPassword1!");
+
+        /*
+         * 조회한 영속 엔티티는 트랜잭션 종료 시 JPA 변경 감지로
+         * UPDATE되므로 save()를 명시적으로 호출하지 않음.
+         */
+        verify(userRepository, never())
+            .save(any(User.class));
+    }
+
+    @Test
+    @DisplayName("인증 정보가 없으면 비밀번호 변경에 실패한다")
+    void changePassword_fail_whenAuthenticationDoesNotExist() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        ChangePasswordRequest request =
+            new ChangePasswordRequest("newPassword1!");
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.changePassword(
+                null,
+                userId,
+                request
+            )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.UNAUTHORIZED);
+
+        /*
+         * 인증되지 않은 요청은 DB 조회와 BCrypt 인코딩을
+         * 수행하기 전에 중단되어야 한다.
+         */
+        verifyNoInteractions(
+            userRepository,
+            passwordEncoder
+        );
+    }
+
+    @Test
+    @DisplayName("다른 사용자의 비밀번호를 변경하려 하면 실패한다")
+    void changePassword_fail_whenChangingAnotherUserPassword() {
+        // given
+        UUID authenticatedUserId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        UUID targetUserId =
+            UUID.fromString("22222222-2222-2222-2222-222222222222");
+
+        ChangePasswordRequest request =
+            new ChangePasswordRequest("newPassword1!");
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.changePassword(
+                authenticatedUserId,
+                targetUserId,
+                request
+            )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.FORBIDDEN);
+
+        /*
+         * 본인이 아닌 경우 사용자 존재 여부를 확인하지 않고
+         * 비밀번호 인코딩도 수행하지 않음.
+         */
+        verifyNoInteractions(
+            userRepository,
+            passwordEncoder
+        );
+    }
+
+    @Test
+    @DisplayName("변경할 사용자가 존재하지 않으면 비밀번호 변경에 실패한다")
+    void changePassword_fail_whenUserDoesNotExist() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        ChangePasswordRequest request =
+            new ChangePasswordRequest("newPassword1!");
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.changePassword(
+                userId,
+                userId,
+                request
+            )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+
+        verify(userRepository).findById(userId);
+
+        /*
+         * 사용자가 존재하지 않으면 비용이 큰 BCrypt 인코딩을
+         * 수행하면 안 됩니다.
+         */
+        verifyNoInteractions(passwordEncoder);
+    }
+
+    @Test
+    @DisplayName("관리자는 사용자 계정을 잠글 수 있다")
+    void updateLocked_success_whenLockingUser() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        /*
+         * createUserFixture()는 locked가 false인 사용자를 생성
+         * 따라서 잠기지 않은 계정을 잠그는 상황
+         */
+        User user = createUserFixture(userId);
+
+        UserLockUpdateRequest request =
+            new UserLockUpdateRequest(true);
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        // when
+        userService.updateLocked(
+            userId,
+            request
+        );
+
+        // then
+        assertThat(user.isLocked()).isTrue();
+
+        /*
+         * 대상 사용자는 한 번만 조회해야 한다.
+         */
+        verify(userRepository).findById(userId);
+
+        /*
+         * 조회한 User는 영속 엔티티이므로 JPA 변경 감지를 사용
+         * 따라서 save()를 명시적으로 호출하지 않아야 한다.
+         */
+        verify(userRepository, never())
+            .save(any(User.class));
+    }
+
+    @Test
+    @DisplayName("관리자는 사용자 계정 잠금을 해제할 수 있다")
+    void updateLocked_success_whenUnlockingUser() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        User user = createUserFixture(userId);
+
+        /*
+         * createUserFixture()는 기본적으로 잠기지 않은 사용자를 만든다.
+         *
+         * 테스트 대상인 updateLocked()를 준비 과정에서 먼저 호출하면
+         * 같은 메서드가 정상 동작한다고 가정하는 테스트가 되므로,
+         * 테스트 준비 단계에서는 ReflectionTestUtils로 잠금 상태를 설정
+         */
+        ReflectionTestUtils.setField(
+            user,
+            "locked",
+            true
+        );
+
+        UserLockUpdateRequest request =
+            new UserLockUpdateRequest(false);
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        // when
+        userService.updateLocked(
+            userId,
+            request
+        );
+
+        // then
+        assertThat(user.isLocked()).isFalse();
+
+        verify(userRepository).findById(userId);
+
+        verify(userRepository, never())
+            .save(any(User.class));
+    }
+
+    @Test
+    @DisplayName("잠금 상태를 변경할 사용자가 없으면 실패한다")
+    void updateLocked_fail_whenUserDoesNotExist() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        UserLockUpdateRequest request =
+            new UserLockUpdateRequest(true);
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.updateLocked(
+                userId,
+                request
+            )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+
+        verify(userRepository).findById(userId);
+
+        /*
+         * 사용자가 존재하지 않으므로 저장 또는 상태 변경과 관련된
+         * 추가 Repository 작업이 발생하면 안된다.
+         */
+        verify(userRepository, never())
+            .save(any(User.class));
     }
 
     /**

@@ -5,6 +5,8 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserUpdateRequest;
+import com.mopl.user.dto.UserLockUpdateRequest;
+import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.storage.ProfileImageStorage;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
@@ -204,6 +206,135 @@ public class UserService {
         );
 
         return UserDto.from(user);
+    }
+
+    /**
+     * 인증된 사용자의 비밀번호를 새로운 비밀번호로 변경
+     *
+     * Swagger 계약의 PATCH /api/users/{userId}/password 요청을 처리
+     *
+     * 비밀번호는 본인만 변경할 수 있으므로 JWT 인증 정보에서 가져온
+     * 사용자 UUID와 URL 경로의 수정 대상 userId를 비교
+     *
+     * 요청으로 전달된 비밀번호 원문은 데이터베이스에 저장하지 않고,
+     * PasswordEncoder로 인코딩한 해시만 User 엔티티에 반영
+     *
+     * 현재 Swagger 계약에는 기존 비밀번호가 포함되어 있지 않으므로
+     * 이번 기본 구현에서는 기존 비밀번호를 별도로 검증하지 않는다.
+     *
+     * @param authenticatedUserId JWT 인증 정보에서 가져온 사용자 UUID
+     * @param userId URL 경로로 전달된 비밀번호 변경 대상 사용자 UUID
+     * @param request 새 비밀번호를 담은 요청
+     * @throws BusinessException 인증 정보가 없는 경우
+     * @throws BusinessException 다른 사용자의 비밀번호를 변경하려는 경우
+     * @throws BusinessException 변경할 사용자가 존재하지 않는 경우
+     */
+    @Transactional
+    public void changePassword(
+        UUID authenticatedUserId,
+        UUID userId,
+        ChangePasswordRequest request
+    ) {
+        /*
+         * 인증 정보가 없다면 비밀번호 변경을 수행할 수 없다.
+         *
+         * 전역 SecurityConfig에서도 인증을 검사하지만,
+         * Service에서도 비즈니스 규칙을 보장하도록 방어
+         */
+        if (authenticatedUserId == null) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
+
+        /*
+         * JWT 사용자 UUID와 URL의 대상 사용자 UUID가 다르면
+         * 다른 사용자의 비밀번호를 변경하려는 요청
+         *
+         * 사용자 조회보다 먼저 확인하여 공격자가 임의의 UUID를 넣어
+         * 다른 계정의 존재 여부를 확인하지 못하게 한다.
+         */
+        if (!authenticatedUserId.equals(userId)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN);
+        }
+
+        /*
+         * 본인 여부를 확인한 다음 데이터베이스에서 사용자를 조회
+         *
+         * JWT가 발급된 이후 계정이 삭제될 수 있으므로
+         * 유효한 토큰이 있더라도 사용자가 항상 존재한다고 가정하지 않는다.
+         */
+        User user = userRepository.findById(userId)
+            .orElseThrow(() ->
+                new BusinessException(ErrorCode.RESOURCE_NOT_FOUND)
+            );
+
+        /*
+         * 비밀번호 원문은 DB에 저장하거나 엔티티에 전달하지 않는다.
+         *
+         * 회원가입과 로그인에 사용하는 동일한 PasswordEncoder Bean으로
+         * 새 비밀번호를 인코딩
+         */
+        String encodedPassword =
+            passwordEncoder.encode(request.password());
+
+        /*
+         * User 엔티티에는 PasswordEncoder의 결과인 해시만 전달
+         */
+        user.changePassword(encodedPassword);
+
+        /*
+         * user는 현재 트랜잭션에서 조회한 영속 엔티티
+         *
+         * 트랜잭션이 정상적으로 종료되면 JPA 변경 감지가 password_hash의
+         * 변경을 확인해 UPDATE SQL을 실행하므로 save() 호출은 필요하지 않다.
+         */
+    }
+
+    /**
+     * 관리자의 요청에 따라 사용자 계정의 잠금 상태를 변경
+     *
+     * 관리자 권한 검증은 HTTP 인증 정보를 사용할 수 있는 Controller에서
+     * 먼저 수행하고, Service는 대상 사용자 조회와 상태 변경을 담당
+     *
+     * 대상 사용자가 존재하지 않으면 RESOURCE_NOT_FOUND를 발생시킴
+     * 조회된 User는 영속 상태이므로 updateLocked() 호출 후 별도의
+     * save() 없이 JPA 변경 감지를 통해 데이터베이스에 반영
+     *
+     * @param userId 잠금 상태를 변경할 대상 사용자의 UUID
+     * @param request 새 잠금 상태가 담긴 요청
+     * @throws BusinessException 대상 사용자가 존재하지 않는 경우
+     */
+    @Transactional
+    public void updateLocked(
+        UUID userId,
+        UserLockUpdateRequest request
+    ) {
+        /*
+         * 대상 사용자는 한 번만 조회
+         *
+         * 존재하지 않는 사용자는 잠금 상태를 변경할 수 없으므로
+         * RESOURCE_NOT_FOUND를 발생시킴
+         */
+        User user = userRepository.findById(userId)
+            .orElseThrow(() ->
+                new BusinessException(ErrorCode.RESOURCE_NOT_FOUND)
+            );
+
+        /*
+         * DTO의 locked 값은 Controller의 @Valid와 @NotNull 검증을
+         * 통과한 값이므로 true 또는 false 중 하나
+         *
+         * Boolean 값은 updateLocked(boolean)에 전달될 때
+         * 자동으로 원시 타입 boolean으로 변환
+         */
+        user.updateLocked(request.locked());
+
+        /*
+         * user는 현재 트랜잭션 안에서 조회된 영속 엔티티
+         *
+         * 트랜잭션 종료 시 JPA 변경 감지가 locked 필드 변경을 확인하여
+         * UPDATE SQL을 실행하므로 userRepository.save(user)를
+         * 다시 호출할 필요가 없음
+         */
     }
 
     /**

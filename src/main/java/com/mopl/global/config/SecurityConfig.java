@@ -63,6 +63,14 @@ public class SecurityConfig {
             "/ws/**"
     };
 
+    static boolean isPublicPostPath(String path) {
+        return Arrays.asList(PUBLIC_POST_PATHS).contains(path);
+    }
+
+    static boolean isPublicGetPath(String path) {
+        return Arrays.asList(PUBLIC_GET_PATHS).contains(path);
+    }
+
     @Bean
     public SecurityErrorResponseWriter securityErrorResponseWriter(
         ObjectMapper objectMapper
@@ -132,6 +140,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, PUBLIC_POST_PATHS).permitAll()
                         .requestMatchers(PUBLIC_HANDSHAKE_PATHS).permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers(HttpMethod.PATCH, "/api/users/*/locked").hasRole("ADMIN")
                         .anyRequest().authenticated())
                 .addFilterBefore(new JwtAuthenticationFilter(jwtProvider), UsernamePasswordAuthenticationFilter.class);
         return http.build();

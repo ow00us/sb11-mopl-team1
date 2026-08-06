@@ -2,8 +2,12 @@ package com.mopl.user.controller;
 
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserUpdateRequest;
+import com.mopl.user.dto.UserLockUpdateRequest;
 import com.mopl.user.dto.UserDto;
+import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.service.UserService;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.util.UUID;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -42,6 +46,7 @@ public class UserController {
      * 검증에 실패하면 UserService를 호출하지 않고 400 응답을 반환
      */
     @PostMapping
+    @ApiResponse(responseCode = "201", description = "사용자 생성 성공")
     public ResponseEntity<UserDto> signUp(
         @Valid @RequestBody UserCreateRequest request
     ) {
@@ -133,4 +138,85 @@ public class UserController {
         return ResponseEntity.ok(response);
     }
 
+    /**
+     * 인증된 사용자의 비밀번호를 변경
+     *
+     * JWT 인증 정보에서 가져온 사용자 UUID와 URL의 대상 사용자 UUID를
+     * Service에 전달하여 본인의 비밀번호를 변경하는 요청인지 검사
+     *
+     * 요청으로 받은 비밀번호 원문은 Controller에서 직접 처리하지 않고
+     * UserService가 PasswordEncoder로 인코딩하여 비밀번호 해시만 저장
+     *
+     * 비밀번호 변경이 완료되면 응답 본문 없이 204 No Content를 반환
+     *
+     * @param authenticatedUserId JWT 인증 정보에서 가져온 사용자 UUID
+     * @param userId 비밀번호를 변경할 대상 사용자의 UUID
+     * @param request 새 비밀번호가 담긴 요청
+     * @return 응답 본문이 없는 204 No Content 응답
+     */
+    @PatchMapping("/{userId}/password")
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "204",
+            description = "비밀번호 변경 성공"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자를 찾을 수 없음"
+        )
+    })
+    public ResponseEntity<Void> changePassword(
+        @AuthenticationPrincipal UUID authenticatedUserId,
+        @PathVariable UUID userId,
+        @Valid @RequestBody ChangePasswordRequest request
+    ) {
+        userService.changePassword(
+            authenticatedUserId,
+            userId,
+            request
+        );
+
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 관리자가 사용자 계정의 잠금 상태를 변경
+     *
+     * SecurityFilterChain에서 ROLE_ADMIN 권한 검사를 통과한 요청에 대해
+     * 대상 사용자 UUID와 변경할 잠금 상태를 UserService에 전달
+     *
+     * 관리자 권한 검사는 Spring MVC의 요청 본문 역직렬화와
+     * Bean Validation보다 먼저 수행
+     *
+     * locked가 true이면 계정을 잠그고,
+     * false이면 기존 계정 잠금을 해제
+     *
+     * 변경이 완료되면 응답 본문 없이 204 No Content를 반환
+     *
+     * @param userId 잠금 상태를 변경할 대상 사용자의 UUID
+     * @param request 새 잠금 상태가 담긴 요청
+     * @return 응답 본문이 없는 204 No Content 응답
+     */
+    @PatchMapping("/{userId}/locked")
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "204",
+            description = "계정 잠금 상태 변경 성공"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자를 찾을 수 없음"
+        )
+    })
+    public ResponseEntity<Void> updateLocked(
+        @PathVariable UUID userId,
+        @Valid @RequestBody UserLockUpdateRequest request
+    ) {
+        userService.updateLocked(
+            userId,
+            request
+        );
+
+        return ResponseEntity.noContent().build();
+    }
 }

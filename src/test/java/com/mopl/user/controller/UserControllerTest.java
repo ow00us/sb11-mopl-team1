@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.exception.BusinessException;
@@ -18,6 +19,8 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserUpdateRequest;
+import com.mopl.user.dto.UserLockUpdateRequest;
+import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.service.UserService;
 import java.time.Instant;
@@ -481,6 +484,176 @@ class UserControllerTest {
         /*
          * Controller 입력 검증에서 실패했으므로
          * Service는 호출되면 안 된다.
+         */
+        verifyNoInteractions(userService);
+    }
+
+    /**
+     * 올바른 새 비밀번호가 전달되면 비밀번호 변경에 성공하고
+     * 응답 본문 없이 204 No Content를 반환하는지 검증
+     *
+     * Controller가 다음 값을 Service에 정확히 전달하는지도 확인
+     *
+     * 1. JWT 인증 정보에 저장된 사용자 UUID
+     * 2. URL 경로로 전달된 변경 대상 사용자 UUID
+     * 3. JSON 요청 본문에서 변환된 ChangePasswordRequest
+     */
+    @Test
+    @DisplayName("본인은 자신의 비밀번호를 변경할 수 있다")
+    void changePassword_success() throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        /*
+         * 실제 요청에서는 JwtAuthenticationFilter가 JWT의 subject에서
+         * 사용자 UUID를 가져와 Authentication principal에 저장
+         *
+         * Controller 단위 테스트에서는 Security Filter를 비활성화했으므로
+         * 동일한 형태의 인증 정보를 SecurityContext에 직접 설정
+         */
+        setAuthenticatedUser(userId);
+
+        ChangePasswordRequest request =
+            new ChangePasswordRequest("newPassword1!");
+
+        // when & then
+        mockMvc.perform(
+                patch(
+                    "/api/users/{userId}/password",
+                    userId
+                )
+                    .contentType("application/json")
+                    .content(objectMapper.writeValueAsString(request))
+            )
+            .andExpect(status().isNoContent())
+            /*
+             * 204 No Content 응답에는 JSON 응답 본문이 없어야 한다.
+             *
+             * 비밀번호나 비밀번호 해시는 민감 정보이므로
+             * 변경 결과를 응답으로 반환하지 않는다.
+             */
+            .andExpect(content().string(""));
+
+        /*
+         * 인증 사용자 UUID, URL의 대상 사용자 UUID,
+         * 요청 본문이 Service에 정확하게 전달되었는지 검증
+         */
+        verify(userService).changePassword(
+            userId,
+            userId,
+            new ChangePasswordRequest("newPassword1!")
+        );
+    }
+
+    /**
+     * 새 비밀번호가 비어 있으면 DTO의 Bean Validation에서 요청을 거절하고
+     * UserService를 호출하지 않는지 검증
+     *
+     * @Valid 검증은 Controller 메서드가 실행되기 전에 수행되므로
+     * 잘못된 요청이 비즈니스 로직까지 전달되면 안된다.
+     */
+    @Test
+    @DisplayName("새 비밀번호가 비어 있으면 400을 반환한다")
+    void changePassword_fail_whenPasswordIsBlank() throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        setAuthenticatedUser(userId);
+
+        ChangePasswordRequest request =
+            new ChangePasswordRequest("");
+
+        // when & then
+        mockMvc.perform(
+                patch(
+                    "/api/users/{userId}/password",
+                    userId
+                )
+                    .contentType("application/json")
+                    .content(objectMapper.writeValueAsString(request))
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.errorCode")
+                .value("COMMON_400_1"))
+            .andExpect(jsonPath("$.details.password").exists());
+
+        /*
+         * Controller 입력 검증 단계에서 실패했으므로
+         * 비밀번호 암호화와 DB 조회를 담당하는 Service는 호출되면 안된다.
+         */
+        verifyNoInteractions(userService);
+    }
+
+    /**
+     * ROLE_ADMIN 권한을 가진 사용자가 계정 잠금 상태를 변경하면
+     * Service에 대상 사용자와 요청이 전달되고 204를 반환하는지 검증
+     */
+    @Test
+    @DisplayName("계정 잠금 상태 변경 요청 시 서비스를 호출하고 204를 반환한다")
+    void updateLocked_success() throws Exception {
+        // given
+        UUID targetUserId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        UserLockUpdateRequest request =
+            new UserLockUpdateRequest(true);
+
+        // when & then
+        /*
+         * 이 테스트는 Security Filter를 비활성화한 Controller 단위 테스트
+         * 관리자 권한 검증은 SecurityAccessPolicyTest에서 별도로 확인하고
+         * 여기서는 올바른 요청이 서비스에 전달되고 204 응답이 반환되는지만 검증
+         */
+        mockMvc.perform(
+                patch(
+                    "/api/users/{userId}/locked",
+                    targetUserId
+                )
+                    .contentType("application/json")
+                    .content(objectMapper.writeValueAsString(request))
+            )
+            .andExpect(status().isNoContent())
+            .andExpect(content().string(""));
+
+        verify(userService).updateLocked(
+            targetUserId,
+            new UserLockUpdateRequest(true)
+        );
+    }
+
+    /**
+     * locked 값이 null이면 DTO Bean Validation에서 요청을 거절하고
+     * Controller 메서드와 Service 호출까지 진행하지 않는지 검증
+     */
+    @Test
+    @DisplayName("계정 잠금 상태가 누락되면 400을 반환한다")
+    void updateLocked_fail_whenLockedIsNull() throws Exception {
+        // given
+        UUID targetUserId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        UserLockUpdateRequest request =
+            new UserLockUpdateRequest(null);
+
+        // when & then
+        mockMvc.perform(
+                patch(
+                    "/api/users/{userId}/locked",
+                    targetUserId
+                )
+                    .contentType("application/json")
+                    .content(objectMapper.writeValueAsString(request))
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.errorCode")
+                .value("COMMON_400_1"))
+            .andExpect(jsonPath("$.details.locked").exists());
+
+        /*
+         * @Valid 검증이 Controller 메서드 실행 전에 실패하므로
+         * Service는 호출되지 않는다.
          */
         verifyNoInteractions(userService);
     }
