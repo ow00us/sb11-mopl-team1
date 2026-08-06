@@ -2,6 +2,7 @@ package com.mopl.watchingsession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -35,6 +36,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
@@ -125,7 +127,11 @@ class WatchingSessionE2ERegressionTest {
     @AfterEach
     void tearDown() {
         if (session != null && session.isConnected()) {
-            session.disconnect();
+            try {
+                session.disconnect();
+            } catch (MessageDeliveryException ignored) {
+                // ERROR 프레임 처리 직후 서버가 먼저 연결을 닫을 수 있습니다.
+            }
         }
         if (stompClient != null) {
             stompClient.stop();
@@ -176,13 +182,13 @@ class WatchingSessionE2ERegressionTest {
             .connectAsync(wsUrl(), (WebSocketHttpHeaders) null, connectHeaders, new StompSessionHandlerAdapter() {
                 @Override
                 public Type getPayloadType(StompHeaders headers) {
-                    return String.class;
+                    return byte[].class;
                 }
 
                 @Override
                 public void handleFrame(StompHeaders headers, Object payload) {
-                    if (errorFuture != null && payload != null) {
-                        errorFuture.complete((String) payload);
+                    if (errorFuture != null) {
+                        errorFuture.complete(new String((byte[]) payload, StandardCharsets.UTF_8));
                     }
                 }
 
@@ -192,11 +198,6 @@ class WatchingSessionE2ERegressionTest {
                     if (errorFuture != null && command == StompCommand.ERROR) {
                         errorFuture.complete(new String(payload, StandardCharsets.UTF_8));
                     }
-                }
-                @Override
-                public void handleTransportError(StompSession session, Throwable exception) {
-                    System.err.println("STOMP transport error: " + exception);
-                    exception.printStackTrace();
                 }
             })
             .get(5, TimeUnit.SECONDS);
@@ -214,7 +215,7 @@ class WatchingSessionE2ERegressionTest {
 
             @Override
             public void handleFrame(StompHeaders headers, @Nullable Object payload) {
-                received.complete((T) payload);
+                received.complete(payloadType.cast(payload));
             }
         });
         Thread.sleep(SETTLE_MILLIS);
@@ -252,12 +253,14 @@ class WatchingSessionE2ERegressionTest {
         joinResult.subscription().unsubscribe();
 
         // then 3: 세션이 실제로 DB에서 삭제되었는지로 정상 퇴장을 확인 (구독 해제 후 세션 없어야 함)
-        Thread.sleep(SETTLE_MILLIS);
-        assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty();
+        await().atMost(5, TimeUnit.SECONDS)
+                .pollInterval(100, TimeUnit.MILLISECONDS)
+                    .untilAsserted(() ->
+                        assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty());
     }
 
     @Test
-    @DisplayName("[E2E 회귀] 존재하지 않는 콘텐츠 구독(비정상 입장) 시 STOMP ERROR 프레임이 발신자에게 전달됨")
+    @DisplayName("[E2E 회귀] 존재하지 않는 콘텐츠 구독(비정상 입장) 시 STOMP ERROR 프레임이 발신자에게 전달되고, 연결도 종료됨")
     void invalidContentSubscribe_returnsErrorFrame_toSubscriberOnly() throws Exception {
         // given
         CompletableFuture<String> errorReceived = new CompletableFuture<>();
@@ -270,7 +273,7 @@ class WatchingSessionE2ERegressionTest {
         session.subscribe(invalidWatchDestination, new StompFrameHandler() {
             @Override
             public Type getPayloadType(StompHeaders headers) {
-                return String.class;
+                return byte[].class;
             }
 
             @Override
@@ -283,36 +286,47 @@ class WatchingSessionE2ERegressionTest {
         String errorPayload = errorReceived.get(5, TimeUnit.SECONDS);
         assertThat(errorPayload).contains(ErrorCode.CONTENT_NOT_FOUND.getCode());
 
+        // WatchingSessionSubscribeExistenceInterceptor.preSend()가 브로커 등록을 막기 위해
+        // errorFrameSender.send() 후 null을 반환하면, StompSubProtocolHandler.handleError()가
+        // ERROR 처리 경로를 타면서 finally에서 항상 session.close(PROTOCOL_ERROR)를 호출 -> 연결 종료됨
+        await().atMost(5, TimeUnit.SECONDS)
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .until(() -> !session.isConnected());
+
         // 시청 세션이 DB에 생성되지 않았어야 함
         assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty();
     }
 
     @Test
-    @DisplayName("[E2E 회귀] 비정상 입장(에러) 후에도 재연결하면 정상 콘텐츠는 입장 가능")
+    @DisplayName("[E2E 회귀] 비정상 입장(에러) 후 연결이 종료되어도 재연결하면 정상 콘텐츠는 입장 가능")
     void afterErrorOnInvalidContent_canStillJoinValidContent() throws Exception {
-        // given: 먼저 잘못된 콘텐츠로 구독 시도해 에러를 한 번 겪은 겪음
+        // given: 먼저 잘못된 콘텐츠로 구독 시도해 에러를 한 번 겪음
         CompletableFuture<String> errorReceived = new CompletableFuture<>();
-        session = connectAs(watcherId, errorReceived);
+        StompSession firstSession = connectAs(watcherId, errorReceived);
 
-        UUID nonExistentContentId = UUID.randomUUID();
-        session.subscribe("/sub/contents/" + nonExistentContentId + "/watch", new StompFrameHandler() {
-            @Override
-            public Type getPayloadType(StompHeaders headers) {
-                return String.class;
+        try {
+            UUID nonExistentContentId = UUID.randomUUID();
+            firstSession.subscribe("/sub/contents/" + nonExistentContentId + "/watch", new StompFrameHandler() {
+                @Override
+                public Type getPayloadType(StompHeaders headers) {
+                    return byte[].class;
+                }
+
+                @Override
+                public void handleFrame(StompHeaders headers, @Nullable Object payload) {
+                }
+            });
+
+            await().atMost(5, TimeUnit.SECONDS)
+                .pollInterval(100, TimeUnit.MILLISECONDS)
+                .until(() -> !firstSession.isConnected());
+        } finally {
+            if (firstSession.isConnected()) {
+                firstSession.disconnect();
             }
+        }
 
-            @Override
-            public void handleFrame(StompHeaders headers, @Nullable Object payload) {
-            }
-        });
-
-        String errorPayload = errorReceived.get(5, TimeUnit.SECONDS);
-        assertThat(errorPayload).contains(ErrorCode.CONTENT_NOT_FOUND.getCode());
-
-        // 서버가 ERROR 프레임 이후 연결을 닫을 때까지 잠깐 대기
-        Thread.sleep(SETTLE_MILLIS);
-
-        // when: 재연결 후 실제로 존재하는 콘텐츠를 구독 (정상 입장 재시도)
+        // when: 재연결 후 실제로 존재하는 콘텐츠를 구독 (FE의 자동 재연결에 해당)
         session = connectAs(watcherId, null);
         SubscriptionResult<WatchingSessionChange> joinResult =
             subscribeAndWait(session, "/sub/contents/" + contentId + "/watch", WatchingSessionChange.class);
@@ -347,7 +361,7 @@ class WatchingSessionE2ERegressionTest {
             session.subscribe("/sub/contents/" + nonExistentContentId + "/watch", new StompFrameHandler() {
                 @Override
                 public Type getPayloadType(StompHeaders headers) {
-                    return String.class;
+                    return byte[].class;
                 }
 
                 @Override
