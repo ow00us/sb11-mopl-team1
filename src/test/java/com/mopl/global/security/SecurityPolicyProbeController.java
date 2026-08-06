@@ -1,6 +1,7 @@
 package com.mopl.global.security;
 
 import com.mopl.user.dto.UserLockUpdateRequest;
+import com.mopl.user.dto.UserRoleUpdateRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -55,6 +56,27 @@ class SecurityPolicyProbeController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void updateLocked(
         @Valid @RequestBody UserLockUpdateRequest request
+    ) {
+    }
+
+    /**
+     * 관리자 사용자 권한 변경 API의 보안 정책을 검증하기 위한
+     * 테스트 전용 경로
+     *
+     * 실제 UserController와 동일한 경로와 요청 DTO 검증 조건을 사용
+     *
+     * 이를 통해 Spring Security가 요청 본문의 역직렬화와
+     * @Valid 검증보다 먼저 관리자 권한을 검사하는지 확인할 수 있다.
+     *
+     * 이 Controller는 security-policy-test 프로파일에서만 등록되며
+     * 운영 애플리케이션에는 포함되지 않는다.
+     *
+     * @param request 새로 적용할 사용자 권한
+     */
+    @PatchMapping("/api/users/{userId}/role")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void updateRole(
+        @Valid @RequestBody UserRoleUpdateRequest request
     ) {
     }
 

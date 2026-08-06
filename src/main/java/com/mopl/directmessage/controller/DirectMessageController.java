@@ -55,8 +55,17 @@ public class DirectMessageController {
             );
         }
 
+        String principalName =
+            principal.getName();
+
+        if (principalName == null) {
+            throw new BusinessException(
+                ErrorCode.UNAUTHORIZED
+            );
+        }
+
         try {
-            return UUID.fromString(principal.getName());
+            return UUID.fromString(principalName);
         } catch (IllegalArgumentException exception) {
             throw new BusinessException(
                 ErrorCode.UNAUTHORIZED

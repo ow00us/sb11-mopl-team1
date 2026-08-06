@@ -140,7 +140,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, PUBLIC_POST_PATHS).permitAll()
                         .requestMatchers(PUBLIC_HANDSHAKE_PATHS).permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers(HttpMethod.PATCH, "/api/users/*/locked").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.PATCH, "/api/users/*/locked", "/api/users/*/role").hasRole("ADMIN")
                         .anyRequest().authenticated())
                 .addFilterBefore(new JwtAuthenticationFilter(jwtProvider), UsernamePasswordAuthenticationFilter.class);
         return http.build();
