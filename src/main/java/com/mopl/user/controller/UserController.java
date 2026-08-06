@@ -4,6 +4,7 @@ import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserUpdateRequest;
 import com.mopl.user.dto.UserLockUpdateRequest;
 import com.mopl.user.dto.UserDto;
+import com.mopl.user.dto.UserRoleUpdateRequest;
 import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.service.UserService;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -172,6 +173,48 @@ public class UserController {
     ) {
         userService.changePassword(
             authenticatedUserId,
+            userId,
+            request
+        );
+
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 관리자가 사용자의 권한을 변경
+     *
+     * SecurityFilterChain에서 ROLE_ADMIN 권한 검사를 통과한 요청에 대해
+     * 대상 사용자 UUID와 새로 적용할 권한을 UserService에 전달
+     *
+     * 관리자 권한 검사는 Spring MVC의 요청 본문 역직렬화와
+     * Bean Validation보다 먼저 수행되어야 한다.
+     *
+     * 요청의 role에는 UserRole enum에 정의된
+     * USER 또는 ADMIN만 전달할 수 있다.
+     *
+     * 권한 변경이 완료되면 응답 본문 없이
+     * 204 No Content를 반환
+     *
+     * @param userId 권한을 변경할 대상 사용자의 UUID
+     * @param request 새로 적용할 사용자 권한이 담긴 요청
+     * @return 응답 본문이 없는 204 No Content 응답
+     */
+    @PatchMapping("/{userId}/role")
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "204",
+            description = "사용자 권한 변경 성공"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자를 찾을 수 없음"
+        )
+    })
+    public ResponseEntity<Void> updateRole(
+        @PathVariable UUID userId,
+        @Valid @RequestBody UserRoleUpdateRequest request
+    ) {
+        userService.updateRole(
             userId,
             request
         );
