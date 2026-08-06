@@ -1,11 +1,13 @@
 package com.mopl.global.security.websocket;
 
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.handler.annotation.MessageExceptionHandler;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 
+@ConditionalOnBean(name = "clientOutboundChannel")
 @ControllerAdvice
 public class WebSocketMessageExceptionHandler {
 
