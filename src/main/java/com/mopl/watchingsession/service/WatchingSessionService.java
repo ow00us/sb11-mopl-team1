@@ -94,7 +94,6 @@ public class WatchingSessionService {
     }
 
     // delete 성격의 메서드
-    @Transactional(propagation = Propagation.NOT_SUPPORTED) // 클래스 레벨의 트랜잭션을 무시하고 트랜잭션 없이 실행
     public boolean end(UUID watcherId, String currentSessionId) {
         synchronized (getWatcherLock(watcherId)) {
             // 확인만 먼저 수행 (메모리에서 지우지는 않음)
@@ -103,7 +102,7 @@ public class WatchingSessionService {
             }
 
             // DB 삭제 (여기서 예외가 터지면 소유권은 그대로 유지됨)
-            watchingSessionSnapshotRepository.deleteByWatcherId(watcherId);
+            watchingSessionSnapshotWriter.delete(watcherId);
 
             // DB 삭제까지 완벽히 성공한 후 메모리 소유권 정리
             activeSessions.remove(watcherId);

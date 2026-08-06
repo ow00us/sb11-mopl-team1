@@ -212,6 +212,32 @@ public class WatchingSessionServiceTest {
         verify(watchingSessionSnapshotWriter, never()).upsert(any(), any(), any());
     }
 
+    @Test
+    @DisplayName("start 중 enrich 단계에서 예외가 발생하면 보상 삭제(delete)가 수행되어야 한다")
+    void start_throwsExceptionDuringEnrich_thenCompensationDeleteIsCalled() {
+        // given
+        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+
+        WatchingSessionSnapshot dummySnapshot = createSnapshotFixture(
+            CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT, FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS)
+        );
+
+        // upsert(DB 저장)는 성공
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(dummySnapshot);
+
+        // enrich 내부에서 User를 찾을 때 에러(빈 값) 발생
+        when(userRepository.findById(WATCHER_ID)).thenReturn(Optional.empty());
+
+        // when & then
+        // 예외가 밖으로 제대로 던져지는지 확인
+        assertThatThrownBy(() -> watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID))
+            .isInstanceOf(BusinessException.class); // ErrorCode.RESOURCE_NOT_FOUND
+
+        // 예외가 터지면서 catch 블록을 타서 writer.delete()가 호출되었는지 검증
+        verify(watchingSessionSnapshotWriter, times(1)).delete(WATCHER_ID);
+    }
+
     /* --- end() 메서드 검증 --- */
     @Test
     @DisplayName("종료 시 소유권(sessionId)이 일치하면 삭제를 수행하고 true를 반환")
@@ -229,7 +255,7 @@ public class WatchingSessionServiceTest {
 
         // then
         assertThat(actuallyDeleted).isTrue();
-        verify(watchingSessionSnapshotRepository).deleteByWatcherId(WATCHER_ID);
+        verify(watchingSessionSnapshotWriter).delete(WATCHER_ID);
     }
 
     @Test
@@ -248,7 +274,7 @@ public class WatchingSessionServiceTest {
         // then
         assertThat(actuallyDeleted).isFalse();
         // DB 삭제가 수행되지 않았음을 보장
-        verify(watchingSessionSnapshotRepository, never()).deleteByWatcherId(WATCHER_ID);
+        verify(watchingSessionSnapshotWriter, never()).delete(WATCHER_ID);
     }
 
     @Test
@@ -259,7 +285,7 @@ public class WatchingSessionServiceTest {
 
         // then
         assertThat(actuallyDeleted).isFalse();
-        verify(watchingSessionSnapshotRepository, never()).deleteByWatcherId(any());
+        verify(watchingSessionSnapshotWriter, never()).delete(any());
     }
 
     /* --- get() 메서드 검증 --- */
@@ -790,12 +816,12 @@ public class WatchingSessionServiceTest {
         // then: S2의 에러 핸들링으로 end(S2)가 호출되더라도 DB는 삭제되지 않아야 함 (S1 보호)
         boolean s2Ended = watchingSessionService.end(WATCHER_ID, S2);
         assertThat(s2Ended).isFalse();
-        verify(watchingSessionSnapshotRepository, never()).deleteByWatcherId(WATCHER_ID);
+        verify(watchingSessionSnapshotWriter, never()).delete(WATCHER_ID);
 
         // S1은 여전히 소유자이므로 정상 종료가 가능해야 함
         boolean s1Ended = watchingSessionService.end(WATCHER_ID, S1);
         assertThat(s1Ended).isTrue();
-        verify(watchingSessionSnapshotRepository).deleteByWatcherId(WATCHER_ID);
+        verify(watchingSessionSnapshotWriter).delete(WATCHER_ID);
     }
 
     @Test
@@ -815,13 +841,13 @@ public class WatchingSessionServiceTest {
         // 실행 순서 추적을 위한 스레드 안전 리스트
         List<String> executionOrder = synchronizedList(new ArrayList<>());
 
-        // S1의 deleteByWatcherId 처리에 의도적 지연(100ms) 추가
+        // S1의 delete 처리에 의도적 지연(100ms) 추가
         doAnswer(invocation -> {
             executionOrder.add("DELETE_START");
             Thread.sleep(100);
             executionOrder.add("DELETE_END");
             return null;
-        }).when(watchingSessionSnapshotRepository).deleteByWatcherId(WATCHER_ID);
+        }).when(watchingSessionSnapshotWriter).delete(WATCHER_ID);
 
         // S2의 upsert 처리
         doAnswer(invocation -> {
