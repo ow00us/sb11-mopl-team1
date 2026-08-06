@@ -1,6 +1,7 @@
 package com.mopl.directmessage.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.mockito.Mockito.when;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -16,6 +17,7 @@ import com.mopl.directmessage.entity.ParticipantSlot;
 import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.directmessage.repository.ConversationRepository;
 import com.mopl.directmessage.repository.DirectMessageRepository;
+import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.security.JwtProvider;
 import com.mopl.global.exception.ErrorResponse;
 import com.mopl.global.common.CursorResponse;
@@ -35,6 +37,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
@@ -180,31 +183,55 @@ class DirectMessageStompIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        sessions.forEach(session -> {
-            if (session.isConnected()) {
-                try {
-                    session.disconnect();
-                } catch (MessageDeliveryException ignored) {
-                    // 서버가 먼저 연결을 닫은 경우는 무시한다.
+        List<Executable> cleanupTasks =
+            new ArrayList<>();
+
+        sessions.forEach(session ->
+            cleanupTasks.add(() -> {
+                if (session.isConnected()) {
+                    try {
+                        session.disconnect();
+                    } catch (
+                        MessageDeliveryException ignored
+                    ) {
+                        // 서버가 먼저 연결을 닫은 경우는 무시한다.
+                    }
                 }
+            })
+        );
+
+        cleanupTasks.add(() -> {
+            if (stompClient != null) {
+                stompClient.stop();
             }
         });
 
-        if (stompClient != null) {
-            stompClient.stop();
-        }
+        cleanupTasks.add(() -> {
+            if (taskScheduler != null) {
+                taskScheduler.shutdown();
+            }
+        });
 
-        if (taskScheduler != null) {
-            taskScheduler.shutdown();
-        }
+        cleanupTasks.add(
+            directMessageRepository::deleteAll
+        );
 
-        // 외래 키 관계의 반대 순서로 테스트 데이터를 삭제한다.
-        directMessageRepository.deleteAll();
-        participantRepository.deleteAll();
-        conversationRepository.deleteAll();
-        userRepository.deleteAll();
+        cleanupTasks.add(
+            participantRepository::deleteAll
+        );
 
-        sessions.clear();
+        cleanupTasks.add(
+            conversationRepository::deleteAll
+        );
+
+        cleanupTasks.add(
+            userRepository::deleteAll
+        );
+
+        assertAll(
+            "WebSocket 통합 테스트 자원 정리",
+            cleanupTasks
+        );
     }
 
     @Test
@@ -443,8 +470,8 @@ class DirectMessageStompIntegrationTest {
     }
 
     @Test
-    @DisplayName("WebSocket 전송이 실패해도 커밋된 DM은 DB에 유지된다")
-    void send_broadcastFailure_preservesSavedMessage() {
+    @DisplayName("브로드캐스트가 실패해도 저장된 DM은 롤백되지 않는다")
+    void send_broadcastFailure_doesNotRollbackSavedMessage() {
         // given
         DirectMessageSendRequest request =
             new DirectMessageSendRequest(
@@ -584,6 +611,71 @@ class DirectMessageStompIntegrationTest {
             .hasSize(expectedCount);
 
         return messages;
+    }
+
+    @Test
+    @DisplayName("브로드캐스트 실패 시 STOMP ERROR를 전달하고 저장된 DM은 유지한다")
+    void send_broadcastFailure_sendsErrorAndPreservesMessage()
+        throws Exception {
+
+        // given
+        doThrow(
+            new MessageDeliveryException(
+                "WebSocket 브로드캐스트 실패"
+            )
+        ).when(broadcaster)
+            .broadcast(
+                eq(conversationId),
+                any(DirectMessageDto.class)
+            );
+
+        CompletableFuture<ErrorResponse> errorReceived =
+            new CompletableFuture<>();
+
+        StompSession senderSession =
+            connectAs(
+                senderId,
+                errorReceived
+            );
+
+        // when
+        senderSession.send(
+            "/pub/conversations/"
+                + conversationId
+                + "/direct-messages",
+            new DirectMessageSendRequest(
+                "전송 실패 테스트"
+            )
+        );
+
+        ErrorResponse error =
+            errorReceived.get(
+                5,
+                TimeUnit.SECONDS
+            );
+
+        // then: 클라이언트에 STOMP ERROR가 전달된다.
+        assertThat(error.errorCode())
+            .isEqualTo(
+                ErrorCode.INTERNAL_ERROR.getCode()
+            );
+
+        List<DirectMessage> savedMessages =
+            waitForMessageCount(1);
+
+        assertThat(savedMessages.get(0).getConversationId())
+            .isEqualTo(conversationId);
+
+        assertThat(savedMessages.get(0).getSenderId())
+            .isEqualTo(senderId);
+
+        assertThat(savedMessages.get(0).getContent())
+            .isEqualTo(
+                "전송 실패 테스트"
+            );
+
+        assertThat(savedMessages.get(0).getReadAt())
+            .isNull();
     }
 
     @Test

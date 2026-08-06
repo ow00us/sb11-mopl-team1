@@ -58,7 +58,7 @@ public class DirectMessageWebSocketController {
         }
 
         try {
-            return UUID.fromString(principal.getName());
+            return UUID.fromString(principalName);
         } catch (IllegalArgumentException exception) {
             throw new BusinessException(
                 ErrorCode.UNAUTHORIZED

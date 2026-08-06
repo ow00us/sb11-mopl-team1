@@ -15,6 +15,7 @@ import org.springframework.messaging.Message;
 import org.springframework.messaging.handler.annotation.support.MethodArgumentNotValidException;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
+import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.stereotype.Component;
@@ -72,6 +73,17 @@ public class WebSocketStompErrorHandler extends StompSubProtocolErrorHandler {
         StompHeaderAccessor clientHeaderAccessor = (clientMessage != null)
             ? MessageHeaderAccessor.getAccessor(clientMessage, StompHeaderAccessor.class)
             : null;
+
+        if (clientMessage != null) {
+            String sessionId =
+                SimpMessageHeaderAccessor.getSessionId(
+                    clientMessage.getHeaders()
+                );
+
+            if (sessionId != null) {
+                accessor.setSessionId(sessionId);
+            }
+        }
 
         if (clientHeaderAccessor != null) {
             String receiptId = clientHeaderAccessor.getReceipt();
