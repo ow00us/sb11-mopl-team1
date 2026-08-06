@@ -5,6 +5,7 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserUpdateRequest;
+import com.mopl.user.dto.UserLockUpdateRequest;
 import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.storage.ProfileImageStorage;
 import com.mopl.user.entity.User;
@@ -285,6 +286,54 @@ public class UserService {
          *
          * 트랜잭션이 정상적으로 종료되면 JPA 변경 감지가 password_hash의
          * 변경을 확인해 UPDATE SQL을 실행하므로 save() 호출은 필요하지 않다.
+         */
+    }
+
+    /**
+     * 관리자의 요청에 따라 사용자 계정의 잠금 상태를 변경
+     *
+     * 관리자 권한 검증은 HTTP 인증 정보를 사용할 수 있는 Controller에서
+     * 먼저 수행하고, Service는 대상 사용자 조회와 상태 변경을 담당
+     *
+     * 대상 사용자가 존재하지 않으면 RESOURCE_NOT_FOUND를 발생시킴
+     * 조회된 User는 영속 상태이므로 updateLocked() 호출 후 별도의
+     * save() 없이 JPA 변경 감지를 통해 데이터베이스에 반영
+     *
+     * @param userId 잠금 상태를 변경할 대상 사용자의 UUID
+     * @param request 새 잠금 상태가 담긴 요청
+     * @throws BusinessException 대상 사용자가 존재하지 않는 경우
+     */
+    @Transactional
+    public void updateLocked(
+        UUID userId,
+        UserLockUpdateRequest request
+    ) {
+        /*
+         * 대상 사용자는 한 번만 조회
+         *
+         * 존재하지 않는 사용자는 잠금 상태를 변경할 수 없으므로
+         * RESOURCE_NOT_FOUND를 발생시킴
+         */
+        User user = userRepository.findById(userId)
+            .orElseThrow(() ->
+                new BusinessException(ErrorCode.RESOURCE_NOT_FOUND)
+            );
+
+        /*
+         * DTO의 locked 값은 Controller의 @Valid와 @NotNull 검증을
+         * 통과한 값이므로 true 또는 false 중 하나
+         *
+         * Boolean 값은 updateLocked(boolean)에 전달될 때
+         * 자동으로 원시 타입 boolean으로 변환
+         */
+        user.updateLocked(request.locked());
+
+        /*
+         * user는 현재 트랜잭션 안에서 조회된 영속 엔티티
+         *
+         * 트랜잭션 종료 시 JPA 변경 감지가 locked 필드 변경을 확인하여
+         * UPDATE SQL을 실행하므로 userRepository.save(user)를
+         * 다시 호출할 필요가 없음
          */
     }
 

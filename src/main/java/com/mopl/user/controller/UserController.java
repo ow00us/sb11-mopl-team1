@@ -2,6 +2,7 @@ package com.mopl.user.controller;
 
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserUpdateRequest;
+import com.mopl.user.dto.UserLockUpdateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.service.UserService;
@@ -178,4 +179,44 @@ public class UserController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * 관리자가 사용자 계정의 잠금 상태를 변경
+     *
+     * SecurityFilterChain에서 ROLE_ADMIN 권한 검사를 통과한 요청에 대해
+     * 대상 사용자 UUID와 변경할 잠금 상태를 UserService에 전달
+     *
+     * 관리자 권한 검사는 Spring MVC의 요청 본문 역직렬화와
+     * Bean Validation보다 먼저 수행
+     *
+     * locked가 true이면 계정을 잠그고,
+     * false이면 기존 계정 잠금을 해제
+     *
+     * 변경이 완료되면 응답 본문 없이 204 No Content를 반환
+     *
+     * @param userId 잠금 상태를 변경할 대상 사용자의 UUID
+     * @param request 새 잠금 상태가 담긴 요청
+     * @return 응답 본문이 없는 204 No Content 응답
+     */
+    @PatchMapping("/{userId}/locked")
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "204",
+            description = "계정 잠금 상태 변경 성공"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자를 찾을 수 없음"
+        )
+    })
+    public ResponseEntity<Void> updateLocked(
+        @PathVariable UUID userId,
+        @Valid @RequestBody UserLockUpdateRequest request
+    ) {
+        userService.updateLocked(
+            userId,
+            request
+        );
+
+        return ResponseEntity.noContent().build();
+    }
 }
