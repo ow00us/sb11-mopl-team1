@@ -1,6 +1,7 @@
 package com.mopl.watchingsession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -353,7 +354,7 @@ public class WatchingSessionSubscribeListenerTest {
 
         // when & then: BusinessException이 아니므로 리스너가 잡지 않고 그대로 전파해야 함
         Executable call = () -> listener.onSubscribe(event);
-        IllegalStateException thrown = org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalStateException thrown = assertThrows(
             IllegalStateException.class, call);
         assertThat(thrown).isSameAs(unexpected);
 
