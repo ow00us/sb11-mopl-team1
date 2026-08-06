@@ -15,6 +15,14 @@ spring:
 jwt:
   secret: MVB4n0vCRFADVbcto73tHp0Ghw2bWmriymBGLOuR2Q4=
 
+tmdb:
+  access-token: test-dummy-token
+  image-base-url: https://image.tmdb.org/t/p/w500
+
+sportsdb:
+  api-key: test-dummy-key
+  league-ids: 4569
+
 logging:
   level:
     root: warn
