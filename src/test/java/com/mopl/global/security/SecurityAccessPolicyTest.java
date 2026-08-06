@@ -338,4 +338,165 @@ class SecurityAccessPolicyTest {
         ).validate(org.mockito.ArgumentMatchers.anyString());
     }
 
+    @Test
+    @DisplayName("일반 사용자가 권한 변경 API에 잘못된 본문을 보내도 403을 반환한다")
+    void updateRole_userWithInvalidBody_returnsForbidden()
+        throws Exception {
+
+        // given
+        /*
+         * JWT 인증은 성공했지만 ROLE_USER 권한만 가진 인증 객체를 생성한다.
+         *
+         * 요청자는 인증된 사용자이지만 관리자가 아니므로
+         * Controller와 DTO 검증에 도달하기 전에 403으로 차단되어야 한다.
+         */
+        var authentication =
+            UsernamePasswordAuthenticationToken.authenticated(
+                UUID.fromString(USER_ID),
+                null,
+                List.of(new SimpleGrantedAuthority("ROLE_USER"))
+            );
+
+        when(jwtProvider.validate("user-token"))
+            .thenReturn(true);
+
+        when(jwtProvider.getAuthentication("user-token"))
+            .thenReturn(authentication);
+
+        // when & then
+        /*
+         * 빈 JSON에는 필수 role 값이 없으므로 Controller까지 도달하면
+         * @Valid 검증에 의해 400 Bad Request가 발생한다.
+         *
+         * 하지만 일반 사용자는 관리자 권한이 없으므로
+         * 본문 검증보다 먼저 SecurityFilterChain에서 차단되어
+         * 반드시 403 Forbidden이 반환되어야 한다.
+         *
+         * CSRF 토큰을 포함하지 않으면 CSRF 필터가 먼저 403을 반환할 수 있다.
+         * 관리자 권한 부족으로 발생한 403임을 확인하기 위해
+         * 유효한 CSRF 토큰을 함께 전달한다.
+         */
+        mockMvc.perform(
+                patch(
+                    "/api/users/{userId}/role",
+                    USER_ID
+                )
+                    .with(csrf())
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer user-token"
+                    )
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}")
+            )
+            .andExpect(status().isForbidden())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_403_1")
+            );
+
+        /*
+         * JWT 검증과 Authentication 생성까지 성공했는지 확인한다.
+         * 이를 통해 인증 실패가 아니라 권한 부족으로 발생한 403임을 보장한다.
+         */
+        verify(jwtProvider).validate("user-token");
+        verify(jwtProvider).getAuthentication("user-token");
+    }
+
+    @Test
+    @DisplayName("관리자가 권한 변경 API에 잘못된 본문을 보내면 400을 반환한다")
+    void updateRole_adminWithInvalidBody_returnsBadRequest()
+        throws Exception {
+
+        // given
+        /*
+         * ROLE_ADMIN 권한을 가진 인증 객체를 생성한다.
+         *
+         * 관리자는 SecurityFilterChain의 관리자 권한 검사를 통과하고
+         * 요청이 Controller까지 전달되어야 한다.
+         */
+        var authentication =
+            UsernamePasswordAuthenticationToken.authenticated(
+                UUID.fromString(USER_ID),
+                null,
+                List.of(new SimpleGrantedAuthority("ROLE_ADMIN"))
+            );
+
+        when(jwtProvider.validate("admin-token"))
+            .thenReturn(true);
+
+        when(jwtProvider.getAuthentication("admin-token"))
+            .thenReturn(authentication);
+
+        // when & then
+        /*
+         * 관리자는 보안 필터의 권한 검사를 통과한다.
+         *
+         * 이후 role 값이 없는 빈 JSON이
+         * UserRoleUpdateRequest의 @NotNull 검증에 실패하여
+         * 400 Bad Request가 반환되어야 한다.
+         */
+        mockMvc.perform(
+                patch(
+                    "/api/users/{userId}/role",
+                    USER_ID
+                )
+                    .with(csrf())
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer admin-token"
+                    )
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}")
+            )
+            .andExpect(status().isBadRequest());
+
+        verify(jwtProvider).validate("admin-token");
+        verify(jwtProvider).getAuthentication("admin-token");
+    }
+
+    @Test
+    @DisplayName("인증되지 않은 사용자가 권한 변경 API에 잘못된 본문을 보내도 401을 반환한다")
+    void updateRole_unauthenticatedWithInvalidBody_returnsUnauthorized()
+        throws Exception {
+
+        // given
+        /*
+         * Authorization 헤더를 전달하지 않아
+         * 인증 정보가 없는 요청을 구성한다.
+         *
+         * 빈 JSON은 role 값이 없어 DTO 검증에 실패할 요청이지만,
+         * 인증되지 않은 요청은 본문 검증보다 먼저 차단되어야 한다.
+         */
+
+        // when & then
+        /*
+         * CSRF 토큰을 포함해야 CSRF 실패 403과
+         * 인증 실패 401을 정확하게 구분할 수 있다.
+         */
+        mockMvc.perform(
+                patch(
+                    "/api/users/{userId}/role",
+                    USER_ID
+                )
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}")
+            )
+            .andExpect(status().isUnauthorized())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_401_1")
+            );
+
+        /*
+         * Bearer 토큰 자체가 전달되지 않았으므로
+         * JwtProvider의 토큰 검증도 실행되지 않아야 한다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(org.mockito.ArgumentMatchers.anyString());
+    }
+
 }
