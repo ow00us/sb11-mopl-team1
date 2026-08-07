@@ -31,10 +31,6 @@ public record PlaylistDto(
         );
     }
 
-    public static PlaylistDto from(Playlist playlist, boolean subscribedByMe) {
-        return from(playlist, subscribedByMe, List.of());
-    }
-
     /** owner.name·profileImageUrl 은 User 도메인 연동 후 채워집니다. */
     public static PlaylistDto from(Playlist playlist) {
         return from(playlist, false, List.of());

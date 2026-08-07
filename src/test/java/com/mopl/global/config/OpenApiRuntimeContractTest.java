@@ -24,6 +24,8 @@ import com.mopl.playlist.service.PlaylistService;
 import com.mopl.review.controller.ReviewController;
 import com.mopl.review.service.ReviewService;
 import com.mopl.sample.controller.SampleController;
+import com.mopl.sse.controller.SseController;
+import com.mopl.sse.service.SseEmitterManager;
 import com.mopl.user.controller.AuthController;
 import com.mopl.user.controller.UserController;
 import com.mopl.user.service.AuthService;
@@ -72,6 +74,7 @@ import org.yaml.snakeyaml.Yaml;
     DirectMessageController.class,
     FollowController.class,
     NotificationController.class,
+    SseController.class,
     PlaylistController.class,
     ReviewController.class,
     UserController.class,
@@ -116,6 +119,7 @@ class OpenApiRuntimeContractTest {
         "GET /api/follows/followers",
         "GET /api/follows/followings",
         "GET /api/notifications",
+        "GET /api/sse",
         "GET /api/playlists",
         "GET /api/playlists/{playlistId}",
         "GET /api/playlists/{playlistId}/subscribers",
@@ -178,6 +182,9 @@ class OpenApiRuntimeContractTest {
 
     @MockitoBean
     WatchingSessionService watchingSessionService;
+
+    @MockitoBean
+    SseEmitterManager sseEmitterManager;
 
     @BeforeAll
     static void loadContract() throws Exception {

@@ -22,11 +22,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -571,7 +574,143 @@ class PlaylistServiceTest {
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
     }
 
+    // ── Phase D: 남은 조건 분기 커버 ─────────────────────────────────────────
+
+    @Test
+    @DisplayName("get 은 requesterId 가 있고 구독 이력이 없으면 subscribedByMe=false 를 반환한다")
+    void get_requesterNotSubscribed_returnsSubscribedByMeFalse() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID)).thenReturn(false);
+
+        PlaylistDto result = playlistService.get(PLAYLIST_ID, OTHER_ID);
+
+        assertThat(result.subscribedByMe()).isFalse();
+    }
+
+    @Test
+    @DisplayName("getList 는 requesterId 가 있고 페이지가 비어있지 않으면 구독 여부를 배치 조회하고 subscribedByMe 를 매핑한다")
+    void getList_requesterIdAndNonEmptyPage_mapsSubscribedByMe() {
+        UUID subscribedId = UUID.randomUUID();
+        UUID otherId = UUID.randomUUID();
+        List<Playlist> rows = List.of(
+                savedPlaylist(subscribedId, OWNER_ID, "S", "s", Instant.now()),
+                savedPlaylist(otherId, OWNER_ID, "O", "o", Instant.now())
+        );
+        when(playlistRepository.findByUpdatedAtAsc(null, null, null, null, null, 3)).thenReturn(rows);
+        when(playlistRepository.countByFilter(null, null, null)).thenReturn(2L);
+        when(subscriptionRepository.findSubscribedPlaylistIds(OTHER_ID, List.of(subscribedId, otherId)))
+                .thenReturn(Set.of(subscribedId));
+
+        CursorResponse<PlaylistDto> result = playlistService.getList(
+                null, null, null, null, null, 2, "updatedAt", "ASCENDING", OTHER_ID);
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.data().get(0).subscribedByMe()).isTrue();
+        assertThat(result.data().get(1).subscribedByMe()).isFalse();
+    }
+
+    @Test
+    @DisplayName("get 은 콘텐츠 타입 TV_SERIES 를 tvSeries 문자열로 매핑한다")
+    void get_mapsContentTypeTvSeries() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        UUID contentId = UUID.randomUUID();
+        Content content = savedContentWithType(contentId, "TV", ContentType.TV_SERIES);
+
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(playlistContentRepository.findAllByPlaylistIdOrderByCreatedAtAsc(PLAYLIST_ID))
+                .thenReturn(List.of(savedLink(PLAYLIST_ID, contentId, Instant.now())));
+        when(contentRepository.findAllWithTagsByIdIn(List.of(contentId)))
+                .thenReturn(List.of(content));
+
+        PlaylistDto result = playlistService.get(PLAYLIST_ID, null);
+
+        assertThat(result.contents()).hasSize(1);
+        assertThat(result.contents().get(0).type()).isEqualTo("tvSeries");
+    }
+
+    @Test
+    @DisplayName("get 은 콘텐츠 타입 SPORT 를 sport 문자열로 매핑한다")
+    void get_mapsContentTypeSport() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        UUID contentId = UUID.randomUUID();
+        Content content = savedContentWithType(contentId, "축구", ContentType.SPORT);
+
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(playlistContentRepository.findAllByPlaylistIdOrderByCreatedAtAsc(PLAYLIST_ID))
+                .thenReturn(List.of(savedLink(PLAYLIST_ID, contentId, Instant.now())));
+        when(contentRepository.findAllWithTagsByIdIn(List.of(contentId)))
+                .thenReturn(List.of(content));
+
+        PlaylistDto result = playlistService.get(PLAYLIST_ID, null);
+
+        assertThat(result.contents().get(0).type()).isEqualTo("sport");
+    }
+
+    @Test
+    @DisplayName("get 은 링크된 콘텐츠 ID 가 ContentRepository 결과에 없으면 해당 항목을 조용히 제외한다")
+    void get_dropsMissingContentSummary() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        UUID existingContentId = UUID.randomUUID();
+        UUID missingContentId = UUID.randomUUID();
+
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(playlistContentRepository.findAllByPlaylistIdOrderByCreatedAtAsc(PLAYLIST_ID))
+                .thenReturn(List.of(
+                        savedLink(PLAYLIST_ID, existingContentId, Instant.now()),
+                        savedLink(PLAYLIST_ID, missingContentId, Instant.now())));
+        when(contentRepository.findAllWithTagsByIdIn(List.of(existingContentId, missingContentId)))
+                .thenReturn(List.of(savedContent(existingContentId, "존재")));
+
+        PlaylistDto result = playlistService.get(PLAYLIST_ID, null);
+
+        assertThat(result.contents()).hasSize(1);
+        assertThat(result.contents().get(0).id()).isEqualTo(existingContentId);
+    }
+
+    @Test
+    @DisplayName("addContent 는 DuplicateKey 가 아닌 DataIntegrityViolationException 은 그대로 전파한다")
+    void addContent_propagates_nonDuplicateKeyIntegrityViolation() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        UUID contentId = UUID.randomUUID();
+
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(contentRepository.existsById(contentId)).thenReturn(true);
+        when(playlistContentRepository.existsByPlaylistIdAndContentId(PLAYLIST_ID, contentId)).thenReturn(false);
+        DataIntegrityViolationException nonUniqueViolation = new DataIntegrityViolationException("FK violation");
+        doThrow(nonUniqueViolation).when(playlistContentSaver).save(PLAYLIST_ID, contentId);
+
+        assertThatThrownBy(() -> playlistService.addContent(PLAYLIST_ID, contentId, OWNER_ID))
+                .isSameAs(nonUniqueViolation);
+    }
+
+    @Test
+    @DisplayName("addContent 는 DuplicateKeyException 을 조용히 흡수한다")
+    void addContent_silentlyIgnores_duplicateKeyException() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        UUID contentId = UUID.randomUUID();
+
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(contentRepository.existsById(contentId)).thenReturn(true);
+        when(playlistContentRepository.existsByPlaylistIdAndContentId(PLAYLIST_ID, contentId)).thenReturn(false);
+        doThrow(new DuplicateKeyException("duplicate")).when(playlistContentSaver).save(PLAYLIST_ID, contentId);
+
+        // 예외 없이 정상 반환 (동시 삽입 race 흡수)
+        playlistService.addContent(PLAYLIST_ID, contentId, OWNER_ID);
+        verify(playlistContentSaver).save(PLAYLIST_ID, contentId);
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
+
+    private Content savedContentWithType(UUID id, String title, ContentType type) {
+        Content c = Content.builder()
+                .type(type)
+                .title(title)
+                .description("설명")
+                .build();
+        ReflectionTestUtils.setField(c, "id", id);
+        return c;
+    }
 
     private Playlist savedPlaylist(UUID id, UUID ownerId, String title, String desc, Instant updatedAt) {
         Playlist p = Playlist.builder().ownerId(ownerId).title(title).description(desc).build();
