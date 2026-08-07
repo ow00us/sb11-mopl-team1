@@ -209,7 +209,10 @@ public class PlaylistServiceImpl implements PlaylistService {
             return isAsc
                     ? playlistRepository.findByUpdatedAtAsc(keywordLike, ownerStr, subscriberStr, cursorTime, idAfterStr, limit)
                     : playlistRepository.findByUpdatedAtDesc(keywordLike, ownerStr, subscriberStr, cursorTime, idAfterStr, limit);
-        } catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException | java.time.format.DateTimeParseException e) {
+            // Instant.parse 는 DateTimeParseException 을 던지므로 IllegalArgumentException 만
+            // 잡으면 GlobalExceptionHandler catch-all 로 500 이 된다.
+            // getSubscribers·FollowService·ContentServiceImpl 과 동일한 패턴으로 함께 잡는다.
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
     }

@@ -249,6 +249,21 @@ class PlaylistServiceTest {
     }
 
     @Test
+    @DisplayName("cursor 가 base64 는 유효하지만 디코딩 결과가 ISO-8601 이 아니면 INVALID_INPUT 예외가 발생한다")
+    void getList_fail_cursorNotIso8601() {
+        // base64 로는 디코드에 성공하지만 Instant.parse 가 DateTimeParseException 을
+        // 던지는 커서. fetchPage 의 catch 절이 IllegalArgumentException 만 잡을 때는
+        // GlobalExceptionHandler catch-all 로 500 이 되었으므로 회귀 방지용으로 추가.
+        String base64ValidButNotIso = CursorUtils.encode("not-an-iso-instant");
+
+        assertThatThrownBy(() -> playlistService.getList(
+                null, null, null, base64ValidButNotIso, UUID.randomUUID(),
+                10, "updatedAt", "ASCENDING", null))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
     @DisplayName("cursor만 있고 idAfter가 없으면 INVALID_INPUT 예외가 발생한다")
     void getList_fail_cursorWithoutIdAfter() {
         String validCursor = CursorUtils.encodeInstant(Instant.now());

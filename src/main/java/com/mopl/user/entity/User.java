@@ -129,6 +129,27 @@ public class User extends BaseEntity {
     }
 
     /**
+     * 관리자의 요청에 따라 사용자의 권한을 변경
+     *
+     * 현재 시스템에서 사용할 수 있는 권한은
+     * UserRole enum에 정의된 USER와 ADMIN
+     *
+     * role 필드에 범용 setter를 제공하지 않고
+     * 사용자 권한 변경이라는 목적이 드러나는 메서드를 통해서만
+     * 권한을 변경하도록 제한
+     *
+     * 전달되는 role 값의 null 여부는
+     * UserRoleUpdateRequest의 @NotNull 검증에서 먼저 확인
+     *
+     * @param role 새로 적용할 사용자 권한
+     */
+    public void updateRole(
+        UserRole role
+    ) {
+        this.role = role;
+    }
+
+    /**
      * 관리자의 요청에 따라 사용자 계정의 잠금 상태를 변경
      *
      * true를 전달하면 계정을 잠그고,

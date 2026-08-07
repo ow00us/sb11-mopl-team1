@@ -6,6 +6,7 @@ import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserUpdateRequest;
 import com.mopl.user.dto.UserLockUpdateRequest;
+import com.mopl.user.dto.UserRoleUpdateRequest;
 import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.storage.ProfileImageStorage;
 import com.mopl.user.entity.User;
@@ -286,6 +287,58 @@ public class UserService {
          *
          * 트랜잭션이 정상적으로 종료되면 JPA 변경 감지가 password_hash의
          * 변경을 확인해 UPDATE SQL을 실행하므로 save() 호출은 필요하지 않다.
+         */
+    }
+
+    /**
+     * 관리자의 요청에 따라 사용자의 권한을 변경
+     *
+     * 관리자 권한 검증은 SecurityFilterChain에서 수행
+     * Service는 권한 변경 대상 사용자 조회와 상태 변경을 담당
+     *
+     * 대상 사용자가 존재하지 않으면 RESOURCE_NOT_FOUND를 발생
+     *
+     * 조회한 User는 현재 트랜잭션 안에서 영속 상태이므로
+     * updateRole()로 상태를 변경하면 트랜잭션 종료 시
+     * JPA 변경 감지를 통해 UPDATE SQL이 실행
+     *
+     * 따라서 userRepository.save(user)를 다시 호출할 필요가 없다.
+     *
+     * @param userId 권한을 변경할 대상 사용자의 UUID
+     * @param request 새로 적용할 사용자 권한이 담긴 요청
+     * @throws BusinessException 대상 사용자가 존재하지 않는 경우
+     */
+    @Transactional
+    public void updateRole(
+        UUID userId,
+        UserRoleUpdateRequest request
+    ) {
+        /*
+         * 변경 대상 사용자를 UUID로 한 번 조회
+         *
+         * 존재하지 않는 사용자의 권한은 변경할 수 없으므로
+         * 공통 RESOURCE_NOT_FOUND 예외를 발생
+         */
+        User user = userRepository.findById(userId)
+            .orElseThrow(() ->
+                new BusinessException(ErrorCode.RESOURCE_NOT_FOUND)
+            );
+
+        /*
+         * request.role()은 Controller의 @Valid와
+         * UserRoleUpdateRequest의 @NotNull 검증을 통과한 값
+         *
+         * UserRole enum 타입이므로 USER 또는 ADMIN 중 하나만 전달
+         */
+        user.updateRole(request.role());
+
+        /*
+         * user는 현재 트랜잭션에서 조회한 영속 엔티티
+         *
+         * 트랜잭션이 정상 종료되면 JPA 변경 감지가
+         * role 필드 변경을 확인하여 UPDATE SQL을 실행
+         *
+         * userRepository.save(user)는 호출하지 않는다.
          */
     }
 

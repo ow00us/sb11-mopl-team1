@@ -1,5 +1,7 @@
 package com.mopl.watchingsession.websocket;
 
+import com.mopl.global.exception.BusinessException;
+import com.mopl.global.security.websocket.StompErrorFrameSender;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.service.WatchingSessionService;
 import java.security.Principal;
@@ -31,6 +33,7 @@ public class WatchingSessionSubscribeListener {
         Pattern.compile("^/sub/contents/([0-9a-fA-F-]{36})/watch$");
     private final WatchingSessionService watchingSessionService;
     private final WatchingSessionBroadcaster watchingSessionBroadcaster;
+    private final StompErrorFrameSender errorFrameSender;
 
     @EventListener
     public void onSubscribe(SessionSubscribeEvent event) {
@@ -76,12 +79,22 @@ public class WatchingSessionSubscribeListener {
         try {
             session = watchingSessionService.start(watcherId, contentId, sessionId);
         } catch (RuntimeException e) {
-            log.warn("시청 세션 시작 실패, 구독 매핑 정리: watcherId={}, contentId={}, cause={}",
-                watcherId, contentId, e.getMessage());
-
-            // 인메모리 매핑 정리
+            // 예외 종류와 무관하게 인메모리 매핑 항상 정리
             WatchSubscriptionAttributes.remove(accessor);
-            return;
+
+            if (e instanceof BusinessException be) {
+                log.warn("시청 세션 시작 실패, 구독 매핑 정리: watcherId={}, contentId={}, cause={}",
+                    watcherId, contentId, e.getMessage());
+                // 클라이언트에 실패 알림
+                errorFrameSender.send(event.getMessage(), be.getClass().getSimpleName(), be.getErrorCode(),
+                    be.getMessage(), be.getDetails());
+                return;
+            }
+
+            // 예상 못한 예외는 삼키지 않고 그대로 전파
+            log.error("시청 세션 시작 중 예상하지 못한 예외 발생, 구독 매핑만 정리 후 재전파: watcherId={}, contentId={}",
+                watcherId, contentId, e);
+            throw e;
         }
 
         // start()가 완벽하게 성공한 후에만 이전 세션에 대한 LEAVE 알림 전송
