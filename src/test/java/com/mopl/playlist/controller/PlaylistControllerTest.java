@@ -440,10 +440,89 @@ class PlaylistControllerTest {
         verifyNoInteractions(playlistService);
     }
 
+    // ── 인증 예외 경로 (resolveUserId / resolveUserIdOptional) ────────────────
+
+    @Test
+    @DisplayName("인증 사용자 이름이 UUID 형식이 아니면 필수 인증 엔드포인트는 401 을 반환한다")
+    void requiredAuth_fail_whenPrincipalNameIsInvalidUUID() throws Exception {
+        setAuthName("not-a-uuid");
+
+        mockMvc.perform(post("/api/playlists")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new PlaylistCreateRequest("제목", "설명"))))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(playlistService);
+    }
+
+    @Test
+    @DisplayName("anonymousUser 프린시펄로 필수 인증 엔드포인트 요청 시 401 을 반환한다")
+    void requiredAuth_fail_whenPrincipalIsAnonymousUser() throws Exception {
+        setAuthName("anonymousUser");
+
+        mockMvc.perform(delete("/api/playlists/{playlistId}", PLAYLIST_ID))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(playlistService);
+    }
+
+    @Test
+    @DisplayName("인증 사용자 이름이 UUID 형식이 아니면 선택 인증 엔드포인트는 미인증으로 처리해 200 을 반환한다")
+    void optionalAuth_treatsInvalidPrincipalAsAnonymous_onGetList() throws Exception {
+        setAuthName("not-a-uuid");
+
+        CursorResponse<PlaylistDto> response = CursorResponse.of(
+                List.of(), null, null, false, 0L, "updatedAt", "ASCENDING");
+        when(playlistService.getList(any(), any(), any(), any(), any(), eq(10),
+                eq("updatedAt"), eq("ASCENDING"), eq(null))).thenReturn(response);
+
+        mockMvc.perform(get("/api/playlists")
+                        .param("limit", "10")
+                        .param("sortBy", "updatedAt")
+                        .param("sortDirection", "ASCENDING"))
+                .andExpect(status().isOk());
+
+        verify(playlistService).getList(any(), any(), any(), any(), any(), eq(10),
+                eq("updatedAt"), eq("ASCENDING"), eq(null));
+    }
+
+    @Test
+    @DisplayName("anonymousUser 프린시펄로 선택 인증 엔드포인트 요청 시 미인증으로 처리해 200 을 반환한다")
+    void optionalAuth_treatsAnonymousUserAsAnonymous_onGet() throws Exception {
+        setAuthName("anonymousUser");
+
+        when(playlistService.get(eq(PLAYLIST_ID), eq(null)))
+                .thenReturn(sampleDto("공개 조회", "설명"));
+
+        mockMvc.perform(get("/api/playlists/{playlistId}", PLAYLIST_ID))
+                .andExpect(status().isOk());
+
+        verify(playlistService).get(eq(PLAYLIST_ID), eq(null));
+    }
+
+    @Test
+    @DisplayName("인증 정보가 authenticated=false 이면 필수 인증 엔드포인트는 401 을 반환한다")
+    void requiredAuth_fail_whenAuthenticationNotAuthenticated() throws Exception {
+        var auth = UsernamePasswordAuthenticationToken.unauthenticated(OWNER_ID.toString(), null);
+        var context = SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(auth);
+        SecurityContextHolder.setContext(context);
+
+        mockMvc.perform(delete("/api/playlists/{playlistId}", PLAYLIST_ID))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(playlistService);
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
     private void setAuth(UUID userId) {
-        var auth = new UsernamePasswordAuthenticationToken(userId.toString(), null, List.of());
+        setAuthName(userId.toString());
+    }
+
+    private void setAuthName(String name) {
+        var auth = new UsernamePasswordAuthenticationToken(name, null, List.of());
         var context = SecurityContextHolder.createEmptyContext();
         context.setAuthentication(auth);
         SecurityContextHolder.setContext(context);

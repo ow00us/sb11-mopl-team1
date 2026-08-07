@@ -339,10 +339,54 @@ class FollowControllerTest {
                 .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
     }
 
+    // ── 인증 예외 경로 (resolveUserId) ─────────────────────────────────────
+
+    @Test
+    @DisplayName("인증 사용자 이름이 UUID 형식이 아니면 401 을 반환한다")
+    void follow_fail_whenPrincipalNameIsInvalidUUID() throws Exception {
+        setAuthName("not-a-uuid");
+
+        mockMvc.perform(post("/api/follows")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new FollowRequest(FOLLOWEE_ID))))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(followService);
+    }
+
+    @Test
+    @DisplayName("anonymousUser 프린시펄로 필수 인증 엔드포인트 요청 시 401 을 반환한다")
+    void follow_fail_whenPrincipalIsAnonymousUser() throws Exception {
+        setAuthName("anonymousUser");
+
+        mockMvc.perform(delete("/api/follows/{followId}", FOLLOW_ID))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(followService);
+    }
+
+    @Test
+    @DisplayName("인증 정보가 authenticated=false 이면 필수 인증 엔드포인트는 401 을 반환한다")
+    void follow_fail_whenAuthenticationNotAuthenticated() throws Exception {
+        var auth = UsernamePasswordAuthenticationToken.unauthenticated(FOLLOWER_ID.toString(), null);
+        var context = SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(auth);
+        SecurityContextHolder.setContext(context);
+
+        mockMvc.perform(delete("/api/follows/{followId}", FOLLOW_ID))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(followService);
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
     private void setAuth(UUID userId) {
-        var auth = new UsernamePasswordAuthenticationToken(userId.toString(), null, List.of());
+        setAuthName(userId.toString());
+    }
+
+    private void setAuthName(String name) {
+        var auth = new UsernamePasswordAuthenticationToken(name, null, List.of());
         var context = SecurityContextHolder.createEmptyContext();
         context.setAuthentication(auth);
         SecurityContextHolder.setContext(context);
