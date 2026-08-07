@@ -32,10 +32,17 @@ public class WatchingSessionUnsubscribeListener {
     public void onUnsubscribe(SessionUnsubscribeEvent event) {
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
 
+        boolean isActiveSubscription = WatchSubscriptionAttributes.isActive(accessor);
+
         // 입장 시점에 저장해둔 매핑에서 contentId를 복원
         // 매핑이 없으면 시청 토픽 구독 해제가 아니었다는 뜻이므로 관여하지 않음
         UUID contentId = WatchSubscriptionAttributes.remove(accessor);
         if (contentId == null) {
+            return;
+        }
+
+        if (!isActiveSubscription) {
+            log.debug("낡은 구독의 UNSUBSCRIBE로 판단되어 무동작 처리: contentId={}", contentId);
             return;
         }
 

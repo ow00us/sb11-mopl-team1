@@ -16,31 +16,37 @@ import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
  */
 final class WatchSubscriptionAttributes {
 
-    public static final String ATTRIBUTE_KEY = "watchingSession.subscriptions";
+    public static final String SUBSCRIPTION_MAP_ATTRIBUTE_KEY = "watchingSession.subscriptionMap";
+    public static final String ACTIVE_SUBSCRIPTION_ID_ATTRIBUTE_KEY = "watchingSession.activeSubscriptionId";
 
     private WatchSubscriptionAttributes() {}
 
-    static boolean put(StompHeaderAccessor accessor, UUID contentId) {
+    public static boolean put(StompHeaderAccessor accessor, UUID contentId) {
         String subscriptionId = accessor.getSubscriptionId();
         if (subscriptionId == null) {
             return false; // subscriptionId가 없으면 매핑 불가
         }
 
-        Map<String, UUID> map = subscriptionMap(accessor);
+        Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
+        if (sessionAttributes == null) {
+            return false;
+        }
+
+        Map<String, UUID> map = getOrCreateSubscriptionMap(accessor);
         if (map == null) {
-            return false; // 세션 속성이 없어도 매핑 불가
+            return false;
         }
 
         map.put(subscriptionId, contentId);
-        return true; // 저장 성공
+        sessionAttributes.put(ACTIVE_SUBSCRIPTION_ID_ATTRIBUTE_KEY, subscriptionId);
+        return true;
     }
 
-    static UUID remove(SimpMessageHeaderAccessor accessor) {
+    public static UUID remove(SimpMessageHeaderAccessor accessor) {
         String subscriptionId = accessor.getSubscriptionId();
         if (subscriptionId == null) return null;
 
-        Map<String, UUID> map = subscriptionMap(accessor);
-
+        Map<String, UUID> map = getOrCreateSubscriptionMap(accessor);
         if (map == null) {
             return null;
         }
@@ -49,14 +55,32 @@ final class WatchSubscriptionAttributes {
     }
 
     @SuppressWarnings("unchecked")
-    private static Map<String, UUID> subscriptionMap(SimpMessageHeaderAccessor accessor) {
+    private static Map<String, UUID> getOrCreateSubscriptionMap(SimpMessageHeaderAccessor accessor) {
         Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
         if (sessionAttributes == null) {
             return null;
         }
+
+        // Spring의 Session Attributes 맵에 대해 동기화 처리 후 Map 가져오기
         synchronized (sessionAttributes) {
             return (Map<String, UUID>) sessionAttributes
-                .computeIfAbsent(ATTRIBUTE_KEY, key -> new ConcurrentHashMap<String, UUID>());
+                .computeIfAbsent(SUBSCRIPTION_MAP_ATTRIBUTE_KEY, key -> new ConcurrentHashMap<String, UUID>());
         }
- }
-}
+    }
+
+    static boolean isActive(SimpMessageHeaderAccessor accessor) {
+        String subscriptionId = accessor.getSubscriptionId();
+        if (subscriptionId == null) {
+            return false;
+        }
+
+        Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
+        if (sessionAttributes == null) {
+            return false;
+        }
+
+        return subscriptionId.equals(sessionAttributes.get(ACTIVE_SUBSCRIPTION_ID_ATTRIBUTE_KEY));
+        }
+    }
+
+
