@@ -59,4 +59,20 @@ public interface PlaylistSubscriptionRepository extends JpaRepository<PlaylistSu
             """, nativeQuery = true)
     int insertIfAbsent(@Param("playlistId") String playlistId,
                        @Param("subscriberId") String subscriberId);
+
+    /**
+     * (playlist_id, subscriber_id) 조건부 삭제. 실제로 삭제된 rows affected 를 반환한다.
+     * <p>동일 (playlist, subscriber) 에 대한 동시 unsubscribe 요청 시
+     * 오직 하나만 rows affected 1 을 얻으므로, 카운터 감소를 이 경로에서만 실행하면
+     * subscriber_count 이 실제 구독 수보다 낮게 떨어지는 race 를 막을 수 있다.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """
+            DELETE FROM playlist_subscriptions
+            WHERE playlist_id = CAST(:playlistId AS uuid)
+              AND subscriber_id = CAST(:subscriberId AS uuid)
+            """, nativeQuery = true)
+    int deleteByPlaylistIdAndSubscriberIdReturningCount(
+            @Param("playlistId") String playlistId,
+            @Param("subscriberId") String subscriberId);
 }

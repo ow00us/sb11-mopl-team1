@@ -33,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -416,28 +417,50 @@ class PlaylistServiceTest {
     // ── unsubscribe ───────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("구독 취소 성공 시 삭제 flush 후 subscriberCount 를 감소시킨다")
+    @DisplayName("구독 취소 성공 시 rows affected 1 을 얻고 subscriberCount 를 한 번 감소시킨다")
     void unsubscribe_success() {
-        PlaylistSubscription sub = savedSubscription(PLAYLIST_ID, OTHER_ID);
-        when(subscriptionRepository.findByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
-                .thenReturn(Optional.of(sub));
+        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
+                .thenReturn(true);
+        when(subscriptionRepository.deleteByPlaylistIdAndSubscriberIdReturningCount(
+                PLAYLIST_ID.toString(), OTHER_ID.toString()))
+                .thenReturn(1);
 
         playlistService.unsubscribe(PLAYLIST_ID, OTHER_ID);
 
-        verify(subscriptionRepository).delete(sub);
-        verify(subscriptionRepository).flush();
+        verify(subscriptionRepository).deleteByPlaylistIdAndSubscriberIdReturningCount(
+                PLAYLIST_ID.toString(), OTHER_ID.toString());
         verify(playlistRepository).decrementSubscriberCount(PLAYLIST_ID);
     }
 
     @Test
     @DisplayName("구독하지 않은 상태에서 취소 시도 시 RESOURCE_NOT_FOUND 예외가 발생한다")
     void unsubscribe_fail_notSubscribed() {
-        when(subscriptionRepository.findByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
-                .thenReturn(Optional.empty());
+        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
+                .thenReturn(false);
 
         assertThatThrownBy(() -> playlistService.unsubscribe(PLAYLIST_ID, OTHER_ID))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+
+        verify(subscriptionRepository, never())
+                .deleteByPlaylistIdAndSubscriberIdReturningCount(anyString(), anyString());
+        verify(playlistRepository, never()).decrementSubscriberCount(any(UUID.class));
+    }
+
+    @Test
+    @DisplayName("동시 unsubscribe race 로 rows affected 가 0 이면 decrement 를 호출하지 않는다")
+    void unsubscribe_noDecrement_whenRaceLosesRow() {
+        // exists 통과 후 다른 트랜잭션이 먼저 DELETE 를 실행한 상황을 시뮬레이션한다.
+        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
+                .thenReturn(true);
+        when(subscriptionRepository.deleteByPlaylistIdAndSubscriberIdReturningCount(
+                PLAYLIST_ID.toString(), OTHER_ID.toString()))
+                .thenReturn(0);
+
+        playlistService.unsubscribe(PLAYLIST_ID, OTHER_ID);
+
+        // rows=0 경로에서는 카운터를 감소시키지 않아 실구독 수보다 낮게 떨어지지 않는다.
+        verify(playlistRepository, never()).decrementSubscriberCount(any(UUID.class));
     }
 
     // ── getSubscribers ────────────────────────────────────────────────────────

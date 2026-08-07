@@ -122,6 +122,33 @@ class PlaylistSubscriptionRepositoryTest {
         assertThat(page2).extracting(PlaylistSubscription::getId).containsExactly(smaller, larger);
     }
 
+    // ── deleteByPlaylistIdAndSubscriberIdReturningCount ───────────────────────
+
+    @Test
+    @DisplayName("deleteByPlaylistIdAndSubscriberIdReturningCount 는 구독이 있으면 1 을 반환하며 삭제한다")
+    void deleteByPlaylistIdAndSubscriberIdReturningCount_returnsOne_whenExists() {
+        UUID playlistId = persistPlaylist("PL").getId();
+        persistSubscription(playlistId, SUB_B, Instant.now());
+
+        int deleted = subscriptionRepository.deleteByPlaylistIdAndSubscriberIdReturningCount(
+                playlistId.toString(), SUB_B.toString());
+
+        assertThat(deleted).isEqualTo(1);
+        assertThat(subscriptionRepository.existsByPlaylistIdAndSubscriberId(playlistId, SUB_B)).isFalse();
+    }
+
+    @Test
+    @DisplayName("deleteByPlaylistIdAndSubscriberIdReturningCount 는 구독이 없으면 0 을 반환하고 예외를 던지지 않는다")
+    void deleteByPlaylistIdAndSubscriberIdReturningCount_returnsZero_whenAbsent() {
+        UUID playlistId = persistPlaylist("PL").getId();
+        // SUB_B 는 구독을 넣지 않은 상태 - race 로 이미 삭제된 상황과 동일한 조건.
+
+        int deleted = subscriptionRepository.deleteByPlaylistIdAndSubscriberIdReturningCount(
+                playlistId.toString(), SUB_B.toString());
+
+        assertThat(deleted).isZero();
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
     private Playlist persistPlaylist(String title) {
