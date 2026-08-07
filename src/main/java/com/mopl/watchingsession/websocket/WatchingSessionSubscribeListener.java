@@ -1,10 +1,13 @@
 package com.mopl.watchingsession.websocket;
 
 import com.mopl.global.exception.BusinessException;
+import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.security.websocket.StompErrorFrameSender;
+import com.mopl.global.security.websocket.StompSessionCloser;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.service.WatchingSessionService;
 import java.security.Principal;
+import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -34,6 +37,7 @@ public class WatchingSessionSubscribeListener {
     private final WatchingSessionService watchingSessionService;
     private final WatchingSessionBroadcaster watchingSessionBroadcaster;
     private final StompErrorFrameSender errorFrameSender;
+    private final StompSessionCloser sessionCloser;
 
     @EventListener
     public void onSubscribe(SessionSubscribeEvent event) {
@@ -91,10 +95,16 @@ public class WatchingSessionSubscribeListener {
                 return;
             }
 
-            // 예상 못한 예외는 삼키지 않고 그대로 전파
-            log.error("시청 세션 시작 중 예상하지 못한 예외 발생, 구독 매핑만 정리 후 재전파: watcherId={}, contentId={}",
+            // 인프라 오류 등 예상 못한 예외:
+            // 브로커에는 이미 구독이 등록된 상태라 그대로 두면 유령 구독이 남는다.
+            // 클라이언트에 INTERNAL_ERROR 프레임을 알리고 서버 주도로 세션을 종료해
+            // Spring 의 SessionDisconnectEvent 경로로 브로커 구독을 자동 정리한다.
+            log.error("시청 세션 시작 중 예상하지 못한 예외 발생, ERROR 프레임 발송 후 세션 종료: watcherId={}, contentId={}",
                 watcherId, contentId, e);
-            throw e;
+            errorFrameSender.send(event.getMessage(), e.getClass().getSimpleName(),
+                ErrorCode.INTERNAL_ERROR, ErrorCode.INTERNAL_ERROR.getMessage(), Map.of());
+            sessionCloser.close(event.getMessage());
+            return;
         }
 
         // start()가 완벽하게 성공한 후에만 이전 세션에 대한 LEAVE 알림 전송

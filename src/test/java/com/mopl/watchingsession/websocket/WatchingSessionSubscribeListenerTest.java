@@ -1,7 +1,6 @@
 package com.mopl.watchingsession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -14,17 +13,18 @@ import com.mopl.global.common.UserSummary;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.security.websocket.StompErrorFrameSender;
+import com.mopl.global.security.websocket.StompSessionCloser;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.service.WatchingSessionService;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.api.function.Executable;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -47,6 +47,9 @@ public class WatchingSessionSubscribeListenerTest {
 
     @Mock
     StompErrorFrameSender errorFrameSender;
+
+    @Mock
+    StompSessionCloser sessionCloser;
 
     @InjectMocks
     WatchingSessionSubscribeListener listener;
@@ -342,8 +345,8 @@ public class WatchingSessionSubscribeListenerTest {
     }
 
     @Test
-    @DisplayName("start() 처리 중 BusinessException이 아닌 예외가 발생하면 구독 매핑은 정리하되 삼키지 않고 리스너 밖으로 전파함")
-    void onSubscribe_propagatesException_whenStartThrowsNonBusinessException() {
+    @DisplayName("start() 처리 중 BusinessException 이 아닌 예외 발생 시 인메모리 매핑 정리 + INTERNAL_ERROR ERROR 프레임 발송 + 세션 강제 종료로 유령 구독 방지 (#137)")
+    void onSubscribe_sendsErrorAndClosesSession_whenStartThrowsNonBusinessException() {
         // given
         SessionSubscribeEvent event = subscribeEvent(
             "/sub/contents/" + CONTENT_ID + "/watch", "sub-123", principalOf(WATCHER_ID));
@@ -352,19 +355,27 @@ public class WatchingSessionSubscribeListenerTest {
         when(watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID))
             .thenThrow(unexpected);
 
-        // when & then: BusinessException이 아니므로 리스너가 잡지 않고 그대로 전파해야 함
-        Executable call = () -> listener.onSubscribe(event);
-        IllegalStateException thrown = assertThrows(
-            IllegalStateException.class, call);
-        assertThat(thrown).isSameAs(unexpected);
+        // when: 예외를 밖으로 던지지 않고 내부에서 처리 (재-throw 시 브로커에 유령 구독이 남기 때문)
+        listener.onSubscribe(event);
 
-        // 예외 종류와 무관하게 인메모리 매핑은 정리되어야 함 (DB 세션 없이 매핑만 남는 상태 불일치 방지)
+        // then: 예외 종류와 무관하게 인메모리 매핑은 정리되어야 함
         StompHeaderAccessor lookupAccessor = StompHeaderAccessor.wrap(event.getMessage());
         assertThat(WatchSubscriptionAttributes.remove(lookupAccessor)).isNull();
 
-        // BusinessException 전용 처리(에러 프레임 전송, JOIN/LEAVE 브로드캐스트)는 수행되지 않아야 함
+        // 브로드캐스트는 발생하지 않아야 함
         verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
-        verifyNoInteractions(errorFrameSender);
+
+        // 클라이언트에 INTERNAL_ERROR ERROR 프레임 전송 (예외 클래스명은 원본 예외 기준)
+        verify(errorFrameSender).send(
+            eq(event.getMessage()),
+            eq("IllegalStateException"),
+            eq(ErrorCode.INTERNAL_ERROR),
+            eq(ErrorCode.INTERNAL_ERROR.getMessage()),
+            eq(Map.of())
+        );
+
+        // 세션 강제 종료로 SessionDisconnectEvent 유발 → 브로커 구독 자동 정리
+        verify(sessionCloser).close(event.getMessage());
     }
 }
