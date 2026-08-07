@@ -1,11 +1,15 @@
 package com.mopl.content.external.batch;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 
 import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentSource;
 import com.mopl.content.entity.ContentType;
+import com.mopl.content.external.mapping.ContentUpsertService;
+import com.mopl.content.external.mapping.ExternalContentDraft;
 import com.mopl.content.external.sportsdb.SportsDbApiClient;
 import com.mopl.content.external.sportsdb.dto.SportsDbEventSummary;
 import com.mopl.content.external.tmdb.TmdbApiClient;
@@ -22,8 +26,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.JobExecution;
 import org.springframework.batch.core.JobParameters;
-import org.springframework.batch.core.StepExecution;
 import org.springframework.batch.core.JobParametersBuilder;
+import org.springframework.batch.core.StepExecution;
 import org.springframework.batch.test.JobLauncherTestUtils;
 import org.springframework.batch.test.context.SpringBatchTest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,6 +35,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -56,6 +61,9 @@ class ExternalContentCollectionJobIntegrationTest {
 
     @MockitoBean
     SportsDbApiClient sportsDbApiClient;
+
+    @MockitoSpyBean
+    ContentUpsertService contentUpsertService;
 
     @Test
     @DisplayName("Job을 실행하면 TMDB·Sports DB 콘텐츠가 수집되어 DB에 저장된다")
@@ -148,5 +156,44 @@ class ExternalContentCollectionJobIntegrationTest {
                 .findFirst()
                 .orElseThrow();
         assertThat(movieStep.getSkipCount()).isZero();
+    }
+
+    @Test
+    @DisplayName("항목 하나의 저장이 실패해도 나머지 항목은 정상 저장되고 Job이 완료된다")
+    void job_oneItemFailsDuringWrite_stepSkipsAndJobStillCompletes() throws Exception {
+        TmdbMovieSummary okMovie = new TmdbMovieSummary(9101L, "OK Movie", "overview", "/m1.jpg", List.of(28));
+        TmdbMovieSummary failMovie = new TmdbMovieSummary(9102L, "Fail Movie", "overview", "/m2.jpg", List.of(28));
+        when(tmdbApiClient.getPopularMovies(1))
+                .thenReturn(new TmdbPopularMoviesResponse(1, List.of(okMovie, failMovie), 1));
+        when(tmdbApiClient.getPopularTvShows(1)).thenReturn(new TmdbPopularTvResponse(1, List.of(), 0));
+        when(sportsDbApiClient.getEventsByDay(LocalDate.now(), 4569)).thenReturn(List.of());
+
+        // externalId가 "9102"인 draft만 강제로 실패시키고, 나머지는 실제 로직을 그대로 실행한다
+        doAnswer(invocation -> {
+            ExternalContentDraft draft = invocation.getArgument(0);
+            if ("9102".equals(draft.externalId())) {
+                throw new RuntimeException("의도적으로 발생시킨 실패 (skip 정책 검증용)");
+            }
+            return invocation.callRealMethod();
+        }).when(contentUpsertService).upsert(any(ExternalContentDraft.class));
+
+        JobExecution jobExecution = jobLauncherTestUtils.launchJob(new JobParametersBuilder()
+                .addLocalDateTime("runDateTime", LocalDateTime.now())
+                .toJobParameters());
+
+        // 실패한 항목이 있어도 Job 자체는 실패 처리되지 않는다 (skipLimit 20 이내이므로)
+        assertThat(jobExecution.getStatus()).isEqualTo(BatchStatus.COMPLETED);
+
+        // 정상 항목은 저장되고, 실패한 항목은 저장되지 않는다
+        assertThat(contentRepository.findBySourceAndExternalId(ContentSource.TMDB, "9101")).isPresent();
+        assertThat(contentRepository.findBySourceAndExternalId(ContentSource.TMDB, "9102")).isEmpty();
+
+        // Step 실행 통계에도 스킵 1건이 정확히 기록된다
+        long writeSkipCount = jobExecution.getStepExecutions().stream()
+                .filter(stepExecution -> stepExecution.getStepName().equals("tmdbMovieCollectionStep"))
+                .findFirst()
+                .orElseThrow()
+                .getWriteSkipCount();
+        assertThat(writeSkipCount).isEqualTo(1);
     }
 }
