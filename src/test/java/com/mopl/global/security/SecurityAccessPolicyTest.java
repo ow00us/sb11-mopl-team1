@@ -143,6 +143,138 @@ class SecurityAccessPolicyTest {
             .andExpect(jsonPath("$.errorCode").value("COMMON_401_1"));
     }
 
+    /**
+     * 관리자 사용자 목록 조회 API는 인증되지 않은 사용자가
+     * 접근할 수 없는 보호 API인지 검증
+     */
+    @Test
+    @DisplayName("인증되지 않은 사용자가 사용자 목록을 조회하면 401을 반환한다")
+    void findUsers_unauthenticated_returnsUnauthorized() throws Exception {
+        // when & then
+        /*
+         * Authorization 헤더를 전달하지 않으므로
+         * SecurityContext에는 인증 정보가 존재하지 않는다.
+         *
+         * GET 요청은 CSRF 검증 대상이 아니므로 별도의 csrf()는 필요하지 않다.
+         */
+        mockMvc.perform(
+                get("/api/users")
+                    .param("limit", "20")
+                    .param("sortDirection", "ASCENDING")
+                    .param("sortBy", "createdAt")
+            )
+            .andExpect(status().isUnauthorized())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_401_1")
+            );
+
+        /*
+         * Bearer 토큰 자체가 전달되지 않았으므로
+         * JwtProvider의 토큰 검증도 실행되지 않아야 한다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(org.mockito.ArgumentMatchers.anyString());
+    }
+
+    /**
+     * JWT 인증에는 성공했지만 ROLE_USER 권한만 가진 사용자가
+     * 관리자 사용자 목록 조회 API에 접근하면 차단되는지 검증
+     */
+    @Test
+    @DisplayName("일반 사용자가 사용자 목록을 조회하면 403을 반환한다")
+    void findUsers_user_returnsForbidden() throws Exception {
+        // given
+        /*
+         * 유효한 JWT로 인증됐지만 관리자 권한은 없는 사용자를 구성
+         */
+        var authentication =
+            UsernamePasswordAuthenticationToken.authenticated(
+                UUID.fromString(USER_ID),
+                null,
+                List.of(new SimpleGrantedAuthority("ROLE_USER"))
+            );
+
+        when(jwtProvider.validate("user-token"))
+            .thenReturn(true);
+
+        when(jwtProvider.getAuthentication("user-token"))
+            .thenReturn(authentication);
+
+        // when & then
+        mockMvc.perform(
+                get("/api/users")
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer user-token"
+                    )
+                    .param("limit", "20")
+                    .param("sortDirection", "ASCENDING")
+                    .param("sortBy", "createdAt")
+            )
+            .andExpect(status().isForbidden())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_403_1")
+            );
+
+        /*
+         * JWT 검증과 Authentication 생성에는 성공했는지 확인
+         *
+         * 이를 통해 이번 403이 인증 실패가 아니라
+         * ROLE_ADMIN 권한 부족으로 발생했음을 보장
+         */
+        verify(jwtProvider).validate("user-token");
+        verify(jwtProvider).getAuthentication("user-token");
+    }
+
+    /**
+     * ROLE_ADMIN 권한을 가진 사용자는 보안 필터를 통과해
+     * 사용자 목록 조회 Controller에 도달하는지 검증
+     */
+    @Test
+    @DisplayName("관리자가 사용자 목록을 조회하면 보안 필터를 통과한다")
+    void findUsers_admin_passesSecurityFilter() throws Exception {
+        // given
+        /*
+         * ROLE_ADMIN 권한을 가진 인증 객체를 구성
+         */
+        var authentication =
+            UsernamePasswordAuthenticationToken.authenticated(
+                UUID.fromString(USER_ID),
+                null,
+                List.of(new SimpleGrantedAuthority("ROLE_ADMIN"))
+            );
+
+        when(jwtProvider.validate("admin-token"))
+            .thenReturn(true);
+
+        when(jwtProvider.getAuthentication("admin-token"))
+            .thenReturn(authentication);
+
+        // when & then
+        /*
+         * SecurityPolicyProbeController의 테스트 전용 메서드는
+         * 요청이 보안 필터를 통과하면 204 No Content를 반환
+         */
+        mockMvc.perform(
+                get("/api/users")
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer admin-token"
+                    )
+                    .param("limit", "20")
+                    .param("sortDirection", "ASCENDING")
+                    .param("sortBy", "createdAt")
+            )
+            .andExpect(status().isNoContent());
+
+        verify(jwtProvider).validate("admin-token");
+        verify(jwtProvider).getAuthentication("admin-token");
+    }
+
     @Test
     @DisplayName("보호 API는 유효하지 않은 Bearer 토큰이면 401을 반환한다")
     void protectedApi_withInvalidToken_returnsUnauthorized() throws Exception {
@@ -457,8 +589,7 @@ class SecurityAccessPolicyTest {
 
     @Test
     @DisplayName("인증되지 않은 사용자가 권한 변경 API에 잘못된 본문을 보내도 401을 반환한다")
-    void updateRole_unauthenticatedWithInvalidBody_returnsUnauthorized()
-        throws Exception {
+    void updateRole_unauthenticatedWithInvalidBody_returnsUnauthorized() throws Exception {
 
         // given
         /*

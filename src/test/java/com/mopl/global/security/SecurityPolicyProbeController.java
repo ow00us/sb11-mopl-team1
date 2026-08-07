@@ -35,6 +35,23 @@ class SecurityPolicyProbeController {
     void publicOrAuthenticationApi() {
     }
 
+    /**
+     * 관리자 사용자 목록 조회 API의 접근 정책을 검증하기 위한 테스트 전용 경로
+     *
+     * <p>실제 UserController의 GET /api/users와 동일한 경로를 사용한다.</p>
+     *
+     * <p>이 메서드가 204 No Content를 반환하도록 구성한 이유는
+     * 테스트가 실제 목록 조회 로직이나 데이터베이스에 의존하지 않고
+     * SecurityFilterChain의 인증·권한 검사만 확인할 수 있도록 하기 위함이다.</p>
+     *
+     * <p>이 Controller는 security-policy-test 프로파일에서만 등록되므로
+     * 운영 애플리케이션에는 포함되지 않는다.</p>
+     */
+    @GetMapping("/api/users")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void findUsers() {
+    }
+
     @GetMapping("/api/security-policy/protected")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void protectedApi() {
