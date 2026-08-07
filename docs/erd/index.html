@@ -285,18 +285,19 @@
     <section class="toolbar" aria-label="ERD 탐색 도구">
       <input id="search" class="search" type="search" placeholder="테이블 또는 필드 검색" aria-label="테이블 또는 필드 검색">
       <div class="filters" role="group" aria-label="도메인 필터">
-        <button class="filter active" data-filter="all" type="button">전체</button>
-        <button class="filter" data-filter="social" type="button">사용자</button>
-        <button class="filter" data-filter="content" type="button">콘텐츠</button>
-        <button class="filter" data-filter="playlist" type="button">플레이리스트</button>
-        <button class="filter" data-filter="message" type="button">메시징</button>
-        <button class="filter" data-filter="presence" type="button">시청 세션</button>
+        <button class="filter active" data-filter="all" type="button" aria-pressed="true">전체</button>
+        <button class="filter" data-filter="social" type="button" aria-pressed="false">사용자</button>
+        <button class="filter" data-filter="content" type="button" aria-pressed="false">콘텐츠</button>
+        <button class="filter" data-filter="playlist" type="button" aria-pressed="false">플레이리스트</button>
+        <button class="filter" data-filter="message" type="button" aria-pressed="false">메시징</button>
+        <button class="filter" data-filter="presence" type="button" aria-pressed="false">시청 세션</button>
       </div>
     </section>
 
     <div class="legend" aria-label="키 범례">
       <span><span class="key pk">PK</span> 기본 키</span>
       <span><span class="key fk">FK</span> 외래 키 · 클릭하여 이동</span>
+      <span><span class="key fk">FK*</span> 같은 표시끼리 복합 외래 키</span>
       <span><span class="key uk">UK</span> 단독 또는 복합 유니크 제약</span>
       <span>테이블 제목을 다시 누르면 관계 강조가 해제됩니다.</span>
     </div>
@@ -422,14 +423,15 @@
           </article>
 
           <article class="table-card" id="direct_messages" data-table="direct_messages" data-relations="conversations conversation_participants">
-            <button class="table-head" type="button"><span class="table-name">direct_messages</span><span class="table-note">참여자만 발신 가능</span></button>
+            <button class="table-head" type="button"><span class="table-name">direct_messages</span><span class="table-note">대화·발신자 복합 FK로 참여자 확인</span></button>
             <ul class="fields">
               <li class="field"><span class="field-main"><span class="field-name">id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span></span></li>
-              <li class="field"><span class="field-main"><a class="field-name relation" href="#conversations">conversation_id</a><span class="field-type">uuid</span></span><span class="keys"><span class="key fk">FK</span></span></li>
-              <li class="field"><span class="field-main"><a class="field-name relation" href="#conversation_participants">sender_id</a><span class="field-type">uuid</span></span><span class="keys"><span class="key fk">FK</span></span></li>
+              <li class="field"><span class="field-main"><a class="field-name relation" href="#conversation_participants">conversation_id</a><span class="field-type">uuid</span></span><span class="keys"><span class="key fk">FK*</span></span></li>
+              <li class="field"><span class="field-main"><a class="field-name relation" href="#conversation_participants">sender_id</a><span class="field-type">uuid</span></span><span class="keys"><span class="key fk">FK*</span></span></li>
               <li class="field"><span class="field-main"><span class="field-name">content</span><span class="field-type">text</span></span></li>
               <li class="field"><span class="field-main"><span class="field-name">read_at</span><span class="field-type">timestamptz?</span></span></li>
             </ul>
+            <p class="table-note" style="padding: 0 12px 12px; margin: 0;">(conversation_id, sender_id) → conversation_participants(conversation_id, user_id)</p>
           </article>
 
           <article class="table-card" id="notifications" data-table="notifications" data-relations="users">
@@ -524,7 +526,11 @@
     cards.forEach(card => card.querySelector('.table-head').addEventListener('click', () => selectTable(card)));
     filters.forEach(filter => filter.addEventListener('click', () => {
       activeDomain = filter.dataset.filter;
-      filters.forEach(item => item.classList.toggle('active', item === filter));
+      filters.forEach(item => {
+        const isActive = item === filter;
+        item.classList.toggle('active', isActive);
+        item.setAttribute('aria-pressed', String(isActive));
+      });
       applyFilters();
     }));
     search.addEventListener('input', applyFilters);
@@ -532,7 +538,11 @@
       if (event.key === 'Escape') {
         search.value = '';
         activeDomain = 'all';
-        filters.forEach(item => item.classList.toggle('active', item.dataset.filter === 'all'));
+        filters.forEach(item => {
+          const isActive = item.dataset.filter === 'all';
+          item.classList.toggle('active', isActive);
+          item.setAttribute('aria-pressed', String(isActive));
+        });
         applyFilters();
       }
     });

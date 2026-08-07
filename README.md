@@ -128,7 +128,7 @@ sb11-mopl-team1
 | `/api/notifications` | 알림 목록과 삭제 |
 | `/api/conversations` | 대화방과 DM 조회·읽음 처리 |
 
-목록 API는 커서 기반 페이지네이션을 사용합니다. 실제 요청·응답 필드와 상태 코드는 실행 중인 Swagger UI와 기준 OpenAPI 문서를 우선합니다.
+목록 API는 커서 기반 페이지네이션을 사용합니다. 실제 요청·응답 필드와 상태 코드는 실행 중인 Swagger UI와 팀이 관리하는 기준 계약 `openapi/mopl-api.yaml`을 우선합니다. `openapi/reference/provided-openapi.json`은 최초 제공·비교용 문서입니다.
 
 ### 인증과 CSRF
 
@@ -268,9 +268,10 @@ docker build --tag mopl:local .
 
 - Swagger UI: `http://localhost:8080/swagger-ui.html`
 - 런타임 OpenAPI JSON: `http://localhost:8080/v3/api-docs`
-- 기준 OpenAPI 문서: `openapi/reference/provided-openapi.json`
+- 팀 관리 기준 REST 계약: `openapi/mopl-api.yaml`
+- 최초 제공·비교용 문서: `openapi/reference/provided-openapi.json`
 
-REST 계약을 변경할 때에는 구현, 테스트, 런타임 Swagger와 기준 OpenAPI 문서를 함께 갱신합니다.
+REST 계약을 변경할 때에는 구현, 테스트, 런타임 Swagger와 팀 관리 기준 계약 `openapi/mopl-api.yaml`을 함께 갱신합니다.
 
 ## 데이터베이스 변경
 
