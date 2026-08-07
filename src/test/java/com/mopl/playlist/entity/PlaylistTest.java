@@ -52,6 +52,18 @@ class PlaylistTest {
     }
 
     @Test
+    @DisplayName("update 호출 시 title=null 이면 title 은 유지되고 description 만 갱신된다")
+    void update_titleNull_updatesDescriptionOnly() {
+        Playlist playlist = Playlist.builder()
+                .ownerId(OWNER_ID).title("원래 제목").description("원래 설명").build();
+
+        playlist.update(null, "새 설명");
+
+        assertThat(playlist.getTitle()).isEqualTo("원래 제목");
+        assertThat(playlist.getDescription()).isEqualTo("새 설명");
+    }
+
+    @Test
     @DisplayName("isOwnedBy 는 소유자 ID 일 때 true 를 반환한다")
     void isOwnedBy_returnsTrue_forOwner() {
         Playlist playlist = Playlist.builder()

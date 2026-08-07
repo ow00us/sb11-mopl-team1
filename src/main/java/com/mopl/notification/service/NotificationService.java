@@ -6,12 +6,14 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.notification.dto.NotificationDto;
 import com.mopl.notification.entity.Notification;
 import com.mopl.notification.entity.NotificationLevel;
+import com.mopl.notification.event.NotificationCreatedEvent;
 import com.mopl.notification.repository.NotificationRepository;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -28,6 +30,7 @@ public class NotificationService {
     private static final int MAX_LIMIT = 100;
 
     private final NotificationRepository notificationRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Transactional
     public NotificationDto create(
@@ -48,7 +51,16 @@ public class NotificationService {
         Notification saved =
             notificationRepository.save(notification);
 
-        return NotificationDto.from(saved);
+        NotificationDto notificationDto =
+            NotificationDto.from(saved);
+
+        eventPublisher.publishEvent(
+            new NotificationCreatedEvent(
+                notificationDto
+            )
+        );
+
+        return notificationDto;
     }
 
     public CursorResponse<NotificationDto> getUnreadNotifications(
