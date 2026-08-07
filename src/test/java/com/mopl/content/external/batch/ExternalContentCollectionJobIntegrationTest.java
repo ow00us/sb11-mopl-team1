@@ -20,6 +20,7 @@ import com.mopl.content.external.tmdb.dto.TmdbTvSummary;
 import com.mopl.content.repository.ContentRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -195,5 +196,39 @@ class ExternalContentCollectionJobIntegrationTest {
                 .orElseThrow()
                 .getWriteSkipCount();
         assertThat(writeSkipCount).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("실패 항목이 skipLimit을 초과하면 Step이 FAILED로 끝난다")
+    void job_failuresExceedSkipLimit_stepFails() throws Exception {
+        List<TmdbMovieSummary> movies = new ArrayList<>();
+        for (long id = 9301; id <= 9325; id++) {
+            movies.add(new TmdbMovieSummary(id, "Movie" + id, "overview", "/m.jpg", List.of(28)));
+        }
+        when(tmdbApiClient.getPopularMovies(1)).thenReturn(new TmdbPopularMoviesResponse(1, movies, 1));
+        when(tmdbApiClient.getPopularTvShows(1)).thenReturn(new TmdbPopularTvResponse(1, List.of(), 0));
+        when(sportsDbApiClient.getEventsByDay(LocalDate.now(), 4569)).thenReturn(List.of());
+
+        // 25개 중 externalId가 9305 이상인 21개를 실패시킨다 (skipLimit 20을 초과)
+        doAnswer(invocation -> {
+            ExternalContentDraft draft = invocation.getArgument(0);
+            long id = Long.parseLong(draft.externalId());
+            if (id >= 9305) {
+                throw new RuntimeException("의도적으로 발생시킨 실패 (skipLimit 초과 검증용)");
+            }
+            return invocation.callRealMethod();
+        }).when(contentUpsertService).upsert(any(ExternalContentDraft.class));
+
+        JobExecution jobExecution = jobLauncherTestUtils.launchJob(new JobParametersBuilder()
+                .addLocalDateTime("runDateTime", LocalDateTime.now())
+                .toJobParameters());
+
+        assertThat(jobExecution.getStatus()).isEqualTo(BatchStatus.FAILED);
+
+        StepExecution movieStep = jobExecution.getStepExecutions().stream()
+                .filter(stepExecution -> stepExecution.getStepName().equals("tmdbMovieCollectionStep"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(movieStep.getStatus()).isEqualTo(BatchStatus.FAILED);
     }
 }
