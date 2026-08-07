@@ -13,7 +13,6 @@ import com.mopl.global.common.UserSummary;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.security.websocket.StompErrorFrameSender;
-import com.mopl.global.security.websocket.StompSessionCloser;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.service.WatchingSessionService;
 import java.time.Instant;
@@ -47,9 +46,6 @@ public class WatchingSessionSubscribeListenerTest {
 
     @Mock
     StompErrorFrameSender errorFrameSender;
-
-    @Mock
-    StompSessionCloser sessionCloser;
 
     @InjectMocks
     WatchingSessionSubscribeListener listener;
@@ -345,8 +341,8 @@ public class WatchingSessionSubscribeListenerTest {
     }
 
     @Test
-    @DisplayName("start() 처리 중 BusinessException 이 아닌 예외 발생 시 인메모리 매핑 정리 + INTERNAL_ERROR ERROR 프레임 발송 + 세션 강제 종료로 유령 구독 방지 (#137)")
-    void onSubscribe_sendsErrorAndClosesSession_whenStartThrowsNonBusinessException() {
+    @DisplayName("start() 처리 중 BusinessException 이 아닌 예외 발생 시 인메모리 매핑 정리 + INTERNAL_ERROR ERROR 프레임 발송으로 유령 구독 방지 (#137)")
+    void onSubscribe_sendsErrorFrame_whenStartThrowsNonBusinessException() {
         // given
         SessionSubscribeEvent event = subscribeEvent(
             "/sub/contents/" + CONTENT_ID + "/watch", "sub-123", principalOf(WATCHER_ID));
@@ -356,6 +352,7 @@ public class WatchingSessionSubscribeListenerTest {
             .thenThrow(unexpected);
 
         // when: 예외를 밖으로 던지지 않고 내부에서 처리 (재-throw 시 브로커에 유령 구독이 남기 때문)
+        // ERROR 프레임 전송 자체가 Spring 의 SessionDisconnectEvent 를 유발해 브로커가 구독을 자동 정리한다
         listener.onSubscribe(event);
 
         // then: 예외 종류와 무관하게 인메모리 매핑은 정리되어야 함
@@ -374,8 +371,5 @@ public class WatchingSessionSubscribeListenerTest {
             eq(ErrorCode.INTERNAL_ERROR.getMessage()),
             eq(Map.of())
         );
-
-        // 세션 강제 종료로 SessionDisconnectEvent 유발 → 브로커 구독 자동 정리
-        verify(sessionCloser).close(event.getMessage());
     }
 }
