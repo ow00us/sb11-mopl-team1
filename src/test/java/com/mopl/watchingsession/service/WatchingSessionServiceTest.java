@@ -835,5 +835,11 @@ public class WatchingSessionServiceTest {
         assertThat(atomicOrder1 || atomicOrder2)
             .as("작업이 원자적으로 실행되지 않고 중간에 섞임. 실행 로그: " + joinedOrder)
             .isTrue();
+
+        // 두 실행 순서 중 어느 쪽이었든, 최종 소유권은 항상 재구독한 sub-2(NEW_CONTENT_ID)여야 한다.
+        boolean finalOwnerIsSub2 = watchingSessionService.end(WATCHER_ID, SESSION_ID, OTHER_SUBSCRIPTION_ID);
+        assertThat(finalOwnerIsSub2)
+            .as("최종 소유권은 재구독한 subscriptionId(sub-2)여야 한다")
+            .isTrue();
     }
 }

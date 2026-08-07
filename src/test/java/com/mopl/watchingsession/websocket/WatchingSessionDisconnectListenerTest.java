@@ -82,6 +82,7 @@ public class WatchingSessionDisconnectListenerTest {
         StompHeaderAccessor subAccessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
         subAccessor.setSubscriptionId("sub-active");
         subAccessor.setSessionAttributes(attributes);
+        WatchSubscriptionAttributes.put(subAccessor, CONTENT_ID);
         WatchSubscriptionAttributes.activate(subAccessor);
 
         WatchingSessionDto dto = dtoFixture(CONTENT_ID);
@@ -108,6 +109,7 @@ public class WatchingSessionDisconnectListenerTest {
         StompHeaderAccessor subAccessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
         subAccessor.setSubscriptionId("sub-active");
         subAccessor.setSessionAttributes(attributes);
+        WatchSubscriptionAttributes.put(subAccessor, CONTENT_ID);
         WatchSubscriptionAttributes.activate(subAccessor);
 
         WatchingSessionDto dto = dtoFixture(CONTENT_ID);

@@ -463,4 +463,72 @@ class WatchingSessionE2ERegressionTest {
             }
         };
     }
+
+    @Test
+    @DisplayName("[E2E 회귀] 활성 watch 구독 상태에서 연결 자체가 끊기면(session.disconnect()), DB에서 세션이 삭제되고 다른 관찰자에게 LEAVE가 브로드캐스트")
+    void disconnectWhileActivelyWatching_deletesSessionAndBroadcastsLeaveToObserver() throws Exception {
+        // given: 시청자 세션이 watch 토픽을 구독해 활성 시청 세션을 시작한다.
+        session = connectAs(watcherId, null);
+        String watchDestination = "/sub/contents/" + contentId + "/watch";
+
+        session.subscribe(watchDestination, new StompFrameHandler() {
+            @Override
+            public Type getPayloadType(StompHeaders headers) {
+                return WatchingSessionChange.class;
+            }
+
+            @Override
+            public void handleFrame(StompHeaders headers, @Nullable Object payload) {
+            }
+        });
+        Thread.sleep(SETTLE_MILLIS);
+
+        await().atMost(5, TimeUnit.SECONDS)
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isPresent());
+
+        // 별도 관찰자(다른 유저)가 같은 콘텐츠의 watch 토픽을 구독해 LEAVE 수신 여부를 확인한다.
+        User observer = userRepository.save(User.builder()
+            .email("e2e-disconnect-observer-" + UUID.randomUUID() + "@test.com")
+            .passwordHash("hash")
+            .name("관찰자")
+            .role(UserRole.USER)
+            .locked(false)
+            .build());
+        StompSession observerSession = connectAs(observer.getId(), null);
+
+        CompletableFuture<WatchingSessionChange> leaveReceived = new CompletableFuture<>();
+        observerSession.subscribe(watchDestination, new StompFrameHandler() {
+            @Override
+            public Type getPayloadType(StompHeaders headers) {
+                return WatchingSessionChange.class;
+            }
+
+            @Override
+            public void handleFrame(StompHeaders headers, @Nullable Object payload) {
+                WatchingSessionChange change = (WatchingSessionChange) payload;
+                if (change.type() == ChangeType.LEAVE) {
+                    leaveReceived.complete(change);
+                }
+            }
+        });
+        Thread.sleep(SETTLE_MILLIS);
+
+        try {
+            // when: 시청자 세션이 정상 UNSUBSCRIBE 없이 연결 자체를 끊는다.
+            session.disconnect();
+
+            // then: DB에서 세션이 삭제되고, 관찰자에게 LEAVE가 브로드캐스트된다.
+            await().atMost(5, TimeUnit.SECONDS)
+                .pollInterval(100, TimeUnit.MILLISECONDS)
+                .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty());
+
+            WatchingSessionChange leaveChange = leaveReceived.get(5, TimeUnit.SECONDS);
+            assertThat(leaveChange.watchingSessionDto().watcher().userId()).isEqualTo(watcherId);
+        } finally {
+            if (observerSession.isConnected()) {
+                observerSession.disconnect();
+            }
+        }
+    }
 }

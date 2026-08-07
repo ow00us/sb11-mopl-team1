@@ -112,6 +112,13 @@ final class WatchSubscriptionAttributes {
                 return SubscriptionConsumeResult.NO_MAPPING;
             }
 
+            // 해제한 구독이 현재 활성 ID와 같다면 활성 ID 기록도 함께 정리한다.
+            // 그렇지 않으면 이 구독이 UNSUBSCRIBE된 뒤에도 currentActiveSubscriptionId()가
+            // 이미 해제된 subscriptionId를 계속 반환해, 실제 구독 상태와 세션 attribute가 어긋난다.
+            if (subscriptionId.equals(sessionAttributes.get(ACTIVE_SUBSCRIPTION_ID_ATTRIBUTE_KEY))) {
+                sessionAttributes.remove(ACTIVE_SUBSCRIPTION_ID_ATTRIBUTE_KEY);
+            }
+
             return SubscriptionConsumeResult.mapped(contentId);
         }
     }
