@@ -5,6 +5,7 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.security.websocket.StompErrorFrameSender;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.service.WatchingSessionService;
+import com.mopl.watchingsession.service.WatchingSessionService.ReplacedSession;
 import java.security.Principal;
 import java.util.Map;
 import java.util.UUID;
@@ -24,6 +25,10 @@ import org.springframework.web.socket.messaging.SessionSubscribeEvent;
  * STOMP UNSUBSCRIBE 프레임은 destination 없이 subscriptionId만 담아 오므로,
  * 여기서(SUBSCRIBE 시점) 세션 attribute에 subscriptionId -> contentId 매핑을 저장해두고
  * WatchingSessionUnsubscribeListener에서 그 매핑을 꺼내 쓴다.
+ *
+ * 소유권(활성 구독 판정) 자체는 WatchingSessionService.activeSessions가
+ * (sessionId, subscriptionId) 쌍으로 전담한다. 이 리스너는 그 판정에 필요한
+ * subscriptionId를 accessor에서 그대로 꺼내 start()에 넘기기만 하면 된다.
  */
 @Slf4j
 @Component
@@ -63,8 +68,7 @@ public class WatchingSessionSubscribeListener {
             return;
         }
 
-        // 퇴장 알림을 먼저 보내지 않고, 이전 세션 정보를 조회만 해 둠
-        WatchingSessionDto prevSession = watchingSessionService.get(watcherId).orElse(null);
+        String subscriptionId = accessor.getSubscriptionId();
 
         // 유틸 내부에서 subscriptionId null 체크 및 맵 null 체크 후 매핑 시도
         boolean isMapped = WatchSubscriptionAttributes.put(accessor, contentId);
@@ -77,9 +81,9 @@ public class WatchingSessionSubscribeListener {
         }
 
         // DB 세션 시작
-        WatchingSessionDto session;
+        ReplacedSession replaced;
         try {
-            session = watchingSessionService.start(watcherId, contentId, sessionId);
+            replaced = watchingSessionService.start(watcherId, contentId, sessionId, subscriptionId);
         } catch (RuntimeException e) {
             // start() 실패 시 이 구독은 아직 활성으로 전환되지 않았으므로(activate() 호출 전),
             // consume()으로 지워도 이전 활성 구독(있었다면)에는 영향이 없다.
@@ -108,6 +112,9 @@ public class WatchingSessionSubscribeListener {
 
         // start()가 완벽하게 성공한 후에만 구독 활성화, 이전 세션에 대한 LEAVE 알림 전송
         WatchSubscriptionAttributes.activate(accessor);
+
+        WatchingSessionDto session = replaced.session();
+        WatchingSessionDto prevSession = replaced.previous();
 
         if (prevSession != null && !prevSession.content().id().equals(contentId)) {
             watchingSessionBroadcaster.broadcastLeave(prevSession, prevSession.content().id());

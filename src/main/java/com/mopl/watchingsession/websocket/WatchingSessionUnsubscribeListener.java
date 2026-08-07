@@ -20,6 +20,11 @@ import org.springframework.web.socket.messaging.SessionUnsubscribeEvent;
  * UNSUBSCRIBE 프레임에는 destination이 없고 subscriptionId만 있으므로,
  * 입장 시점(WatchingSessionSubscribeListener)에서 세션 attribute에 저장해둔
  * subscriptionId -> contentId 매핑(WatchSubscriptionAttributes)을 여기서 조회해 복원한다.
+ *
+ * 낡은 구독(같은 연결에서 재구독으로 대체된 구독)인지 여부는 더 이상 이 리스너나
+ * WatchSubscriptionAttributes가 판정하지 않는다. WatchingSessionService.end()가
+ * (sessionId, subscriptionId) 쌍을 소유권과 비교해 원자적으로 판정하므로,
+ * 이 리스너는 accessor에서 얻은 값을 그대로 넘기기만 하면 된다.
  */
 @Slf4j
 @Component
@@ -32,20 +37,12 @@ public class WatchingSessionUnsubscribeListener {
     @EventListener
     public void onUnsubscribe(SessionUnsubscribeEvent event) {
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
+        String subscriptionId = accessor.getSubscriptionId();
 
-        // 판정(활성 여부) + 소비(매핑 제거) + 정리(활성 ID 제거)를 하나의 락 안에서 원자적으로 수행.
-        // isActive()와 remove()를 따로 호출하면 그 사이에 다른 스레드의 SUBSCRIBE(put)가 끼어들어
-        // 활성 구독이 갱신될 수 있어(clientInboundChannel의 동시 처리), 낡은 UNSUBSCRIBE가
-        // 활성으로 잘못 판정되는 레이스가 생긴다.
         SubscriptionConsumeResult result = WatchSubscriptionAttributes.consume(accessor);
 
         if (!result.hasMapping()) {
             // 시청 토픽 구독 해제가 아니었음
-            return;
-        }
-
-        if (!result.wasActive()) {
-            log.debug("낡은 구독의 UNSUBSCRIBE로 판단되어 무동작 처리: contentId={}", result.contentId());
             return;
         }
 
@@ -75,7 +72,7 @@ public class WatchingSessionUnsubscribeListener {
 
         // watcherId 기준 활성 세션 삭제 및 브로드캐스트. sessionId가 일치할 때만
         // 다른 연결로 이미 소유권이 넘어갔다면 이 UNSUBSCRIBE는 오래된 연결의 정리 시도이므로 삭제 안함
-        boolean actuallyDeleted = watchingSessionService.end(watcherId, sessionId);
+        boolean actuallyDeleted = watchingSessionService.end(watcherId, sessionId, subscriptionId);
         if (actuallyDeleted) {
             watchingSessionBroadcaster.broadcastLeave(session, contentId);
         }

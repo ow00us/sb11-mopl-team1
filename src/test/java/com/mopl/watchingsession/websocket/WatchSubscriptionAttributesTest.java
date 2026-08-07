@@ -24,6 +24,8 @@ class WatchSubscriptionAttributesTest {
         return accessor;
     }
 
+    // ── put() ────────────────────────────────────────────────────────────
+
     @Test
     @DisplayName("subscriptionId와 sessionAttributes가 있으면 매핑 저장에 성공")
     void put_success_whenSubscriptionIdAndSessionAttributesExist() {
@@ -62,22 +64,25 @@ class WatchSubscriptionAttributesTest {
         WatchSubscriptionAttributes.put(accessor, CONTENT_ID);
 
         // put()은 매핑만 저장할 뿐, 활성 전환은 activate()가 별도로 담당한다.
-        assertThat(WatchSubscriptionAttributes.isActive(accessor)).isFalse();
+        // 활성 여부는 currentActiveSubscriptionId()로 확인한다 (isActive()는 더 이상 없음).
+        assertThat(WatchSubscriptionAttributes.currentActiveSubscriptionId(accessor)).isNull();
     }
 
+    // ── activate() / currentActiveSubscriptionId() ─────────────────────────
+
     @Test
-    @DisplayName("activate 호출 후에는 해당 subscriptionId가 활성 상태")
-    void activate_makesSubscriptionActive() {
+    @DisplayName("activate 호출 후에는 currentActiveSubscriptionId가 해당 subscriptionId를 반환한다")
+    void activate_makesSubscriptionIdCurrentActive() {
         StompHeaderAccessor accessor = createAccessor("sub-1", new HashMap<>());
         WatchSubscriptionAttributes.put(accessor, CONTENT_ID);
 
         WatchSubscriptionAttributes.activate(accessor);
 
-        assertThat(WatchSubscriptionAttributes.isActive(accessor)).isTrue();
+        assertThat(WatchSubscriptionAttributes.currentActiveSubscriptionId(accessor)).isEqualTo("sub-1");
     }
 
     @Test
-    @DisplayName("같은 연결에서 재구독 후 activate하면 이전 구독은 비활성, 새 구독은 활성으로 전환")
+    @DisplayName("같은 연결에서 재구독 후 activate하면 currentActiveSubscriptionId는 가장 최근 것만 가리킨다")
     void activate_reflectsMostRecentActivationOnly() {
         Map<String, Object> sessionAttributes = new HashMap<>();
         StompHeaderAccessor sub1 = createAccessor("sub-1", sessionAttributes);
@@ -89,13 +94,13 @@ class WatchSubscriptionAttributesTest {
         WatchSubscriptionAttributes.put(sub2, CONTENT_ID);
         WatchSubscriptionAttributes.activate(sub2);
 
-        assertThat(WatchSubscriptionAttributes.isActive(sub1)).isFalse();
-        assertThat(WatchSubscriptionAttributes.isActive(sub2)).isTrue();
+        assertThat(WatchSubscriptionAttributes.currentActiveSubscriptionId(sub1)).isEqualTo("sub-2");
+        assertThat(WatchSubscriptionAttributes.currentActiveSubscriptionId(sub2)).isEqualTo("sub-2");
     }
 
     @Test
-    @DisplayName("재구독의 put만 하고 activate하지 않으면 이전 구독이 계속 활성 상태로 유지된다")
-    void activate_notCalled_keepsPreviousSubscriptionActive() {
+    @DisplayName("재구독의 put만 하고 activate하지 않으면 currentActiveSubscriptionId는 이전 구독을 계속 가리킨다")
+    void activate_notCalled_keepsPreviousSubscriptionAsCurrentActive() {
         // start() 실패 시나리오를 재현: sub-1은 정상적으로 활성화됐지만,
         // 재구독한 sub-2는 put까지만 되고 activate는 호출되지 않는다(=start() 실패로 activate 전 롤백).
         Map<String, Object> sessionAttributes = new HashMap<>();
@@ -107,8 +112,7 @@ class WatchSubscriptionAttributesTest {
         WatchSubscriptionAttributes.put(sub2, OTHER_CONTENT_ID);
         // activate(sub2)를 의도적으로 호출하지 않음
 
-        assertThat(WatchSubscriptionAttributes.isActive(sub1)).isTrue();
-        assertThat(WatchSubscriptionAttributes.isActive(sub2)).isFalse();
+        assertThat(WatchSubscriptionAttributes.currentActiveSubscriptionId(sub1)).isEqualTo("sub-1");
     }
 
     @Test
@@ -118,7 +122,7 @@ class WatchSubscriptionAttributesTest {
 
         WatchSubscriptionAttributes.activate(accessor);
 
-        assertThat(WatchSubscriptionAttributes.isActive(accessor)).isFalse();
+        assertThat(WatchSubscriptionAttributes.currentActiveSubscriptionId(accessor)).isNull();
     }
 
     @Test
@@ -128,36 +132,30 @@ class WatchSubscriptionAttributesTest {
 
         WatchSubscriptionAttributes.activate(accessor);
 
-        assertThat(WatchSubscriptionAttributes.isActive(accessor)).isFalse();
+        assertThat(WatchSubscriptionAttributes.currentActiveSubscriptionId(accessor)).isNull();
     }
 
     @Test
-    @DisplayName("subscriptionId가 없으면 비활성으로 처리")
-    void isActive_false_whenSubscriptionIdIsNull() {
-        StompHeaderAccessor accessor = createAccessor(null, new HashMap<>());
-
-        assertThat(WatchSubscriptionAttributes.isActive(accessor)).isFalse();
-    }
-
-    @Test
-    @DisplayName("sessionAttributes가 없으면 비활성으로 처리")
-    void isActive_false_whenSessionAttributesIsNull() {
+    @DisplayName("sessionAttributes가 없으면 currentActiveSubscriptionId는 null을 반환")
+    void currentActiveSubscriptionId_null_whenSessionAttributesIsNull() {
         StompHeaderAccessor accessor = createAccessor("sub-1", null);
 
-        assertThat(WatchSubscriptionAttributes.isActive(accessor)).isFalse();
+        assertThat(WatchSubscriptionAttributes.currentActiveSubscriptionId(accessor)).isNull();
     }
 
     @Test
-    @DisplayName("한 번도 activate되지 않은 subscriptionId는 비활성으로 처리")
-    void isActive_false_whenNeverActivated() {
+    @DisplayName("한 번도 activate되지 않았으면 currentActiveSubscriptionId는 null을 반환")
+    void currentActiveSubscriptionId_null_whenNeverActivated() {
         StompHeaderAccessor accessor = createAccessor("sub-never-activated", new HashMap<>());
 
-        assertThat(WatchSubscriptionAttributes.isActive(accessor)).isFalse();
+        assertThat(WatchSubscriptionAttributes.currentActiveSubscriptionId(accessor)).isNull();
     }
 
+    // ── consume() ────────────────────────────────────────────────────────
+
     @Test
-    @DisplayName("consume으로 활성 구독을 소비하면 ACTIVE 결과를 반환하고, 이후 isActive는 false로 바뀐다")
-    void consume_returnsActive_andIsActiveBecomesFalse_afterConsumingActiveSubscription() {
+    @DisplayName("consume으로 매핑된 subscriptionId를 소비하면 contentId를 담은 결과를 반환하고, 매핑에서 제거된다")
+    void consume_success_returnsMappedContentIdAndRemovesMapping() {
         Map<String, Object> sessionAttributes = new HashMap<>();
         StompHeaderAccessor putAccessor = createAccessor("sub-1", sessionAttributes);
         WatchSubscriptionAttributes.put(putAccessor, CONTENT_ID);
@@ -166,16 +164,20 @@ class WatchSubscriptionAttributesTest {
         StompHeaderAccessor consumeAccessor = createAccessor("sub-1", sessionAttributes);
         SubscriptionConsumeResult result = WatchSubscriptionAttributes.consume(consumeAccessor);
 
-        assertThat(result.wasActive()).isTrue();
+        assertThat(result.hasMapping()).isTrue();
         assertThat(result.contentId()).isEqualTo(CONTENT_ID);
 
-        StompHeaderAccessor checkAccessor = createAccessor("sub-1", sessionAttributes);
-        assertThat(WatchSubscriptionAttributes.isActive(checkAccessor)).isFalse();
+        // 같은 subscriptionId를 다시 consume하면 이미 제거되어 매핑이 없어야 한다.
+        StompHeaderAccessor secondConsumeAccessor = createAccessor("sub-1", sessionAttributes);
+        SubscriptionConsumeResult secondResult = WatchSubscriptionAttributes.consume(secondConsumeAccessor);
+        assertThat(secondResult.hasMapping()).isFalse();
     }
 
     @Test
-    @DisplayName("consume으로 낡은 구독(sub-1)을 소비하면 STALE 결과를 반환하고, 현재 활성 구독(sub-2)의 isActive는 계속 true")
-    void consume_returnsStale_forNonActiveSubscription_andDoesNotAffectCurrentActiveSubscription() {
+    @DisplayName("같은 연결에서 재구독한 뒤 낡은 구독(sub-1)을 consume해도 매핑된 contentId는 정상적으로 반환된다 (활성 여부와 무관)")
+    void consume_returnsMapping_regardlessOfActiveStatus() {
+        // consume()은 더 이상 활성 여부를 판정하지 않는다.
+        // "낡은 구독인지"의 최종 판정은 WatchingSessionService.end()의 소유권 비교가 전담한다.
         Map<String, Object> sessionAttributes = new HashMap<>();
         StompHeaderAccessor sub1PutAccessor = createAccessor("sub-1", sessionAttributes);
         WatchSubscriptionAttributes.put(sub1PutAccessor, CONTENT_ID);
@@ -188,12 +190,12 @@ class WatchSubscriptionAttributesTest {
         StompHeaderAccessor sub1ConsumeAccessor = createAccessor("sub-1", sessionAttributes);
         SubscriptionConsumeResult result = WatchSubscriptionAttributes.consume(sub1ConsumeAccessor);
 
-        assertThat(result.wasActive()).isFalse();
         assertThat(result.hasMapping()).isTrue();
         assertThat(result.contentId()).isEqualTo(CONTENT_ID);
 
+        // sub-1을 consume해도 sub-2가 currentActiveSubscriptionId로 남아있어야 한다.
         StompHeaderAccessor sub2CheckAccessor = createAccessor("sub-2", sessionAttributes);
-        assertThat(WatchSubscriptionAttributes.isActive(sub2CheckAccessor)).isTrue();
+        assertThat(WatchSubscriptionAttributes.currentActiveSubscriptionId(sub2CheckAccessor)).isEqualTo("sub-2");
     }
 
     @Test
@@ -204,7 +206,6 @@ class WatchSubscriptionAttributesTest {
         SubscriptionConsumeResult result = WatchSubscriptionAttributes.consume(accessor);
 
         assertThat(result.hasMapping()).isFalse();
-        assertThat(result.wasActive()).isFalse();
     }
 
     @Test
@@ -228,16 +229,32 @@ class WatchSubscriptionAttributesTest {
     }
 
     @Test
-    @DisplayName("put만 되고 activate되지 않은 구독을 consume하면 STALE로 처리된다 (활성화 전 롤백 시나리오)")
-    void consume_returnsStale_whenMappedButNeverActivated() {
+    @DisplayName("put만 되고 activate되지 않은 구독도 consume하면 매핑된 contentId가 정상적으로 반환된다")
+    void consume_returnsMapping_whenMappedButNeverActivated() {
+        // activate 전에 실패 롤백된 시나리오(WatchingSessionSubscribeListener의 catch 블록)도
+        // consume()이 매핑 자체는 정상적으로 정리할 수 있어야 한다.
         StompHeaderAccessor accessor = createAccessor("sub-1", new HashMap<>());
         WatchSubscriptionAttributes.put(accessor, CONTENT_ID);
-        // activate를 호출하지 않음 (start() 실패로 인한 롤백 시나리오)
+        // activate를 호출하지 않음
 
         SubscriptionConsumeResult result = WatchSubscriptionAttributes.consume(accessor);
 
         assertThat(result.hasMapping()).isTrue();
-        assertThat(result.wasActive()).isFalse();
         assertThat(result.contentId()).isEqualTo(CONTENT_ID);
+    }
+
+    @Test
+    @DisplayName("sessionAttributes에 저장된 활성 ID 값이 String 타입이 아니면 안전하게 null을 반환")
+    void currentActiveSubscriptionId_null_whenValueIsNotString() {
+        // given: 의도적으로 String이 아닌 값(예: Integer)을 세션 속성에 주입
+        Map<String, Object> sessionAttributes = new HashMap<>();
+        sessionAttributes.put(WatchSubscriptionAttributes.ACTIVE_SUBSCRIPTION_ID_ATTRIBUTE_KEY, 12345);
+        StompHeaderAccessor accessor = createAccessor("sub-1", sessionAttributes);
+
+        // when
+        String result = WatchSubscriptionAttributes.currentActiveSubscriptionId(accessor);
+
+        // then: ClassCastException이 발생하지 않고 null이 반환되어야 함
+        assertThat(result).isNull();
     }
 }
