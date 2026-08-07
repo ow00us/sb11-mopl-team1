@@ -22,6 +22,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
@@ -30,6 +32,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.web.socket.messaging.SessionUnsubscribeEvent;
 
+@MockitoSettings(strictness = Strictness.LENIENT)
 @ExtendWith(MockitoExtension.class)
 public class WatchingSessionUnsubscribeListenerTest {
 
@@ -84,11 +87,13 @@ public class WatchingSessionUnsubscribeListenerTest {
         firstSubscribeAccessor.setSubscriptionId(staleSubscriptionId);
         firstSubscribeAccessor.setSessionAttributes(sharedSessionAttributes);
         WatchSubscriptionAttributes.put(firstSubscribeAccessor, contentId);
+        WatchSubscriptionAttributes.activate(firstSubscribeAccessor);
 
         StompHeaderAccessor secondSubscribeAccessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
         secondSubscribeAccessor.setSubscriptionId(newSubscriptionId);
         secondSubscribeAccessor.setSessionAttributes(sharedSessionAttributes);
         WatchSubscriptionAttributes.put(secondSubscribeAccessor, contentId);
+        WatchSubscriptionAttributes.activate(secondSubscribeAccessor);
 
         return createUnsubscribeEvent(unsubscribeSubscriptionId, principal, sharedSessionAttributes);
     }
@@ -102,6 +107,7 @@ public class WatchingSessionUnsubscribeListenerTest {
         subscribeAccessor.setSubscriptionId(subscriptionId);
         subscribeAccessor.setSessionAttributes(sharedSessionAttributes);
         WatchSubscriptionAttributes.put(subscribeAccessor, mappedContentId);
+        WatchSubscriptionAttributes.activate(subscribeAccessor);
 
         return createUnsubscribeEvent(subscriptionId, principal, sharedSessionAttributes);
     }
@@ -286,11 +292,14 @@ public class WatchingSessionUnsubscribeListenerTest {
         firstSubscribeAccessor.setSubscriptionId("sub-1");
         firstSubscribeAccessor.setSessionAttributes(sharedSessionAttributes);
         WatchSubscriptionAttributes.put(firstSubscribeAccessor, CONTENT_ID);
+        WatchSubscriptionAttributes.activate(firstSubscribeAccessor);
 
         StompHeaderAccessor secondSubscribeAccessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
         secondSubscribeAccessor.setSubscriptionId("sub-2");
         secondSubscribeAccessor.setSessionAttributes(sharedSessionAttributes);
         WatchSubscriptionAttributes.put(secondSubscribeAccessor, CONTENT_ID);
+        WatchSubscriptionAttributes.activate(secondSubscribeAccessor);
+
 
         WatchingSessionDto dto = dtoFixture(CONTENT_ID);
         when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.of(dto));
