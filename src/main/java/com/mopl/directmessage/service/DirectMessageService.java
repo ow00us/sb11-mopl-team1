@@ -1,5 +1,6 @@
 package com.mopl.directmessage.service;
 
+import com.mopl.directmessage.dto.DirectMessageCreatedEvent;
 import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.directmessage.repository.DirectMessageRepository;
 import com.mopl.directmessage.entity.ConversationParticipant;
@@ -18,6 +19,7 @@ import java.util.stream.Collectors;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +37,7 @@ public class DirectMessageService {
     private final DirectMessageRepository directMessageRepository;
     private final ConversationParticipantRepository participantRepository;
     private final UserRepository userRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     public CursorResponse<DirectMessageDto> getDirectMessages(
         UUID requesterId,
@@ -363,11 +366,18 @@ public class DirectMessageService {
                 directMessage
             );
 
-        return toDto(
-            savedMessage,
-            receiverIdBySenderId,
-            userSummaries
+        DirectMessageDto response =
+            toDto(
+                savedMessage,
+                receiverIdBySenderId,
+                userSummaries
+            );
+
+        eventPublisher.publishEvent(
+            new DirectMessageCreatedEvent(response)
         );
+
+        return response;
     }
 
     private void validateContent(String content) {
