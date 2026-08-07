@@ -215,13 +215,33 @@ class UserListRepositoryTest {
             )
         );
 
+        /*
+         * flushAndClear() 이후에도 저장된 사용자를 다시 조회할 수 있도록
+         * 영속성 컨텍스트를 비우기 전에 UUID를 보관
+         */
+        List<UUID> savedIds = savedUsers.stream()
+            .map(User::getId)
+            .toList();
+
         flushAndClear();
 
         /*
-         * 데이터베이스에서 기대되는 정렬 순서를 테스트 코드에서도
-         * 동일하게 만든 뒤 첫 번째 사용자를 커서 기준으로 사용
+         * JPA Auditing이 생성한 Instant는 나노초 정밀도를 가질 수 있지만,
+         * PostgreSQL timestamp는 마이크로초 정밀도로 저장
+         *
+         * 따라서 저장 전 메모리 객체가 아니라 DB에 실제 저장된 값을
+         * 다시 조회해 기대 정렬 순서와 커서를 구성
          */
-        List<User> sortedUsers = new ArrayList<>(savedUsers);
+        List<User> reloadedUsers = savedIds.stream()
+            .map(id -> entityManager.find(User.class, id))
+            .toList();
+
+        /*
+         * 데이터베이스에 저장된 값을 기준으로 기대되는 정렬 순서를 만든 뒤
+         * 첫 번째 사용자를 커서 기준으로 사용
+         */
+        List<User> sortedUsers =
+            new ArrayList<>(reloadedUsers);
 
         sortedUsers.sort(
             comparatorFor(sortBy, sortDirection)
