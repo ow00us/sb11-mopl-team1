@@ -3,6 +3,7 @@ package com.mopl.global.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.security.JwtAuthenticationFilter;
 import com.mopl.global.security.JwtProvider;
+import com.mopl.global.security.csrf.RotatingCookieCsrfTokenRepository;
 import com.mopl.global.security.handler.RestAccessDeniedHandler;
 import com.mopl.global.security.handler.RestAuthenticationEntryPoint;
 import com.mopl.global.security.handler.SecurityErrorResponseWriter;
@@ -18,7 +19,6 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -128,7 +128,7 @@ public class SecurityConfig {
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource))
                 .csrf(csrf -> csrf
-                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                        .csrfTokenRepository(RotatingCookieCsrfTokenRepository.withHttpOnlyFalse())
                         .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
                         .ignoringRequestMatchers("/ws/**"))
                 .exceptionHandling(exception -> exception
