@@ -35,3 +35,9 @@ application-local.yml
 
 ### Local documentation ###
 docs/
+!docs/
+docs/*
+!docs/erd/
+docs/erd/*
+!docs/erd/index.html
+!docs/erd/overview.svg
