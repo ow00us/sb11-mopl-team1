@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="500" viewBox="0 0 1400 500" role="img" aria-labelledby="title desc">
+  <title id="title">MOPL 데이터베이스 관계 개요</title>
+  <desc id="desc">사용자, 콘텐츠, 플레이리스트, 대화, 알림과 시청 세션을 포함한 13개 테이블의 관계</desc>
+  <style>
+    .edge { fill: none; stroke: #565666; stroke-width: 1.5; opacity: .75; }
+    .edge-strong { fill: none; stroke: #ff4a64; stroke-width: 1.8; opacity: .82; }
+    .card { fill: #212126; stroke: #565666; stroke-width: 1; }
+    .name { fill: #f2f2f3; font: 600 12px Consolas, monospace; }
+    .meta { fill: #828291; font: 500 9px Arial, sans-serif; }
+  </style>
+  <rect width="1400" height="500" rx="20" fill="#131316"/>
+
+  <g aria-hidden="true">
+    <path class="edge-strong" d="M220 221 C260 221 260 211 300 211"/>
+    <path class="edge-strong" d="M500 111 C540 111 540 211 580 211"/>
+    <path class="edge" d="M400 80 L400 58"/>
+    <path class="edge" d="M220 211 C390 211 410 111 580 111"/>
+    <path class="edge" d="M780 111 L900 111"/>
+    <path class="edge" d="M500 111 C540 111 540 221 580 221"/>
+    <path class="edge" d="M680 140 L680 190"/>
+    <path class="edge" d="M220 231 C390 231 410 331 580 331"/>
+    <path class="edge" d="M130 252 L130 300"/>
+    <path class="edge-strong" d="M220 201 C570 201 550 221 900 221"/>
+    <path class="edge" d="M1000 142 L1000 190"/>
+    <path class="edge-strong" d="M1100 221 L1180 221"/>
+    <path class="edge" d="M1100 111 C1210 111 1210 190 1270 190"/>
+    <path class="edge" d="M220 241 C560 241 560 351 900 351"/>
+    <path class="edge" d="M220 251 C260 251 260 351 300 351"/>
+    <path class="edge-strong" d="M500 121 C550 121 550 351 500 351"/>
+  </g>
+
+  <g transform="translate(40 190)"><rect class="card" width="180" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff4a64"/><text class="name" x="30" y="23">users</text><text class="meta" x="17" y="45">사용자·인증 중심</text></g>
+  <g transform="translate(40 300)"><rect class="card" width="180" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff4a64"/><text class="name" x="30" y="23">follows</text><text class="meta" x="17" y="45">사용자 관계</text></g>
+
+  <g transform="translate(300 0)"><rect class="card" width="200" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff687e"/><text class="name" x="30" y="23">content_tags</text><text class="meta" x="17" y="43">콘텐츠 태그</text></g>
+  <g transform="translate(300 80)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff687e"/><text class="name" x="30" y="23">contents</text><text class="meta" x="17" y="45">콘텐츠·집계 중심</text></g>
+  <g transform="translate(300 180)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff687e"/><text class="name" x="30" y="23">reviews</text><text class="meta" x="17" y="45">사용자 콘텐츠 평가</text></g>
+  <g transform="translate(300 320)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ce0045"/><text class="name" x="30" y="23">watching_sessions</text><text class="meta" x="17" y="45">활성 시청 스냅샷</text></g>
+
+  <g transform="translate(580 80)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#aaaab1"/><text class="name" x="30" y="23">playlists</text><text class="meta" x="17" y="45">사용자 컬렉션</text></g>
+  <g transform="translate(580 190)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#aaaab1"/><text class="name" x="30" y="23">playlist_contents</text><text class="meta" x="17" y="45">플레이리스트 콘텐츠</text></g>
+  <g transform="translate(580 300)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#aaaab1"/><text class="name" x="30" y="23">playlist_subscriptions</text><text class="meta" x="17" y="45">플레이리스트 구독</text></g>
+
+  <g transform="translate(900 80)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ccccd6"/><text class="name" x="30" y="23">conversations</text><text class="meta" x="17" y="45">1:1 대화</text></g>
+  <g transform="translate(900 190)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ccccd6"/><text class="name" x="30" y="23">conversation_participants</text><text class="meta" x="17" y="45">대화 참여자</text></g>
+  <g transform="translate(900 320)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ccccd6"/><text class="name" x="30" y="23">notifications</text><text class="meta" x="17" y="45">사용자 알림</text></g>
+  <g transform="translate(1180 190)"><rect class="card" width="180" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ccccd6"/><text class="name" x="30" y="23">direct_messages</text><text class="meta" x="17" y="45">대화 메시지</text></g>
+</svg>
