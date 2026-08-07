@@ -2,6 +2,7 @@ package com.mopl.watchingsession.websocket;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -73,6 +74,25 @@ public class WatchingSessionUnsubscribeListenerTest {
         return new SessionUnsubscribeEvent(this, message);
     }
 
+    private SessionUnsubscribeEvent unsubscribeEventAfterResubscribe(
+        UUID contentId, String staleSubscriptionId, String newSubscriptionId,
+        String unsubscribeSubscriptionId, Authentication principal
+    ) {
+        Map<String, Object> sharedSessionAttributes = new HashMap<>();
+
+        StompHeaderAccessor firstSubscribeAccessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        firstSubscribeAccessor.setSubscriptionId(staleSubscriptionId);
+        firstSubscribeAccessor.setSessionAttributes(sharedSessionAttributes);
+        WatchSubscriptionAttributes.put(firstSubscribeAccessor, contentId);
+
+        StompHeaderAccessor secondSubscribeAccessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        secondSubscribeAccessor.setSubscriptionId(newSubscriptionId);
+        secondSubscribeAccessor.setSessionAttributes(sharedSessionAttributes);
+        WatchSubscriptionAttributes.put(secondSubscribeAccessor, contentId);
+
+        return createUnsubscribeEvent(unsubscribeSubscriptionId, principal, sharedSessionAttributes);
+    }
+
     private SessionUnsubscribeEvent unsubscribeEventWithMapping(
         UUID mappedContentId, String subscriptionId, Authentication principal
     ) {
@@ -111,7 +131,7 @@ public class WatchingSessionUnsubscribeListenerTest {
     }
 
     @Test
-    @DisplayName("end()가 삭제에 실패(소유권 없음)하면 브로드캐스트를 전송하지 않음 (중복 알림 방어)")
+    @DisplayName("end()가 삭제에 실패(다른 연결로 소유권 이전됨)하면 브로드캐스트를 전송하지 않음 (중복 알림 방어)")
     void onUnsubscribe_skipsBroadcast_whenActuallyDeletedIsFalse() {
         // given
         WatchingSessionDto dto = dtoFixture(CONTENT_ID);
@@ -219,5 +239,72 @@ public class WatchingSessionUnsubscribeListenerTest {
 
         // then
         verify(watchingSessionService, never()).end(any(), any());
+    }
+
+    @Test
+    @DisplayName("같은 연결에서 구독을 갈아탄 뒤 이전 구독의 UNSUBSCRIBE가 도착하면 무동작 처리")
+    void onUnsubscribe_success_ignoresStaleSubscriptionAfterResubscribe() {
+        // given: sub-1로 먼저 구독한 뒤, 같은 연결에서 sub-2로 재구독
+        SessionUnsubscribeEvent staleEvent = unsubscribeEventAfterResubscribe(
+            CONTENT_ID, "sub-1", "sub-2", "sub-1", principalOf(WATCHER_ID));
+
+        // when: 뒤늦게 도착한 sub-1의 UNSUBSCRIBE 처리
+        listener.onUnsubscribe(staleEvent);
+
+        // then: DB 조회조차 하지 않고 완전히 무동작 처리되어야 함
+        verify(watchingSessionService, never()).get(any());
+        verify(watchingSessionService, never()).end(any(), any());
+        verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
+    }
+
+    @Test
+    @DisplayName("현재 활성 구독의 UNSUBSCRIBE는 재구독 이후에도 정상적으로 세션을 종료")
+    void onUnsubscribe_success_endsSessionForCurrentActiveSubscriptionAfterResubscribe() {
+        // given
+        WatchingSessionDto dto = dtoFixture(CONTENT_ID);
+        when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.of(dto));
+        when(watchingSessionService.end(WATCHER_ID, SESSION_ID)).thenReturn(true);
+
+        SessionUnsubscribeEvent currentEvent = unsubscribeEventAfterResubscribe(
+            CONTENT_ID, "sub-1", "sub-2", "sub-2", principalOf(WATCHER_ID));
+
+        // when: 현재 활성 구독(sub-2)의 정상적인 UNSUBSCRIBE
+        listener.onUnsubscribe(currentEvent);
+
+        // then
+        verify(watchingSessionService).end(WATCHER_ID, SESSION_ID);
+        verify(watchingSessionBroadcaster).broadcastLeave(dto, CONTENT_ID);
+    }
+
+    @Test
+    @DisplayName("같은 연결에서 sub-1의 낡은 UNSUBSCRIBE를 무시한 뒤에도, 이어지는 sub-2의 정상 UNSUBSCRIBE는 세션을 종료함")
+    void onUnsubscribe_success_stillEndsCurrentSessionAfterIgnoringStaleUnsubscribeInSequence() {
+        // given: sub-1 -> sub-2로 재구독된 연결 상태를 재현
+        Map<String, Object> sharedSessionAttributes = new HashMap<>();
+
+        StompHeaderAccessor firstSubscribeAccessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        firstSubscribeAccessor.setSubscriptionId("sub-1");
+        firstSubscribeAccessor.setSessionAttributes(sharedSessionAttributes);
+        WatchSubscriptionAttributes.put(firstSubscribeAccessor, CONTENT_ID);
+
+        StompHeaderAccessor secondSubscribeAccessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        secondSubscribeAccessor.setSubscriptionId("sub-2");
+        secondSubscribeAccessor.setSessionAttributes(sharedSessionAttributes);
+        WatchSubscriptionAttributes.put(secondSubscribeAccessor, CONTENT_ID);
+
+        WatchingSessionDto dto = dtoFixture(CONTENT_ID);
+        when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.of(dto));
+        when(watchingSessionService.end(WATCHER_ID, SESSION_ID)).thenReturn(true);
+
+        SessionUnsubscribeEvent staleEvent = createUnsubscribeEvent("sub-1", principalOf(WATCHER_ID), sharedSessionAttributes);
+        SessionUnsubscribeEvent currentEvent = createUnsubscribeEvent("sub-2", principalOf(WATCHER_ID), sharedSessionAttributes);
+
+        // when: 같은 리스너 인스턴스에서 sub-1 UNSUBSCRIBE 먼저 처리, 이어서 sub-2 UNSUBSCRIBE 처리
+        listener.onUnsubscribe(staleEvent);
+        listener.onUnsubscribe(currentEvent);
+
+        // then: sub-1 처리로 인한 부수효과가 전혀 없어야 하고, sub-2만 정상 종료되어야 함
+        verify(watchingSessionService, times(1)).end(WATCHER_ID, SESSION_ID);
+        verify(watchingSessionBroadcaster, times(1)).broadcastLeave(dto, CONTENT_ID);
     }
 }
