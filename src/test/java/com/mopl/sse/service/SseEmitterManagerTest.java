@@ -2,10 +2,7 @@ package com.mopl.sse.service;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doNothing;
-import static org.mockito.Mockito.mockConstruction;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.*;
 
 import java.io.IOException;
 import java.util.UUID;
@@ -72,8 +69,8 @@ class SseEmitterManagerTest {
     }
 
     @Test
-    @DisplayName("동일 사용자가 재연결하면 기존 연결을 종료하고 교체")
-    void subscribe_existingUser_replacesEmitter()
+    @DisplayName("동일 사용자의 여러 SSE 연결을 모두 유지")
+    void subscribe_sameUser_keepsAllEmitters()
         throws Exception {
 
         try (
@@ -83,15 +80,76 @@ class SseEmitterManagerTest {
             SseEmitterManager manager =
                 new SseEmitterManager();
 
-            // when
+            manager.subscribe(USER_ID);
             manager.subscribe(USER_ID);
             manager.subscribe(USER_ID);
 
-            // then
-            SseEmitter previousEmitter =
+            SseEmitter first =
                 construction.constructed().get(0);
 
-            verify(previousEmitter).complete();
+            SseEmitter second =
+                construction.constructed().get(1);
+
+            SseEmitter third =
+                construction.constructed().get(2);
+
+            manager.send(
+                USER_ID,
+                EVENT_ID,
+                "notifications",
+                "알림 내용"
+            );
+
+            verify(first, never()).complete();
+            verify(second, never()).complete();
+            verify(third, never()).complete();
+
+            verify(first, times(2)).send(
+                any(SseEmitter.SseEventBuilder.class)
+            );
+
+            verify(second, times(2)).send(
+                any(SseEmitter.SseEventBuilder.class)
+            );
+
+            verify(third, times(2)).send(
+                any(SseEmitter.SseEventBuilder.class)
+            );
+        }
+    }
+
+    @Test
+    @DisplayName("연결된 모든 Emitter에 heartbeat를 전송")
+    void sendHeartbeat_sendsToAllEmitters()
+        throws Exception {
+
+        try (
+            MockedConstruction<SseEmitter> construction =
+                mockConstruction(SseEmitter.class)
+        ) {
+            SseEmitterManager manager =
+                new SseEmitterManager();
+
+            manager.subscribe(USER_ID);
+            manager.subscribe(USER_ID);
+
+            SseEmitter first =
+                construction.constructed().get(0);
+
+            SseEmitter second =
+                construction.constructed().get(1);
+
+            // when
+            manager.sendHeartbeat();
+
+            // then
+            verify(first, times(2)).send(
+                any(SseEmitter.SseEventBuilder.class)
+            );
+
+            verify(second, times(2)).send(
+                any(SseEmitter.SseEventBuilder.class)
+            );
         }
     }
 
