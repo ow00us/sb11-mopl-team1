@@ -5,11 +5,11 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-public interface UserRepository extends JpaRepository<User, UUID> {
+public interface UserRepository extends JpaRepository<User, UUID>, UserRepositoryCustom {
     // 정규화된 이메일로 사용자 조회
 
     /**
-     * 다음과 같은 의미의 조회 쿼리를 자동으로 생성합니다.
+     * 다음과 같은 의미의 조회 쿼리를 자동으로 생성
      *
      * SELECT * FROM users WHERE email = ?
      */
