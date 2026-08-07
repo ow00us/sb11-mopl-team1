@@ -95,7 +95,7 @@ class ExternalContentCollectionJobIntegrationTest {
     @Test
     @DisplayName("동일한 external_id로 Job을 재실행해도 중복 저장되지 않는다")
     void job_rerunWithSameExternalIds_doesNotCreateDuplicates() throws Exception {
-        TmdbMovieSummary movie = new TmdbMovieSummary(9001L, "Test Movie", "movie overview", "/m.jpg", List.of(28));
+        TmdbMovieSummary movie = new TmdbMovieSummary(9011L, "Test Movie", "movie overview", "/m.jpg", List.of(28));
         when(tmdbApiClient.getPopularMovies(1)).thenReturn(new TmdbPopularMoviesResponse(1, List.of(movie), 1));
         when(tmdbApiClient.getPopularTvShows(1)).thenReturn(new TmdbPopularTvResponse(1, List.of(), 0));
         when(sportsDbApiClient.getEventsByDay(LocalDate.now(), 4569)).thenReturn(List.of());
@@ -108,7 +108,7 @@ class ExternalContentCollectionJobIntegrationTest {
                 .toJobParameters());
 
         long count = contentRepository.findAll().stream()
-                .filter(c -> c.getSource() == ContentSource.TMDB && "9001".equals(c.getExternalId()))
+                .filter(c -> c.getSource() == ContentSource.TMDB && "9011".equals(c.getExternalId()))
                 .count();
         assertThat(count).isEqualTo(1);
     }
