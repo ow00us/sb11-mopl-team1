@@ -15,17 +15,21 @@ import com.mopl.global.security.JwtProvider;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
+import com.mopl.watchingsession.dto.ChangeType;
 import com.mopl.watchingsession.dto.ContentChatDto;
 import com.mopl.watchingsession.dto.WatchingSessionChange;
+import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -376,6 +380,160 @@ class WatchingSessionE2ERegressionTest {
             // then: 관찰자에게는 아무것도 전달되지 않음
             assertThatThrownBy(() -> observerErrorReceived.get(2, TimeUnit.SECONDS))
                 .isInstanceOf(TimeoutException.class);
+        } finally {
+            if (observerSession.isConnected()) {
+                observerSession.disconnect();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("[E2E 회귀] 같은 연결에서 재구독한 뒤 이전 구독을 UNSUBSCRIBE해도 현재 시청 세션은 유지되고, 현재 구독을 UNSUBSCRIBE해야만 실제로 종료됨")
+    void resubscribeSameConnection_staleUnsubscribeIsNoop_onlyCurrentUnsubscribeEndsSession() throws Exception {
+        // given: watch 토픽을 구독(입장)해 첫 번째 시청 세션(sub-1)을 시작
+        session = connectAs(watcherId, null);
+        String watchDestination = "/sub/contents/" + contentId + "/watch";
+
+        AtomicInteger leaveCount = new AtomicInteger(0);
+
+        // 브로드캐스트 관찰 전용 구독. 테스트가 끝날 때까지 unsubscribe하지 않는다.
+        // sub-1, sub-2의 UNSUBSCRIBE와는 무관하게 이 구독으로만 LEAVE 수신 여부를 판단해야
+        // "구독 해제 직후 그 구독 자신으로 메시지를 받으려는" 레이스를 피할 수 있다.
+        session.subscribe(watchDestination, new StompFrameHandler() {
+            @Override
+            public Type getPayloadType(StompHeaders headers) {
+                return WatchingSessionChange.class;
+            }
+
+            @Override
+            public void handleFrame(StompHeaders headers, @Nullable Object payload) {
+                WatchingSessionChange change = (WatchingSessionChange) payload;
+                if (change.type() == ChangeType.LEAVE) {
+                    leaveCount.incrementAndGet();
+                }
+            }
+        });
+        Thread.sleep(SETTLE_MILLIS);
+
+        // 실제 입장을 유발할 첫 번째 구독(sub-1)
+        Subscription firstSubscription = session.subscribe(watchDestination, noopHandler());
+        Thread.sleep(SETTLE_MILLIS);
+
+        await().atMost(5, TimeUnit.SECONDS)
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isPresent());
+
+        Instant beforeResubscribe = snapshotRepository.findByWatcherId(watcherId).orElseThrow().getUpdatedAt();
+
+        // 같은 연결에서 같은 콘텐츠를 다시 구독(sub-2). sub-1은 이 시점부터 낡은 구독이 됨
+        Subscription currentSubscription = session.subscribe(watchDestination, noopHandler());
+
+        await().atMost(5, TimeUnit.SECONDS)
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .untilAsserted(() -> {
+                WatchingSessionSnapshot latest = snapshotRepository.findByWatcherId(watcherId).orElseThrow();
+                assertThat(latest.getUpdatedAt()).isAfter(beforeResubscribe);
+            });
+
+        // when: 이전 구독(sub-1)을 UNSUBSCRIBE - 낡은 구독의 늦은 정리 시도를 재현
+        firstSubscription.unsubscribe();
+
+        // then: 정의된 배출 대기 구간(SETTLE_MILLIS) 동안 leaveCount가 계속 0으로 유지되는지 확인
+        // 단발성 sleep+assert가 아닌 구간 내내 조건이 깨지지 않는지 검증
+        // 낡은 구독의 UNSUBSCRIBE는 무동작이어야 하므로, 현재 시청 세션은 DB에 그대로 남아있어야 함
+        await().during(SETTLE_MILLIS, TimeUnit.MILLISECONDS)
+            .atMost(SETTLE_MILLIS + 2000, TimeUnit.MILLISECONDS)
+            .untilAsserted(() -> assertThat(leaveCount.get()).isZero());
+        assertThat(snapshotRepository.findByWatcherId(watcherId)).isPresent();
+
+        // when: 현재 활성 구독(sub-2)을 UNSUBSCRIBE - 실제 퇴장
+        currentSubscription.unsubscribe();
+
+        // then: DB 삭제를 먼저 확정 대기한 뒤 같은 배출 경계까지 leaveCount가 정확히 1로 유지되는지 확인
+        // DB삭제가 확인된 시점 이후에도 stale UNSUBSCRIBE로 인한 추가 LEAVE가 뒤늦게 도착하지 않는지 검증
+        // 관찰자 구독(끊지 않고 유지 중)이 LEAVE를 정확히 한 번 수신해야 함
+        await().atMost(5, TimeUnit.SECONDS)
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty());
+        await().during(SETTLE_MILLIS, TimeUnit.MILLISECONDS)
+            .atMost(SETTLE_MILLIS + 2000, TimeUnit.MILLISECONDS)
+            .untilAsserted(() -> assertThat(leaveCount.get()).isEqualTo(1));
+    }
+
+    private StompFrameHandler noopHandler() {
+        return new StompFrameHandler() {
+            @Override
+            public Type getPayloadType(StompHeaders headers) {
+                return WatchingSessionChange.class;
+            }
+
+            @Override
+            public void handleFrame(StompHeaders headers, @Nullable Object payload) {
+                // 이 구독은 JOIN/LEAVE를 발생시키는 용도일 뿐, 수신 내용은 관찰자 구독에서 검증한다.
+            }
+        };
+    }
+
+    @Test
+    @DisplayName("[E2E 회귀] 활성 watch 구독 상태에서 연결 자체가 끊기면(session.disconnect()), DB에서 세션이 삭제되고 다른 관찰자에게 LEAVE가 브로드캐스트")
+    void disconnectWhileActivelyWatching_deletesSessionAndBroadcastsLeaveToObserver() throws Exception {
+        // given: 시청자 세션이 watch 토픽을 구독해 활성 시청 세션을 시작한다.
+        session = connectAs(watcherId, null);
+        String watchDestination = "/sub/contents/" + contentId + "/watch";
+
+        session.subscribe(watchDestination, new StompFrameHandler() {
+            @Override
+            public Type getPayloadType(StompHeaders headers) {
+                return WatchingSessionChange.class;
+            }
+
+            @Override
+            public void handleFrame(StompHeaders headers, @Nullable Object payload) {
+            }
+        });
+
+        await().atMost(5, TimeUnit.SECONDS)
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isPresent());
+
+        // 별도 관찰자(다른 유저)가 같은 콘텐츠의 watch 토픽을 구독해 LEAVE 수신 여부를 확인한다.
+        User observer = userRepository.save(User.builder()
+            .email("e2e-disconnect-observer-" + UUID.randomUUID() + "@test.com")
+            .passwordHash("hash")
+            .name("관찰자")
+            .role(UserRole.USER)
+            .locked(false)
+            .build());
+        StompSession observerSession = connectAs(observer.getId(), null);
+
+        CompletableFuture<WatchingSessionChange> leaveReceived = new CompletableFuture<>();
+        observerSession.subscribe(watchDestination, new StompFrameHandler() {
+            @Override
+            public Type getPayloadType(StompHeaders headers) {
+                return WatchingSessionChange.class;
+            }
+
+            @Override
+            public void handleFrame(StompHeaders headers, @Nullable Object payload) {
+                WatchingSessionChange change = (WatchingSessionChange) payload;
+                if (change.type() == ChangeType.LEAVE) {
+                    leaveReceived.complete(change);
+                }
+            }
+        });
+        Thread.sleep(SETTLE_MILLIS);
+
+        try {
+            // when: 시청자 세션이 정상 UNSUBSCRIBE 없이 연결 자체를 끊는다.
+            session.disconnect();
+
+            // then: DB에서 세션이 삭제되고, 관찰자에게 LEAVE가 브로드캐스트된다.
+            await().atMost(5, TimeUnit.SECONDS)
+                .pollInterval(100, TimeUnit.MILLISECONDS)
+                .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty());
+
+            WatchingSessionChange leaveChange = leaveReceived.get(5, TimeUnit.SECONDS);
+            assertThat(leaveChange.watchingSessionDto().watcher().userId()).isEqualTo(watcherId);
         } finally {
             if (observerSession.isConnected()) {
                 observerSession.disconnect();
