@@ -308,6 +308,78 @@ class FollowServiceTest {
         assertThat(result.totalCount()).isEqualTo(1L);
     }
 
+    // ── Phase E: 남은 조건 분기 커버 ─────────────────────────────────────
+
+    @Test
+    @DisplayName("insertIfAbsent=1 인데 findBy 가 empty (이례적) 이면 즉시 INTERNAL_ERROR 를 던진다")
+    void follow_insertedButNotFound_throwsInternalErrorWithoutRetry() {
+        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(1);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> followService.follow(FOLLOWER_ID, FOLLOWEE_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INTERNAL_ERROR);
+
+        // 재시도 없이 즉시 실패해야 함
+        verify(followRepository, times(1))
+                .insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString());
+    }
+
+    @Test
+    @DisplayName("race: 재시도에서 다른 tx 가 이미 삽입해 retryInserted=0 이지만 refetched 가 존재하면 created=false 로 정상 반환")
+    void follow_retryRowsZeroButRefetchFound_returnsCreatedFalse() {
+        Follow existing = savedFollow(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID);
+        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(0)
+                .thenReturn(0);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(existing));
+
+        FollowResult result = followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
+
+        assertThat(result.created()).isFalse();
+        assertThat(result.dto().id()).isEqualTo(FOLLOW_ID);
+    }
+
+    @Test
+    @DisplayName("getFollowers 는 cursor + idAfter 로 호출되면 pageFetcher lambda 가 idAfter 를 문자열로 넘긴다")
+    void getFollowers_withCursorAndIdAfter_passesIdAfterAsString() {
+        UUID idAfter = UUID.randomUUID();
+        String cursor = CursorUtils.encodeInstant(Instant.parse("2026-08-01T10:00:00Z"));
+
+        when(followRepository.findFollowersByFolloweeIdDesc(
+                eq(FOLLOWEE_ID.toString()), any(), eq(idAfter.toString()), eq(11)))
+                .thenReturn(List.of());
+        when(followRepository.countByFolloweeId(FOLLOWEE_ID)).thenReturn(0L);
+
+        followService.getFollowers(FOLLOWEE_ID, cursor, idAfter, 10, "followedAt", "DESCENDING");
+
+        verify(followRepository).findFollowersByFolloweeIdDesc(
+                eq(FOLLOWEE_ID.toString()), any(), eq(idAfter.toString()), eq(11));
+    }
+
+    @Test
+    @DisplayName("getFollowings 는 cursor + idAfter 로 호출되면 pageFetcher lambda 가 idAfter 를 문자열로 넘긴다")
+    void getFollowings_withCursorAndIdAfter_passesIdAfterAsString() {
+        UUID idAfter = UUID.randomUUID();
+        String cursor = CursorUtils.encodeInstant(Instant.parse("2026-08-01T10:00:00Z"));
+
+        when(followRepository.findFollowingsByFollowerIdDesc(
+                eq(FOLLOWER_ID.toString()), any(), eq(idAfter.toString()), eq(11)))
+                .thenReturn(List.of());
+        when(followRepository.countByFollowerId(FOLLOWER_ID)).thenReturn(0L);
+
+        followService.getFollowings(FOLLOWER_ID, cursor, idAfter, 10, "followedAt", "DESCENDING");
+
+        verify(followRepository).findFollowingsByFollowerIdDesc(
+                eq(FOLLOWER_ID.toString()), any(), eq(idAfter.toString()), eq(11));
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
     private Follow savedFollow(UUID id, UUID followerId, UUID followeeId) {
