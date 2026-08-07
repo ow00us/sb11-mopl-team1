@@ -1,5 +1,6 @@
 package com.mopl.content.external.batch;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -8,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.JobExecution;
 import org.springframework.batch.core.JobParameters;
@@ -26,6 +28,8 @@ class ExternalContentJobSchedulerTest {
         ExternalContentJobScheduler scheduler = new ExternalContentJobScheduler(jobLauncher, job);
         scheduler.runExternalContentCollectionJob();
 
-        verify(jobLauncher).run(eq(job), any(JobParameters.class));
+        ArgumentCaptor<JobParameters> jobParametersCaptor = ArgumentCaptor.forClass(JobParameters.class);
+        verify(jobLauncher).run(eq(job), jobParametersCaptor.capture());
+        assertThat(jobParametersCaptor.getValue().getLocalDateTime("runDateTime")).isNotNull();
     }
 }
