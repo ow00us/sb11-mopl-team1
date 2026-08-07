@@ -134,6 +134,87 @@ class PlaylistServiceGetListIntegrationTest {
                 .isEqualTo(smallPageQueries);
     }
 
+    // ── Phase C: sortBy=subscriberCount 정렬·커서 분기 커버 ─────────────────
+
+    @Test
+    @DisplayName("sortBy=subscriberCount ASCENDING 정렬 시 subscriber_count 오름차순으로 반환된다")
+    void getList_sortBySubscriberCount_asc_returnsAscendingOrder() {
+        List<Playlist> playlists = seedPlaylists(3);
+        setSubscriberCount(playlists.get(0).getId(), 5);
+        setSubscriberCount(playlists.get(1).getId(), 1);
+        setSubscriberCount(playlists.get(2).getId(), 3);
+
+        CursorResponse<PlaylistDto> result = playlistService.getList(
+                null, null, null, null, null, 10, "subscriberCount", "ASCENDING", null);
+
+        assertThat(result.data()).hasSize(3);
+        assertThat(result.data()).extracting(PlaylistDto::subscriberCount)
+                .containsExactly(1L, 3L, 5L);
+    }
+
+    @Test
+    @DisplayName("sortBy=subscriberCount DESCENDING 정렬 시 subscriber_count 내림차순으로 반환된다")
+    void getList_sortBySubscriberCount_desc_returnsDescendingOrder() {
+        List<Playlist> playlists = seedPlaylists(3);
+        setSubscriberCount(playlists.get(0).getId(), 5);
+        setSubscriberCount(playlists.get(1).getId(), 1);
+        setSubscriberCount(playlists.get(2).getId(), 3);
+
+        CursorResponse<PlaylistDto> result = playlistService.getList(
+                null, null, null, null, null, 10, "subscriberCount", "DESCENDING", null);
+
+        assertThat(result.data()).extracting(PlaylistDto::subscriberCount)
+                .containsExactly(5L, 3L, 1L);
+    }
+
+    @Test
+    @DisplayName("sortBy=subscriberCount ASC + 커서 페이지네이션 시 nextCursor 로 다음 페이지 이어받는다")
+    void getList_sortBySubscriberCount_asc_withCursor_paginatesCorrectly() {
+        List<Playlist> playlists = seedPlaylists(4);
+        setSubscriberCount(playlists.get(0).getId(), 1);
+        setSubscriberCount(playlists.get(1).getId(), 2);
+        setSubscriberCount(playlists.get(2).getId(), 3);
+        setSubscriberCount(playlists.get(3).getId(), 4);
+
+        // 첫 페이지 2건 조회
+        CursorResponse<PlaylistDto> firstPage = playlistService.getList(
+                null, null, null, null, null, 2, "subscriberCount", "ASCENDING", null);
+        assertThat(firstPage.data()).extracting(PlaylistDto::subscriberCount)
+                .containsExactly(1L, 2L);
+        assertThat(firstPage.hasNext()).isTrue();
+        assertThat(firstPage.nextCursor()).isNotNull();
+        assertThat(firstPage.nextIdAfter()).isNotNull();
+
+        // nextCursor 로 다음 페이지 조회
+        CursorResponse<PlaylistDto> secondPage = playlistService.getList(
+                null, null, null, firstPage.nextCursor(), firstPage.nextIdAfter(),
+                2, "subscriberCount", "ASCENDING", null);
+        assertThat(secondPage.data()).extracting(PlaylistDto::subscriberCount)
+                .containsExactly(3L, 4L);
+        assertThat(secondPage.hasNext()).isFalse();
+    }
+
+    @Test
+    @DisplayName("sortBy=updatedAt DESCENDING + 커서 페이지네이션 시 nextCursor 로 다음 페이지 이어받는다")
+    void getList_sortByUpdatedAt_desc_withCursor_paginatesCorrectly() {
+        seedPlaylists(4);
+
+        CursorResponse<PlaylistDto> firstPage = playlistService.getList(
+                null, null, null, null, null, 2, "updatedAt", "DESCENDING", null);
+        assertThat(firstPage.data()).hasSize(2);
+        assertThat(firstPage.hasNext()).isTrue();
+
+        CursorResponse<PlaylistDto> secondPage = playlistService.getList(
+                null, null, null, firstPage.nextCursor(), firstPage.nextIdAfter(),
+                2, "updatedAt", "DESCENDING", null);
+        assertThat(secondPage.data()).hasSize(2);
+        assertThat(secondPage.hasNext()).isFalse();
+    }
+
+    private void setSubscriberCount(UUID playlistId, long count) {
+        jdbcTemplate.update("UPDATE playlists SET subscriber_count = ? WHERE id = ?", count, playlistId);
+    }
+
     // ── 헬퍼 ──────────────────────────────────────────────────────────────────
 
     private Statistics getStatistics() {
