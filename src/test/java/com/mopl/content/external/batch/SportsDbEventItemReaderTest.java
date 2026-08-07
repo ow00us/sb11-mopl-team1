@@ -8,6 +8,7 @@ import com.mopl.content.external.sportsdb.SportsDbApiClient;
 import com.mopl.content.external.sportsdb.dto.SportsDbEventSummary;
 import java.time.LocalDate;
 import java.util.List;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class SportsDbEventItemReaderTest {
@@ -15,6 +16,7 @@ class SportsDbEventItemReaderTest {
     private final SportsDbApiClient sportsDbApiClient = mock(SportsDbApiClient.class);
 
     @Test
+    @DisplayName("날짜를 바깥 루프로, 리그를 안쪽 루프로 순회하며 이벤트를 반환한다")
     void read_iteratesDatesOuterAndLeaguesInner() throws Exception {
         LocalDate day1 = LocalDate.of(2026, 8, 1);
         LocalDate day2 = LocalDate.of(2026, 8, 2);

@@ -11,6 +11,7 @@ import com.mopl.content.external.tmdb.TmdbApiClient;
 import com.mopl.content.external.tmdb.dto.TmdbMovieSummary;
 import com.mopl.content.external.tmdb.dto.TmdbPopularMoviesResponse;
 import java.util.List;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class TmdbMoviePopularItemReaderTest {
@@ -18,6 +19,7 @@ class TmdbMoviePopularItemReaderTest {
     private final TmdbApiClient tmdbApiClient = mock(TmdbApiClient.class);
 
     @Test
+    @DisplayName("여러 페이지에 걸친 영화를 모두 반환한 뒤 빈 페이지를 만나면 null을 반환한다")
     void read_returnsAllItemsAcrossPages_thenNullWhenPageEmpty() throws Exception {
         TmdbMovieSummary movie1 = new TmdbMovieSummary(1L, "Movie1", "overview1", "/p1.jpg", List.of(28));
         TmdbMovieSummary movie2 = new TmdbMovieSummary(2L, "Movie2", "overview2", "/p2.jpg", List.of(35));
@@ -32,6 +34,7 @@ class TmdbMoviePopularItemReaderTest {
     }
 
     @Test
+    @DisplayName("최대 페이지에 도달하면 이후 페이지는 호출하지 않고 종료한다")
     void read_stopsAtMaxPages_withoutCallingFurtherPages() throws Exception {
         TmdbMovieSummary movie1 = new TmdbMovieSummary(1L, "Movie1", "overview1", "/p1.jpg", List.of(28));
         when(tmdbApiClient.getPopularMovies(1)).thenReturn(new TmdbPopularMoviesResponse(1, List.of(movie1), 10));

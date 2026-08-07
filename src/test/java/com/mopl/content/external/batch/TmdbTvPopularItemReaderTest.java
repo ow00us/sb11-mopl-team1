@@ -11,6 +11,7 @@ import com.mopl.content.external.tmdb.TmdbApiClient;
 import com.mopl.content.external.tmdb.dto.TmdbPopularTvResponse;
 import com.mopl.content.external.tmdb.dto.TmdbTvSummary;
 import java.util.List;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class TmdbTvPopularItemReaderTest {
@@ -18,6 +19,7 @@ class TmdbTvPopularItemReaderTest {
     private final TmdbApiClient tmdbApiClient = mock(TmdbApiClient.class);
 
     @Test
+    @DisplayName("여러 페이지에 걸친 TV 프로그램을 모두 반환한 뒤 빈 페이지를 만나면 null을 반환한다")
     void read_returnsAllItemsAcrossPages_thenNullWhenPageEmpty() throws Exception {
         TmdbTvSummary tv1 = new TmdbTvSummary(1L, "Tv1", "overview1", "/p1.jpg", List.of(18));
         TmdbTvSummary tv2 = new TmdbTvSummary(2L, "Tv2", "overview2", "/p2.jpg", List.of(35));
@@ -32,6 +34,7 @@ class TmdbTvPopularItemReaderTest {
     }
 
     @Test
+    @DisplayName("최대 페이지에 도달하면 이후 페이지는 호출하지 않고 종료한다")
     void read_stopsAtMaxPages_withoutCallingFurtherPages() throws Exception {
         TmdbTvSummary tv1 = new TmdbTvSummary(1L, "Tv1", "overview1", "/p1.jpg", List.of(18));
         when(tmdbApiClient.getPopularTvShows(1)).thenReturn(new TmdbPopularTvResponse(1, List.of(tv1), 10));

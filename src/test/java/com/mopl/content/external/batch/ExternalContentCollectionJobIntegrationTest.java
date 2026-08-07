@@ -15,6 +15,7 @@ import com.mopl.content.repository.ContentRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.BatchStatus;
 import org.springframework.batch.core.JobParameters;
@@ -53,6 +54,7 @@ class ExternalContentCollectionJobIntegrationTest {
     SportsDbApiClient sportsDbApiClient;
 
     @Test
+    @DisplayName("Job을 실행하면 TMDB·Sports DB 콘텐츠가 수집되어 DB에 저장된다")
     void job_collectsTmdbAndSportsDbContent_andSavesToDatabase() throws Exception {
         TmdbMovieSummary movie = new TmdbMovieSummary(9001L, "Test Movie", "movie overview", "/m.jpg", List.of(28));
         when(tmdbApiClient.getPopularMovies(1)).thenReturn(new TmdbPopularMoviesResponse(1, List.of(movie), 1));
@@ -78,6 +80,7 @@ class ExternalContentCollectionJobIntegrationTest {
     }
 
     @Test
+    @DisplayName("동일한 external_id로 Job을 재실행해도 중복 저장되지 않는다")
     void job_rerunWithSameExternalIds_doesNotCreateDuplicates() throws Exception {
         TmdbMovieSummary movie = new TmdbMovieSummary(9001L, "Test Movie", "movie overview", "/m.jpg", List.of(28));
         when(tmdbApiClient.getPopularMovies(1)).thenReturn(new TmdbPopularMoviesResponse(1, List.of(movie), 1));

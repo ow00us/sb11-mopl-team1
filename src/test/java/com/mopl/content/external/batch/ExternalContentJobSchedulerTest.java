@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.JobExecution;
@@ -15,6 +16,7 @@ import org.springframework.batch.core.launch.JobLauncher;
 class ExternalContentJobSchedulerTest {
 
     @Test
+    @DisplayName("스케줄 실행 시 runDateTime 파라미터를 포함해 Job을 실행한다")
     void runExternalContentCollectionJob_launchesJobWithRunDateTimeParameter() throws Exception {
         JobLauncher jobLauncher = mock(JobLauncher.class);
         Job job = mock(Job.class);
