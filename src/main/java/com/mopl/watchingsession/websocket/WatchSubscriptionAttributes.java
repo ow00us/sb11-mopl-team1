@@ -43,11 +43,34 @@ final class WatchSubscriptionAttributes {
         synchronized (sessionAttributes) {
             Map<String, UUID> map = subscriptionMapLocked(sessionAttributes);
             map.put(subscriptionId, contentId);
-            // 매핑 갱신과 활성 ID 갱신을 같은 락 안에서 수행해, 두 값이 서로 다른 시점의
-            // 상태를 반영하는 일이 없도록 한다.
+            // 활성 ID 전환은 여기서 하지 않는다. 매핑 등록(put)과 "이 구독이 실제로 유효한
+            // 시청 세션으로 이어졌다"는 서로 다른 시점의 사실이다. put 직후 start()가 실패하면
+            // 아직 유효하지 않은 구독이 활성으로 전환돼, 이전에 진짜 활성이던 구독을 밀어내고
+            // 그 자신도 즉시 롤백되어 "활성 구독 없음" 상태가 되는 문제가 생긴다.
+            // 활성 전환은 start()가 성공한 뒤 activate()로 별도 호출한다.
+            }
+        return true;
+    }
+
+    /**
+     * SUBSCRIBE 처리(start())가 성공한 뒤에만 호출한다.
+     * 이 subscriptionId를 이 연결의 활성 구독으로 전환한다.
+     * put() 시점이 아니라 여기서 전환해야, start() 실패 시 이전 활성 구독이 잘못 밀려나지 않는다.
+     */
+    static void activate(StompHeaderAccessor accessor) {
+        String subscriptionId = accessor.getSubscriptionId();
+        if (subscriptionId == null) {
+            return;
+        }
+
+        Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
+        if (sessionAttributes == null) {
+            return;
+        }
+
+        synchronized (sessionAttributes) {
             sessionAttributes.put(ACTIVE_SUBSCRIPTION_ID_ATTRIBUTE_KEY, subscriptionId);
         }
-        return true;
     }
 
 

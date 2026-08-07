@@ -79,7 +79,8 @@ public class WatchingSessionSubscribeListener {
         try {
             session = watchingSessionService.start(watcherId, contentId, sessionId);
         } catch (RuntimeException e) {
-            // 예외 종류와 무관하게 인메모리 매핑 항상 정리
+            // start() 실패 시 이 구독은 아직 활성으로 전환되지 않았으므로(activate() 호출 전),
+            // consume()으로 지워도 이전 활성 구독(있었다면)에는 영향이 없다.
             WatchSubscriptionAttributes.consume(accessor);
 
             if (e instanceof BusinessException be) {
@@ -97,7 +98,9 @@ public class WatchingSessionSubscribeListener {
             throw e;
         }
 
-        // start()가 완벽하게 성공한 후에만 이전 세션에 대한 LEAVE 알림 전송
+        // start()가 완벽하게 성공한 후에만 구독 활성화, 이전 세션에 대한 LEAVE 알림 전송
+        WatchSubscriptionAttributes.activate(accessor);
+
         if (prevSession != null && !prevSession.content().id().equals(contentId)) {
             watchingSessionBroadcaster.broadcastLeave(prevSession, prevSession.content().id());
         }

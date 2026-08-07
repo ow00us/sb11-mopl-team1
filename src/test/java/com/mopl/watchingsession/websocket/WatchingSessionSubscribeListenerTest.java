@@ -367,4 +367,29 @@ public class WatchingSessionSubscribeListenerTest {
         verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
         verifyNoInteractions(errorFrameSender);
     }
+
+    @Test
+    @DisplayName("재구독(sub-1 -> sub-2)에서 sub-2의 start()가 실패해도 sub-1은 계속 활성 상태로 남아, 이후 sub-1의 UNSUBSCRIBE가 정상적으로 시청 세션을 종료함")
+    void onSubscribe_keepsPreviousSubscriptionActive_whenResubscribeStartFails() {
+        // given: sub-1로 먼저 정상 구독해 활성 상태로 만든다.
+        WatchingSessionDto sub1Session = dtoFixture(PREV_CONTENT_ID);
+        when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.empty(), Optional.of(sub1Session));
+        when(watchingSessionService.start(WATCHER_ID, PREV_CONTENT_ID, SESSION_ID)).thenReturn(sub1Session);
+
+        SessionSubscribeEvent sub1Event = subscribeEvent(
+            "/sub/contents/" + PREV_CONTENT_ID + "/watch", "sub-1", principalOf(WATCHER_ID));
+        listener.onSubscribe(sub1Event);
+
+        // when: 같은 연결에서 sub-2로 재구독을 시도하지만 start()가 실패
+        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID))
+            .thenThrow(new BusinessException(ErrorCode.CONTENT_NOT_FOUND));
+
+        SessionSubscribeEvent sub2Event = subscribeEvent(
+            "/sub/contents/" + CONTENT_ID + "/watch", "sub-2", principalOf(WATCHER_ID));
+        listener.onSubscribe(sub2Event);
+
+        // then: sub-2는 활성으로 전환되지 않았어야 하므로, sub-1의 UNSUBSCRIBE는 여전히 활성 구독으로 판정되어야 한다.
+        StompHeaderAccessor sub1UnsubscribeAccessor = StompHeaderAccessor.wrap(sub1Event.getMessage());
+        assertThat(WatchSubscriptionAttributes.isActive(sub1UnsubscribeAccessor)).isTrue();
+    }
 }
