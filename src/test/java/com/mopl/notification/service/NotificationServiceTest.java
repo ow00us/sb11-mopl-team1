@@ -12,6 +12,7 @@ import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.notification.dto.NotificationDto;
+import com.mopl.notification.event.NotificationCreatedEvent;
 import com.mopl.notification.entity.Notification;
 import com.mopl.notification.entity.NotificationLevel;
 import com.mopl.notification.repository.NotificationRepository;
@@ -26,6 +27,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -42,6 +44,9 @@ class NotificationServiceTest {
 
     @Mock
     NotificationRepository notificationRepository;
+
+    @Mock
+    ApplicationEventPublisher eventPublisher;
 
     @InjectMocks
     NotificationService notificationService;
@@ -98,6 +103,24 @@ class NotificationServiceTest {
         assertThat(captor.getValue().getReceiverId())
             .isEqualTo(RECEIVER_ID);
         assertThat(captor.getValue().getReadAt()).isNull();
+
+        ArgumentCaptor<NotificationCreatedEvent> eventCaptor =
+            ArgumentCaptor.forClass(
+                NotificationCreatedEvent.class
+            );
+
+        verify(eventPublisher).publishEvent(
+            eventCaptor.capture()
+        );
+
+        NotificationDto publishedNotification =
+            eventCaptor.getValue().notification();
+
+        assertThat(publishedNotification.id())
+            .isEqualTo(NOTIFICATION_ID);
+
+        assertThat(publishedNotification.receiverId())
+            .isEqualTo(RECEIVER_ID);
     }
 
     @Test

@@ -12,7 +12,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @RequiredArgsConstructor
 public class NotificationSseListener {
 
-    private static final String EVENT_NAME = "notification";
+    private static final String EVENT_NAME = "notifications";
 
     private final SseEmitterManager sseEmitterManager;
 
