@@ -25,13 +25,21 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class WatchingSessionService {
+
+    /**
+     * 시청 세션의 소유권을 표현하는 (WebSocket 연결, 구독) 쌍.
+     * subscriptionId가 null인 경우(예: 아직 STOMP 구독 이전 경로로 호출되는 경우 등)도
+     * 방어적으로 다루기 위해 Objects.equals 기반 equals/hashCode를 record가 자동 생성해준다.
+     */
+    private record SubscriptionOwner(String sessionId, String subscriptionId) {}
+
+    public record ReplacedSession(WatchingSessionDto session, WatchingSessionDto previous) {}
 
     // Redis presence + heartbeat/TTL이 들어오기 전 쓰는 임시 고정 TTL
     // TODO(심화필수): Redis 쓰기 모델로 옮기면서 heartbeat 기반 갱신으로 대체
@@ -52,7 +60,7 @@ public class WatchingSessionService {
      * TODO(심화필수): Redis presence(사용자당 활성 세션 1개, 원본)로 이전하면서
      * 이 소유권 판정 자체를 Redis 쪽 구조로 대체할 예정. 그 전까지는 단일 인스턴스 운영을 전제로 한다.
      */
-    private final ConcurrentHashMap<UUID, String> activeSessions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, SubscriptionOwner> activeSessions = new ConcurrentHashMap<>();
 
     // ★ 추가됨: Watcher 단위로 독립적인 원자성을 보장하기 위한 락 맵
     private final ConcurrentHashMap<UUID, Object> watcherLocks = new ConcurrentHashMap<>();
@@ -62,14 +70,17 @@ public class WatchingSessionService {
     }
 
     // create + update 성격의 메서드 - 독립 트랜잭션을 위해 writer 호출
-    public WatchingSessionDto start(UUID watcherId, UUID contentId, String sessionId) {
+    public ReplacedSession start(UUID watcherId, UUID contentId, String sessionId, String subscriptionId) {
 
         WatchingSessionSnapshot snapshot;
+        WatchingSessionDto previous;
 
         // ★ 임계 구역 시작: 검증, DB 반영, 소유권 갱신을 묶어 원자적으로 처리
         synchronized (getWatcherLock(watcherId)) {
             // 검증 먼저 진행 (실패 시 소유권 변경이나 DB 터치 없음)
             validateContentExists(contentId);
+
+            previous = get(watcherId).orElse(null);
 
             Instant expiresAt = Instant.now().plus(DEFAULT_SESSION_TTL);
 
@@ -81,23 +92,23 @@ public class WatchingSessionService {
             }
 
             // DB 반영까지 안전하게 성공했을 때 비로소 소유권을 갱신
-            activeSessions.put(watcherId, sessionId);
+            activeSessions.put(watcherId, new SubscriptionOwner(sessionId, subscriptionId));
         }
 
         try {
-            return enrich(snapshot);
+            return new ReplacedSession(enrich(snapshot), previous);
         } catch (RuntimeException e) {
-            // 계약 분리: 새 상태가 반영된 후 실패했다면, 스스로 롤백하여 원자성 보장
-            end(watcherId, sessionId);
+            end(watcherId, sessionId, subscriptionId);
             throw e;
         }
     }
 
     // delete 성격의 메서드
-    public boolean end(UUID watcherId, String currentSessionId) {
+    public boolean end(UUID watcherId, String currentSessionId, String currentSubscriptionId) {
         synchronized (getWatcherLock(watcherId)) {
+            SubscriptionOwner requester = new SubscriptionOwner(currentSessionId, currentSubscriptionId);
             // 확인만 먼저 수행 (메모리에서 지우지는 않음)
-            if (!currentSessionId.equals(activeSessions.get(watcherId))) {
+            if (!requester.equals(activeSessions.get(watcherId))) {
                 return false;
             }
 
