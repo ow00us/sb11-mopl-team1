@@ -195,24 +195,54 @@ class PlaylistServiceGetListIntegrationTest {
     }
 
     @Test
-    @DisplayName("sortBy=updatedAt DESCENDING + 커서 페이지네이션 시 nextCursor 로 다음 페이지 이어받는다")
+    @DisplayName("sortBy=updatedAt DESCENDING + 커서 페이지네이션 시 페이지 간 중복 없이 DESC 순서로 이어받는다")
     void getList_sortByUpdatedAt_desc_withCursor_paginatesCorrectly() {
-        seedPlaylists(4);
+        // 명시적 updatedAt 값으로 결정적 정렬 검증
+        List<Playlist> playlists = seedPlaylists(4);
+        Instant base = Instant.parse("2026-08-01T00:00:00Z");
+        setUpdatedAt(playlists.get(0).getId(), base);                    // 가장 오래됨
+        setUpdatedAt(playlists.get(1).getId(), base.plusSeconds(100));
+        setUpdatedAt(playlists.get(2).getId(), base.plusSeconds(200));
+        setUpdatedAt(playlists.get(3).getId(), base.plusSeconds(300));   // 가장 최신
 
+        // 첫 페이지: 최신 2건 (updatedAt DESC)
         CursorResponse<PlaylistDto> firstPage = playlistService.getList(
                 null, null, null, null, null, 2, "updatedAt", "DESCENDING", null);
         assertThat(firstPage.data()).hasSize(2);
         assertThat(firstPage.hasNext()).isTrue();
+        assertThat(firstPage.nextCursor()).isNotNull();
+        assertThat(firstPage.nextIdAfter()).isNotNull();
+        // 첫 페이지 안에서 DESC 정렬 유지
+        assertThat(firstPage.data().get(0).updatedAt())
+                .isAfterOrEqualTo(firstPage.data().get(1).updatedAt());
 
+        // 두 번째 페이지: nextCursor 로 이어받아 나머지 2건
         CursorResponse<PlaylistDto> secondPage = playlistService.getList(
                 null, null, null, firstPage.nextCursor(), firstPage.nextIdAfter(),
                 2, "updatedAt", "DESCENDING", null);
         assertThat(secondPage.data()).hasSize(2);
         assertThat(secondPage.hasNext()).isFalse();
+        // 두 번째 페이지 안에서 DESC 정렬 유지
+        assertThat(secondPage.data().get(0).updatedAt())
+                .isAfterOrEqualTo(secondPage.data().get(1).updatedAt());
+
+        // 페이지 간 식별자 중복 없음
+        List<UUID> firstIds = firstPage.data().stream().map(PlaylistDto::id).toList();
+        List<UUID> secondIds = secondPage.data().stream().map(PlaylistDto::id).toList();
+        assertThat(firstIds).doesNotContainAnyElementsOf(secondIds);
+
+        // 전체 결과가 DESC 순서 유지 (첫 페이지 마지막 >= 두 번째 페이지 첫)
+        assertThat(firstPage.data().get(1).updatedAt())
+                .isAfterOrEqualTo(secondPage.data().get(0).updatedAt());
     }
 
     private void setSubscriberCount(UUID playlistId, long count) {
         jdbcTemplate.update("UPDATE playlists SET subscriber_count = ? WHERE id = ?", count, playlistId);
+    }
+
+    private void setUpdatedAt(UUID playlistId, Instant updatedAt) {
+        jdbcTemplate.update("UPDATE playlists SET updated_at = ? WHERE id = ?",
+                Timestamp.from(updatedAt), playlistId);
     }
 
     // ── 헬퍼 ──────────────────────────────────────────────────────────────────
