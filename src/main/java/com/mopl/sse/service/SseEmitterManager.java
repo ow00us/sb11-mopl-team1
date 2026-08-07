@@ -2,6 +2,8 @@ package com.mopl.sse.service;
 
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.core.parameters.P;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -10,6 +12,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+@Slf4j
 @Component
 public class SseEmitterManager {
 
@@ -67,6 +70,41 @@ public class SseEmitterManager {
         );
 
         return emitter;
+    }
+
+    public void send(
+        UUID userId,
+        UUID eventId,
+        String eventName,
+        Object data
+    ) {
+        SseEmitter emitter =
+            emitters.get(userId);
+
+        if (emitter == null) {
+            return;
+        }
+
+        try {
+            emitter.send(
+                SseEmitter.event()
+                    .id(eventId.toString())
+                    .name(eventName)
+                    .data(data)
+            );
+        } catch (
+            IOException | IllegalStateException exception
+        ) {
+            remove(userId, emitter);
+
+            emitter.completeWithError(exception);
+
+            log.warn("SSE 이벤트 전송 실패 - userId: {}, eventName: {}",
+                userId,
+                eventName,
+                exception
+            );
+        }
     }
 
     private void sendConnectionComment(
