@@ -35,6 +35,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
@@ -131,9 +132,13 @@ public class ContentChatStompIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        if (session != null && session.isConnected()) {
-            session.disconnect();
-        }
+        /*
+         * STOMP ERROR 프레임 처리 후에는 서버가 WebSocket 연결을 먼저 종료할 수 있다.
+         * 이 경우 테스트가 세션을 다시 종료하려 하면 MessageDeliveryException이
+         * 발생할 수 있으므로 안전한 세션 종료 메서드를 사용한다.
+         */
+        disconnectSafely(session);
+
         if (stompClient != null) {
             stompClient.stop();
         }
@@ -143,6 +148,39 @@ public class ContentChatStompIntegrationTest {
         snapshotRepository.deleteAll();
         contentRepository.deleteAll();
         userRepository.deleteAll();
+    }
+
+    /**
+     * 테스트에서 사용한 STOMP 세션을 안전하게 종료한다.
+     *
+     * <p>STOMP ERROR 프레임을 처리하면 서버가 클라이언트보다 먼저
+     * WebSocket 연결을 종료할 수 있다. 따라서 {@link StompSession#isConnected()}
+     * 확인 결과가 true였더라도 disconnect()를 호출하기 전에 세션이 종료될 수 있다.</p>
+     *
+     * <p>이 메서드는 해당 타이밍 경합으로 발생하는
+     * {@link MessageDeliveryException}만 처리한다. 다른 종류의 예외는 숨기지 않아
+     * 실제 테스트 문제를 발견할 수 있도록 한다.</p>
+     *
+     * @param targetSession 종료할 STOMP 세션
+     */
+    private void disconnectSafely(StompSession targetSession) {
+        /*
+         * 세션이 생성되지 않았거나 이미 종료된 상태라면
+         * 별도의 DISCONNECT 프레임을 보낼 필요가 없다.
+         */
+        if (targetSession == null || !targetSession.isConnected()) {
+            return;
+        }
+
+        try {
+            targetSession.disconnect();
+        } catch (MessageDeliveryException ignored) {
+            /*
+             * isConnected() 확인 직후 서버가 연결을 먼저 종료할 수 있다.
+             * 테스트 검증 실패가 아니라 정상적인 연결 종료 순서의 차이이므로
+             * 테스트 정리 단계에서는 해당 예외만 허용한다.
+             */
+        }
     }
 
     private WebSocketStompClient createNativeStompClient() {
@@ -333,9 +371,11 @@ public class ContentChatStompIntegrationTest {
             assertThatThrownBy(() -> observerErrorReceived.get(2, TimeUnit.SECONDS))
                 .isInstanceOf(TimeoutException.class);
         } finally {
-            if (observerSession.isConnected()) {
-                observerSession.disconnect();
-            }
+            /*
+             * 테스트 도중 서버가 observer 세션을 먼저 종료했더라도
+             * 정리 과정이 본래의 테스트 결과를 덮어쓰지 않도록 안전하게 종료한다.
+             */
+            disconnectSafely(observerSession);
         }
     }
 }

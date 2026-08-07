@@ -7,6 +7,7 @@ import com.mopl.global.security.websocket.StompDestinationAuthorizationIntercept
 import com.mopl.global.security.websocket.StompMessagingControllerAdvice;
 import com.mopl.global.security.websocket.WebSocketStompErrorHandler;
 import com.mopl.watchingsession.websocket.ChatSenderCachingInterceptor;
+import com.mopl.watchingsession.websocket.WatchingSessionSubscribeExistenceInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -31,6 +32,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final WebSocketStompErrorHandler webSocketStompErrorHandler;
     private final DirectMessageAuthorizationInterceptor directMessageAuthorizationInterceptor;
     private final ChatSenderCachingInterceptor chatSenderCachingInterceptor;
+    private final WatchingSessionSubscribeExistenceInterceptor watchingSessionSubscribeExistenceInterceptor;
 
     @Value("${app.websocket.allowed-origins}")
     private String[] allowedOrigins;
@@ -57,6 +59,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         registration.interceptors(
             stompAuthChannelInterceptor,
             stompDestinationAuthorizationInterceptor,
+            watchingSessionSubscribeExistenceInterceptor,
             chatSenderCachingInterceptor,
             directMessageAuthorizationInterceptor
         );

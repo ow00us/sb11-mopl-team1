@@ -14,6 +14,7 @@ import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserUpdateRequest;
 import com.mopl.user.dto.UserLockUpdateRequest;
+import com.mopl.user.dto.UserRoleUpdateRequest;
 import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.storage.ProfileImageStorage;
 import com.mopl.user.entity.User;
@@ -601,9 +602,128 @@ class UserServiceTest {
 
         /*
          * 사용자가 존재하지 않으면 비용이 큰 BCrypt 인코딩을
-         * 수행하면 안 됩니다.
+         * 수행하면 안된다.
          */
         verifyNoInteractions(passwordEncoder);
+    }
+
+    @Test
+    @DisplayName("관리자는 일반 사용자를 관리자로 변경할 수 있다")
+    void updateRole_success_whenChangingUserToAdmin() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        /*
+         * createUserFixture()는 기본 권한이 USER인 사용자를 생성
+         */
+        User user = createUserFixture(userId);
+
+        UserRoleUpdateRequest request =
+            new UserRoleUpdateRequest(UserRole.ADMIN);
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        // when
+        userService.updateRole(
+            userId,
+            request
+        );
+
+        // then
+        assertThat(user.getRole())
+            .isEqualTo(UserRole.ADMIN);
+
+        /*
+         * 변경 대상 사용자는 한 번만 조회해야 한다.
+         */
+        verify(userRepository).findById(userId);
+
+        /*
+         * 조회한 User는 영속 엔티티이므로 JPA 변경 감지를 사용
+         * 따라서 save()를 명시적으로 호출하지 않는다.
+         */
+        verify(userRepository, never())
+            .save(any(User.class));
+    }
+
+    @Test
+    @DisplayName("관리자는 관리자를 일반 사용자로 변경할 수 있다")
+    void updateRole_success_whenChangingAdminToUser() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        User user = createUserFixture(userId);
+
+        /*
+         * createUserFixture()는 기본 권한이 USER
+         *
+         * 테스트 대상인 updateRole()을 준비 과정에서 호출하면
+         * 검증할 메서드가 이미 정상 동작한다고 가정
+         * 따라서 ReflectionTestUtils로 초기 권한만 ADMIN으로 설정
+         */
+        ReflectionTestUtils.setField(
+            user,
+            "role",
+            UserRole.ADMIN
+        );
+
+        UserRoleUpdateRequest request =
+            new UserRoleUpdateRequest(UserRole.USER);
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        // when
+        userService.updateRole(
+            userId,
+            request
+        );
+
+        // then
+        assertThat(user.getRole())
+            .isEqualTo(UserRole.USER);
+
+        verify(userRepository).findById(userId);
+
+        verify(userRepository, never())
+            .save(any(User.class));
+    }
+
+    @Test
+    @DisplayName("권한을 변경할 사용자가 없으면 실패한다")
+    void updateRole_fail_whenUserDoesNotExist() {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        UserRoleUpdateRequest request =
+            new UserRoleUpdateRequest(UserRole.ADMIN);
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.updateRole(
+                userId,
+                request
+            )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+
+        verify(userRepository).findById(userId);
+
+        /*
+         * 대상 사용자가 존재하지 않으므로
+         * 저장과 관련된 추가 Repository 작업이 발생하면 안된다.
+         */
+        verify(userRepository, never())
+            .save(any(User.class));
     }
 
     @Test

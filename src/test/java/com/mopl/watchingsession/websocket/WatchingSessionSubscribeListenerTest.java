@@ -1,14 +1,19 @@
 package com.mopl.watchingsession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mopl.global.common.ContentSummary;
 import com.mopl.global.common.UserSummary;
+import com.mopl.global.exception.BusinessException;
+import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.security.websocket.StompErrorFrameSender;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.service.WatchingSessionService;
 import java.time.Instant;
@@ -19,6 +24,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.function.Executable;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -38,6 +44,9 @@ public class WatchingSessionSubscribeListenerTest {
 
     @Mock
     WatchingSessionBroadcaster watchingSessionBroadcaster;
+
+    @Mock
+    StompErrorFrameSender errorFrameSender;
 
     @InjectMocks
     WatchingSessionSubscribeListener listener;
@@ -92,6 +101,7 @@ public class WatchingSessionSubscribeListenerTest {
         // then
         verify(watchingSessionService).start(WATCHER_ID, CONTENT_ID, SESSION_ID);
         verify(watchingSessionBroadcaster).broadcastJoin(dto, CONTENT_ID);
+        verifyNoInteractions(errorFrameSender);
     }
 
     @Test
@@ -122,7 +132,7 @@ public class WatchingSessionSubscribeListenerTest {
     }
 
     @Test
-    @DisplayName("A 콘텐츠 시청 중 B 콘텐츠로 환승을 시도했으나 start()가 실패하면, 기존 A 콘텐츠에 LEAVE 알림을 보내지 않음")
+    @DisplayName("A 콘텐츠 시청 중 B 콘텐츠로 환승을 시도했으나 start()가 BusinessException으로 실패하면, 기존 A 콘텐츠에 LEAVE 알림을 보내지 않음")
     void onSubscribe_skipsLeaveBroadcastForPrevContent_whenStartFails() {
         // given
         WatchingSessionDto prevSession = dtoFixture(PREV_CONTENT_ID);
@@ -133,10 +143,10 @@ public class WatchingSessionSubscribeListenerTest {
 
         // start() 시 예외 발생 유도
         when(watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID))
-            .thenThrow(new RuntimeException("새 세션 시작 실패"));
+            .thenThrow(new BusinessException(ErrorCode.CONTENT_NOT_FOUND));
 
         // when
-        assertDoesNotThrow(() -> listener.onSubscribe(event));
+        listener.onSubscribe(event);
 
         // then: 실패 시 LEAVE도 JOIN도 나가지 않고 기존 세션 정보 유지
         verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
@@ -299,24 +309,62 @@ public class WatchingSessionSubscribeListenerTest {
     }
 
     @Test
-    @DisplayName("start() 처리 중 예외 발생 시 STOMP 예외 전파를 막고 인메모리만 정리 수행")
-    void onSubscribe_rollback_whenStartThrowsException() {
+    @DisplayName("start() 처리 중 예외 발생 시 인매모리 매핑을 정리하고 클라이언트에 ERROR 프레임 전송")
+    void onSubscribe_rollback_whenStartThrowsBusinessException() {
         // given
         SessionSubscribeEvent event = subscribeEvent(
             "/sub/contents/" + CONTENT_ID + "/watch", "sub-123", principalOf(WATCHER_ID));
 
+        BusinessException exception = new BusinessException(ErrorCode.CONTENT_NOT_FOUND);
         when(watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID))
-            .thenThrow(new RuntimeException("시청 세션 시작 실패 흉내"));
+            .thenThrow(exception);
 
         // when
-        assertDoesNotThrow(() -> listener.onSubscribe(event));
+        listener.onSubscribe(event);
 
         // then
         // 리스너 단에서 end() 호출하지 않음
         verify(watchingSessionService, never()).end(any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());
 
+        // 인메모리 매핑 정리
         StompHeaderAccessor lookupAccessor = StompHeaderAccessor.wrap(event.getMessage());
         assertThat(WatchSubscriptionAttributes.remove(lookupAccessor)).isNull();
+
+        // 클라이언트에게 CONTENT_NOT_FOUND ERROR 프레임 전송
+        verify(errorFrameSender).send(
+            eq(event.getMessage()),
+            eq("BusinessException"),
+            eq(ErrorCode.CONTENT_NOT_FOUND),
+            eq(ErrorCode.CONTENT_NOT_FOUND.getMessage()),
+            eq(exception.getDetails())
+        );
+    }
+
+    @Test
+    @DisplayName("start() 처리 중 BusinessException이 아닌 예외가 발생하면 구독 매핑은 정리하되 삼키지 않고 리스너 밖으로 전파함")
+    void onSubscribe_propagatesException_whenStartThrowsNonBusinessException() {
+        // given
+        SessionSubscribeEvent event = subscribeEvent(
+            "/sub/contents/" + CONTENT_ID + "/watch", "sub-123", principalOf(WATCHER_ID));
+
+        RuntimeException unexpected = new IllegalStateException("예상 못한 오류");
+        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID))
+            .thenThrow(unexpected);
+
+        // when & then: BusinessException이 아니므로 리스너가 잡지 않고 그대로 전파해야 함
+        Executable call = () -> listener.onSubscribe(event);
+        IllegalStateException thrown = assertThrows(
+            IllegalStateException.class, call);
+        assertThat(thrown).isSameAs(unexpected);
+
+        // 예외 종류와 무관하게 인메모리 매핑은 정리되어야 함 (DB 세션 없이 매핑만 남는 상태 불일치 방지)
+        StompHeaderAccessor lookupAccessor = StompHeaderAccessor.wrap(event.getMessage());
+        assertThat(WatchSubscriptionAttributes.remove(lookupAccessor)).isNull();
+
+        // BusinessException 전용 처리(에러 프레임 전송, JOIN/LEAVE 브로드캐스트)는 수행되지 않아야 함
+        verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());
+        verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
+        verifyNoInteractions(errorFrameSender);
     }
 }
