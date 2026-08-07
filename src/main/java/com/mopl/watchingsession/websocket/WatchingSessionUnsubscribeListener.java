@@ -1,5 +1,6 @@
 package com.mopl.watchingsession.websocket;
 
+import com.mopl.watchingsession.dto.SubscriptionConsumeResult;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.service.WatchingSessionService;
 import java.security.Principal;
@@ -32,19 +33,23 @@ public class WatchingSessionUnsubscribeListener {
     public void onUnsubscribe(SessionUnsubscribeEvent event) {
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
 
-        boolean isActiveSubscription = WatchSubscriptionAttributes.isActive(accessor);
+        // 판정(활성 여부) + 소비(매핑 제거) + 정리(활성 ID 제거)를 하나의 락 안에서 원자적으로 수행.
+        // isActive()와 remove()를 따로 호출하면 그 사이에 다른 스레드의 SUBSCRIBE(put)가 끼어들어
+        // 활성 구독이 갱신될 수 있어(clientInboundChannel의 동시 처리), 낡은 UNSUBSCRIBE가
+        // 활성으로 잘못 판정되는 레이스가 생긴다.
+        SubscriptionConsumeResult result = WatchSubscriptionAttributes.consume(accessor);
 
-        // 입장 시점에 저장해둔 매핑에서 contentId를 복원
-        // 매핑이 없으면 시청 토픽 구독 해제가 아니었다는 뜻이므로 관여하지 않음
-        UUID contentId = WatchSubscriptionAttributes.remove(accessor);
-        if (contentId == null) {
+        if (!result.hasMapping()) {
+            // 시청 토픽 구독 해제가 아니었음
             return;
         }
 
-        if (!isActiveSubscription) {
-            log.debug("낡은 구독의 UNSUBSCRIBE로 판단되어 무동작 처리: contentId={}", contentId);
+        if (!result.wasActive()) {
+            log.debug("낡은 구독의 UNSUBSCRIBE로 판단되어 무동작 처리: contentId={}", result.contentId());
             return;
         }
+
+        UUID contentId = result.contentId();
 
         UUID watcherId = extractWatcherId(accessor.getUser());
         if (watcherId == null) {

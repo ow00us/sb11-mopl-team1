@@ -80,7 +80,7 @@ public class WatchingSessionSubscribeListener {
             session = watchingSessionService.start(watcherId, contentId, sessionId);
         } catch (RuntimeException e) {
             // 예외 종류와 무관하게 인메모리 매핑 항상 정리
-            WatchSubscriptionAttributes.remove(accessor);
+            WatchSubscriptionAttributes.consume(accessor);
 
             if (e instanceof BusinessException be) {
                 log.warn("시청 세션 시작 실패, 구독 매핑 정리: watcherId={}, contentId={}, cause={}",

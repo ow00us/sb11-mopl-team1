@@ -209,7 +209,7 @@ public class WatchingSessionSubscribeListenerTest {
 
         // then = 같은 세션 attribute 맵에서 방금 저장한 매핑을 그대로 조회할 수 있어야 함
         StompHeaderAccessor lookupAccessor = StompHeaderAccessor.wrap(event.getMessage());
-        assertThat(WatchSubscriptionAttributes.remove(lookupAccessor)).isEqualTo(CONTENT_ID);
+        assertThat(WatchSubscriptionAttributes.consume(lookupAccessor).contentId()).isEqualTo(CONTENT_ID);
     }
 
     @Test
@@ -329,7 +329,7 @@ public class WatchingSessionSubscribeListenerTest {
 
         // 인메모리 매핑 정리
         StompHeaderAccessor lookupAccessor = StompHeaderAccessor.wrap(event.getMessage());
-        assertThat(WatchSubscriptionAttributes.remove(lookupAccessor)).isNull();
+        assertThat(WatchSubscriptionAttributes.consume(lookupAccessor).hasMapping()).isFalse();
 
         // 클라이언트에게 CONTENT_NOT_FOUND ERROR 프레임 전송
         verify(errorFrameSender).send(
@@ -360,7 +360,7 @@ public class WatchingSessionSubscribeListenerTest {
 
         // 예외 종류와 무관하게 인메모리 매핑은 정리되어야 함 (DB 세션 없이 매핑만 남는 상태 불일치 방지)
         StompHeaderAccessor lookupAccessor = StompHeaderAccessor.wrap(event.getMessage());
-        assertThat(WatchSubscriptionAttributes.remove(lookupAccessor)).isNull();
+        assertThat(WatchSubscriptionAttributes.consume(lookupAccessor).hasMapping()).isFalse();
 
         // BusinessException 전용 처리(에러 프레임 전송, JOIN/LEAVE 브로드캐스트)는 수행되지 않아야 함
         verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());

@@ -427,21 +427,26 @@ class WatchingSessionE2ERegressionTest {
 
         // when: 이전 구독(sub-1)을 UNSUBSCRIBE - 낡은 구독의 늦은 정리 시도를 재현
         firstSubscription.unsubscribe();
-        Thread.sleep(SETTLE_MILLIS);
 
-        // then: 낡은 구독의 UNSUBSCRIBE는 무동작이어야 하므로, 현재 시청 세션은 DB에 그대로 남아있어야 함
+        // then: 정의된 배출 대기 구간(SETTLE_MILLIS) 동안 leaveCount가 계속 0으로 유지되는지 확인
+        // 단발성 sleep+assert가 아닌 구간 내내 조건이 깨지지 않는지 검증
+        // 낡은 구독의 UNSUBSCRIBE는 무동작이어야 하므로, 현재 시청 세션은 DB에 그대로 남아있어야 함
+        await().during(SETTLE_MILLIS, TimeUnit.MILLISECONDS)
+            .atMost(SETTLE_MILLIS + 2000, TimeUnit.MILLISECONDS)
+            .untilAsserted(() -> assertThat(leaveCount.get()).isZero());
         assertThat(snapshotRepository.findByWatcherId(watcherId)).isPresent();
-        assertThat(leaveCount.get()).isZero();
 
         // when: 현재 활성 구독(sub-2)을 UNSUBSCRIBE - 실제 퇴장
         currentSubscription.unsubscribe();
 
-        // then: 관찰자 구독(끊지 않고 유지 중)이 LEAVE를 정확히 한 번 수신해야 함
+        // then: DB 삭제를 먼저 확정 대기한 뒤 같은 배출 경계까지 leaveCount가 정확히 1로 유지되는지 확인
+        // DB삭제가 확인된 시점 이후에도 stale UNSUBSCRIBE로 인한 추가 LEAVE가 뒤늦게 도착하지 않는지 검증
+        // 관찰자 구독(끊지 않고 유지 중)이 LEAVE를 정확히 한 번 수신해야 함
         await().atMost(5, TimeUnit.SECONDS)
             .pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty());
-        await().atMost(5, TimeUnit.SECONDS)
-            .pollInterval(100, TimeUnit.MILLISECONDS)
+        await().during(SETTLE_MILLIS, TimeUnit.MILLISECONDS)
+            .atMost(SETTLE_MILLIS + 2000, TimeUnit.MILLISECONDS)
             .untilAsserted(() -> assertThat(leaveCount.get()).isEqualTo(1));
     }
 

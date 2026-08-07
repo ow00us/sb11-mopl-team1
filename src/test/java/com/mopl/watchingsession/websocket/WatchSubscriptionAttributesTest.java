@@ -2,6 +2,7 @@ package com.mopl.watchingsession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.mopl.watchingsession.dto.SubscriptionConsumeResult;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -51,66 +52,6 @@ class WatchSubscriptionAttributesTest {
         boolean result = WatchSubscriptionAttributes.put(accessor, CONTENT_ID);
 
         assertThat(result).isFalse();
-    }
-
-    @Test
-    @DisplayName("저장한 매핑을 remove로 꺼내면 저장했던 contentId가 반환됨")
-    void remove_success_returnsStoredContentId() {
-        Map<String, Object> sessionAttributes = new HashMap<>();
-        StompHeaderAccessor putAccessor = createAccessor("sub-1", sessionAttributes);
-        WatchSubscriptionAttributes.put(putAccessor, CONTENT_ID);
-
-        StompHeaderAccessor removeAccessor = createAccessor("sub-1", sessionAttributes);
-        UUID result = WatchSubscriptionAttributes.remove(removeAccessor);
-
-        assertThat(result).isEqualTo(CONTENT_ID);
-    }
-
-    @Test
-    @DisplayName("매핑되지 않은 subscriptionId를 remove하면 null 반환")
-    void remove_returnsNull_whenNoMappingExists() {
-        StompHeaderAccessor accessor = createAccessor("sub-unknown", new HashMap<>());
-
-        UUID result = WatchSubscriptionAttributes.remove(accessor);
-
-        assertThat(result).isNull();
-    }
-
-    @Test
-    @DisplayName("subscriptionId가 없으면 remove는 null 반환")
-    void remove_returnsNull_whenSubscriptionIdIsNull() {
-        StompHeaderAccessor accessor = createAccessor(null, new HashMap<>());
-
-        UUID result = WatchSubscriptionAttributes.remove(accessor);
-
-        assertThat(result).isNull();
-    }
-
-    @Test
-    @DisplayName("sessionAttributes가 없으면 remove는 null 반환")
-    void remove_returnsNull_whenSessionAttributesIsNull() {
-        StompHeaderAccessor accessor = createAccessor("sub-1", null);
-
-        UUID result = WatchSubscriptionAttributes.remove(accessor);
-
-        assertThat(result).isNull();
-    }
-
-    @Test
-    @DisplayName("같은 subscriptionId를 두 번 remove하면 두 번째는 null 반환 (소비 후 재조회 불가)")
-    void remove_returnsNull_whenCalledTwice() {
-        Map<String, Object> sessionAttributes = new HashMap<>();
-        StompHeaderAccessor putAccessor = createAccessor("sub-1", sessionAttributes);
-        WatchSubscriptionAttributes.put(putAccessor, CONTENT_ID);
-
-        StompHeaderAccessor firstRemoveAccessor = createAccessor("sub-1", sessionAttributes);
-        StompHeaderAccessor secondRemoveAccessor = createAccessor("sub-1", sessionAttributes);
-
-        UUID first = WatchSubscriptionAttributes.remove(firstRemoveAccessor);
-        UUID second = WatchSubscriptionAttributes.remove(secondRemoveAccessor);
-
-        assertThat(first).isEqualTo(CONTENT_ID);
-        assertThat(second).isNull();
     }
 
     @Test
@@ -174,19 +115,74 @@ class WatchSubscriptionAttributesTest {
     }
 
     @Test
-    @DisplayName("remove 이후에도 activeSubscriptionId 기록 자체는 남아있어 isActive는 여전히 true")
-    void isActive_stillTrue_afterRemove_becauseRemoveOnlyClearsMapping() {
-        // remove()는 subscriptionMap의 항목만 지우고 activeSubscriptionId는 건드리지 않는다.
-        // UNSUBSCRIBE 리스너가 isActive()를 remove() 이전에 평가하므로
-        // 실제 흐름에서는 이 케이스가 문제되지 않음
+    @DisplayName("consume으로 활성 구독을 소비하면 ACTIVE 결과를 반환하고, 이후 isActive는 false로 바뀜")
+    void consume_returnsActive_andIsActiveBecomesFalse_afterConsumingActiveSubscription() {
         Map<String, Object> sessionAttributes = new HashMap<>();
         StompHeaderAccessor putAccessor = createAccessor("sub-1", sessionAttributes);
         WatchSubscriptionAttributes.put(putAccessor, CONTENT_ID);
 
-        StompHeaderAccessor removeAccessor = createAccessor("sub-1", sessionAttributes);
-        WatchSubscriptionAttributes.remove(removeAccessor);
+        StompHeaderAccessor consumeAccessor = createAccessor("sub-1", sessionAttributes);
+        SubscriptionConsumeResult result = WatchSubscriptionAttributes.consume(consumeAccessor);
+
+        assertThat(result.wasActive()).isTrue();
+        assertThat(result.contentId()).isEqualTo(CONTENT_ID);
 
         StompHeaderAccessor checkAccessor = createAccessor("sub-1", sessionAttributes);
-        assertThat(WatchSubscriptionAttributes.isActive(checkAccessor)).isTrue();
+        assertThat(WatchSubscriptionAttributes.isActive(checkAccessor)).isFalse();
     }
+
+    @Test
+    @DisplayName("consume으로 낡은 구독(sub-1)을 소비하면 STALE 결과를 반환하고, 현재 활성 구독(sub-2)의 isActive는 계속 true")
+    void consume_returnsStale_forNonActiveSubscription_andDoesNotAffectCurrentActiveSubscription() {
+        Map<String, Object> sessionAttributes = new HashMap<>();
+        StompHeaderAccessor sub1PutAccessor = createAccessor("sub-1", sessionAttributes);
+        WatchSubscriptionAttributes.put(sub1PutAccessor, CONTENT_ID);
+
+        StompHeaderAccessor sub2PutAccessor = createAccessor("sub-2", sessionAttributes);
+        WatchSubscriptionAttributes.put(sub2PutAccessor, CONTENT_ID);
+
+        StompHeaderAccessor sub1ConsumeAccessor = createAccessor("sub-1", sessionAttributes);
+        SubscriptionConsumeResult result = WatchSubscriptionAttributes.consume(sub1ConsumeAccessor);
+
+        assertThat(result.wasActive()).isFalse();
+        assertThat(result.hasMapping()).isTrue();
+        assertThat(result.contentId()).isEqualTo(CONTENT_ID);
+
+        // sub-1을 소비해도 현재 활성 구독(sub-2)의 activeSubscriptionId는 그대로 유지되어야 함
+        StompHeaderAccessor sub2CheckAccessor = createAccessor("sub-2", sessionAttributes);
+        assertThat(WatchSubscriptionAttributes.isActive(sub2CheckAccessor)).isTrue();
+    }
+
+    @Test
+    @DisplayName("매핑되지 않은 subscriptionId를 consume하면 NO_MAPPING을 반환")
+    void consume_returnsNoMapping_whenNoMappingExists() {
+        StompHeaderAccessor accessor = createAccessor("sub-unknown", new HashMap<>());
+
+        SubscriptionConsumeResult result = WatchSubscriptionAttributes.consume(accessor);
+
+        assertThat(result.hasMapping()).isFalse();
+        assertThat(result.wasActive()).isFalse();
+    }
+
+    @Test
+    @DisplayName("subscriptionId가 없으면 consume은 NO_MAPPING을 반환")
+    void consume_returnsNoMapping_whenSubscriptionIdIsNull() {
+        StompHeaderAccessor accessor = createAccessor(null, new HashMap<>());
+
+        SubscriptionConsumeResult result = WatchSubscriptionAttributes.consume(accessor);
+
+        assertThat(result.hasMapping()).isFalse();
+    }
+
+    @Test
+    @DisplayName("sessionAttributes가 없으면 consume은 NO_MAPPING을 반환")
+    void consume_returnsNoMapping_whenSessionAttributesIsNull() {
+        StompHeaderAccessor accessor = createAccessor("sub-1", null);
+
+        SubscriptionConsumeResult result = WatchSubscriptionAttributes.consume(accessor);
+
+        assertThat(result.hasMapping()).isFalse();
+    }
+
+
 }
