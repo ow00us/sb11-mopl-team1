@@ -31,4 +31,9 @@ public class WatchingSessionSnapshotWriter {
                     .build()));
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void delete(UUID watcherId) {
+        watchingSessionSnapshotRepository.deleteByWatcherId(watcherId);
+    }
+
 }

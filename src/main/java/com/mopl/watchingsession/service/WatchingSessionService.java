@@ -25,6 +25,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -101,7 +102,7 @@ public class WatchingSessionService {
             }
 
             // DB 삭제 (여기서 예외가 터지면 소유권은 그대로 유지됨)
-            watchingSessionSnapshotRepository.deleteByWatcherId(watcherId);
+            watchingSessionSnapshotWriter.delete(watcherId);
 
             // DB 삭제까지 완벽히 성공한 후 메모리 소유권 정리
             activeSessions.remove(watcherId);
