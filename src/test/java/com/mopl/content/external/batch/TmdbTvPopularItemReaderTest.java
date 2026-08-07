@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.mopl.content.external.tmdb.TmdbApiClient;
+import com.mopl.content.external.tmdb.TmdbApiException;
 import com.mopl.content.external.tmdb.dto.TmdbPopularTvResponse;
 import com.mopl.content.external.tmdb.dto.TmdbTvSummary;
 import java.util.List;
@@ -45,5 +46,17 @@ class TmdbTvPopularItemReaderTest {
         assertThat(reader.read()).isNull();
 
         verify(tmdbApiClient, never()).getPopularTvShows(eq(2));
+    }
+
+    @Test
+    @DisplayName("특정 페이지 조회가 실패하면 예외를 던지지 않고 다음 페이지로 넘어간다")
+    void read_pageFetchFails_logsAndContinuesToNextPage() throws Exception {
+        TmdbTvSummary tv = new TmdbTvSummary(1L, "Tv1", "overview1", "/p1.jpg", List.of(18));
+        when(tmdbApiClient.getPopularTvShows(1)).thenThrow(new TmdbApiException("일시적 장애", null));
+        when(tmdbApiClient.getPopularTvShows(2)).thenReturn(new TmdbPopularTvResponse(2, List.of(tv), 2));
+
+        TmdbTvPopularItemReader reader = new TmdbTvPopularItemReader(tmdbApiClient, 5);
+
+        assertThat(reader.read()).isEqualTo(tv);
     }
 }

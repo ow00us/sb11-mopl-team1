@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.mopl.content.external.tmdb.TmdbApiClient;
+import com.mopl.content.external.tmdb.TmdbApiException;
 import com.mopl.content.external.tmdb.dto.TmdbMovieSummary;
 import com.mopl.content.external.tmdb.dto.TmdbPopularMoviesResponse;
 import java.util.List;
@@ -45,5 +46,17 @@ class TmdbMoviePopularItemReaderTest {
         assertThat(reader.read()).isNull();
 
         verify(tmdbApiClient, never()).getPopularMovies(eq(2));
+    }
+
+    @Test
+    @DisplayName("특정 페이지 조회가 실패하면 예외를 던지지 않고 다음 페이지로 넘어간다")
+    void read_pageFetchFails_logsAndContinuesToNextPage() throws Exception {
+        TmdbMovieSummary movie = new TmdbMovieSummary(1L, "Movie1", "overview1", "/p1.jpg", List.of(28));
+        when(tmdbApiClient.getPopularMovies(1)).thenThrow(new TmdbApiException("일시적 장애", null));
+        when(tmdbApiClient.getPopularMovies(2)).thenReturn(new TmdbPopularMoviesResponse(2, List.of(movie), 2));
+
+        TmdbMoviePopularItemReader reader = new TmdbMoviePopularItemReader(tmdbApiClient, 5);
+
+        assertThat(reader.read()).isEqualTo(movie);
     }
 }
