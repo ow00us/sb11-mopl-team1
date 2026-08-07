@@ -18,9 +18,11 @@ import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.ChangeType;
 import com.mopl.watchingsession.dto.ContentChatDto;
 import com.mopl.watchingsession.dto.WatchingSessionChange;
+import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -421,9 +423,17 @@ class WatchingSessionE2ERegressionTest {
             .pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isPresent());
 
+        Instant beforeResubscribe = snapshotRepository.findByWatcherId(watcherId).orElseThrow().getUpdatedAt();
+
         // 같은 연결에서 같은 콘텐츠를 다시 구독(sub-2). sub-1은 이 시점부터 낡은 구독이 됨
         Subscription currentSubscription = session.subscribe(watchDestination, noopHandler());
-        Thread.sleep(SETTLE_MILLIS);
+
+        await().atMost(5, TimeUnit.SECONDS)
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .untilAsserted(() -> {
+                WatchingSessionSnapshot latest = snapshotRepository.findByWatcherId(watcherId).orElseThrow();
+                assertThat(latest.getUpdatedAt()).isAfter(beforeResubscribe);
+            });
 
         // when: 이전 구독(sub-1)을 UNSUBSCRIBE - 낡은 구독의 늦은 정리 시도를 재현
         firstSubscription.unsubscribe();
@@ -481,7 +491,6 @@ class WatchingSessionE2ERegressionTest {
             public void handleFrame(StompHeaders headers, @Nullable Object payload) {
             }
         });
-        Thread.sleep(SETTLE_MILLIS);
 
         await().atMost(5, TimeUnit.SECONDS)
             .pollInterval(100, TimeUnit.MILLISECONDS)
