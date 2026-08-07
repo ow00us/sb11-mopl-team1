@@ -8,4 +8,19 @@ public record ExternalContentBatchProperties(
         int sportsDbPastDays,
         int sportsDbFutureDays
 ) {
+
+    public ExternalContentBatchProperties {
+        if (tmdbMaxPages < 1) {
+            throw new IllegalStateException(
+                    "external-content-batch.tmdb-max-pages must be at least 1: " + tmdbMaxPages);
+        }
+        if (sportsDbPastDays < 0) {
+            throw new IllegalStateException(
+                    "external-content-batch.sportsdb-past-days must not be negative: " + sportsDbPastDays);
+        }
+        if (sportsDbFutureDays < 0) {
+            throw new IllegalStateException(
+                    "external-content-batch.sportsdb-future-days must not be negative: " + sportsDbFutureDays);
+        }
+    }
 }
