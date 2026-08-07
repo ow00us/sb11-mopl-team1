@@ -28,6 +28,7 @@ external-content-batch:
   sportsdb-past-days: 0
   sportsdb-future-days: 0
   cron: "0 0 4 * * *"
+  zone: Asia/Seoul
 
 logging:
   level:

@@ -55,6 +55,7 @@ external-content-batch:
   sportsdb-past-days: 3
   sportsdb-future-days: 3
   cron: "0 0 4 * * *"
+  zone: Asia/Seoul
 
 app:
   cors:

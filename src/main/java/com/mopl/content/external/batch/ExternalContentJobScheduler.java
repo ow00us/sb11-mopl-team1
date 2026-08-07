@@ -24,7 +24,7 @@ public class ExternalContentJobScheduler {
     private final JobLauncher jobLauncher;
     private final Job externalContentCollectionJob;
 
-    @Scheduled(cron = "${external-content-batch.cron}")
+    @Scheduled(cron = "${external-content-batch.cron}", zone = "${external-content-batch.zone}")
     public void runExternalContentCollectionJob() throws Exception {
         JobParameters jobParameters = new JobParametersBuilder()
                 .addLocalDateTime("runDateTime", LocalDateTime.now())

@@ -11,6 +11,7 @@ import com.mopl.content.external.tmdb.TmdbApiClient;
 import com.mopl.content.external.tmdb.dto.TmdbMovieSummary;
 import com.mopl.content.external.tmdb.dto.TmdbTvSummary;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -105,12 +106,13 @@ public class ExternalContentBatchConfig {
     @Bean
     @StepScope
     public SportsDbEventItemReader sportsDbEventItemReader() {
-        List<LocalDate> dates = buildDateRange(batchProperties.sportsDbPastDays(), batchProperties.sportsDbFutureDays());
+        ZoneId zone = ZoneId.of(batchProperties.zone());
+        List<LocalDate> dates = buildDateRange(batchProperties.sportsDbPastDays(), batchProperties.sportsDbFutureDays(), zone);
         return new SportsDbEventItemReader(sportsDbApiClient, sportsDbProperties.leagueIds(), dates);
     }
 
-    private List<LocalDate> buildDateRange(int pastDays, int futureDays) {
-        LocalDate today = LocalDate.now();
+    private List<LocalDate> buildDateRange(int pastDays, int futureDays, ZoneId zone) {
+        LocalDate today = LocalDate.now(zone);
         List<LocalDate> dates = new ArrayList<>();
         for (int offset = -pastDays; offset <= futureDays; offset++) {
             dates.add(today.plusDays(offset));
