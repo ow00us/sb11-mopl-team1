@@ -25,6 +25,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -63,7 +64,12 @@ public class ContentServiceImpl implements ContentService {
         return ContentDto.from(findOrThrow(contentId));
     }
 
+    // 정렬/커서 계산(fetchPage)과 표시용 실시간 시청자 수 집계(countGroupedByContentIds)가
+    // 서로 다른 쿼리라, 기본 READ COMMITTED(문장별 스냅샷)에서는 그 사이 다른 트랜잭션이 커밋한
+    // 시청 세션 변경을 서로 다르게 볼 수 있다. REPEATABLE_READ로 트랜잭션 시작 시점 스냅샷을
+    // 공유시켜 두 쿼리가 같은 시청자 수 기준으로 동작하도록 한다.
     @Override
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public CursorResponse<ContentDto> getList(
             String typeEqual, String keywordLike, List<String> tagsIn,
             String cursor, UUID idAfter, int limit, String sortBy, String sortDirection) {
