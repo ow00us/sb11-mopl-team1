@@ -92,6 +92,9 @@ public class WatchingSessionSnapshotWriterTest {
         UUID contentId = insertContent();
 
         WatchingSessionSnapshot first = writer.upsert(watcherId, contentId, Instant.now().plusSeconds(60));
+        // first는 삽입 직후 재조회 없이 반환된 값이라 DB 정밀도(마이크로초)로 절삭되지 않았을 수 있다.
+        // result와 동일 조건으로 비교하기 위해 DB에 실제 저장된 값을 다시 읽어온다.
+        Instant firstCreatedAtInDb = repository.findById(first.getId()).orElseThrow().getCreatedAt();
 
         // when
         Instant extendedExpiresAt = Instant.now().plusSeconds(120);
@@ -101,7 +104,7 @@ public class WatchingSessionSnapshotWriterTest {
         assertThat(repository.count()).isEqualTo(1);
         assertThat(result.getId()).isEqualTo(first.getId());
         assertThat(result.getExpiresAt()).isEqualTo(extendedExpiresAt);
-        assertThat(result.getCreatedAt()).isEqualTo(first.getCreatedAt());
+        assertThat(result.getCreatedAt()).isEqualTo(firstCreatedAtInDb);
     }
 
     @Test
