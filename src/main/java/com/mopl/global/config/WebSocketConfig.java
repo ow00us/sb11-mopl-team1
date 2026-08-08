@@ -27,7 +27,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final StompDestinationAuthorizationInterceptor stompDestinationAuthorizationInterceptor;
     private final WebSocketStompErrorHandler webSocketStompErrorHandler;
     private final DirectMessageAuthorizationInterceptor directMessageAuthorizationInterceptor;
-    private final ChatSenderCacheInitializer chatSenderCachingInterceptor;
+    private final ChatSenderCacheInitializer chatSenderCachingInitializer;
     private final WatchingSessionSubscribeExistenceInterceptor watchingSessionSubscribeExistenceInterceptor;
 
     @Value("${app.websocket.allowed-origins}")
@@ -56,7 +56,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
             stompAuthChannelInterceptor,
             stompDestinationAuthorizationInterceptor,
             watchingSessionSubscribeExistenceInterceptor,
-            chatSenderCachingInterceptor,
+            chatSenderCachingInitializer,
             directMessageAuthorizationInterceptor
         );
     }
