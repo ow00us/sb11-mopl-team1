@@ -2,6 +2,9 @@ package com.mopl.user.service;
 
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.common.CursorResponse;
+import com.mopl.global.util.CursorUtils;
+import com.mopl.user.dto.UserListRequest;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserUpdateRequest;
@@ -12,8 +15,11 @@ import com.mopl.user.storage.ProfileImageStorage;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
+import java.time.DateTimeException;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.List;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -28,6 +34,19 @@ import org.springframework.http.MediaType;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class UserService {
+
+    private static final Set<String> USER_SORT_FIELDS = Set.of(
+        "name",
+        "email",
+        "createdAt",
+        "locked",
+        "role"
+    );
+
+    private static final Set<String> SORT_DIRECTIONS = Set.of(
+        "ASCENDING",
+        "DESCENDING"
+    );
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -126,6 +145,80 @@ public class UserService {
         return UserDto.from(user);
     }
 */
+
+    /**
+     * 관리자가 사용자 목록을 커서 페이지네이션으로 조회
+     *
+     * Repository는 요청 limit보다 한 건 더 조회하고,
+     * Service는 추가 조회된 한 건을 이용해 다음 페이지 존재 여부를 판단
+     *
+     * 실제 응답에는 요청 limit만큼만 포함하고, 다음 페이지가 있다면
+     * 마지막 응답 사용자의 정렬 값과 UUID를 다음 커서로 반환
+     *
+     * @param request 검색·필터·커서·정렬 조건
+     * @return 사용자 목록과 다음 페이지 정보를 포함한 커서 응답
+     */
+    public CursorResponse<UserDto> findUsers(
+        UserListRequest request
+    ) {
+        /*
+         * Service를 Controller 외부에서 호출하더라도 잘못된 값이
+         * Repository까지 전달되지 않도록 비즈니스 경계에서 다시 검증
+         */
+        validateUserListRequest(request);
+
+        /*
+         * Repository는 hasNext 확인을 위해 최대 limit + 1건을 반환
+         */
+        List<User> rows = userRepository.findUsers(request);
+
+        boolean hasNext = rows.size() > request.limit();
+
+        /*
+         * 추가 조회된 한 건은 응답 데이터에 포함하지 않는다.
+         */
+        List<User> page = hasNext
+            ? rows.subList(0, request.limit())
+            : rows;
+
+        String nextCursor = null;
+        UUID nextIdAfter = null;
+
+        /*
+         * 다음 페이지가 존재할 때 현재 응답의 마지막 사용자를
+         * 다음 요청의 커서 기준으로 사용
+         */
+        if (hasNext && !page.isEmpty()) {
+            User lastUser = page.get(page.size() - 1);
+
+            nextCursor = buildNextUserCursor(
+                lastUser,
+                request.sortBy()
+            );
+
+            nextIdAfter = lastUser.getId();
+        }
+
+        List<UserDto> data = page.stream()
+            .map(UserDto::from)
+            .toList();
+
+        /*
+         * totalCount에는 커서 이후의 개수가 아니라
+         * 필터 조건에 해당하는 전체 사용자 수를 반환
+         */
+        long totalCount = userRepository.countUsers(request);
+
+        return CursorResponse.of(
+            data,
+            nextCursor,
+            nextIdAfter,
+            hasNext,
+            totalCount,
+            request.sortBy(),
+            request.sortDirection()
+        );
+    }
 
     /**
      * 사용자의 이름과 프로필 이미지를 변경
@@ -388,6 +481,123 @@ public class UserService {
          * UPDATE SQL을 실행하므로 userRepository.save(user)를
          * 다시 호출할 필요가 없음
          */
+    }
+
+    /**
+     * 사용자 목록 요청의 필수값과 커서 형식을 검증
+     *
+     * Controller의 Bean Validation만 의존하지 않고 Service에서도 검증하여
+     * 내부 호출에서도 동일한 비즈니스 규칙을 보장
+     */
+    private void validateUserListRequest(
+        UserListRequest request
+    ) {
+        if (request == null
+            || request.limit() == null
+            || request.limit() < 1
+            || request.limit() > 100
+            || !USER_SORT_FIELDS.contains(request.sortBy())
+            || !SORT_DIRECTIONS.contains(request.sortDirection())) {
+
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        boolean hasCursor = request.cursor() != null;
+        boolean hasIdAfter = request.idAfter() != null;
+
+        /*
+         * 주 커서와 보조 커서는 하나의 페이지 위치를 나타내므로
+         * 반드시 함께 전달되거나 함께 생략되어야 한다.
+         */
+        if (hasCursor != hasIdAfter) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        if (!hasCursor) {
+            return;
+        }
+
+        /*
+         * Repository 호출 전에 Base64와 실제 필드 타입을 검증
+         *
+         * 이렇게 해야 잘못된 외부 입력이 Spring의 Repository 예외로
+         * 변환되지 않고 일관된 INVALID_INPUT 응답으로 처리
+         */
+        try {
+            switch (request.sortBy()) {
+                case "name", "email" ->
+                    CursorUtils.decode(request.cursor());
+
+                case "createdAt" ->
+                    CursorUtils.decodeAsInstant(request.cursor());
+
+                case "locked" ->
+                    validateBooleanCursor(request.cursor());
+
+                case "role" ->
+                    UserRole.valueOf(
+                        CursorUtils.decode(request.cursor())
+                    );
+
+                default ->
+                    throw new IllegalArgumentException(
+                        "지원하지 않는 사용자 정렬 기준입니다."
+                    );
+            }
+        } catch (
+            IllegalArgumentException | DateTimeException exception
+        ) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+    }
+
+    /**
+     * 잠금 상태 커서가 true 또는 false인지 검증
+     *
+     * Boolean.valueOf()는 잘못된 문자열도 false로 바꾸므로 사용하지 않는다.
+     */
+    private void validateBooleanCursor(String cursor) {
+        String decoded = CursorUtils.decode(cursor);
+
+        if (!"true".equals(decoded)
+            && !"false".equals(decoded)) {
+
+            throw new IllegalArgumentException(
+                "잠금 상태 커서 형식이 올바르지 않습니다."
+            );
+        }
+    }
+
+    /**
+     * 현재 페이지 마지막 사용자의 정렬 값을 다음 커서로 변환
+     */
+    private String buildNextUserCursor(
+        User user,
+        String sortBy
+    ) {
+        return switch (sortBy) {
+            case "name" ->
+                CursorUtils.encode(user.getName());
+
+            case "email" ->
+                CursorUtils.encode(user.getEmail());
+
+            case "createdAt" ->
+                CursorUtils.encodeInstant(user.getCreatedAt());
+
+            case "locked" ->
+                CursorUtils.encode(
+                    Boolean.toString(user.isLocked())
+                );
+
+            case "role" ->
+                CursorUtils.encode(user.getRole().name());
+
+            default ->
+                throw new BusinessException(
+                    ErrorCode.INVALID_INPUT
+                );
+        };
     }
 
     /**
