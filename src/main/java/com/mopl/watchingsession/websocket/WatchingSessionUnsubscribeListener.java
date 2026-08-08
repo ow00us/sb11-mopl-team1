@@ -1,5 +1,6 @@
 package com.mopl.watchingsession.websocket;
 
+import com.mopl.watchingsession.dto.SubscriptionConsumeResult;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.service.WatchingSessionService;
 import java.security.Principal;
@@ -19,6 +20,11 @@ import org.springframework.web.socket.messaging.SessionUnsubscribeEvent;
  * UNSUBSCRIBE 프레임에는 destination이 없고 subscriptionId만 있으므로,
  * 입장 시점(WatchingSessionSubscribeListener)에서 세션 attribute에 저장해둔
  * subscriptionId -> contentId 매핑(WatchSubscriptionAttributes)을 여기서 조회해 복원한다.
+ *
+ * 낡은 구독(같은 연결에서 재구독으로 대체된 구독)인지 여부는 더 이상 이 리스너나
+ * WatchSubscriptionAttributes가 판정하지 않는다. WatchingSessionService.end()가
+ * (sessionId, subscriptionId) 쌍을 소유권과 비교해 원자적으로 판정하므로,
+ * 이 리스너는 accessor에서 얻은 값을 그대로 넘기기만 하면 된다.
  */
 @Slf4j
 @Component
@@ -31,13 +37,16 @@ public class WatchingSessionUnsubscribeListener {
     @EventListener
     public void onUnsubscribe(SessionUnsubscribeEvent event) {
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
+        String subscriptionId = accessor.getSubscriptionId();
 
-        // 입장 시점에 저장해둔 매핑에서 contentId를 복원
-        // 매핑이 없으면 시청 토픽 구독 해제가 아니었다는 뜻이므로 관여하지 않음
-        UUID contentId = WatchSubscriptionAttributes.remove(accessor);
-        if (contentId == null) {
+        SubscriptionConsumeResult result = WatchSubscriptionAttributes.consume(accessor);
+
+        if (!result.hasMapping()) {
+            // 시청 토픽 구독 해제가 아니었음
             return;
         }
+
+        UUID contentId = result.contentId();
 
         UUID watcherId = extractWatcherId(accessor.getUser());
         if (watcherId == null) {
@@ -63,7 +72,7 @@ public class WatchingSessionUnsubscribeListener {
 
         // watcherId 기준 활성 세션 삭제 및 브로드캐스트. sessionId가 일치할 때만
         // 다른 연결로 이미 소유권이 넘어갔다면 이 UNSUBSCRIBE는 오래된 연결의 정리 시도이므로 삭제 안함
-        boolean actuallyDeleted = watchingSessionService.end(watcherId, sessionId);
+        boolean actuallyDeleted = watchingSessionService.end(watcherId, sessionId, subscriptionId);
         if (actuallyDeleted) {
             watchingSessionBroadcaster.broadcastLeave(session, contentId);
         }

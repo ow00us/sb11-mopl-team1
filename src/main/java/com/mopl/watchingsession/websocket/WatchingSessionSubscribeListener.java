@@ -1,10 +1,14 @@
 package com.mopl.watchingsession.websocket;
 
 import com.mopl.global.exception.BusinessException;
+import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.security.websocket.StompErrorFrameSender;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.service.WatchingSessionService;
+import com.mopl.watchingsession.service.WatchingSessionService.ReplacedSession;
+import com.mopl.watchingsession.service.WatchingSessionService.StartFailedException;
 import java.security.Principal;
+import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -22,6 +26,10 @@ import org.springframework.web.socket.messaging.SessionSubscribeEvent;
  * STOMP UNSUBSCRIBE 프레임은 destination 없이 subscriptionId만 담아 오므로,
  * 여기서(SUBSCRIBE 시점) 세션 attribute에 subscriptionId -> contentId 매핑을 저장해두고
  * WatchingSessionUnsubscribeListener에서 그 매핑을 꺼내 쓴다.
+ *
+ * 소유권(활성 구독 판정) 자체는 WatchingSessionService.activeSessions가
+ * (sessionId, subscriptionId) 쌍으로 전담한다. 이 리스너는 그 판정에 필요한
+ * subscriptionId를 accessor에서 그대로 꺼내 start()에 넘기기만 하면 된다.
  */
 @Slf4j
 @Component
@@ -61,8 +69,7 @@ public class WatchingSessionSubscribeListener {
             return;
         }
 
-        // 퇴장 알림을 먼저 보내지 않고, 이전 세션 정보를 조회만 해 둠
-        WatchingSessionDto prevSession = watchingSessionService.get(watcherId).orElse(null);
+        String subscriptionId = accessor.getSubscriptionId();
 
         // 유틸 내부에서 subscriptionId null 체크 및 맵 null 체크 후 매핑 시도
         boolean isMapped = WatchSubscriptionAttributes.put(accessor, contentId);
@@ -75,29 +82,59 @@ public class WatchingSessionSubscribeListener {
         }
 
         // DB 세션 시작
-        WatchingSessionDto session;
+        ReplacedSession replaced;
         try {
-            session = watchingSessionService.start(watcherId, contentId, sessionId);
+            replaced = watchingSessionService.start(watcherId, contentId, sessionId, subscriptionId);
         } catch (RuntimeException e) {
-            // 예외 종류와 무관하게 인메모리 매핑 항상 정리
-            WatchSubscriptionAttributes.remove(accessor);
+            // start() 실패 시 이 구독은 아직 활성으로 전환되지 않았으므로(activate() 호출 전),
+            // consume()으로 지워도 이전 활성 구독(있었다면)에는 영향이 없다.
+            WatchSubscriptionAttributes.consume(accessor);
 
-            if (e instanceof BusinessException be) {
+            RuntimeException cause = e;
+            if (e instanceof StartFailedException startFailed) {
+                // upsert()까지는 성공해 소유권이 이미 새 콘텐츠로 넘어간 뒤 enrich()에서 실패
+                // 보상 삭제가 실제로 수행됐을 때만(endedPrevious != null) 그 직전 콘텐츠의
+                // 다른 시청자들에게 LEAVE 브로드캐스트
+                WatchingSessionDto endedPrevious = startFailed.getEndedPrevious();
+                if (endedPrevious != null) {
+                    try {
+                        watchingSessionBroadcaster.broadcastLeave(endedPrevious, endedPrevious.content().id());
+                    } catch (RuntimeException broadcastFailure) {
+                       log.error("보상 삭제 후 LEAVE 브로드캐스트 실패: watcherId={}, prevContentId={}",
+                           watcherId, endedPrevious.content().id(), broadcastFailure);
+                    }
+                }
+                // 클라이언트로 나가는 ERROR 프레임은 원래 실패 원인 기준 (기존 계약 유지)
+                cause = (RuntimeException) startFailed.getCause();
+            }
+
+            if (cause instanceof BusinessException be) {
                 log.warn("시청 세션 시작 실패, 구독 매핑 정리: watcherId={}, contentId={}, cause={}",
-                    watcherId, contentId, e.getMessage());
+                    watcherId, contentId, be.getMessage());
                 // 클라이언트에 실패 알림
                 errorFrameSender.send(event.getMessage(), be.getClass().getSimpleName(), be.getErrorCode(),
                     be.getMessage(), be.getDetails());
                 return;
             }
 
-            // 예상 못한 예외는 삼키지 않고 그대로 전파
-            log.error("시청 세션 시작 중 예상하지 못한 예외 발생, 구독 매핑만 정리 후 재전파: watcherId={}, contentId={}",
-                watcherId, contentId, e);
-            throw e;
+            // 인프라 오류 등 예상 못한 예외:
+            // 브로커에는 이미 구독이 등록된 상태라 그대로 두면 유령 구독이 남는다.
+            // 클라이언트에 INTERNAL_ERROR 프레임을 알리면 Spring 이 ERROR 프레임 전송
+            // 이후 WebSocket 세션을 종료하고, SessionDisconnectEvent 가 발행되어
+            // SimpleBrokerMessageHandler 가 해당 세션 구독을 자동 정리한다.
+            log.error("시청 세션 시작 중 예상하지 못한 예외 발생, ERROR 프레임 발송: watcherId={}, contentId={}",
+                watcherId, contentId, cause);
+            errorFrameSender.send(event.getMessage(), cause.getClass().getSimpleName(),
+                ErrorCode.INTERNAL_ERROR, ErrorCode.INTERNAL_ERROR.getMessage(), Map.of());
+            return;
         }
 
-        // start()가 완벽하게 성공한 후에만 이전 세션에 대한 LEAVE 알림 전송
+        // start()가 완벽하게 성공한 후에만 구독 활성화, 이전 세션에 대한 LEAVE 알림 전송
+        WatchSubscriptionAttributes.activate(accessor);
+
+        WatchingSessionDto session = replaced.session();
+        WatchingSessionDto prevSession = replaced.previous();
+
         if (prevSession != null && !prevSession.content().id().equals(contentId)) {
             watchingSessionBroadcaster.broadcastLeave(prevSession, prevSession.content().id());
         }

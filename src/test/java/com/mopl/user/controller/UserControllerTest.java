@@ -16,6 +16,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.common.CursorResponse;
+import com.mopl.user.dto.UserListRequest;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserUpdateRequest;
@@ -130,6 +132,202 @@ class UserControllerTest {
                 "passwordTest1!"
             )
         );
+    }
+
+    /**
+     * 관리자 사용자 목록 조회 요청의 쿼리 파라미터가
+     * UserListRequest로 정상 바인딩되고 Service 결과가 JSON으로 반환되는지 검증한다.
+     *
+     * <p>이 테스트 클래스는 Security Filter를 비활성화한 Controller 단위 테스트이므로
+     * 관리자 권한 자체는 검증하지 않는다. 관리자 권한 검증은
+     * SecurityAccessPolicyTest에서 별도로 수행한다.</p>
+     */
+    @Test
+    @DisplayName("사용자 목록 조회 조건을 전달하면 커서 페이지 응답을 반환한다")
+    void findUsers_success() throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        UUID nextIdAfter =
+            UUID.fromString("22222222-2222-2222-2222-222222222222");
+
+        Instant createdAt =
+            Instant.parse("2026-07-31T03:00:00Z");
+
+        UserDto user = new UserDto(
+            userId,
+            createdAt,
+            "user@example.com",
+            "테스트 사용자",
+            "https://example.com/profile.png",
+            UserRole.USER,
+            false
+        );
+
+        /*
+         * MockMvc 요청에 전달할 쿼리 파라미터와 동일한 조건이다.
+         *
+         * cursor와 idAfter는 첫 페이지 조회이므로 null이다.
+         */
+        UserListRequest request = new UserListRequest(
+            "user",
+            UserRole.USER,
+            false,
+            null,
+            null,
+            20,
+            "ASCENDING",
+            "email"
+        );
+
+        /*
+         * Service가 반환할 커서 페이지 응답을 구성한다.
+         *
+         * 다음 페이지가 존재하므로 nextCursor와 nextIdAfter가 포함된다.
+         */
+        CursorResponse<UserDto> response = CursorResponse.of(
+            List.of(user),
+            "bmV4dC1jdXJzb3I=",
+            nextIdAfter,
+            true,
+            3L,
+            "email",
+            "ASCENDING"
+        );
+
+        when(userService.findUsers(request))
+            .thenReturn(response);
+
+        // when & then
+        mockMvc.perform(
+                get("/api/users")
+                    .param("emailLike", "user")
+                    .param("roleEqual", "USER")
+                    .param("locked", "false")
+                    .param("limit", "20")
+                    .param("sortDirection", "ASCENDING")
+                    .param("sortBy", "email")
+            )
+            .andExpect(status().isOk())
+            .andExpect(content().contentType("application/json"))
+            .andExpect(jsonPath("$.data[0].id").value(userId.toString()))
+            .andExpect(jsonPath("$.data[0].createdAt").value(createdAt.toString()))
+            .andExpect(jsonPath("$.data[0].email").value("user@example.com"))
+            .andExpect(jsonPath("$.data[0].name").value("테스트 사용자"))
+            .andExpect(jsonPath("$.data[0].profileImageUrl").value("https://example.com/profile.png"))
+            .andExpect(jsonPath("$.data[0].role").value("USER"))
+            .andExpect(jsonPath("$.data[0].locked").value(false))
+            /*
+             * 사용자 응답에 비밀번호 관련 필드가 노출되지 않는지 검증한다.
+             */
+            .andExpect(jsonPath("$.data[0].password").doesNotExist())
+            .andExpect(jsonPath("$.data[0].passwordHash").doesNotExist())
+            .andExpect(jsonPath("$.nextCursor").value("bmV4dC1jdXJzb3I="))
+            .andExpect(jsonPath("$.nextIdAfter").value(nextIdAfter.toString()))
+            .andExpect(jsonPath("$.hasNext").value(true))
+            .andExpect(jsonPath("$.totalCount").value(3))
+            .andExpect(jsonPath("$.sortBy").value("email"))
+            .andExpect(jsonPath("$.sortDirection").value("ASCENDING"));
+
+        verify(userService).findUsers(request);
+    }
+
+    /**
+     * OpenAPI 계약에서 limit의 최댓값은 100
+     *
+     * <p>101이 전달되면 Controller 메서드가 실행되기 전에
+     * UserListRequest의 Bean Validation에서 요청을 거부해야 한다.</p>
+     */
+    @Test
+    @DisplayName("사용자 목록 조회 개수가 100을 초과하면 400을 반환한다")
+    void findUsers_fail_whenLimitExceedsMaximum() throws Exception {
+        // when & then
+        mockMvc.perform(
+                get("/api/users")
+                    .param("limit", "101")
+                    .param("sortDirection", "ASCENDING")
+                    .param("sortBy", "createdAt")
+            )
+            .andExpect(status().isBadRequest());
+
+        /*
+         * 요청 DTO 검증 단계에서 거부되므로
+         * UserService는 호출되지 않아야 한다.
+         */
+        verifyNoInteractions(userService);
+    }
+
+    /**
+     * limit, sortDirection, sortBy는 OpenAPI에서 필수인 쿼리 파라미터
+     *
+     * <p>필수 조건이 전달되지 않으면 UserListRequest 검증에 실패하고
+     * 400 Bad Request가 반환되어야 한다.</p>
+     */
+    @Test
+    @DisplayName("사용자 목록 조회 필수 조건이 누락되면 400을 반환한다")
+    void findUsers_fail_whenRequiredParametersAreMissing() throws Exception {
+        // when & then
+        mockMvc.perform(get("/api/users"))
+            .andExpect(status().isBadRequest());
+
+        /*
+         * 필수 파라미터 검증에서 실패했으므로
+         * UserService는 호출되지 않아야 한다.
+         */
+        verifyNoInteractions(userService);
+    }
+
+    /**
+     * roleEqual은 UserRole enum으로 변환
+     *
+     * <p>USER 또는 ADMIN이 아닌 값을 전달하면
+     * Spring MVC의 쿼리 파라미터 변환 과정에서 요청이 거부되어야 한다.</p>
+     */
+    @Test
+    @DisplayName("존재하지 않는 사용자 역할로 조회하면 400을 반환한다")
+    void findUsers_fail_whenRoleIsInvalid() throws Exception {
+        // when & then
+        mockMvc.perform(
+                get("/api/users")
+                    .param("roleEqual", "MANAGER")
+                    .param("limit", "20")
+                    .param("sortDirection", "ASCENDING")
+                    .param("sortBy", "createdAt")
+            )
+            .andExpect(status().isBadRequest());
+
+        /*
+         * roleEqual을 UserRole로 변환하는 과정에서 실패했으므로
+         * UserService는 호출되지 않아야 한다.
+         */
+        verifyNoInteractions(userService);
+    }
+
+    /**
+     * OpenAPI에서 허용하는 사용자 목록 정렬 기준은
+     * name, email, createdAt, locked, role
+     *
+     * <p>허용 목록에 없는 updatedAt이 전달되면
+     * UserListRequest의 @Pattern 검증에서 요청을 거부해야 한다.</p>
+     */
+    @Test
+    @DisplayName("지원하지 않는 정렬 기준으로 조회하면 400을 반환한다")
+    void findUsers_fail_whenSortByIsInvalid() throws Exception {
+        // when & then
+        mockMvc.perform(
+                get("/api/users")
+                    .param("limit", "20")
+                    .param("sortDirection", "ASCENDING")
+                    .param("sortBy", "updatedAt")
+            )
+            .andExpect(status().isBadRequest());
+
+        /*
+         * sortBy 검증에서 실패했으므로
+         * UserService는 호출되지 않아야 한다.
+         */
+        verifyNoInteractions(userService);
     }
 
     @Test

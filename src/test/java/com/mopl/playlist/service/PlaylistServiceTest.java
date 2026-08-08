@@ -22,11 +22,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -419,8 +422,8 @@ class PlaylistServiceTest {
     @Test
     @DisplayName("구독 취소 성공 시 rows affected 1 을 얻고 subscriberCount 를 한 번 감소시킨다")
     void unsubscribe_success() {
-        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
-                .thenReturn(true);
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
         when(subscriptionRepository.deleteByPlaylistIdAndSubscriberIdReturningCount(
                 PLAYLIST_ID.toString(), OTHER_ID.toString()))
                 .thenReturn(1);
@@ -433,10 +436,31 @@ class PlaylistServiceTest {
     }
 
     @Test
-    @DisplayName("구독하지 않은 상태에서 취소 시도 시 RESOURCE_NOT_FOUND 예외가 발생한다")
-    void unsubscribe_fail_notSubscribed() {
-        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
-                .thenReturn(false);
+    @DisplayName("구독하지 않은 상태에서 재취소해도 예외 없이 204 흐름으로 종료되고 카운터도 감소하지 않는다")
+    void unsubscribe_notSubscribed_isIdempotent() {
+        // 플레이리스트는 존재하지만 해당 사용자의 구독 row 는 없는 상황.
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(subscriptionRepository.deleteByPlaylistIdAndSubscriberIdReturningCount(
+                PLAYLIST_ID.toString(), OTHER_ID.toString()))
+                .thenReturn(0);
+
+        // 예외 없이 정상 종료해야 하며 (컨트롤러가 204 로 응답한다)
+        playlistService.unsubscribe(PLAYLIST_ID, OTHER_ID);
+
+        // 실제 DELETE 는 시도되어야 rows=0 을 확인할 수 있다.
+        verify(subscriptionRepository).deleteByPlaylistIdAndSubscriberIdReturningCount(
+                PLAYLIST_ID.toString(), OTHER_ID.toString());
+        // rows=0 경로에서는 카운터를 감소시키지 않아 실구독 수보다 낮게 떨어지지 않는다.
+        verify(playlistRepository, never()).decrementSubscriberCount(any(UUID.class));
+        verify(subscriptionRepository, never())
+                .existsByPlaylistIdAndSubscriberId(any(UUID.class), any(UUID.class));
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 플레이리스트를 취소 시도하면 RESOURCE_NOT_FOUND 예외가 발생한다")
+    void unsubscribe_fail_playlistNotFound() {
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> playlistService.unsubscribe(PLAYLIST_ID, OTHER_ID))
                 .isInstanceOf(BusinessException.class)
@@ -450,15 +474,18 @@ class PlaylistServiceTest {
     @Test
     @DisplayName("동시 unsubscribe race 로 rows affected 가 0 이면 decrement 를 호출하지 않는다")
     void unsubscribe_noDecrement_whenRaceLosesRow() {
-        // exists 통과 후 다른 트랜잭션이 먼저 DELETE 를 실행한 상황을 시뮬레이션한다.
-        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
-                .thenReturn(true);
+        // 두 트랜잭션이 동시에 진입해 한 쪽만 실제 DELETE 를 성공시킨 race 를 시뮬레이션한다.
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
         when(subscriptionRepository.deleteByPlaylistIdAndSubscriberIdReturningCount(
                 PLAYLIST_ID.toString(), OTHER_ID.toString()))
                 .thenReturn(0);
 
         playlistService.unsubscribe(PLAYLIST_ID, OTHER_ID);
 
+        // race 경로에서도 실제 DELETE 는 시도되어야 rows=0 을 통해 상황을 판정할 수 있다.
+        verify(subscriptionRepository).deleteByPlaylistIdAndSubscriberIdReturningCount(
+                PLAYLIST_ID.toString(), OTHER_ID.toString());
         // rows=0 경로에서는 카운터를 감소시키지 않아 실구독 수보다 낮게 떨어지지 않는다.
         verify(playlistRepository, never()).decrementSubscriberCount(any(UUID.class));
     }
@@ -571,7 +598,143 @@ class PlaylistServiceTest {
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
     }
 
+    // ── Phase D: 남은 조건 분기 커버 ─────────────────────────────────────────
+
+    @Test
+    @DisplayName("get 은 requesterId 가 있고 구독 이력이 없으면 subscribedByMe=false 를 반환한다")
+    void get_requesterNotSubscribed_returnsSubscribedByMeFalse() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID)).thenReturn(false);
+
+        PlaylistDto result = playlistService.get(PLAYLIST_ID, OTHER_ID);
+
+        assertThat(result.subscribedByMe()).isFalse();
+    }
+
+    @Test
+    @DisplayName("getList 는 requesterId 가 있고 페이지가 비어있지 않으면 구독 여부를 배치 조회하고 subscribedByMe 를 매핑한다")
+    void getList_requesterIdAndNonEmptyPage_mapsSubscribedByMe() {
+        UUID subscribedId = UUID.randomUUID();
+        UUID otherId = UUID.randomUUID();
+        List<Playlist> rows = List.of(
+                savedPlaylist(subscribedId, OWNER_ID, "S", "s", Instant.now()),
+                savedPlaylist(otherId, OWNER_ID, "O", "o", Instant.now())
+        );
+        when(playlistRepository.findByUpdatedAtAsc(null, null, null, null, null, 3)).thenReturn(rows);
+        when(playlistRepository.countByFilter(null, null, null)).thenReturn(2L);
+        when(subscriptionRepository.findSubscribedPlaylistIds(OTHER_ID, List.of(subscribedId, otherId)))
+                .thenReturn(Set.of(subscribedId));
+
+        CursorResponse<PlaylistDto> result = playlistService.getList(
+                null, null, null, null, null, 2, "updatedAt", "ASCENDING", OTHER_ID);
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.data().get(0).subscribedByMe()).isTrue();
+        assertThat(result.data().get(1).subscribedByMe()).isFalse();
+    }
+
+    @Test
+    @DisplayName("get 은 콘텐츠 타입 TV_SERIES 를 tvSeries 문자열로 매핑한다")
+    void get_mapsContentTypeTvSeries() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        UUID contentId = UUID.randomUUID();
+        Content content = savedContentWithType(contentId, "TV", ContentType.TV_SERIES);
+
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(playlistContentRepository.findAllByPlaylistIdOrderByCreatedAtAsc(PLAYLIST_ID))
+                .thenReturn(List.of(savedLink(PLAYLIST_ID, contentId, Instant.now())));
+        when(contentRepository.findAllWithTagsByIdIn(List.of(contentId)))
+                .thenReturn(List.of(content));
+
+        PlaylistDto result = playlistService.get(PLAYLIST_ID, null);
+
+        assertThat(result.contents()).hasSize(1);
+        assertThat(result.contents().get(0).type()).isEqualTo("tvSeries");
+    }
+
+    @Test
+    @DisplayName("get 은 콘텐츠 타입 SPORT 를 sport 문자열로 매핑한다")
+    void get_mapsContentTypeSport() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        UUID contentId = UUID.randomUUID();
+        Content content = savedContentWithType(contentId, "축구", ContentType.SPORT);
+
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(playlistContentRepository.findAllByPlaylistIdOrderByCreatedAtAsc(PLAYLIST_ID))
+                .thenReturn(List.of(savedLink(PLAYLIST_ID, contentId, Instant.now())));
+        when(contentRepository.findAllWithTagsByIdIn(List.of(contentId)))
+                .thenReturn(List.of(content));
+
+        PlaylistDto result = playlistService.get(PLAYLIST_ID, null);
+
+        assertThat(result.contents().get(0).type()).isEqualTo("sport");
+    }
+
+    @Test
+    @DisplayName("get 은 링크된 콘텐츠 ID 가 ContentRepository 결과에 없으면 해당 항목을 조용히 제외한다")
+    void get_dropsMissingContentSummary() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        UUID existingContentId = UUID.randomUUID();
+        UUID missingContentId = UUID.randomUUID();
+
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(playlistContentRepository.findAllByPlaylistIdOrderByCreatedAtAsc(PLAYLIST_ID))
+                .thenReturn(List.of(
+                        savedLink(PLAYLIST_ID, existingContentId, Instant.now()),
+                        savedLink(PLAYLIST_ID, missingContentId, Instant.now())));
+        when(contentRepository.findAllWithTagsByIdIn(List.of(existingContentId, missingContentId)))
+                .thenReturn(List.of(savedContent(existingContentId, "존재")));
+
+        PlaylistDto result = playlistService.get(PLAYLIST_ID, null);
+
+        assertThat(result.contents()).hasSize(1);
+        assertThat(result.contents().get(0).id()).isEqualTo(existingContentId);
+    }
+
+    @Test
+    @DisplayName("addContent 는 DuplicateKey 가 아닌 DataIntegrityViolationException 은 그대로 전파한다")
+    void addContent_propagates_nonDuplicateKeyIntegrityViolation() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        UUID contentId = UUID.randomUUID();
+
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(contentRepository.existsById(contentId)).thenReturn(true);
+        when(playlistContentRepository.existsByPlaylistIdAndContentId(PLAYLIST_ID, contentId)).thenReturn(false);
+        DataIntegrityViolationException nonUniqueViolation = new DataIntegrityViolationException("FK violation");
+        doThrow(nonUniqueViolation).when(playlistContentSaver).save(PLAYLIST_ID, contentId);
+
+        assertThatThrownBy(() -> playlistService.addContent(PLAYLIST_ID, contentId, OWNER_ID))
+                .isSameAs(nonUniqueViolation);
+    }
+
+    @Test
+    @DisplayName("addContent 는 DuplicateKeyException 을 조용히 흡수한다")
+    void addContent_silentlyIgnores_duplicateKeyException() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        UUID contentId = UUID.randomUUID();
+
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(contentRepository.existsById(contentId)).thenReturn(true);
+        when(playlistContentRepository.existsByPlaylistIdAndContentId(PLAYLIST_ID, contentId)).thenReturn(false);
+        doThrow(new DuplicateKeyException("duplicate")).when(playlistContentSaver).save(PLAYLIST_ID, contentId);
+
+        // 예외 없이 정상 반환 (동시 삽입 race 흡수)
+        playlistService.addContent(PLAYLIST_ID, contentId, OWNER_ID);
+        verify(playlistContentSaver).save(PLAYLIST_ID, contentId);
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
+
+    private Content savedContentWithType(UUID id, String title, ContentType type) {
+        Content c = Content.builder()
+                .type(type)
+                .title(title)
+                .description("설명")
+                .build();
+        ReflectionTestUtils.setField(c, "id", id);
+        return c;
+    }
 
     private Playlist savedPlaylist(UUID id, UUID ownerId, String title, String desc, Instant updatedAt) {
         Playlist p = Playlist.builder().ownerId(ownerId).title(title).description(desc).build();
