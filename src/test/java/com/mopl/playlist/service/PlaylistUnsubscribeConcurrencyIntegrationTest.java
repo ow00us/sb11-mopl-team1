@@ -101,8 +101,8 @@ class PlaylistUnsubscribeConcurrencyIntegrationTest {
                 start.await();
                 playlistService.unsubscribe(playlist.getId(), SUBSCRIBER_ID);
             } catch (Exception ignored) {
-                // race 로 늦게 도달한 요청은 exists 통과 여부에 따라 404 또는 조용한 성공이
-                // 될 수 있다. 이 테스트는 카운터·행 정합성만 검증한다.
+                // 재취소가 멱등이 되어 정상 경로에서는 예외가 발생하지 않지만,
+                // testcontainers 초기화 등의 인프라 실패를 스레드에서 삼키지 않도록 방어적으로 둔다.
             } finally {
                 done.countDown();
             }
