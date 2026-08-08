@@ -1,4 +1,4 @@
-package com.mopl.watchingsession.websocket;
+package com.mopl.watchingsession.websocket.stompsession;
 
 import com.mopl.global.common.UserSummary;
 import java.util.Map;

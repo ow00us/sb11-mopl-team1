@@ -1,4 +1,4 @@
-package com.mopl.watchingsession.websocket;
+package com.mopl.watchingsession.websocket.stompsession;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -35,7 +35,7 @@ public class ChatSenderCachingInterceptorTest {
     private UserRepository userRepository;
 
     @InjectMocks
-    private ChatSenderCachingInterceptor interceptor;
+    private ChatSenderCacheInitializer interceptor;
 
     private static final UUID USER_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
 

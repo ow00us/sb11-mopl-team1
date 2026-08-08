@@ -1,4 +1,4 @@
-package com.mopl.watchingsession.websocket;
+package com.mopl.watchingsession.websocket.interceptor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;

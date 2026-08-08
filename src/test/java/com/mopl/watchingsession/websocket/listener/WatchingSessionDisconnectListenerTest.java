@@ -1,4 +1,4 @@
-package com.mopl.watchingsession.websocket;
+package com.mopl.watchingsession.websocket.listener;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -9,6 +9,8 @@ import com.mopl.global.common.ContentSummary;
 import com.mopl.global.common.UserSummary;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.service.WatchingSessionService;
+import com.mopl.watchingsession.websocket.broadcast.WatchingSessionBroadcaster;
+import com.mopl.watchingsession.websocket.stompsession.WatchSubscriptionAttributes;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
