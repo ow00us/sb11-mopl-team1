@@ -99,7 +99,12 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(code.getStatus()).body(body);
     }
 
-    /** 경로는 있지만 그 메서드로는 매핑되지 않은 요청입니다. */
+    /**
+     * 경로는 있지만 그 메서드로는 매핑되지 않은 요청입니다.
+     *
+     * 405 응답은 허용 메서드를 Allow 헤더로 알려야 합니다. 예외가 ErrorResponse 를
+     * 구현해 헤더를 만들어 주므로 그대로 실어 보냅니다.
+     */
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public ResponseEntity<ErrorResponse> handleMethodNotSupported(HttpRequestMethodNotSupportedException e) {
         ErrorCode code = ErrorCode.METHOD_NOT_ALLOWED;
@@ -110,10 +115,14 @@ public class GlobalExceptionHandler {
         }
         ErrorResponse body = ErrorResponse.of(
                 e.getClass().getSimpleName(), code, code.getMessage(), details);
-        return ResponseEntity.status(code.getStatus()).body(body);
+        return ResponseEntity.status(code.getStatus()).headers(e.getHeaders()).body(body);
     }
 
-    /** 엔드포인트가 소비하지 않는 Content-Type 으로 들어온 요청입니다. */
+    /**
+     * 엔드포인트가 소비하지 않는 Content-Type 으로 들어온 요청입니다.
+     *
+     * PATCH 요청이면 예외가 Accept-Patch 헤더를 만들어 주므로 함께 실어 보냅니다.
+     */
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
     public ResponseEntity<ErrorResponse> handleMediaTypeNotSupported(HttpMediaTypeNotSupportedException e) {
         ErrorCode code = ErrorCode.UNSUPPORTED_MEDIA_TYPE;
@@ -124,7 +133,7 @@ public class GlobalExceptionHandler {
         }
         ErrorResponse body = ErrorResponse.of(
                 e.getClass().getSimpleName(), code, code.getMessage(), details);
-        return ResponseEntity.status(code.getStatus()).body(body);
+        return ResponseEntity.status(code.getStatus()).headers(e.getHeaders()).body(body);
     }
 
     @ExceptionHandler(Exception.class)

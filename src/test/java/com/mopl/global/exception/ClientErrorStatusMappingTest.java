@@ -1,10 +1,12 @@
 package com.mopl.global.exception;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -16,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -65,15 +68,17 @@ class ClientErrorStatusMappingTest {
     }
 
     @Test
-    @DisplayName("허용하지 않는 HTTP 메서드는 405를 반환한다")
+    @DisplayName("허용하지 않는 HTTP 메서드는 405와 Allow 헤더를 반환한다")
     void unsupportedMethod_returnsMethodNotAllowed() throws Exception {
         mockMvc.perform(post("/api/exception-probe/resource").with(user()).with(csrf()))
             .andExpect(status().isMethodNotAllowed())
-            .andExpect(jsonPath("$.errorCode").value("COMMON_405_1"));
+            .andExpect(jsonPath("$.errorCode").value("COMMON_405_1"))
+            .andExpect(jsonPath("$.details.supportedMethods").value(containsString("GET")))
+            .andExpect(header().string(HttpHeaders.ALLOW, containsString("GET")));
     }
 
     @Test
-    @DisplayName("지원하지 않는 Content-Type은 415를 반환한다")
+    @DisplayName("지원하지 않는 Content-Type은 415와 지원 형식을 반환한다")
     void unsupportedMediaType_returnsUnsupportedMediaType() throws Exception {
         mockMvc.perform(patch("/api/exception-probe/json")
                 .with(user())
@@ -81,7 +86,11 @@ class ClientErrorStatusMappingTest {
                 .contentType(MediaType.TEXT_PLAIN)
                 .content("locked=true"))
             .andExpect(status().isUnsupportedMediaType())
-            .andExpect(jsonPath("$.errorCode").value("COMMON_415_1"));
+            .andExpect(jsonPath("$.errorCode").value("COMMON_415_1"))
+            .andExpect(jsonPath("$.details.supportedMediaTypes")
+                .value(containsString(MediaType.APPLICATION_JSON_VALUE)))
+            .andExpect(header().string(HttpHeaders.ACCEPT_PATCH,
+                containsString(MediaType.APPLICATION_JSON_VALUE)));
     }
 
     private RequestPostProcessor user() {
