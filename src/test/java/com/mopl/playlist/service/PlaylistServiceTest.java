@@ -448,6 +448,9 @@ class PlaylistServiceTest {
         // 예외 없이 정상 종료해야 하며 (컨트롤러가 204 로 응답한다)
         playlistService.unsubscribe(PLAYLIST_ID, OTHER_ID);
 
+        // 실제 DELETE 는 시도되어야 rows=0 을 확인할 수 있다.
+        verify(subscriptionRepository).deleteByPlaylistIdAndSubscriberIdReturningCount(
+                PLAYLIST_ID.toString(), OTHER_ID.toString());
         // rows=0 경로에서는 카운터를 감소시키지 않아 실구독 수보다 낮게 떨어지지 않는다.
         verify(playlistRepository, never()).decrementSubscriberCount(any(UUID.class));
         verify(subscriptionRepository, never())
@@ -480,6 +483,9 @@ class PlaylistServiceTest {
 
         playlistService.unsubscribe(PLAYLIST_ID, OTHER_ID);
 
+        // race 경로에서도 실제 DELETE 는 시도되어야 rows=0 을 통해 상황을 판정할 수 있다.
+        verify(subscriptionRepository).deleteByPlaylistIdAndSubscriberIdReturningCount(
+                PLAYLIST_ID.toString(), OTHER_ID.toString());
         // rows=0 경로에서는 카운터를 감소시키지 않아 실구독 수보다 낮게 떨어지지 않는다.
         verify(playlistRepository, never()).decrementSubscriberCount(any(UUID.class));
     }

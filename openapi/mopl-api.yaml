@@ -533,6 +533,12 @@ paths:
             "*/*":
               schema:
                 "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "존재하지 않는 플레이리스트"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
         "500":
           description: "서버 오류"
           content:
