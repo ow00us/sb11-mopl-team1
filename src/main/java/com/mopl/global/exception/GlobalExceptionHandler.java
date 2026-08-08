@@ -6,6 +6,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
@@ -79,6 +82,58 @@ public class GlobalExceptionHandler {
         ErrorResponse body = ErrorResponse.of(
                 e.getClass().getSimpleName(), code, "요청 본문을 파싱할 수 없습니다. 형식을 확인해주세요.", new HashMap<>());
         return ResponseEntity.status(code.getStatus()).body(body);
+    }
+
+    /**
+     * 매핑된 핸들러도 정적 리소스도 없는 경로입니다.
+     *
+     * 핸들러가 없으면 폴백으로 떨어져 500이 되는데, 서버 내부 오류가 아니라
+     * 존재하지 않는 경로를 부른 요청이므로 404로 돌려줍니다.
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNoResourceFound(NoResourceFoundException e) {
+        ErrorCode code = ErrorCode.RESOURCE_NOT_FOUND;
+        log.warn("NoResourceFound: {} {}", e.getHttpMethod(), e.getResourcePath());
+        ErrorResponse body = ErrorResponse.of(
+                e.getClass().getSimpleName(), code, code.getMessage(), new HashMap<>());
+        return ResponseEntity.status(code.getStatus()).body(body);
+    }
+
+    /**
+     * 경로는 있지만 그 메서드로는 매핑되지 않은 요청입니다.
+     *
+     * 405 응답은 허용 메서드를 Allow 헤더로 알려야 합니다. 예외가 ErrorResponse 를
+     * 구현해 헤더를 만들어 주므로 그대로 실어 보냅니다.
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> handleMethodNotSupported(HttpRequestMethodNotSupportedException e) {
+        ErrorCode code = ErrorCode.METHOD_NOT_ALLOWED;
+        log.warn("HttpRequestMethodNotSupported: {}", e.getMethod());
+        Map<String, String> details = new HashMap<>();
+        if (e.getSupportedHttpMethods() != null) {
+            details.put("supportedMethods", e.getSupportedHttpMethods().toString());
+        }
+        ErrorResponse body = ErrorResponse.of(
+                e.getClass().getSimpleName(), code, code.getMessage(), details);
+        return ResponseEntity.status(code.getStatus()).headers(e.getHeaders()).body(body);
+    }
+
+    /**
+     * 엔드포인트가 소비하지 않는 Content-Type 으로 들어온 요청입니다.
+     *
+     * PATCH 요청이면 예외가 Accept-Patch 헤더를 만들어 주므로 함께 실어 보냅니다.
+     */
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> handleMediaTypeNotSupported(HttpMediaTypeNotSupportedException e) {
+        ErrorCode code = ErrorCode.UNSUPPORTED_MEDIA_TYPE;
+        log.warn("HttpMediaTypeNotSupported: {}", e.getContentType());
+        Map<String, String> details = new HashMap<>();
+        if (!e.getSupportedMediaTypes().isEmpty()) {
+            details.put("supportedMediaTypes", e.getSupportedMediaTypes().toString());
+        }
+        ErrorResponse body = ErrorResponse.of(
+                e.getClass().getSimpleName(), code, code.getMessage(), details);
+        return ResponseEntity.status(code.getStatus()).headers(e.getHeaders()).body(body);
     }
 
     @ExceptionHandler(Exception.class)
