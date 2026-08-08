@@ -79,6 +79,26 @@ public class WatchingSessionSnapshotRepositoryTest {
         return id;
     }
 
+    private WatchingSessionSnapshot persistSnapshot(
+        UUID watcherId, UUID contentId, Instant createdAt, Instant expiresAt
+    ) {
+        WatchingSessionSnapshot snapshot = WatchingSessionSnapshot.builder()
+            .watcherId(watcherId)
+            .contentId(contentId)
+            .expiresAt(expiresAt)
+            .build();
+        entityManager.persistAndFlush(snapshot);
+
+        entityManager.getEntityManager().createNativeQuery(
+                "UPDATE watching_session_snapshots SET created_at = :createdAt WHERE id = :id")
+            .setParameter("createdAt", createdAt)
+            .setParameter("id", snapshot.getId())
+            .executeUpdate();
+        entityManager.clear();
+
+        return entityManager.find(WatchingSessionSnapshot.class, snapshot.getId());
+    }
+
     @Test
     @DisplayName("저장한 시청 세션 스냅샷을 watcherId로 조회")
     void findByWatcherId_success() {
@@ -200,7 +220,7 @@ public class WatchingSessionSnapshotRepositoryTest {
     }
 
     @Test
-    @DisplayName("커서 이후 데이터를 updatedAt Desc, id Desc 순으로 조회한다")
+    @DisplayName("커서 이후 데이터를 createdAt Desc, id Desc 순으로 조회한다")
     void findByContentIdAfterDesc_returnsCorrectOrder() {
         // given
         UUID watcherId1 = insertUser();
@@ -216,7 +236,7 @@ public class WatchingSessionSnapshotRepositoryTest {
 
         // when: s3(가장 최신) 이후부터 조회 -> s2, s1 순으로
         List<WatchingSessionSnapshot> result = repository.findByContentIdAfterDesc(
-            contentId, null, now, s3.getUpdatedAt(), s3.getId(), PageRequest.of(0, 10)
+            contentId, null, now, s3.getCreatedAt(), s3.getId(), PageRequest.of(0, 10)
         );
 
         // then
@@ -225,7 +245,7 @@ public class WatchingSessionSnapshotRepositoryTest {
     }
 
     @Test
-    @DisplayName("커서 이후 데이터를 updatedAt Asc, id Asc 순으로 조회한다")
+    @DisplayName("커서 이후 데이터를 createdAt Asc, id Asc 순으로 조회한다")
     void findByContentIdAfterAsc_returnsCorrectOrder() {
         // given
         UUID watcherId1 = insertUser();
@@ -241,7 +261,7 @@ public class WatchingSessionSnapshotRepositoryTest {
 
         // when: s1(가장 오래됨) 이후부터 조회 -> s2, s3 순으로
         List<WatchingSessionSnapshot> result = repository.findByContentIdAfterAsc(
-            contentId, null, now, s1.getUpdatedAt(), s1.getId(), PageRequest.of(0, 10)
+            contentId, null, now, s1.getCreatedAt(), s1.getId(), PageRequest.of(0, 10)
         );
 
         // then
@@ -311,26 +331,6 @@ public class WatchingSessionSnapshotRepositoryTest {
 
         // then
         assertThat(count).isEqualTo(1L);
-    }
-
-    private WatchingSessionSnapshot persistSnapshot(
-        UUID watcherId, UUID contentId, Instant updatedAt, Instant expiresAt
-    ) {
-        WatchingSessionSnapshot snapshot = WatchingSessionSnapshot.builder()
-            .watcherId(watcherId)
-            .contentId(contentId)
-            .expiresAt(expiresAt)
-            .build();
-        entityManager.persistAndFlush(snapshot);
-
-        entityManager.getEntityManager().createNativeQuery(
-                "UPDATE watching_session_snapshots SET updated_at = :updatedAt WHERE id = :id")
-            .setParameter("updatedAt", updatedAt)
-            .setParameter("id", snapshot.getId())
-            .executeUpdate();
-        entityManager.clear();
-
-        return entityManager.find(WatchingSessionSnapshot.class, snapshot.getId());
     }
 
     @Test

@@ -157,8 +157,7 @@ public class WatchingSessionServiceTest {
             watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
 
         assertThat(replaced.session().id()).isEqualTo(SNAPSHOT_ID);
-        assertThat(replaced.session().createdAt()).isEqualTo(now);
-        assertThat(replaced.session().createdAt()).isNotEqualTo(FIRST_CREATED_AT);
+        assertThat(replaced.session().createdAt()).isEqualTo(FIRST_CREATED_AT);
         assertThat(replaced.session().content().id()).isEqualTo(CONTENT_ID);
         verify(watchingSessionSnapshotWriter, times(2)).upsert(eq(WATCHER_ID), eq(CONTENT_ID), any());
     }
@@ -182,8 +181,7 @@ public class WatchingSessionServiceTest {
             watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
 
         assertThat(replaced.session().id()).isEqualTo(SNAPSHOT_ID);
-        assertThat(replaced.session().createdAt()).isEqualTo(now);
-        assertThat(replaced.session().createdAt()).isNotEqualTo(FIRST_CREATED_AT);
+        assertThat(replaced.session().createdAt()).isEqualTo(FIRST_CREATED_AT);
         assertThat(replaced.session().content().id()).isEqualTo(NEW_CONTENT_ID);
         assertThat(replaced.session().watcher().userId()).isEqualTo(WATCHER_ID);
         verify(watchingSessionSnapshotWriter).upsert(eq(WATCHER_ID), eq(CONTENT_ID), any());
@@ -399,8 +397,7 @@ public class WatchingSessionServiceTest {
         assertThat(result).isPresent();
         WatchingSessionDto dto = result.get();
         assertThat(dto.id()).isEqualTo(SNAPSHOT_ID);
-        assertThat(dto.createdAt()).isEqualTo(now);
-        assertThat(dto.createdAt()).isNotEqualTo(FIRST_CREATED_AT);
+        assertThat(dto.createdAt()).isEqualTo(FIRST_CREATED_AT);
         assertThat(dto.watcher().userId()).isEqualTo(WATCHER_ID);
         assertThat(dto.content().id()).isEqualTo(CONTENT_ID);
     }
@@ -623,7 +620,7 @@ public class WatchingSessionServiceTest {
         assertThat(result.data()).hasSize(1);
         assertThat(result.hasNext()).isTrue();
         assertThat(result.totalCount()).isEqualTo(2L);
-        assertThat(result.nextCursor()).isEqualTo(CursorUtils.encodeInstant(s1.getUpdatedAt()));
+        assertThat(result.nextCursor()).isEqualTo(CursorUtils.encodeInstant(s1.getCreatedAt()));
         assertThat(result.nextIdAfter()).isEqualTo(s1.getId());
         verify(watchingSessionSnapshotRepository).countByContentId(eq(CONTENT_ID), isNull(), any());
     }
