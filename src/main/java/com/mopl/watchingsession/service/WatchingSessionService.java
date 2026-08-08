@@ -34,26 +34,28 @@ import org.springframework.transaction.annotation.Transactional;
 public class WatchingSessionService {
 
     /**
-     * 시청 세션의 소유권을 표현하는 (WebSocket 연결, 구독) 쌍.
-     * subscriptionId가 null인 경우(예: 아직 STOMP 구독 이전 경로로 호출되는 경우 등)도
-     * 방어적으로 다루기 위해 Objects.equals 기반 equals/hashCode를 record가 자동 생성해준다.
+     * 시청 세션의 소유권을 표현하는 (WebSocket 연결, 구독) 쌍. subscriptionId가 null인 경우(예: 아직 STOMP 구독 이전 경로로 호출되는 경우
+     * 등)도 방어적으로 다루기 위해 Objects.equals 기반 equals/hashCode를 record가 자동 생성해준다.
      */
-    private record SubscriptionOwner(String sessionId, String subscriptionId) {}
+    private record SubscriptionOwner(String sessionId, String subscriptionId) {
 
-    public record ReplacedSession(WatchingSessionDto session, WatchingSessionDto previous) {}
+    }
+
+    public record ReplacedSession(WatchingSessionDto session, WatchingSessionDto previous) {
+
+    }
 
     /**
      * start()가 DB 스냅샷을 이미 갱신한 뒤 enrich 단계에서 실패해 보상 삭제까지 마친 경우 던진다.
-     *
-     * 보상 삭제가 실제로 수행됐다면 그 시점에 "이전 콘텐츠 퇴장"이 실제로 발생한 것이므로,
-     * 그 이전 세션(endedPrevious)을 함께 실어 리스너가 해당 방에 LEAVE를 브로드캐스트할 수 있게 한다.
-     * (브로드캐스트 책임은 성공 경로의 ReplacedSession과 동일하게 리스너가 전담한다)
-     *
-     * 클라이언트로 나가는 ERROR 프레임은 기존과 동일하게 원인 예외(cause)를 기준으로 만들어야 하므로
-     * BusinessException을 상속하지 않는다.
+     * <p>
+     * 보상 삭제가 실제로 수행됐다면 그 시점에 "이전 콘텐츠 퇴장"이 실제로 발생한 것이므로, 그 이전 세션(endedPrevious)을 함께 실어 리스너가 해당 방에
+     * LEAVE를 브로드캐스트할 수 있게 한다. (브로드캐스트 책임은 성공 경로의 ReplacedSession과 동일하게 리스너가 전담한다)
+     * <p>
+     * 클라이언트로 나가는 ERROR 프레임은 기존과 동일하게 원인 예외(cause)를 기준으로 만들어야 하므로 BusinessException을 상속하지 않는다.
      */
     @Getter
     public static class StartFailedException extends RuntimeException {
+
         // 보상 삭제로 실제 종료된 이전 세션, 없었거나 보상 삭제가 수행되지 않았으면 null
         private final transient WatchingSessionDto endedPrevious;
 
@@ -62,6 +64,7 @@ public class WatchingSessionService {
             this.endedPrevious = endedPrevious;
         }
     }
+
     // Redis presence + heartbeat/TTL이 들어오기 전 쓰는 임시 고정 TTL
     // TODO(심화필수): Redis 쓰기 모델로 옮기면서 heartbeat 기반 갱신으로 대체
     private static final Duration DEFAULT_SESSION_TTL = Duration.ofMinutes(30);
@@ -73,47 +76,86 @@ public class WatchingSessionService {
     private final WatchingSessionSnapshotWriter watchingSessionSnapshotWriter;
 
     /**
-     * watcherId 기준 "지금 이 세션을 소유한 WebSocket 연결(sessionId)"을 추적한다.
-     * 다중 탭/새로고침 시 오래된 연결의 DISCONNECT가 새 연결의 세션을 잘못 지우는 것을 막기 위함.
-     *
-     * 주의: 이 맵은 단일 서버 인스턴스 전제의 인메모리 구조다. 서버 재시작 시 유실되고
-     * 다중 인스턴스 환경에서는 인스턴스마다 별도로 존재해 소유권 판정이 어긋난다.
+     * watcherId 기준 "지금 이 세션을 소유한 WebSocket 연결(sessionId)"을 추적한다. 다중 탭/새로고침 시 오래된 연결의 DISCONNECT가 새
+     * 연결의 세션을 잘못 지우는 것을 막기 위함.
+     * <p>
+     * 주의: 이 맵은 단일 서버 인스턴스 전제의 인메모리 구조다. 서버 재시작 시 유실되고 다중 인스턴스 환경에서는 인스턴스마다 별도로 존재해 소유권 판정이 어긋난다.
      * TODO(심화필수): Redis presence(사용자당 활성 세션 1개, 원본)로 이전하면서
      * 이 소유권 판정 자체를 Redis 쪽 구조로 대체할 예정. 그 전까지는 단일 인스턴스 운영을 전제로 한다.
      */
     private final ConcurrentHashMap<UUID, SubscriptionOwner> activeSessions = new ConcurrentHashMap<>();
 
-    // ★ 추가됨: Watcher 단위로 독립적인 원자성을 보장하기 위한 락 맵
-    private final ConcurrentHashMap<UUID, Object> watcherLocks = new ConcurrentHashMap<>();
+    // Watcher 단위로 독립적인 원자성을 보장하기 위한 락 맵.
+    // 값이 참조 카운트를 함께 들고 있어, 아무도 사용하지 않는 순간(refCount == 0) 엔트리가 제거된다.
+    private final ConcurrentHashMap<UUID, WatcherLock> watcherLocks = new ConcurrentHashMap<>();
 
-    private Object getWatcherLock(UUID watcherId) {
-        return watcherLocks.computeIfAbsent(watcherId, k -> new Object());
+    /**
+     * synchronized 대상 락 객체 + 현재 이 락을 잡았거나 대기 중인 스레드 수.
+     * <p>
+     * refCount는 항상 ConcurrentHashMap의 키 단위 원자 연산(compute/computeIfPresent) 안에서만 읽고 쓰므로, CHM 내부 동기화가
+     * 가시성을 보장한다. 별도 volatile/Atomic이 필요 없다.
+     */
+    private static final class WatcherLock {
+
+        private int refCount;
     }
 
+    /**
+     * 락 객체를 얻으면서 참조 카운트를 1 올린다. 카운트를 올린 뒤에 synchronized에 진입하므로, 임계 구역에 머무는 동안 다른 스레드의 release가 이
+     * 엔트리를 제거할 수 없다.
+     */
+    private WatcherLock acquireWatcherLock(UUID watcherId) {
+        return watcherLocks.compute(watcherId, (key, existing) -> {
+            WatcherLock lock = (existing != null) ? existing : new WatcherLock();
+            lock.refCount++;
+            return lock;
+        });
+    }
+
+    /**
+     * 참조 카운트를 1 내리고, 0이 되면 맵에서 제거한다. 반드시 synchronized 블록을 빠져나온 뒤 finally에서 호출해야 한다.
+     */
+    private void releaseWatcherLock(UUID watcherId) {
+        watcherLocks.computeIfPresent(watcherId, (key, lock) -> {
+            lock.refCount--;
+            return (lock.refCount == 0) ? null : lock;
+        });
+    }
+
+
     // create + update 성격의 메서드 - 독립 트랜잭션을 위해 writer 호출
-    public ReplacedSession start(UUID watcherId, UUID contentId, String sessionId, String subscriptionId) {
+    public ReplacedSession start(UUID watcherId, UUID contentId, String sessionId,
+        String subscriptionId) {
 
         WatchingSessionSnapshot snapshot;
         WatchingSessionDto previous;
 
+        WatcherLock watcherLock = acquireWatcherLock(watcherId);
         // ★ 임계 구역 시작: 검증, DB 반영, 소유권 갱신을 묶어 원자적으로 처리
-        synchronized (getWatcherLock(watcherId)) {
-            // 검증 먼저 진행 (실패 시 소유권 변경이나 DB 터치 없음)
-            validateContentExists(contentId);
+        try {
+            synchronized (watcherLock) {
+                // 검증 먼저 진행 (실패 시 소유권 변경이나 DB 터치 없음)
+                validateContentExists(contentId);
 
-            previous = get(watcherId).orElse(null);
+                previous = get(watcherId).orElse(null);
 
-            Instant expiresAt = Instant.now().plus(DEFAULT_SESSION_TTL);
+                Instant expiresAt = Instant.now().plus(DEFAULT_SESSION_TTL);
 
-            // DB 스냅샷 갱신
-            try {
-                snapshot = watchingSessionSnapshotWriter.upsert(watcherId, contentId, expiresAt);
-            } catch (DataIntegrityViolationException e) {
-                snapshot = watchingSessionSnapshotWriter.upsert(watcherId, contentId, expiresAt);
+                // DB 스냅샷 갱신
+                try {
+                    snapshot = watchingSessionSnapshotWriter.upsert(watcherId, contentId,
+                        expiresAt);
+                } catch (DataIntegrityViolationException e) {
+                    snapshot = watchingSessionSnapshotWriter.upsert(watcherId, contentId,
+                        expiresAt);
+                }
+
+                // DB 반영까지 안전하게 성공했을 때 비로소 소유권을 갱신
+                activeSessions.put(watcherId, new SubscriptionOwner(sessionId, subscriptionId));
             }
-
-            // DB 반영까지 안전하게 성공했을 때 비로소 소유권을 갱신
-            activeSessions.put(watcherId, new SubscriptionOwner(sessionId, subscriptionId));
+        } finally {
+            // validateContentExists()가 CONTENT_NOT_FOUND를 던지는 경로에서도 락 엔트리가 남지 않아야 함
+            releaseWatcherLock(watcherId);
         }
 
         try {
@@ -135,19 +177,26 @@ public class WatchingSessionService {
 
     // delete 성격의 메서드
     public boolean end(UUID watcherId, String currentSessionId, String currentSubscriptionId) {
-        synchronized (getWatcherLock(watcherId)) {
-            SubscriptionOwner requester = new SubscriptionOwner(currentSessionId, currentSubscriptionId);
-            // 확인만 먼저 수행 (메모리에서 지우지는 않음)
-            if (!requester.equals(activeSessions.get(watcherId))) {
-                return false;
+
+        WatcherLock watcherLock = acquireWatcherLock(watcherId);
+        try {
+            synchronized (watcherLock) {
+                SubscriptionOwner requester = new SubscriptionOwner(currentSessionId,
+                    currentSubscriptionId);
+                // 확인만 먼저 수행 (메모리에서 지우지는 않음)
+                if (!requester.equals(activeSessions.get(watcherId))) {
+                    return false;
+                }
+
+                // DB 삭제 (여기서 예외가 터지면 소유권은 그대로 유지됨)
+                watchingSessionSnapshotWriter.delete(watcherId);
+
+                // DB 삭제까지 완벽히 성공한 후 메모리 소유권 정리
+                activeSessions.remove(watcherId);
+                return true;
             }
-
-            // DB 삭제 (여기서 예외가 터지면 소유권은 그대로 유지됨)
-            watchingSessionSnapshotWriter.delete(watcherId);
-
-            // DB 삭제까지 완벽히 성공한 후 메모리 소유권 정리
-            activeSessions.remove(watcherId);
-            return true;
+        } finally {
+            releaseWatcherLock(watcherId);
         }
     }
 
@@ -176,7 +225,8 @@ public class WatchingSessionService {
 
     // 커서 페이지네이션 조회
     public CursorResponse<WatchingSessionDto> getListByContent(
-        UUID contentId, String watcherNameLike, String cursor, UUID idAfter, int limit, String sortBy, String sortDirection
+        UUID contentId, String watcherNameLike, String cursor, UUID idAfter, int limit,
+        String sortBy, String sortDirection
     ) {
         Content content = contentRepository.findById(contentId)
             .orElseThrow(() -> new BusinessException(ErrorCode.CONTENT_NOT_FOUND));
@@ -195,7 +245,7 @@ public class WatchingSessionService {
         if (cursor == null) {
             rows = ascending
                 ? watchingSessionSnapshotRepository.findByContentIdFirstPageAsc(
-                    contentId, escapedWatcherNameLike, now, pageable)
+                contentId, escapedWatcherNameLike, now, pageable)
                 : watchingSessionSnapshotRepository.findByContentIdFirstPageDesc(
                     contentId, escapedWatcherNameLike, now, pageable);
         } else {
@@ -207,7 +257,7 @@ public class WatchingSessionService {
             }
             rows = ascending
                 ? watchingSessionSnapshotRepository.findByContentIdAfterAsc(
-                    contentId, escapedWatcherNameLike, now, cursorValue, idAfter, pageable)
+                contentId, escapedWatcherNameLike, now, cursorValue, idAfter, pageable)
                 : watchingSessionSnapshotRepository.findByContentIdAfterDesc(
                     contentId, escapedWatcherNameLike, now, cursorValue, idAfter, pageable);
         }
@@ -238,9 +288,11 @@ public class WatchingSessionService {
             nextIdAfter = last.getId();
         }
 
-        long totalCount = watchingSessionSnapshotRepository.countByContentId(contentId, escapedWatcherNameLike, now);
+        long totalCount = watchingSessionSnapshotRepository.countByContentId(contentId,
+            escapedWatcherNameLike, now);
 
-        return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, totalCount, sortBy, normalizedSortDirection);
+        return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, totalCount, sortBy,
+            normalizedSortDirection);
     }
 
     private void validateSortBy(String sortBy) {
@@ -259,7 +311,7 @@ public class WatchingSessionService {
 
     private void validateSortDirection(String sortDirection) {
         if (!"ASCENDING".equalsIgnoreCase(sortDirection)
-        && !"DESCENDING".equalsIgnoreCase(sortDirection)) {
+            && !"DESCENDING".equalsIgnoreCase(sortDirection)) {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
     }

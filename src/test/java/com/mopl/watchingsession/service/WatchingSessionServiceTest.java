@@ -26,11 +26,13 @@ import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
+import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -114,6 +116,14 @@ public class WatchingSessionServiceTest {
 
     private WatchingSessionSnapshot createSnapshotFixture(UUID contentId, Instant createdAt, Instant updatedAt, Instant expiresAt) {
         return createSnapshotFixture(SNAPSHOT_ID, WATCHER_ID, contentId, createdAt, updatedAt, expiresAt);
+    }
+
+    @SuppressWarnings("unchecked")
+    private int watcherLockMapSize() throws Exception {
+        Field field = WatchingSessionService.class.getDeclaredField("watcherLocks");
+        field.setAccessible(true);
+        Map<UUID, ?> locks = (Map<UUID, ?>) field.get(watchingSessionService);
+        return locks.size();
     }
 
     /* --- start() 메서드 검증 --- */
@@ -319,6 +329,17 @@ public class WatchingSessionServiceTest {
         assertThat(replaced.session().content().id()).isEqualTo(NEW_CONTENT_ID);
     }
 
+    @Test
+    @DisplayName("start() 검증 단계에서 예외가 발생해도 watcherLocks 엔트리 해제")
+    void start_failure_stillReleasesWatcherLock_whenValidationFails() throws Exception {
+        when(contentRepository.existsById(CONTENT_ID)).thenReturn(false);
+
+        assertThatThrownBy(() -> watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
+            .isInstanceOf(BusinessException.class);
+
+        assertThat(watcherLockMapSize()).isZero();
+    }
+
     /* --- end() 메서드 검증 --- */
     @Test
     @DisplayName("종료 시 소유권(sessionId, subscriptionId)이 일치하면 삭제를 수행하고 true를 반환")
@@ -377,6 +398,28 @@ public class WatchingSessionServiceTest {
         boolean currentEnded = watchingSessionService.end(WATCHER_ID, SESSION_ID, OTHER_SUBSCRIPTION_ID);
         assertThat(currentEnded).isTrue();
         verify(watchingSessionSnapshotWriter).delete(WATCHER_ID);
+    }
+
+    @Test
+    @DisplayName("활성 세션이 없는 watcherId로 end()를 호출해도 watcherLocks에 엔트리가 남지 않음")
+    void end_noActiveSession_stillReleasesWatcherLock() throws Exception {
+        watchingSessionService.end(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(watcherLockMapSize()).isZero();
+    }
+
+    @Test
+    @DisplayName("정상 종료(start→end) 후 watcherLocks 맵에 해당 watcherId의 락 엔트리가 남지 않음")
+    void end_success_removesWatcherLockEntry_afterNormalCompletion() throws Exception {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        when(watchingSessionSnapshotWriter.upsert(any(), any(), any()))
+            .thenReturn(createSnapshotFixture(CONTENT_ID, Instant.now(), Instant.now(), Instant.now()));
+
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+        watchingSessionService.end(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(watcherLockMapSize()).isZero();
     }
 
     /* --- get() 메서드 검증 --- */
@@ -883,5 +926,27 @@ public class WatchingSessionServiceTest {
         assertThat(finalOwnerIsSub2)
             .as("최종 소유권은 재구독한 subscriptionId(sub-2)여야 한다")
             .isTrue();
+    }
+
+    @Test
+    @DisplayName("서로 다른 N명의 watcherId로 start→end를 반복해도 watcherLocks 맵이 누적되지 않음")
+    void watcherLocks_doesNotAccumulate_acrossManyWatchers() throws Exception {
+        int watcherCount = 50;
+        for (int i = 0; i < watcherCount; i++) {
+            UUID watcherId = UUID.randomUUID();
+            mockContentExists(CONTENT_ID);
+            mockUserExists(watcherId);
+            when(watchingSessionSnapshotWriter.upsert(eq(watcherId), any(), any()))
+                .thenReturn(createSnapshotFixture(
+                    UUID.randomUUID(), watcherId, CONTENT_ID,
+                    Instant.now(), Instant.now(), Instant.now().plus(1, ChronoUnit.HOURS)));
+
+            watchingSessionService.start(watcherId, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+            watchingSessionService.end(watcherId, SESSION_ID, SUBSCRIPTION_ID);
+        }
+
+        assertThat(watcherLockMapSize())
+            .as("N명의 watcher가 정상 종료했음에도 락 맵 크기가 N으로 단조 증가하면 안 됨")
+            .isZero();
     }
 }
