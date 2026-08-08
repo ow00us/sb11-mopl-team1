@@ -271,7 +271,7 @@ public class WatchingSessionSnapshotRepositoryTest {
 
         // when: createdAt이 모두 같으므로 커서 조건은 id 동률 분기(s.createdAt = :cursor AND s.id < :idAfter)만 걸린다.
         List<WatchingSessionSnapshot> result = repository.findByContentIdAfterDesc(
-            contentId, null, now, sameCreatedAt, cursor, PageRequest.of(0, 10)
+            contentId, null, now, s1.getCreatedAt(), cursor, PageRequest.of(0, 10)
         );
 
         // then: DESC이므로 cursor보다 id가 작은 행만, 정확히 한 번 반환되어야 한다 (cursor 자신·더 큰 id는 제외).
@@ -328,7 +328,7 @@ public class WatchingSessionSnapshotRepositoryTest {
 
         // when: createdAt이 모두 같으므로 커서 조건은 id 동률 분기(s.createdAt = :cursor AND s.id > :idAfter)만 걸린다.
         List<WatchingSessionSnapshot> result = repository.findByContentIdAfterAsc(
-            contentId, null, now, sameCreatedAt, cursor, PageRequest.of(0, 10)
+            contentId, null, now, s1.getCreatedAt(), cursor, PageRequest.of(0, 10)
         );
 
         // then: ASC이므로 cursor보다 id가 큰 행만, 정확히 한 번 반환되어야 한다 (cursor 자신·더 작은 id는 제외).
