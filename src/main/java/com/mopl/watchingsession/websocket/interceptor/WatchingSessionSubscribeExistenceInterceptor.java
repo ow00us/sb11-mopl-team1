@@ -1,7 +1,6 @@
-package com.mopl.watchingsession.websocket;
+package com.mopl.watchingsession.websocket.interceptor;
 
 import com.mopl.content.repository.ContentRepository;
-import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.security.websocket.StompErrorFrameSender;
 import java.util.Map;

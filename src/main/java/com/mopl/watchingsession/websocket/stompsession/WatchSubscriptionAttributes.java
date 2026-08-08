@@ -1,4 +1,4 @@
-package com.mopl.watchingsession.websocket;
+package com.mopl.watchingsession.websocket.stompsession;
 
 import com.mopl.watchingsession.dto.SubscriptionConsumeResult;
 import java.util.Map;
@@ -21,7 +21,7 @@ import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
  *      소유하고 있던 구독이 무엇인지"를 알아내기 위해 WatchingSessionDisconnectListener가 사용)
  */
 
-final class WatchSubscriptionAttributes {
+public final class WatchSubscriptionAttributes {
 
     public static final String SUBSCRIPTION_MAP_ATTRIBUTE_KEY = "watchingSession.subscriptionMap";
     public static final String ACTIVE_SUBSCRIPTION_ID_ATTRIBUTE_KEY = "watchingSession.activeSubscriptionId";
@@ -56,7 +56,7 @@ final class WatchSubscriptionAttributes {
      * 이 subscriptionId를 이 연결의 활성 구독으로 전환한다.
      * put() 시점이 아니라 여기서 전환해야, start() 실패 시 이전 활성 구독이 잘못 밀려나지 않는다.
      */
-    static void activate(StompHeaderAccessor accessor) {
+     public static void activate(StompHeaderAccessor accessor) {
         String subscriptionId = accessor.getSubscriptionId();
         if (subscriptionId == null) {
             return;
@@ -78,7 +78,7 @@ final class WatchSubscriptionAttributes {
      * "그래서 이 연결이 마지막으로 소유하고 있던 구독이 뭐였는지"를 조회해야 하는 경우에 사용한다.
      * 활성 구독이 없거나 세션 attribute 자체가 없으면 null을 반환한다.
      */
-    static String currentActiveSubscriptionId(SimpMessageHeaderAccessor accessor) {
+    public static String currentActiveSubscriptionId(SimpMessageHeaderAccessor accessor) {
         Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
         if (sessionAttributes == null) {
             return null;
@@ -94,7 +94,7 @@ final class WatchSubscriptionAttributes {
      * UNSUBSCRIBE 처리 전용 API.
      * 매핑에서 subscriptionId에 대응하는 contentId를 꺼내면서 동시에 제거한다.
      */
-    static SubscriptionConsumeResult consume(SimpMessageHeaderAccessor accessor) {
+    public static SubscriptionConsumeResult consume(SimpMessageHeaderAccessor accessor) {
         String subscriptionId = accessor.getSubscriptionId();
         if (subscriptionId == null) {
             return SubscriptionConsumeResult.NO_MAPPING;

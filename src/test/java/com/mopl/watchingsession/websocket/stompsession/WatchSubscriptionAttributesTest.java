@@ -1,4 +1,4 @@
-package com.mopl.watchingsession.websocket;
+package com.mopl.watchingsession.websocket.stompsession;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
