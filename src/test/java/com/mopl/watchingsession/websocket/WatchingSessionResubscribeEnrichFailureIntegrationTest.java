@@ -121,13 +121,9 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        if (session != null && session.isConnected()) {
-            try {
-                session.disconnect();
-            } catch (MessageDeliveryException ignored) {
-                // ERROR 프레임 처리 직후 서버가 먼저 연결을 닫을 수 있습니다.
-            }
-        }
+        disconnectQuietly(session);
+        disconnectQuietly(observerSession);
+
         if (stompClient != null) {
             stompClient.stop();
         }
@@ -157,6 +153,16 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
         scheduler.setThreadNamePrefix("watch-e2e-regression-client-");
         scheduler.initialize();
         return scheduler;
+    }
+
+    private void disconnectQuietly(StompSession target) {
+        if (target != null && target.isConnected()) {
+            try {
+                target.disconnect();
+            } catch (MessageDeliveryException ignored) {
+                // ERROR 프레임 처리 직후 서버가 먼저 연결을 닫을 수 있습니다.
+            }
+        }
     }
 
     private String wsUrl() {

@@ -3,6 +3,7 @@ package com.mopl.watchingsession.websocket;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -439,6 +440,38 @@ public class WatchingSessionSubscribeListenerTest {
             eq(ErrorCode.INTERNAL_ERROR),
             eq(ErrorCode.INTERNAL_ERROR.getMessage()),
             eq(Map.of())
+        );
+    }
+
+    @Test
+    @DisplayName("LEAVE 브로드캐스트가 실패해도 ERROR 프레임은 원인 예외 기준으로 정상 발송됨")
+    void onSubscribe_stillSendsErrorFrame_whenLeaveBroadcastFails() {
+        // given
+        WatchingSessionDto endedPrevious = dtoFixture(PREV_CONTENT_ID);
+        BusinessException enrichFailure = new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
+        WatchingSessionService.StartFailedException startFailed =
+            new WatchingSessionService.StartFailedException(enrichFailure, endedPrevious);
+
+        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, "sub-0"))
+            .thenThrow(startFailed);
+
+        doThrow(new RuntimeException("브로커 전송 실패"))
+            .when(watchingSessionBroadcaster).broadcastLeave(endedPrevious, PREV_CONTENT_ID);
+
+        SessionSubscribeEvent event = subscribeEvent(
+            "/sub/contents/" + CONTENT_ID + "/watch", "sub-0", principalOf(WATCHER_ID));
+
+        // when: 브로드캐스트가 예외를 던져도 리스너 자체는 예외 없이 끝나야 함
+        listener.onSubscribe(event);
+
+        // then: 브로드캐스트는 시도됐고, 실패했더라도 ERROR 프레임은 원인(cause) 기준으로 발송됨
+        verify(watchingSessionBroadcaster).broadcastLeave(endedPrevious, PREV_CONTENT_ID);
+        verify(errorFrameSender).send(
+            eq(event.getMessage()),
+            eq("BusinessException"),
+            eq(ErrorCode.RESOURCE_NOT_FOUND),
+            eq(ErrorCode.RESOURCE_NOT_FOUND.getMessage()),
+            eq(enrichFailure.getDetails())
         );
     }
 }

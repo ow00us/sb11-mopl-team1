@@ -97,7 +97,12 @@ public class WatchingSessionSubscribeListener {
                 // 다른 시청자들에게 LEAVE 브로드캐스트
                 WatchingSessionDto endedPrevious = startFailed.getEndedPrevious();
                 if (endedPrevious != null) {
-                    watchingSessionBroadcaster.broadcastLeave(endedPrevious, endedPrevious.content().id());
+                    try {
+                        watchingSessionBroadcaster.broadcastLeave(endedPrevious, endedPrevious.content().id());
+                    } catch (RuntimeException broadcastFailure) {
+                       log.error("보상 삭제 후 LEAVE 브로드캐스트 실패: watcherId={}, prevContentId={}",
+                           watcherId, endedPrevious.content().id(), broadcastFailure);
+                    }
                 }
                 // 클라이언트로 나가는 ERROR 프레임은 원래 실패 원인 기준 (기존 계약 유지)
                 cause = (RuntimeException) startFailed.getCause();
