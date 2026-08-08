@@ -11,6 +11,8 @@ import com.mopl.content.external.tmdb.TmdbApiClient;
 import com.mopl.content.external.tmdb.TmdbApiException;
 import com.mopl.content.external.tmdb.dto.TmdbPopularTvResponse;
 import com.mopl.content.external.tmdb.dto.TmdbTvSummary;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -27,7 +29,7 @@ class TmdbTvPopularItemReaderTest {
         when(tmdbApiClient.getPopularTvShows(1)).thenReturn(new TmdbPopularTvResponse(1, List.of(tv1, tv2), 1));
         when(tmdbApiClient.getPopularTvShows(2)).thenReturn(new TmdbPopularTvResponse(2, List.of(), 1));
 
-        TmdbTvPopularItemReader reader = new TmdbTvPopularItemReader(tmdbApiClient, 5);
+        TmdbTvPopularItemReader reader = new TmdbTvPopularItemReader(tmdbApiClient, 5, new SimpleMeterRegistry());
 
         assertThat(reader.read()).isEqualTo(tv1);
         assertThat(reader.read()).isEqualTo(tv2);
@@ -40,7 +42,7 @@ class TmdbTvPopularItemReaderTest {
         TmdbTvSummary tv1 = new TmdbTvSummary(1L, "Tv1", "overview1", "/p1.jpg", List.of(18));
         when(tmdbApiClient.getPopularTvShows(1)).thenReturn(new TmdbPopularTvResponse(1, List.of(tv1), 10));
 
-        TmdbTvPopularItemReader reader = new TmdbTvPopularItemReader(tmdbApiClient, 1);
+        TmdbTvPopularItemReader reader = new TmdbTvPopularItemReader(tmdbApiClient, 1, new SimpleMeterRegistry());
 
         assertThat(reader.read()).isEqualTo(tv1);
         assertThat(reader.read()).isNull();
@@ -49,14 +51,17 @@ class TmdbTvPopularItemReaderTest {
     }
 
     @Test
-    @DisplayName("특정 페이지 조회가 실패하면 예외를 던지지 않고 다음 페이지로 넘어간다")
+    @DisplayName("특정 페이지 조회가 실패하면 예외를 던지지 않고 다음 페이지로 넘어가며 실패 카운터가 증가한다")
     void read_pageFetchFails_logsAndContinuesToNextPage() throws Exception {
         TmdbTvSummary tv = new TmdbTvSummary(1L, "Tv1", "overview1", "/p1.jpg", List.of(18));
         when(tmdbApiClient.getPopularTvShows(1)).thenThrow(new TmdbApiException("일시적 장애", null));
         when(tmdbApiClient.getPopularTvShows(2)).thenReturn(new TmdbPopularTvResponse(2, List.of(tv), 2));
 
-        TmdbTvPopularItemReader reader = new TmdbTvPopularItemReader(tmdbApiClient, 5);
+        MeterRegistry meterRegistry = new SimpleMeterRegistry();
+        TmdbTvPopularItemReader reader = new TmdbTvPopularItemReader(tmdbApiClient, 5, meterRegistry);
 
         assertThat(reader.read()).isEqualTo(tv);
+        assertThat(meterRegistry.counter("external-content-batch.api.failures", "source", "tmdb-tv").count())
+                .isEqualTo(1.0);
     }
 }

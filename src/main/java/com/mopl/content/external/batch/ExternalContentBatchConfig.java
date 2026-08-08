@@ -10,6 +10,7 @@ import com.mopl.content.external.sportsdb.dto.SportsDbEventSummary;
 import com.mopl.content.external.tmdb.TmdbApiClient;
 import com.mopl.content.external.tmdb.dto.TmdbMovieSummary;
 import com.mopl.content.external.tmdb.dto.TmdbTvSummary;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -42,6 +43,7 @@ public class ExternalContentBatchConfig {
     private final ContentUpsertService contentUpsertService;
     private final ExternalContentBatchProperties batchProperties;
     private final SportsDbProperties sportsDbProperties;
+    private final MeterRegistry meterRegistry;
 
     @Bean
     public Job externalContentCollectionJob() {
@@ -68,7 +70,7 @@ public class ExternalContentBatchConfig {
     @Bean
     @StepScope
     public TmdbMoviePopularItemReader tmdbMovieItemReader() {
-        return new TmdbMoviePopularItemReader(tmdbApiClient, batchProperties.tmdbMaxPages());
+        return new TmdbMoviePopularItemReader(tmdbApiClient, batchProperties.tmdbMaxPages(), meterRegistry);
     }
 
     @Bean
@@ -87,7 +89,7 @@ public class ExternalContentBatchConfig {
     @Bean
     @StepScope
     public TmdbTvPopularItemReader tmdbTvItemReader() {
-        return new TmdbTvPopularItemReader(tmdbApiClient, batchProperties.tmdbMaxPages());
+        return new TmdbTvPopularItemReader(tmdbApiClient, batchProperties.tmdbMaxPages(), meterRegistry);
     }
 
     @Bean
@@ -108,7 +110,7 @@ public class ExternalContentBatchConfig {
     public SportsDbEventItemReader sportsDbEventItemReader() {
         ZoneId zone = ZoneId.of(batchProperties.zone());
         List<LocalDate> dates = buildDateRange(batchProperties.sportsDbPastDays(), batchProperties.sportsDbFutureDays(), zone);
-        return new SportsDbEventItemReader(sportsDbApiClient, sportsDbProperties.leagueIds(), dates);
+        return new SportsDbEventItemReader(sportsDbApiClient, sportsDbProperties.leagueIds(), dates, meterRegistry);
     }
 
     private List<LocalDate> buildDateRange(int pastDays, int futureDays, ZoneId zone) {

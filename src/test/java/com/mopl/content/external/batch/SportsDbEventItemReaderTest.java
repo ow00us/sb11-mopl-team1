@@ -7,6 +7,8 @@ import static org.mockito.Mockito.when;
 import com.mopl.content.external.sportsdb.SportsDbApiClient;
 import com.mopl.content.external.sportsdb.SportsDbApiException;
 import com.mopl.content.external.sportsdb.dto.SportsDbEventSummary;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -33,7 +35,7 @@ class SportsDbEventItemReaderTest {
         when(sportsDbApiClient.getEventsByDay(day2, 200)).thenReturn(List.of(eventB));
 
         SportsDbEventItemReader reader = new SportsDbEventItemReader(
-                sportsDbApiClient, List.of(100, 200), List.of(day1, day2));
+                sportsDbApiClient, List.of(100, 200), List.of(day1, day2), new SimpleMeterRegistry());
 
         assertThat(reader.read()).isEqualTo(eventA);
         assertThat(reader.read()).isEqualTo(eventB);
@@ -41,7 +43,7 @@ class SportsDbEventItemReaderTest {
     }
 
     @Test
-    @DisplayName("특정 (날짜, 리그) 조회가 실패하면 예외를 던지지 않고 다음 조합으로 넘어간다")
+    @DisplayName("특정 (날짜, 리그) 조회가 실패하면 예외를 던지지 않고 다음 조합으로 넘어가며 실패 카운터가 증가한다")
     void read_oneComboFails_logsAndContinuesToNextCombo() throws Exception {
         LocalDate day1 = LocalDate.of(2026, 8, 1);
         SportsDbEventSummary event = new SportsDbEventSummary(
@@ -50,10 +52,13 @@ class SportsDbEventItemReaderTest {
         when(sportsDbApiClient.getEventsByDay(day1, 100)).thenThrow(new SportsDbApiException("일시적 장애", null));
         when(sportsDbApiClient.getEventsByDay(day1, 200)).thenReturn(List.of(event));
 
+        MeterRegistry meterRegistry = new SimpleMeterRegistry();
         SportsDbEventItemReader reader = new SportsDbEventItemReader(
-                sportsDbApiClient, List.of(100, 200), List.of(day1));
+                sportsDbApiClient, List.of(100, 200), List.of(day1), meterRegistry);
 
         assertThat(reader.read()).isEqualTo(event);
         assertThat(reader.read()).isNull();
+        assertThat(meterRegistry.counter("external-content-batch.api.failures", "source", "sportsdb").count())
+                .isEqualTo(1.0);
     }
 }
