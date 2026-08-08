@@ -24,7 +24,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -96,13 +98,15 @@ class PlaylistUnsubscribeConcurrencyIntegrationTest {
         // 두 스레드를 CountDownLatch 로 동시에 출발시켜 race window 를 만든다.
         CountDownLatch start = new CountDownLatch(1);
         CountDownLatch done = new CountDownLatch(2);
+        // 재취소가 멱등이 되어 정상 경로에서는 예외가 나지 않아야 한다.
+        // 스레드 내부 예외를 삼키면 한쪽이 실패해도 카운터 검증이 통과할 수 있으므로 모두 수집해서 이후 검증한다.
+        List<Throwable> workerErrors = new CopyOnWriteArrayList<>();
         Runnable task = () -> {
             try {
                 start.await();
                 playlistService.unsubscribe(playlist.getId(), SUBSCRIBER_ID);
-            } catch (Exception ignored) {
-                // race 로 늦게 도달한 요청은 exists 통과 여부에 따라 404 또는 조용한 성공이
-                // 될 수 있다. 이 테스트는 카운터·행 정합성만 검증한다.
+            } catch (Throwable t) {
+                workerErrors.add(t);
             } finally {
                 done.countDown();
             }
@@ -111,6 +115,9 @@ class PlaylistUnsubscribeConcurrencyIntegrationTest {
         new Thread(task).start();
         start.countDown();
         assertThat(done.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(workerErrors)
+                .as("동시 unsubscribe 워커에서 예외가 발생하면 안 된다")
+                .isEmpty();
 
         // SUBSCRIBER_ID 는 몇 번 요청했든 실제로는 한 번만 구독을 취소했으므로
         // 카운터는 실구독수와 일치하는 1 이어야 한다.
