@@ -1,5 +1,7 @@
 package com.mopl.user.controller;
 
+import com.mopl.global.common.CursorResponse;
+import com.mopl.user.dto.UserListRequest;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserUpdateRequest;
 import com.mopl.user.dto.UserLockUpdateRequest;
@@ -12,6 +14,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.util.UUID;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.MediaType;
@@ -25,6 +28,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.ModelAttribute;
 
 
 /**
@@ -56,6 +60,37 @@ public class UserController {
         return ResponseEntity
             .status(HttpStatus.CREATED)
             .body(response);
+    }
+
+    /**
+     * 관리자가 사용자 목록을 커서 페이지네이션으로 조회
+     *
+     * OpenAPI의 GET /api/users 계약을 처리
+     *
+     * 쿼리 파라미터는 UserListRequest로 바인딩하고,
+     * @Valid를 통해 limit, sortBy, sortDirection을 검증
+     *
+     * 실제 관리자 권한 검사는 Controller 내부가 아니라
+     * SecurityFilterChain에서 Controller 진입 전에 수행
+     *
+     * @param request 사용자 검색·필터·커서·정렬 조건
+     * @return 사용자 목록과 다음 페이지 정보를 포함한 200 OK 응답
+     */
+    @GetMapping
+    @ApiResponse(
+        responseCode = "200",
+        description = "사용자 목록 조회 성공"
+    )
+    public ResponseEntity<CursorResponse<UserDto>> findUsers(
+        @Valid
+        @ParameterObject
+        @ModelAttribute // JSON이 아닌 URL 쿼리 파라미터를 UserListRequest에 바인딩
+        UserListRequest request
+    ) {
+        CursorResponse<UserDto> response =
+            userService.findUsers(request);
+
+        return ResponseEntity.ok(response);
     }
 
     /**
