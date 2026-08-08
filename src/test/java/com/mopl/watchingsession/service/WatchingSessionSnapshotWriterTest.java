@@ -85,23 +85,46 @@ public class WatchingSessionSnapshotWriterTest {
     }
 
     @Test
-    @DisplayName("기존 행이 있으면 새로 삽입하지 않고 갱신")
-    void upsert_updatesExistingRow() {
+    @DisplayName("같은 콘텐츠로 재구독하면 기존 행을 유지한 채 갱신하고 createdAt이 보존됨")
+    void upsert_sameContent_refreshesExistingRow() {
+        // given
+        UUID watcherId = insertUser();
+        UUID contentId = insertContent();
+
+        WatchingSessionSnapshot first = writer.upsert(watcherId, contentId, Instant.now().plusSeconds(60));
+        // first는 삽입 직후 재조회 없이 반환된 값이라 DB 정밀도(마이크로초)로 절삭되지 않았을 수 있다.
+        // result와 동일 조건으로 비교하기 위해 DB에 실제 저장된 값을 다시 읽어온다.
+        Instant firstCreatedAtInDb = repository.findById(first.getId()).orElseThrow().getCreatedAt();
+
+        // when
+        Instant extendedExpiresAt = Instant.now().plusSeconds(120);
+        WatchingSessionSnapshot result = writer.upsert(watcherId, contentId, extendedExpiresAt);
+
+        // then
+        assertThat(repository.count()).isEqualTo(1);
+        assertThat(result.getId()).isEqualTo(first.getId());
+        assertThat(result.getExpiresAt()).isEqualTo(extendedExpiresAt);
+        assertThat(result.getCreatedAt()).isEqualTo(firstCreatedAtInDb);
+    }
+
+    @Test
+    @DisplayName("다른 콘텐츠로 전환하면 기존 행을 지우고 새로 삽입해 createdAt이 전환 시각을 반영")
+    void upsert_differentContent_replacesRowAndResetsCreatedAt() {
         // given
         UUID watcherId = insertUser();
         UUID previousContentId = insertContent();
         UUID newContentId = insertContent();
 
         WatchingSessionSnapshot first = writer.upsert(watcherId, previousContentId, Instant.now().plusSeconds(60));
-        UUID rowId = first.getId();
 
         // when
         WatchingSessionSnapshot result = writer.upsert(watcherId, newContentId, Instant.now().plusSeconds(120));
 
         // then
         assertThat(repository.count()).isEqualTo(1);
-        assertThat(result.getId()).isEqualTo(rowId);
+        assertThat(result.getId()).isNotEqualTo(first.getId());
         assertThat(result.getContentId()).isEqualTo(newContentId);
+        assertThat(result.getCreatedAt()).isAfterOrEqualTo(first.getCreatedAt());
     }
 
     @Test
