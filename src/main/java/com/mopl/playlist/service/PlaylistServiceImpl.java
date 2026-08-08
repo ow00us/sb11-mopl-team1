@@ -154,20 +154,19 @@ public class PlaylistServiceImpl implements PlaylistService {
     @Override
     @Transactional
     public void unsubscribe(UUID playlistId, UUID subscriberId) {
-        // 사전 exists 체크로 기존 404 응답 계약을 유지한다.
-        if (!subscriptionRepository.existsByPlaylistIdAndSubscriberId(playlistId, subscriberId)) {
-            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
-        }
+        // 리소스 미존재는 멱등 대상이 아니므로 playlist 자체가 없으면 404 를 유지한다.
+        findOrThrow(playlistId);
         // 실제 DELETE 는 rows affected 를 반환하는 네이티브 조건부 삭제로 실행한다.
-        // 동일 (playlist, subscriber) 에 대한 동시 unsubscribe 시 오직 하나만 rows=1 을 얻으므로
-        // 신규 삭제 경로에서만 카운터를 감소시켜 subscribe 의 조건부 increment 패턴과 대칭을 이룬다.
+        // 사전 exists 체크를 두지 않아 (재)취소가 자연스럽게 멱등이 되며,
+        // 동일 (playlist, subscriber) 동시 unsubscribe 시에도 오직 하나만 rows=1 을 얻어
+        // subscribe 의 조건부 increment 패턴과 대칭을 이룬다.
         int deleted = subscriptionRepository.deleteByPlaylistIdAndSubscriberIdReturningCount(
                 playlistId.toString(), subscriberId.toString());
         if (deleted == 1) {
             playlistRepository.decrementSubscriberCount(playlistId);
         }
-        // deleted == 0 은 exists 통과 후 다른 트랜잭션이 먼저 삭제·감소한 race 경로.
-        // 사용자 시점에는 이미 구독이 없어졌으므로 조용히 성공으로 종료한다.
+        // deleted == 0 은 (a) 애초에 구독이 없었거나 (b) 다른 트랜잭션이 먼저 삭제·감소한 race 경로.
+        // 두 경우 모두 사용자 시점에서는 이미 구독이 없어졌으므로 조용히 성공으로 종료한다.
     }
 
     // ── 내부 헬퍼 ──────────────────────────────────────────────────────────
