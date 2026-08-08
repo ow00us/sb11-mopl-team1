@@ -6,6 +6,7 @@ import com.mopl.global.security.websocket.StompErrorFrameSender;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.service.WatchingSessionService;
 import com.mopl.watchingsession.service.WatchingSessionService.ReplacedSession;
+import com.mopl.watchingsession.service.WatchingSessionService.StartFailedException;
 import java.security.Principal;
 import java.util.Map;
 import java.util.UUID;
@@ -89,9 +90,27 @@ public class WatchingSessionSubscribeListener {
             // consume()으로 지워도 이전 활성 구독(있었다면)에는 영향이 없다.
             WatchSubscriptionAttributes.consume(accessor);
 
-            if (e instanceof BusinessException be) {
+            RuntimeException cause = e;
+            if (e instanceof StartFailedException startFailed) {
+                // upsert()까지는 성공해 소유권이 이미 새 콘텐츠로 넘어간 뒤 enrich()에서 실패
+                // 보상 삭제가 실제로 수행됐을 때만(endedPrevious != null) 그 직전 콘텐츠의
+                // 다른 시청자들에게 LEAVE 브로드캐스트
+                WatchingSessionDto endedPrevious = startFailed.getEndedPrevious();
+                if (endedPrevious != null) {
+                    try {
+                        watchingSessionBroadcaster.broadcastLeave(endedPrevious, endedPrevious.content().id());
+                    } catch (RuntimeException broadcastFailure) {
+                       log.error("보상 삭제 후 LEAVE 브로드캐스트 실패: watcherId={}, prevContentId={}",
+                           watcherId, endedPrevious.content().id(), broadcastFailure);
+                    }
+                }
+                // 클라이언트로 나가는 ERROR 프레임은 원래 실패 원인 기준 (기존 계약 유지)
+                cause = (RuntimeException) startFailed.getCause();
+            }
+
+            if (cause instanceof BusinessException be) {
                 log.warn("시청 세션 시작 실패, 구독 매핑 정리: watcherId={}, contentId={}, cause={}",
-                    watcherId, contentId, e.getMessage());
+                    watcherId, contentId, be.getMessage());
                 // 클라이언트에 실패 알림
                 errorFrameSender.send(event.getMessage(), be.getClass().getSimpleName(), be.getErrorCode(),
                     be.getMessage(), be.getDetails());
@@ -104,8 +123,8 @@ public class WatchingSessionSubscribeListener {
             // 이후 WebSocket 세션을 종료하고, SessionDisconnectEvent 가 발행되어
             // SimpleBrokerMessageHandler 가 해당 세션 구독을 자동 정리한다.
             log.error("시청 세션 시작 중 예상하지 못한 예외 발생, ERROR 프레임 발송: watcherId={}, contentId={}",
-                watcherId, contentId, e);
-            errorFrameSender.send(event.getMessage(), e.getClass().getSimpleName(),
+                watcherId, contentId, cause);
+            errorFrameSender.send(event.getMessage(), cause.getClass().getSimpleName(),
                 ErrorCode.INTERNAL_ERROR, ErrorCode.INTERNAL_ERROR.getMessage(), Map.of());
             return;
         }

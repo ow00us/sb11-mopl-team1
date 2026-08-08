@@ -3,6 +3,7 @@ package com.mopl.watchingsession.websocket;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -351,5 +352,126 @@ public class WatchingSessionSubscribeListenerTest {
         // then: sub-2는 활성으로 전환되지 않았어야 하므로, sub-1의 UNSUBSCRIBE는 여전히 활성 구독으로 판정되어야 한다.
         StompHeaderAccessor sub1UnsubscribeAccessor = StompHeaderAccessor.wrap(sub1Event.getMessage());
         assertThat(WatchSubscriptionAttributes.currentActiveSubscriptionId(sub1UnsubscribeAccessor)).isEqualTo("sub-1");
+    }
+
+    @Test
+    @DisplayName("재구독 중 enrich 실패로 보상 삭제되면, 직전 콘텐츠(A)의 다른 시청자에게 LEAVE를 브로드캐스트")
+    void onSubscribe_broadcastsLeaveToPrevContent_whenStartFailsAfterCompensation() {
+        // given
+        WatchingSessionDto endedPrevious = dtoFixture(PREV_CONTENT_ID);
+        BusinessException enrichFailure = new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
+        WatchingSessionService.StartFailedException startFailed =
+            new WatchingSessionService.StartFailedException(enrichFailure, endedPrevious);
+
+        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, "sub-0"))
+            .thenThrow(startFailed);
+
+        SessionSubscribeEvent event = subscribeEvent(
+            "/sub/contents/" + CONTENT_ID + "/watch", "sub-0", principalOf(WATCHER_ID));
+
+        // when
+        listener.onSubscribe(event);
+
+        // then
+        verify(watchingSessionBroadcaster).broadcastLeave(endedPrevious, PREV_CONTENT_ID);
+        verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());
+
+        StompHeaderAccessor lookupAccessor = StompHeaderAccessor.wrap(event.getMessage());
+        assertThat(WatchSubscriptionAttributes.consume(lookupAccessor).hasMapping()).isFalse();
+
+        // 클라이언트로 나가는 ERROR 프레임은 StartFailedException이 아닌 원래 원인(cause) 기준이어야 함
+        verify(errorFrameSender).send(
+            eq(event.getMessage()),
+            eq("BusinessException"),
+            eq(ErrorCode.RESOURCE_NOT_FOUND),
+            eq(ErrorCode.RESOURCE_NOT_FOUND.getMessage()),
+            eq(enrichFailure.getDetails())
+        );
+    }
+
+    @Test
+    @DisplayName("보상 삭제가 소유권 불일치로 스킵되면(endedPrevious=null) LEAVE를 보내지 않음")
+    void onSubscribe_skipsLeaveBroadcast_whenStartFailsWithNoEndedPrevious() {
+        // given: 보상 delete가 실제로는 수행되지 않은 경우(예: 그 사이 다른 재구독이 소유권을 가져간 레이스)
+        BusinessException enrichFailure = new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
+        WatchingSessionService.StartFailedException startFailed =
+            new WatchingSessionService.StartFailedException(enrichFailure, null);
+
+        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, "sub-0"))
+            .thenThrow(startFailed);
+
+        SessionSubscribeEvent event = subscribeEvent(
+            "/sub/contents/" + CONTENT_ID + "/watch", "sub-0", principalOf(WATCHER_ID));
+
+        // when
+        listener.onSubscribe(event);
+
+        // then
+        verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
+        verify(watchingSessionBroadcaster, never()).broadcastJoin(any(), any());
+        verify(errorFrameSender).send(
+            eq(event.getMessage()), eq("BusinessException"),
+            eq(ErrorCode.RESOURCE_NOT_FOUND), eq(ErrorCode.RESOURCE_NOT_FOUND.getMessage()), any());
+    }
+
+    @Test
+    @DisplayName("보상 삭제 후 원인이 인프라 예외였다면, LEAVE 브로드캐스트 후 INTERNAL_ERROR 프레임이 원인 클래스명으로 발송됨")
+    void onSubscribe_sendsInternalError_withOriginalCauseName_whenStartFailedWrapsInfraException() {
+        // given
+        WatchingSessionDto endedPrevious = dtoFixture(PREV_CONTENT_ID);
+        RuntimeException infraFailure = new IllegalStateException("DB 커넥션 끊김");
+        WatchingSessionService.StartFailedException startFailed =
+            new WatchingSessionService.StartFailedException(infraFailure, endedPrevious);
+
+        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, "sub-0"))
+            .thenThrow(startFailed);
+
+        SessionSubscribeEvent event = subscribeEvent(
+            "/sub/contents/" + CONTENT_ID + "/watch", "sub-0", principalOf(WATCHER_ID));
+
+        // when
+        listener.onSubscribe(event);
+
+        // then
+        verify(watchingSessionBroadcaster).broadcastLeave(endedPrevious, PREV_CONTENT_ID);
+        verify(errorFrameSender).send(
+            eq(event.getMessage()),
+            eq("IllegalStateException"), // StartFailedException이 아니라 원래 원인의 클래스명이어야 함
+            eq(ErrorCode.INTERNAL_ERROR),
+            eq(ErrorCode.INTERNAL_ERROR.getMessage()),
+            eq(Map.of())
+        );
+    }
+
+    @Test
+    @DisplayName("LEAVE 브로드캐스트가 실패해도 ERROR 프레임은 원인 예외 기준으로 정상 발송됨")
+    void onSubscribe_stillSendsErrorFrame_whenLeaveBroadcastFails() {
+        // given
+        WatchingSessionDto endedPrevious = dtoFixture(PREV_CONTENT_ID);
+        BusinessException enrichFailure = new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
+        WatchingSessionService.StartFailedException startFailed =
+            new WatchingSessionService.StartFailedException(enrichFailure, endedPrevious);
+
+        when(watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, "sub-0"))
+            .thenThrow(startFailed);
+
+        doThrow(new RuntimeException("브로커 전송 실패"))
+            .when(watchingSessionBroadcaster).broadcastLeave(endedPrevious, PREV_CONTENT_ID);
+
+        SessionSubscribeEvent event = subscribeEvent(
+            "/sub/contents/" + CONTENT_ID + "/watch", "sub-0", principalOf(WATCHER_ID));
+
+        // when: 브로드캐스트가 예외를 던져도 리스너 자체는 예외 없이 끝나야 함
+        listener.onSubscribe(event);
+
+        // then: 브로드캐스트는 시도됐고, 실패했더라도 ERROR 프레임은 원인(cause) 기준으로 발송됨
+        verify(watchingSessionBroadcaster).broadcastLeave(endedPrevious, PREV_CONTENT_ID);
+        verify(errorFrameSender).send(
+            eq(event.getMessage()),
+            eq("BusinessException"),
+            eq(ErrorCode.RESOURCE_NOT_FOUND),
+            eq(ErrorCode.RESOURCE_NOT_FOUND.getMessage()),
+            eq(enrichFailure.getDetails())
+        );
     }
 }

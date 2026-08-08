@@ -20,6 +20,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
@@ -41,6 +42,26 @@ public class WatchingSessionService {
 
     public record ReplacedSession(WatchingSessionDto session, WatchingSessionDto previous) {}
 
+    /**
+     * start()가 DB 스냅샷을 이미 갱신한 뒤 enrich 단계에서 실패해 보상 삭제까지 마친 경우 던진다.
+     *
+     * 보상 삭제가 실제로 수행됐다면 그 시점에 "이전 콘텐츠 퇴장"이 실제로 발생한 것이므로,
+     * 그 이전 세션(endedPrevious)을 함께 실어 리스너가 해당 방에 LEAVE를 브로드캐스트할 수 있게 한다.
+     * (브로드캐스트 책임은 성공 경로의 ReplacedSession과 동일하게 리스너가 전담한다)
+     *
+     * 클라이언트로 나가는 ERROR 프레임은 기존과 동일하게 원인 예외(cause)를 기준으로 만들어야 하므로
+     * BusinessException을 상속하지 않는다.
+     */
+    @Getter
+    public static class StartFailedException extends RuntimeException {
+        // 보상 삭제로 실제 종료된 이전 세션, 없었거나 보상 삭제가 수행되지 않았으면 null
+        private final transient WatchingSessionDto endedPrevious;
+
+        public StartFailedException(RuntimeException cause, WatchingSessionDto endedPrevious) {
+            super(cause.getMessage(), cause);
+            this.endedPrevious = endedPrevious;
+        }
+    }
     // Redis presence + heartbeat/TTL이 들어오기 전 쓰는 임시 고정 TTL
     // TODO(심화필수): Redis 쓰기 모델로 옮기면서 heartbeat 기반 갱신으로 대체
     private static final Duration DEFAULT_SESSION_TTL = Duration.ofMinutes(30);
@@ -98,8 +119,17 @@ public class WatchingSessionService {
         try {
             return new ReplacedSession(enrich(snapshot), previous);
         } catch (RuntimeException e) {
-            end(watcherId, sessionId, subscriptionId);
-            throw e;
+            boolean compensated;
+            try {
+                compensated = end(watcherId, sessionId, subscriptionId);
+            } catch (RuntimeException compensationFailure) {
+                e.addSuppressed(compensationFailure);
+                throw new StartFailedException(e, null);
+            }
+
+            // 보상삭제가 실제로 수행된 경우에만 이전 세션을 전달
+            // end()가 false면 소유권이 이미 다른 연결로 넘어간 것이라 스냅샷이 살아 있으므로 퇴장이 아님
+            throw new StartFailedException(e, compensated ? previous : null);
         }
     }
 
