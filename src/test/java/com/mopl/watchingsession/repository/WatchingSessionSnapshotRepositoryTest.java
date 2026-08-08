@@ -8,6 +8,8 @@ import com.mopl.global.config.JpaConfig;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -245,6 +247,39 @@ public class WatchingSessionSnapshotRepositoryTest {
     }
 
     @Test
+    @DisplayName("createdAt이 같으면 id DESC로 동률을 깨고, 커서 이후 결과가 중복·누락 없이 반환")
+    void findByContentIdAfterDesc_tieBreaksById_whenCreatedAtEqual() {
+        // given
+        UUID watcherId1 = insertUser();
+        UUID watcherId2 = insertUser();
+        UUID watcherId3 = insertUser();
+        UUID contentId = insertContent();
+        Instant now = Instant.now();
+        Instant sameCreatedAt = now.minusSeconds(10);
+
+        WatchingSessionSnapshot s1 = persistSnapshot(watcherId1, contentId, sameCreatedAt, now.plusSeconds(60));
+        WatchingSessionSnapshot s2 = persistSnapshot(watcherId2, contentId, sameCreatedAt, now.plusSeconds(60));
+        WatchingSessionSnapshot s3 = persistSnapshot(watcherId3, contentId, sameCreatedAt, now.plusSeconds(60));
+        entityManager.clear();
+
+        // PostgreSQL uuid 정렬은 unsigned byte-order(hex 문자열 정렬)와 같으므로 문자열 비교로 순서를 계산한다.
+        List<UUID> sortedIds = new ArrayList<>(List.of(s1.getId(), s2.getId(), s3.getId()));
+        sortedIds.sort(Comparator.comparing(UUID::toString));
+        UUID smaller = sortedIds.get(0);
+        UUID cursor = sortedIds.get(1);
+        UUID larger = sortedIds.get(2);
+
+        // when: createdAt이 모두 같으므로 커서 조건은 id 동률 분기(s.createdAt = :cursor AND s.id < :idAfter)만 걸린다.
+        List<WatchingSessionSnapshot> result = repository.findByContentIdAfterDesc(
+            contentId, null, now, sameCreatedAt, cursor, PageRequest.of(0, 10)
+        );
+
+        // then: DESC이므로 cursor보다 id가 작은 행만, 정확히 한 번 반환되어야 한다 (cursor 자신·더 큰 id는 제외).
+        assertThat(result).extracting(WatchingSessionSnapshot::getId)
+            .containsExactly(smaller);
+    }
+
+    @Test
     @DisplayName("커서 이후 데이터를 createdAt Asc, id Asc 순으로 조회한다")
     void findByContentIdAfterAsc_returnsCorrectOrder() {
         // given
@@ -267,6 +302,38 @@ public class WatchingSessionSnapshotRepositoryTest {
         // then
         assertThat(result).extracting(WatchingSessionSnapshot::getId)
             .containsExactly(s2.getId(), s3.getId());
+    }
+
+    @Test
+    @DisplayName("createdAt이 같으면 id ASC로 동률을 깨고, 커서 이후 결과가 중복·누락 없이 반환")
+    void findByContentIdAfterAsc_tieBreaksById_whenCreatedAtEqual() {
+        // given
+        UUID watcherId1 = insertUser();
+        UUID watcherId2 = insertUser();
+        UUID watcherId3 = insertUser();
+        UUID contentId = insertContent();
+        Instant now = Instant.now();
+        Instant sameCreatedAt = now.minusSeconds(10);
+
+        WatchingSessionSnapshot s1 = persistSnapshot(watcherId1, contentId, sameCreatedAt, now.plusSeconds(60));
+        WatchingSessionSnapshot s2 = persistSnapshot(watcherId2, contentId, sameCreatedAt, now.plusSeconds(60));
+        WatchingSessionSnapshot s3 = persistSnapshot(watcherId3, contentId, sameCreatedAt, now.plusSeconds(60));
+        entityManager.clear();
+
+        List<UUID> sortedIds = new ArrayList<>(List.of(s1.getId(), s2.getId(), s3.getId()));
+        sortedIds.sort(Comparator.comparing(UUID::toString));
+        UUID smaller = sortedIds.get(0);
+        UUID cursor = sortedIds.get(1);
+        UUID larger = sortedIds.get(2);
+
+        // when: createdAt이 모두 같으므로 커서 조건은 id 동률 분기(s.createdAt = :cursor AND s.id > :idAfter)만 걸린다.
+        List<WatchingSessionSnapshot> result = repository.findByContentIdAfterAsc(
+            contentId, null, now, sameCreatedAt, cursor, PageRequest.of(0, 10)
+        );
+
+        // then: ASC이므로 cursor보다 id가 큰 행만, 정확히 한 번 반환되어야 한다 (cursor 자신·더 작은 id는 제외).
+        assertThat(result).extracting(WatchingSessionSnapshot::getId)
+            .containsExactly(larger);
     }
 
     @Test
