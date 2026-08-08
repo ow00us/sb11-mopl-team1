@@ -1,0 +1,85 @@
+name: 개발 작업
+description: 구현할 작업을 등록합니다.
+title: "[Task] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        한 이슈는 하나의 확인 가능한 결과를 다룹니다.
+        하루를 초과할 것으로 예상되면 더 작은 작업으로 나누어 주세요.
+
+  - type: dropdown
+    id: domain
+    attributes:
+      label: 담당 도메인
+      description: 이 작업이 주로 속하는 도메인을 선택해 주세요.
+      options:
+        - A. 사용자·인증
+        - B. 콘텐츠·리뷰
+        - C. 플레이리스트·팔로우
+        - D. 알림·DM
+        - E. 시청 세션·같이 보기
+        - F. 인프라·공통 작업
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 우선순위
+      options:
+        - 기본 필수
+        - 심화 필수
+        - 선택 기능
+    validations:
+      required: true
+
+  - type: textarea
+    id: result
+    attributes:
+      label: 구현할 결과
+      description: 이번 작업에서 완성할 결과를 한 가지 중심으로 작성해 주세요.
+      placeholder: 예) 액세스 토큰과 리프레시 토큰을 발급하고 검증할 수 있다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: done
+    attributes:
+      label: 완료 기준
+      description: 코드, API, 테스트 등으로 완료 여부를 확인할 수 있게 작성해 주세요.
+      placeholder: |
+        - 토큰 발급과 검증이 동작한다.
+        - 만료 및 잘못된 토큰 테스트가 통과한다.
+        - 관련 Swagger 응답과 일치한다.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: estimate
+    attributes:
+      label: 예상 소요 시간
+      options:
+        - 2시간
+        - 반나절
+        - 하루
+        - 짧은 사전 확인 후 다시 산정
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: 변경 영향
+      description: 해당하는 항목을 모두 선택해 주세요.
+      options:
+        - label: API 요청·응답이 변경됩니다.
+        - label: 데이터베이스 구조가 변경됩니다.
+        - label: 다른 도메인과의 협의가 필요합니다.
+        - label: 환경 변수나 배포 설정이 변경됩니다.
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: 참고 사항
+      description: 관련 문서, Swagger 경로, 설계 결정 기록 등을 남겨 주세요.

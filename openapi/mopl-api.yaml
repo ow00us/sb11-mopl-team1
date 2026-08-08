@@ -1,0 +1,3841 @@
+openapi: "3.1.0"
+info:
+  title: "모두의 플리 (Mopl) API"
+  description: "프로토타입 OpenAPI를 기준으로 팀이 합의한 요청·응답 규칙을 반영한 API 계약입니다."
+  version: "1.0"
+servers:
+  -
+    url: "/"
+    description: "현재 서버"
+  -
+    url: "http://localhost:8080"
+    description: "로컬 서버"
+security:
+  -
+    BearerAuth: []
+tags:
+  -
+    name: "알림"
+    description: "알림 API"
+paths:
+  "/api/users":
+    get:
+      tags:
+        - "사용자 관리"
+      summary: "[어드민] 사용자 목록 조회 (커서 페이지네이션)"
+      operationId: "findUsers"
+      parameters:
+        -
+          name: "emailLike"
+          in: "query"
+          description: "이메일"
+          required: false
+          schema:
+            type: "string"
+            description: "이메일"
+        -
+          name: "roleEqual"
+          in: "query"
+          description: "권한"
+          required: false
+          schema:
+            type: "string"
+            description: "권한"
+            enum:
+              - "USER"
+              - "ADMIN"
+        -
+          name: "locked"
+          in: "query"
+          description: "계정 잠금 상태"
+          required: false
+          schema:
+            type: "boolean"
+            description: "계정 잠금 상태"
+        -
+          name: "cursor"
+          in: "query"
+          description: "커서"
+          required: false
+          schema:
+            type: "string"
+            description: "커서"
+        -
+          name: "idAfter"
+          in: "query"
+          description: "보조 커서"
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+            description: "보조 커서"
+        -
+          name: "limit"
+          in: "query"
+          description: "한 번에 가져올 개수"
+          required: true
+          schema:
+            type: "integer"
+            format: "int32"
+            minimum: 1
+            maximum: 100
+            description: "한 번에 가져올 개수"
+        -
+          name: "sortDirection"
+          in: "query"
+          description: "정렬 방향"
+          required: true
+          schema:
+            type: "string"
+            description: "정렬 방향"
+            enum:
+              - "ASCENDING"
+              - "DESCENDING"
+        -
+          name: "sortBy"
+          in: "query"
+          description: "정렬 기준"
+          required: true
+          schema:
+            type: "string"
+            description: "정렬 기준"
+            enum:
+              - "name"
+              - "email"
+              - "createdAt"
+              - "locked"
+              - "role"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/CursorResponseUserDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "권한 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - "사용자 관리"
+      summary: "사용자 등록 (회원가입)"
+      operationId: "createUser"
+      security:
+        -
+          CsrfToken: []
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/UserCreateRequest"
+        required: true
+      responses:
+        "201":
+          description: "새 사용자 생성"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/UserDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "409":
+          description: "이미 사용 중인 이메일"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/reviews":
+    get:
+      tags:
+        - "리뷰 관리"
+      summary: "리뷰 목록 조회 (커서 페이지네이션)"
+      operationId: "findReviews"
+      parameters:
+        -
+          name: "contentId"
+          in: "query"
+          description: "콘텐츠 ID"
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+            description: "콘텐츠 ID"
+        -
+          name: "cursor"
+          in: "query"
+          description: "커서"
+          required: false
+          schema:
+            type: "string"
+            description: "커서"
+        -
+          name: "idAfter"
+          in: "query"
+          description: "보조 커서"
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+            description: "보조 커서"
+        -
+          name: "limit"
+          in: "query"
+          description: "한 번에 가져올 개수"
+          required: true
+          schema:
+            type: "integer"
+            format: "int32"
+            minimum: 1
+            maximum: 100
+            description: "한 번에 가져올 개수"
+        -
+          name: "sortDirection"
+          in: "query"
+          description: "정렬 방향"
+          required: true
+          schema:
+            type: "string"
+            description: "정렬 방향"
+            enum:
+              - "ASCENDING"
+              - "DESCENDING"
+        -
+          name: "sortBy"
+          in: "query"
+          description: "정렬 기준"
+          required: true
+          schema:
+            type: "string"
+            description: "정렬 기준"
+            enum:
+              - "createdAt"
+              - "rating"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/CursorResponseReviewDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - "리뷰 관리"
+      summary: "리뷰 생성"
+      description: "생성한 리뷰는 API 요청자 본인의 리뷰로 생성됩니다."
+      operationId: "createReview"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/ReviewCreateRequest"
+        required: true
+      responses:
+        "201":
+          description: "새 리뷰 생성"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ReviewDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "409":
+          description: "동일한 콘텐츠에 작성한 리뷰가 이미 존재함"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/playlists":
+    get:
+      tags:
+        - "플레이리스트 관리"
+      summary: "플레이리스트 목록 조회 (커서 페이지네이션)"
+      operationId: "findPlaylists"
+      parameters:
+        -
+          name: "keywordLike"
+          in: "query"
+          description: "검색 키워드"
+          required: false
+          schema:
+            type: "string"
+            description: "검색 키워드"
+        -
+          name: "ownerIdEqual"
+          in: "query"
+          description: "소유자 ID"
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+            description: "소유자 ID"
+        -
+          name: "subscriberIdEqual"
+          in: "query"
+          description: "구독자 ID"
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+            description: "구독자 ID"
+        -
+          name: "cursor"
+          in: "query"
+          description: "커서"
+          required: false
+          schema:
+            type: "string"
+            description: "커서"
+        -
+          name: "idAfter"
+          in: "query"
+          description: "보조 커서"
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+            description: "보조 커서"
+        -
+          name: "limit"
+          in: "query"
+          description: "한 번에 가져올 개수"
+          required: true
+          schema:
+            type: "integer"
+            format: "int32"
+            minimum: 1
+            maximum: 100
+            description: "한 번에 가져올 개수"
+        -
+          name: "sortDirection"
+          in: "query"
+          description: "정렬 방향"
+          required: true
+          schema:
+            type: "string"
+            description: "정렬 방향"
+            enum:
+              - "ASCENDING"
+              - "DESCENDING"
+        -
+          name: "sortBy"
+          in: "query"
+          description: "정렬 기준"
+          required: true
+          schema:
+            type: "string"
+            description: "정렬 기준"
+            enum:
+              - "updatedAt"
+              - "subscriberCount"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/CursorResponsePlaylistDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - "플레이리스트 관리"
+      summary: "플레이리스트 생성"
+      description: "생성한 플레이리스트는 API 요청자 본인의 플레이리스트로 생성됩니다."
+      operationId: "createPlaylist"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/PlaylistCreateRequest"
+        required: true
+      responses:
+        "201":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/PlaylistDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/playlists/{playlistId}/subscription":
+    post:
+      tags:
+        - "플레이리스트 관리"
+      summary: "플레이리스트 구독"
+      operationId: "subscribePlaylist"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "playlistId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "204":
+          description: "구독 완료. 이미 구독 중이어도 성공"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+    delete:
+      tags:
+        - "플레이리스트 관리"
+      summary: "플레이리스트 구독 취소"
+      operationId: "unsubscribePlaylist"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "playlistId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "204":
+          description: "구독 취소 완료. 이미 취소 상태여도 성공"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "존재하지 않는 플레이리스트"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/playlists/{playlistId}/subscribers":
+    get:
+      tags:
+        - "플레이리스트 관리"
+      summary: "플레이리스트 구독자 목록 조회 (커서 페이지네이션)"
+      description: "특정 플레이리스트를 구독한 사용자들의 목록을 최근순(created_at DESC) 으로 반환합니다."
+      operationId: "getPlaylistSubscribers"
+      security:
+        -
+          BearerAuth: []
+      parameters:
+        -
+          name: "playlistId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "cursor"
+          in: "query"
+          description: "다음 페이지 커서 (마지막 subscribedAt 을 Base64 로 인코딩). idAfter 와 함께 제공해야 합니다."
+          required: false
+          schema:
+            type: "string"
+        -
+          name: "idAfter"
+          in: "query"
+          description: "같은 subscribedAt 값 내 UUID 타이브레이커. cursor 와 함께 제공해야 합니다."
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "limit"
+          in: "query"
+          required: true
+          schema:
+            type: "integer"
+            format: "int32"
+            minimum: 1
+            maximum: 100
+        -
+          name: "sortBy"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            default: "subscribedAt"
+            enum:
+              - "subscribedAt"
+        -
+          name: "sortDirection"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            default: "DESCENDING"
+            description: |
+              현재 구독자 목록 조회는 최신순(DESCENDING)만 지원한다.
+              오래된 순 요청(ASCENDING)은 400 을 반환한다.
+            enum:
+              - "DESCENDING"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/CursorResponseSubscriberItemDto"
+        "400":
+          description: "잘못된 요청 (파라미터 검증 실패, 잘못된 커서, cursor/idAfter 부정합)"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "존재하지 않는 플레이리스트"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/playlists/{playlistId}/contents/{contentId}":
+    post:
+      tags:
+        - "플레이리스트 관리"
+      summary: "플레이리스트에 콘텐츠 추가"
+      description: "플레이리스트 소유자만 콘텐츠를 추가할 수 있습니다."
+      operationId: "addContentToPlaylist"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "playlistId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "contentId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "204":
+          description: "추가 완료. 이미 포함된 콘텐츠여도 성공"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "권한 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+    delete:
+      tags:
+        - "플레이리스트 관리"
+      summary: "플레이리스트에서 콘텐츠 삭제"
+      description: "플레이리스트 소유자만 콘텐츠를 삭제할 수 있습니다."
+      operationId: "removeContentFromPlaylist"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "playlistId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "contentId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "204":
+          description: "성공"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "권한 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/follows":
+    post:
+      tags:
+        - "팔로우 관리"
+      summary: "팔로우"
+      operationId: "createFollow"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/FollowRequest"
+        required: true
+      responses:
+        "201":
+          description: "새 팔로우 관계 생성"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/FollowDto"
+        "200":
+          description: "이미 팔로우 중이면 기존 관계 반환"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/FollowDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/conversations":
+    get:
+      tags:
+        - "다이렉트 메시지"
+      summary: "대화 목록 조회 (커서 페이지네이션)"
+      description: "API 요청자 본인의 대화 목록만 조회할 수 있습니다."
+      operationId: "findConversations"
+      parameters:
+        -
+          name: "keywordLike"
+          in: "query"
+          description: "검색 키워드"
+          required: false
+          schema:
+            type: "string"
+            description: "검색 키워드"
+        -
+          name: "cursor"
+          in: "query"
+          description: "커서"
+          required: false
+          schema:
+            type: "string"
+            description: "커서"
+        -
+          name: "idAfter"
+          in: "query"
+          description: "보조 커서"
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+            description: "보조 커서"
+        -
+          name: "limit"
+          in: "query"
+          description: "한 번에 가져올 개수"
+          required: true
+          schema:
+            type: "integer"
+            format: "int32"
+            minimum: 1
+            maximum: 100
+            description: "한 번에 가져올 개수"
+        -
+          name: "sortDirection"
+          in: "query"
+          description: "정렬 방향"
+          required: true
+          schema:
+            type: "string"
+            description: "정렬 방향"
+            enum:
+              - "ASCENDING"
+              - "DESCENDING"
+        -
+          name: "sortBy"
+          in: "query"
+          description: "정렬 기준"
+          required: true
+          schema:
+            type: "string"
+            description: "정렬 기준"
+            enum:
+              - "createdAt"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/CursorResponseConversationDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - "다이렉트 메시지"
+      summary: "대화 생성"
+      operationId: "createConversation"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/ConversationCreateRequest"
+        required: true
+      responses:
+        "201":
+          description: "새 대화 생성"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ConversationDto"
+        "200":
+          description: "이미 대화가 있으면 기존 대화 반환"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ConversationDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "대화 상대 사용자를 찾을 수 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/conversations/{conversationId}/direct-messages/{directMessageId}/read":
+    post:
+      tags:
+        - "다이렉트 메시지"
+      summary: "DM 읽음 처리"
+      operationId: "read"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "conversationId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "directMessageId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "204":
+          description: "성공"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "DM 읽음 처리 권한 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "대화 또는 DM을 찾을 수 없거나 접근할 수 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/contents":
+    get:
+      tags:
+        - "콘텐츠 관리"
+      summary: "콘텐츠 목록 조회 (커서 페이지네이션)"
+      operationId: "findContents"
+      parameters:
+        -
+          name: "typeEqual"
+          in: "query"
+          description: "콘텐츠 타입"
+          required: false
+          schema:
+            type: "string"
+            description: "콘텐츠 타입"
+            enum:
+              - "movie"
+              - "tvSeries"
+              - "sport"
+        -
+          name: "keywordLike"
+          in: "query"
+          description: "검색 키워드"
+          required: false
+          schema:
+            type: "string"
+            description: "검색 키워드"
+        -
+          name: "tagsIn"
+          in: "query"
+          description: "태그 목록"
+          required: false
+          schema:
+            type: "array"
+            description: "태그 목록"
+            maxItems: 20
+            items:
+              type: "string"
+              description: "태그 목록"
+        -
+          name: "cursor"
+          in: "query"
+          description: "커서"
+          required: false
+          schema:
+            type: "string"
+            description: "커서"
+        -
+          name: "idAfter"
+          in: "query"
+          description: "보조 커서"
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+            description: "보조 커서"
+        -
+          name: "limit"
+          in: "query"
+          description: "한 번에 가져올 개수"
+          required: true
+          schema:
+            type: "integer"
+            format: "int32"
+            minimum: 1
+            maximum: 100
+            description: "한 번에 가져올 개수"
+        -
+          name: "sortDirection"
+          in: "query"
+          description: "정렬 방향"
+          required: true
+          schema:
+            type: "string"
+            description: "정렬 방향"
+            enum:
+              - "ASCENDING"
+              - "DESCENDING"
+        -
+          name: "sortBy"
+          in: "query"
+          description: "정렬 기준"
+          required: true
+          schema:
+            type: "string"
+            description: "정렬 기준"
+            enum:
+              - "createdAt"
+              - "watcherCount"
+              - "averageRating"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/CursorResponseContentDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - "콘텐츠 관리"
+      summary: "[어드민] 콘텐츠 생성"
+      operationId: "createContent"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      requestBody:
+        content:
+          "multipart/form-data":
+            schema:
+              type: "object"
+              properties:
+                request:
+                  "$ref": "#/components/schemas/ContentCreateRequest"
+                thumbnail:
+                  type: "string"
+                  format: "binary"
+              required:
+                - "request"
+      responses:
+        "201":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ContentDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "권한 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/auth/sign-out":
+    post:
+      tags:
+        - "인증 관리"
+      summary: "로그아웃"
+      description: "SecurityFilterChain에서 처리합니다."
+      operationId: "signOut"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      responses:
+        "204":
+          description: "성공"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/auth/sign-in":
+    post:
+      tags:
+        - "인증 관리"
+      summary: "로그인"
+      description: "SecurityFilterChain에서 처리합니다."
+      operationId: "signIn"
+      security:
+        -
+          CsrfToken: []
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/SignInRequest"
+        required: true
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/JwtDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/auth/reset-password":
+    post:
+      tags:
+        - "인증 관리"
+      summary: "비밀번호 초기화"
+      description: "임시 비밀번호로 초기화 후 이메일로 전송합니다."
+      operationId: "resetPassword"
+      security:
+        -
+          CsrfToken: []
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/ResetPasswordRequest"
+        required: true
+      responses:
+        "204":
+          description: "성공"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "해당 리소스 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/auth/refresh":
+    post:
+      tags:
+        - "인증 관리"
+      summary: "토큰 재발급"
+      description: "쿠키(REFRESH_TOKEN)에 저장된 리프레시 토큰으로 리프레시 토큰과 엑세스 토큰을 재발급합니다."
+      operationId: "reissueToken"
+      security:
+        -
+          CsrfToken: []
+      parameters:
+        -
+          name: "REFRESH_TOKEN"
+          in: "cookie"
+          description: "리프레시 토큰"
+          required: true
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/JwtDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/users/{userId}":
+    get:
+      tags:
+        - "사용자 관리"
+      summary: "사용자 상세 조회"
+      operationId: "findUser"
+      parameters:
+        -
+          name: "userId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/UserDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "해당 리소스 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+    patch:
+      tags:
+        - "사용자 관리"
+      summary: "프로필 변경"
+      description: "본인의 프로필만 변경할 수 있습니다."
+      operationId: "updateUser"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "userId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      requestBody:
+        content:
+          "multipart/form-data":
+            schema:
+              type: "object"
+              properties:
+                request:
+                  "$ref": "#/components/schemas/UserUpdateRequest"
+                image:
+                  type: "string"
+                  format: "binary"
+              required:
+                - "request"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/UserDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "권한 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/users/{userId}/role":
+    patch:
+      tags:
+        - "사용자 관리"
+      summary: "[어드민] 권한 수정"
+      operationId: "updateUser_Role"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "userId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/UserRoleUpdateRequest"
+        required: true
+      responses:
+        "204":
+          description: "성공"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "권한 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "사용자를 찾을 수 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/users/{userId}/password":
+    patch:
+      tags:
+        - "사용자 관리"
+      summary: "비밀번호 변경"
+      description: "본인의 비밀번호만 변경할 수 있습니다."
+      operationId: "updateUser_Password"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "userId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/ChangePasswordRequest"
+        required: true
+      responses:
+        "204":
+          description: "성공"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "권한 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "사용자를 찾을 수 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/users/{userId}/locked":
+    patch:
+      tags:
+        - "사용자 관리"
+      summary: "[어드민] 계정 잠금 상태 변경"
+      description: "[어드민 기능] 계정 잠금 상태를 변경합니다."
+      operationId: "updateUser_Locked"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "userId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/UserLockUpdateRequest"
+        required: true
+      responses:
+        "204":
+          description: "성공"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "권한 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "사용자를 찾을 수 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/reviews/{reviewId}":
+    delete:
+      tags:
+        - "리뷰 관리"
+      summary: "리뷰 삭제"
+      description: "리뷰 작성자만 삭제할 수 있습니다."
+      operationId: "deleteReview"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "reviewId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "204":
+          description: "성공"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "권한 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+    patch:
+      tags:
+        - "리뷰 관리"
+      summary: "리뷰 수정"
+      description: "리뷰 작성자만 수정할 수 있습니다."
+      operationId: "updateReview"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "reviewId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/ReviewUpdateRequest"
+        required: true
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ReviewDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "권한 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/playlists/{playlistId}":
+    get:
+      tags:
+        - "플레이리스트 관리"
+      summary: "플레이리스트 단건 조회"
+      operationId: "findPlaylist"
+      parameters:
+        -
+          name: "playlistId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/PlaylistDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+    delete:
+      tags:
+        - "플레이리스트 관리"
+      summary: "플레이리스트 삭제"
+      description: "플레이리스트 소유자만 삭제할 수 있습니다."
+      operationId: "deletePlaylist"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "playlistId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "204":
+          description: "성공"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "권한 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+    patch:
+      tags:
+        - "플레이리스트 관리"
+      summary: "플레이리스트 수정"
+      description: |
+        플레이리스트 소유자만 수정할 수 있습니다.
+        요청 본문의 필드가 `null` 이거나 빈 문자열/공백만 있는 경우 해당 필드는 무시되고 기존값이 유지됩니다.
+        단, `title` 은 255자 제한이 우선 적용되어 256자 이상 문자열(공백 포함)은 400 이 반환됩니다.
+      operationId: "updatePlaylist"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "playlistId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/PlaylistUpdateRequest"
+        required: true
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/PlaylistDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "권한 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/contents/{contentId}":
+    get:
+      tags:
+        - "콘텐츠 관리"
+      summary: "콘텐츠 단건 조회"
+      operationId: "findContent"
+      parameters:
+        -
+          name: "contentId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ContentDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+    delete:
+      tags:
+        - "콘텐츠 관리"
+      summary: "[어드민] 콘텐츠 삭제"
+      operationId: "deleteContent"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "contentId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "204":
+          description: "성공"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "권한 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+    patch:
+      tags:
+        - "콘텐츠 관리"
+      summary: "[어드민] 콘텐츠 수정"
+      operationId: "updateContent"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "contentId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      requestBody:
+        content:
+          "multipart/form-data":
+            schema:
+              type: "object"
+              properties:
+                request:
+                  "$ref": "#/components/schemas/ContentUpdateRequest"
+                thumbnail:
+                  type: "string"
+                  format: "binary"
+              required:
+                - "request"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ContentDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "권한 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/users/{watcherId}/watching-sessions":
+    get:
+      tags:
+        - "시청 세션 관리"
+      summary: "특정 사용자의 시청 세션 조회 (nullable)"
+      operationId: "findWatchingSessionsByWatcher"
+      parameters:
+        -
+          name: "watcherId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/WatchingSessionDto"
+        "204":
+          description: "현재 시청 중인 콘텐츠가 없음"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/sse":
+    get:
+      tags:
+        - "알림"
+      operationId: "subscribe"
+      parameters:
+        -
+          name: "LastEventId"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "200":
+          description: "OK"
+          content:
+            "text/event-stream":
+              schema:
+                "$ref": "#/components/schemas/SseEmitter"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/notifications":
+    get:
+      tags:
+        - "알림"
+      summary: "알림 목록 조회 (커서 페이지네이션)"
+      description: "API 요청자의 알림 목록만 조회할 수 있습니다."
+      operationId: "getNotifications"
+      parameters:
+        -
+          name: "cursor"
+          in: "query"
+          description: "커서"
+          required: false
+          schema:
+            type: "string"
+            description: "커서"
+        -
+          name: "idAfter"
+          in: "query"
+          description: "보조 커서"
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+            description: "보조 커서"
+        -
+          name: "limit"
+          in: "query"
+          description: "한 번에 가져올 개수"
+          required: true
+          schema:
+            type: "integer"
+            format: "int32"
+            minimum: 1
+            maximum: 100
+            description: "한 번에 가져올 개수"
+        -
+          name: "sortDirection"
+          in: "query"
+          description: "정렬 방향"
+          required: true
+          schema:
+            type: "string"
+            description: "정렬 방향"
+            enum:
+              - "ASCENDING"
+              - "DESCENDING"
+        -
+          name: "sortBy"
+          in: "query"
+          description: "정렬 기준"
+          required: true
+          schema:
+            type: "string"
+            description: "정렬 기준"
+            enum:
+              - "createdAt"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/CursorResponseNotificationDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/follows/followed-by-me":
+    get:
+      tags:
+        - "팔로우 관리"
+      summary: "특정 유저를 내가 팔로우하는지 여부 조회"
+      description: "팔로우 중이면 FollowDto(id 포함)를 반환합니다. 팔로우하지 않은 경우 404를 반환합니다."
+      operationId: "isFollowedByMe"
+      parameters:
+        -
+          name: "followeeId"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/FollowDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "해당 리소스 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/follows/count":
+    get:
+      tags:
+        - "팔로우 관리"
+      summary: "특정 유저의 팔로워 수 조회"
+      operationId: "getFollowerCount"
+      parameters:
+        -
+          name: "followeeId"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/FollowerCountResponse"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/follows/followers":
+    get:
+      tags:
+        - "팔로우 관리"
+      summary: "특정 유저의 팔로워 목록 조회 (커서 페이지네이션)"
+      description: "지정한 followeeId 를 팔로우한 사용자들의 목록을 최근순(created_at DESC)으로 반환합니다."
+      operationId: "getFollowers"
+      security:
+        -
+          BearerAuth: []
+      parameters:
+        -
+          name: "followeeId"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "cursor"
+          in: "query"
+          description: "다음 페이지 커서 (마지막 followedAt 을 Base64 로 인코딩). idAfter 와 함께 제공해야 합니다."
+          required: false
+          schema:
+            type: "string"
+        -
+          name: "idAfter"
+          in: "query"
+          description: "같은 followedAt 값 내 UUID 타이브레이커. cursor 와 함께 제공해야 합니다."
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "limit"
+          in: "query"
+          required: true
+          schema:
+            type: "integer"
+            format: "int32"
+            minimum: 1
+            maximum: 100
+        -
+          name: "sortBy"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            default: "followedAt"
+            enum:
+              - "followedAt"
+        -
+          name: "sortDirection"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            default: "DESCENDING"
+            description: |
+              현재 팔로우 목록 조회는 최신순(DESCENDING)만 지원한다.
+              오래된 순 요청(ASCENDING)은 400 을 반환한다.
+            enum:
+              - "DESCENDING"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/CursorResponseFollowUserItemDto"
+        "400":
+          description: "잘못된 요청 (파라미터 검증 실패, 잘못된 커서, cursor/idAfter 부정합)"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/follows/followings":
+    get:
+      tags:
+        - "팔로우 관리"
+      summary: "특정 유저의 팔로잉 목록 조회 (커서 페이지네이션)"
+      description: "지정한 followerId 가 팔로우 중인 사용자들의 목록을 최근순(created_at DESC)으로 반환합니다."
+      operationId: "getFollowings"
+      security:
+        -
+          BearerAuth: []
+      parameters:
+        -
+          name: "followerId"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "cursor"
+          in: "query"
+          description: "다음 페이지 커서. idAfter 와 함께 제공해야 합니다."
+          required: false
+          schema:
+            type: "string"
+        -
+          name: "idAfter"
+          in: "query"
+          description: "같은 followedAt 값 내 UUID 타이브레이커. cursor 와 함께 제공해야 합니다."
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "limit"
+          in: "query"
+          required: true
+          schema:
+            type: "integer"
+            format: "int32"
+            minimum: 1
+            maximum: 100
+        -
+          name: "sortBy"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            default: "followedAt"
+            enum:
+              - "followedAt"
+        -
+          name: "sortDirection"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            default: "DESCENDING"
+            description: |
+              현재 팔로우 목록 조회는 최신순(DESCENDING)만 지원한다.
+              오래된 순 요청(ASCENDING)은 400 을 반환한다.
+            enum:
+              - "DESCENDING"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/CursorResponseFollowUserItemDto"
+        "400":
+          description: "잘못된 요청 (파라미터 검증 실패, 잘못된 커서, cursor/idAfter 부정합)"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/conversations/{conversationId}":
+    get:
+      tags:
+        - "다이렉트 메시지"
+      summary: "대화 조회"
+      operationId: "findConversation"
+      parameters:
+        -
+          name: "conversationId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ConversationDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "해당 리소스 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/conversations/{conversationId}/direct-messages":
+    get:
+      tags:
+        - "다이렉트 메시지"
+      summary: "DM 목록 조회 (커서 페이지네이션)"
+      description: "특정 대화의 DM 목록을 조회합니다. API 요청자가 해당 대화의 참여자여야 합니다."
+      operationId: "findDms"
+      parameters:
+        -
+          name: "conversationId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "cursor"
+          in: "query"
+          description: "커서"
+          required: false
+          schema:
+            type: "string"
+            description: "커서"
+        -
+          name: "idAfter"
+          in: "query"
+          description: "보조 커서"
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+            description: "보조 커서"
+        -
+          name: "limit"
+          in: "query"
+          description: "한 번에 가져올 개수"
+          required: true
+          schema:
+            type: "integer"
+            format: "int32"
+            minimum: 1
+            maximum: 100
+            description: "한 번에 가져올 개수"
+        -
+          name: "sortDirection"
+          in: "query"
+          description: "정렬 방향"
+          required: true
+          schema:
+            type: "string"
+            description: "정렬 방향"
+            enum:
+              - "ASCENDING"
+              - "DESCENDING"
+        -
+          name: "sortBy"
+          in: "query"
+          description: "정렬 기준"
+          required: true
+          schema:
+            type: "string"
+            description: "정렬 기준"
+            enum:
+              - "createdAt"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/CursorResponseDirectMessageDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "대화를 찾을 수 없거나 접근할 수 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/conversations/with":
+    get:
+      tags:
+        - "다이렉트 메시지"
+      summary: "특정 사용자와의 대화 조회"
+      operationId: "findConversationWithUser"
+      parameters:
+        -
+          name: "userId"
+          in: "query"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ConversationDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "해당 리소스 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/contents/{contentId}/watching-sessions":
+    get:
+      tags:
+        - "시청 세션 관리"
+      summary: "특정 콘텐츠의 시청 세션 목록 조회 (커서 페이지네이션)"
+      operationId: "findWatchingSessionsByContent"
+      parameters:
+        -
+          name: "contentId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "watcherNameLike"
+          in: "query"
+          description: "시청자 이름"
+          required: false
+          schema:
+            type: "string"
+            description: "시청자 이름"
+        -
+          name: "cursor"
+          in: "query"
+          description: "커서"
+          required: false
+          schema:
+            type: "string"
+            description: "커서"
+        -
+          name: "idAfter"
+          in: "query"
+          description: "보조 커서"
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+            description: "보조 커서"
+        -
+          name: "limit"
+          in: "query"
+          description: "한 번에 가져올 개수"
+          required: true
+          schema:
+            type: "integer"
+            format: "int32"
+            minimum: 1
+            maximum: 100
+            description: "한 번에 가져올 개수"
+        -
+          name: "sortDirection"
+          in: "query"
+          description: "정렬 방향"
+          required: true
+          schema:
+            type: "string"
+            description: "정렬 방향"
+            enum:
+              - "ASCENDING"
+              - "DESCENDING"
+        -
+          name: "sortBy"
+          in: "query"
+          description: "정렬 기준"
+          required: true
+          schema:
+            type: "string"
+            description: "정렬 기준"
+            enum:
+              - "createdAt"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/CursorResponseWatchingSessionDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "존재하지 않는 콘텐츠"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/auth/csrf-token":
+    get:
+      tags:
+        - "인증 관리"
+      summary: "CSRF 토큰 조회"
+      description: "CSRF 토큰을 조회합니다. 토큰은 쿠키(XSRF-TOKEN)에 저장됩니다."
+      operationId: "getCsrfToken"
+      security: []
+      responses:
+        "204":
+          description: "성공"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/notifications/{notificationId}":
+    delete:
+      tags:
+        - "알림"
+      summary: "알림 읽음 처리"
+      operationId: "readNotification"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "notificationId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "204":
+          description: "성공"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/follows/{followId}":
+    delete:
+      tags:
+        - "팔로우 관리"
+      summary: "팔로우 취소"
+      description: "API 요청자 본인의 팔로우만 취소할 수 있습니다."
+      operationId: "cancelFollow"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "followId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "204":
+          description: "성공"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "권한 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+components:
+  schemas:
+    UserCreateRequest:
+      type: "object"
+      properties:
+        name:
+          type: "string"
+          description: "이름"
+        email:
+          type: "string"
+          description: "이메일"
+        password:
+          type: "string"
+          description: "비밀번호"
+      required:
+        - "email"
+        - "name"
+        - "password"
+    ErrorResponse:
+      type: "object"
+      properties:
+        exceptionName:
+          type: "string"
+          description: "예외 이름"
+        message:
+          type: "string"
+          description: "오류 메시지"
+        details:
+          type: "object"
+          additionalProperties:
+            type: "string"
+          description: "오류 부가 정보"
+        errorCode:
+          type: "string"
+          description: "애플리케이션 오류 코드"
+          example: "COMMON_400_1"
+      required:
+        - "exceptionName"
+        - "errorCode"
+        - "message"
+        - "details"
+    UserDto:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          description: "사용자 ID"
+        createdAt:
+          type: "string"
+          format: "date-time"
+          description: "사용자 생성 시간"
+        email:
+          type: "string"
+          description: "이메일"
+        name:
+          type: "string"
+          description: "사용자 이름"
+        profileImageUrl:
+          type: "string"
+          description: "프로필 이미지 URL"
+        role:
+          type: "string"
+          description: "사용자 역할"
+          enum:
+            - "USER"
+            - "ADMIN"
+        locked:
+          type: "boolean"
+      required:
+        - "createdAt"
+        - "email"
+        - "id"
+        - "locked"
+        - "name"
+        - "role"
+    ReviewCreateRequest:
+      type: "object"
+      properties:
+        contentId:
+          type: "string"
+          format: "uuid"
+          description: "콘텐츠 ID"
+        text:
+          type: "string"
+          description: "리뷰 내용"
+        rating:
+          type: "number"
+          format: "double"
+          description: "평점 (0.0 ~ 5.0)"
+          minimum: 0
+          maximum: 5
+          multipleOf: 0.5
+      required:
+        - "contentId"
+        - "rating"
+        - "text"
+    ReviewDto:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          description: "리뷰 ID"
+        contentId:
+          type: "string"
+          format: "uuid"
+          description: "콘텐츠 ID"
+        author:
+          "$ref": "#/components/schemas/UserSummary"
+          description: "작성자 정보"
+        text:
+          type: "string"
+          description: "리뷰 내용"
+        rating:
+          type: "number"
+          format: "double"
+          description: "평점 (0.0 ~ 5.0)"
+      required:
+        - "author"
+        - "contentId"
+        - "id"
+        - "rating"
+        - "text"
+    UserSummary:
+      type: "object"
+      description: |
+        여러 도메인의 응답에서 공통으로 사용하는 사용자 요약.
+        name / profileImageUrl 은 User 도메인 연동이 완료되기 전까지 null 로 반환될 수 있어
+        OpenAPI 3.1 표준 nullable 표기(["string", "null"])를 사용한다.
+      properties:
+        userId:
+          type: "string"
+          format: "uuid"
+          description: "사용자 ID"
+        name:
+          type:
+            - "string"
+            - "null"
+          description: "사용자 이름 (User 도메인 연동 전까지 null 가능)"
+        profileImageUrl:
+          type:
+            - "string"
+            - "null"
+          description: "사용자 프로필 이미지 URL (User 도메인 연동 전까지 null 가능)"
+      required:
+        - "userId"
+    PlaylistCreateRequest:
+      type: "object"
+      properties:
+        title:
+          type: "string"
+          description: "플레이리스트 제목"
+        description:
+          type: "string"
+          description: "플레이리스트 설명"
+      required:
+        - "description"
+        - "title"
+    ContentSummary:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          description: "콘텐츠 ID"
+        type:
+          type: "string"
+          description: "콘텐츠 타입"
+          enum:
+            - "movie"
+            - "tvSeries"
+            - "sport"
+        title:
+          type: "string"
+          description: "콘텐츠 제목"
+        description:
+          type: "string"
+          description: "콘텐츠 설명"
+        thumbnailUrl:
+          type: "string"
+          description: "썸네일 이미지 URL"
+        tags:
+          type: "array"
+          description: "콘텐츠 태그 목록"
+          items:
+            type: "string"
+        averageRating:
+          type: "number"
+          format: "double"
+          description: "평균 평점"
+        reviewCount:
+          type: "integer"
+          format: "int32"
+          description: "리뷰 개수"
+      required:
+        - "averageRating"
+        - "id"
+        - "reviewCount"
+        - "tags"
+        - "title"
+        - "type"
+    PlaylistDto:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          description: "플레이리스트 ID"
+        owner:
+          "$ref": "#/components/schemas/UserSummary"
+          description: "플레이리스트 소유자"
+        title:
+          type: "string"
+          description: "플레이리스트 제목"
+        description:
+          type: "string"
+          description: "플레이리스트 설명"
+        updatedAt:
+          type: "string"
+          format: "date-time"
+          description: "수정된 시간"
+        subscriberCount:
+          type: "integer"
+          format: "int64"
+          description: "구독자 수"
+        subscribedByMe:
+          type: "boolean"
+          description: "구독 여부"
+        contents:
+          type: "array"
+          description: "플레이리스트에 포함된 콘텐츠 목록"
+          items:
+            "$ref": "#/components/schemas/ContentSummary"
+      required:
+        - "contents"
+        - "description"
+        - "id"
+        - "owner"
+        - "subscribedByMe"
+        - "subscriberCount"
+        - "title"
+        - "updatedAt"
+    SubscriberItemDto:
+      type: "object"
+      description: "플레이리스트 구독자 목록의 아이템."
+      properties:
+        subscriptionId:
+          type: "string"
+          format: "uuid"
+          description: "구독 관계 ID"
+        user:
+          "$ref": "#/components/schemas/UserSummary"
+          description: "구독자 요약. name/profileImageUrl 은 User 도메인 연동 전까지 null."
+        subscribedAt:
+          type: "string"
+          format: "date-time"
+          description: "구독 생성 시각"
+      required:
+        - "subscriptionId"
+        - "user"
+        - "subscribedAt"
+    FollowRequest:
+      type: "object"
+      properties:
+        followeeId:
+          type: "string"
+          format: "uuid"
+          description: "팔로우 대상 사용자 ID"
+      required:
+        - "followeeId"
+    FollowDto:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          description: "팔로우 ID"
+        followeeId:
+          type: "string"
+          format: "uuid"
+          description: "팔로우 대상 사용자 ID"
+        followerId:
+          type: "string"
+          format: "uuid"
+          description: "팔로워 사용자 ID"
+      required:
+        - "followeeId"
+        - "followerId"
+        - "id"
+    FollowUserItemDto:
+      type: "object"
+      description: "팔로워/팔로잉 목록의 아이템. followers 응답에서 user 는 팔로워, followings 응답에서 user 는 팔로우 대상."
+      properties:
+        followId:
+          type: "string"
+          format: "uuid"
+          description: "팔로우 관계 ID (unfollow 시 사용)"
+        user:
+          "$ref": "#/components/schemas/UserSummary"
+          description: "상대 사용자 요약. name/profileImageUrl 은 User 도메인 연동 전까지 null."
+        followedAt:
+          type: "string"
+          format: "date-time"
+          description: "팔로우 관계 생성 시각"
+      required:
+        - "followId"
+        - "user"
+        - "followedAt"
+    ConversationCreateRequest:
+      type: "object"
+      properties:
+        withUserId:
+          type: "string"
+          format: "uuid"
+          description: "대화 상대 정보 ID"
+      required:
+        - "withUserId"
+    ConversationDto:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          description: "대화 ID"
+        with:
+          "$ref": "#/components/schemas/UserSummary"
+          description: "대화 상대 정보"
+        hasUnread:
+          type: "boolean"
+          description: "읽지 않은 메시지 존재 여부"
+        latestMessage:
+          oneOf:
+            -
+              "$ref": "#/components/schemas/DirectMessageDto"
+            -
+              type: "null"
+          description: "마지막 메시지 내용. 새 대화에는 null입니다."
+      required:
+        - "hasUnread"
+        - "id"
+        - "latestMessage"
+        - "with"
+    DirectMessageDto:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          description: "메시지 ID"
+        conversationId:
+          type: "string"
+          format: "uuid"
+          description: "대화 ID"
+        createdAt:
+          type: "string"
+          format: "date-time"
+          description: "메시지 생성 시간"
+        sender:
+          "$ref": "#/components/schemas/UserSummary"
+          description: "발신자 정보"
+        receiver:
+          "$ref": "#/components/schemas/UserSummary"
+          description: "수신자 정보"
+        content:
+          type: "string"
+          description: "메시지 내용"
+      required:
+        - "content"
+        - "conversationId"
+        - "createdAt"
+        - "id"
+        - "receiver"
+        - "sender"
+    ContentCreateRequest:
+      type: "object"
+      properties:
+        type:
+          type: "string"
+          description: "콘텐츠 타입"
+          enum:
+            - "movie"
+            - "tvSeries"
+            - "sport"
+        title:
+          type: "string"
+          description: "콘텐츠 제목"
+        description:
+          type: "string"
+          description: "콘텐츠 설명"
+        tags:
+          type: "array"
+          description: "콘텐츠 태그 목록"
+          items:
+            type: "string"
+      required:
+        - "description"
+        - "tags"
+        - "title"
+        - "type"
+    ContentDto:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          description: "콘텐츠 ID"
+        type:
+          type: "string"
+          description: "콘텐츠 타입"
+          enum:
+            - "movie"
+            - "tvSeries"
+            - "sport"
+        title:
+          type: "string"
+          description: "콘텐츠 제목"
+        description:
+          type: "string"
+          description: "콘텐츠 설명"
+        thumbnailUrl:
+          type: "string"
+          description: "썸네일 이미지 URL"
+        tags:
+          type: "array"
+          description: "콘텐츠 태그 목록"
+          items:
+            type: "string"
+        averageRating:
+          type: "number"
+          format: "double"
+          description: "평균 평점"
+        reviewCount:
+          type: "integer"
+          format: "int32"
+          description: "리뷰 개수"
+        watcherCount:
+          type: "integer"
+          format: "int64"
+          description: "시청자 수"
+      required:
+        - "averageRating"
+        - "description"
+        - "id"
+        - "reviewCount"
+        - "tags"
+        - "thumbnailUrl"
+        - "title"
+        - "type"
+        - "watcherCount"
+    SignInRequest:
+      type: "object"
+      properties:
+        email:
+          type: "string"
+          description: "이메일"
+        password:
+          type: "string"
+          description: "비밀번호"
+      required:
+        - "email"
+        - "password"
+    JwtDto:
+      type: "object"
+      properties:
+        userDto:
+          "$ref": "#/components/schemas/UserDto"
+        accessToken:
+          type: "string"
+      required:
+        - "accessToken"
+        - "userDto"
+    ResetPasswordRequest:
+      type: "object"
+      properties:
+        email:
+          type: "string"
+          description: "임시 비밀번호를 발급받을 이메일"
+      required:
+        - "email"
+    UserUpdateRequest:
+      type: "object"
+      properties:
+        name:
+          type: "string"
+          description: "이름"
+    UserRoleUpdateRequest:
+      type: "object"
+      properties:
+        role:
+          type: "string"
+          description: "권한"
+          enum:
+            - "USER"
+            - "ADMIN"
+      required:
+        - "role"
+    ChangePasswordRequest:
+      type: "object"
+      properties:
+        password:
+          type: "string"
+          description: "8~72자의 새 비밀번호입니다. ASCII 영문, 숫자, 특수문자를 각각 하나 이상 포함해야 합니다."
+          minLength: 8
+          maxLength: 72
+          pattern: '^(?=.*[A-Za-z])(?=.*\d)(?=.*[!@#$%^&*()_+\-={}\[\]|:;"''<>,.?/~`])[A-Za-z\d!@#$%^&*()_+\-={}\[\]|:;"''<>,.?/~`]+$'
+      required:
+        - "password"
+    UserLockUpdateRequest:
+      type: "object"
+      properties:
+        locked:
+          type: "boolean"
+          description: "변경할 잠금 상태"
+      required:
+        - "locked"
+    ReviewUpdateRequest:
+      type: "object"
+      properties:
+        text:
+          type: "string"
+          description: "리뷰 내용"
+        rating:
+          type: "number"
+          format: "double"
+          description: "평점 (0.0 ~ 5.0)"
+          minimum: 0
+          maximum: 5
+          multipleOf: 0.5
+    PlaylistUpdateRequest:
+      type: "object"
+      description: |
+        플레이리스트 부분 수정 요청. `null` 또는 빈 문자열/공백만 있는 필드는 무시되고 기존값이 유지됩니다.
+      properties:
+        title:
+          type: ["string", "null"]
+          maxLength: 255
+          description: "플레이리스트 제목. `null` 또는 빈 문자열/공백만 있는 경우 기존값이 유지됩니다. 256자 이상 문자열(공백 포함)은 400 이 반환됩니다."
+        description:
+          type: ["string", "null"]
+          description: "플레이리스트 설명. `null` 또는 빈 문자열/공백만 있는 경우 기존값이 유지됩니다."
+    ContentUpdateRequest:
+      type: "object"
+      properties:
+        title:
+          type: "string"
+          description: "콘텐츠 제목"
+        description:
+          type: "string"
+          description: "콘텐츠 설명"
+        tags:
+          type: "array"
+          description: "콘텐츠 태그 목록"
+          items:
+            type: "string"
+    CursorResponseUserDto:
+      type: "object"
+      properties:
+        data:
+          type: "array"
+          description: "데이터 목록"
+          items:
+            "$ref": "#/components/schemas/UserDto"
+        nextCursor:
+          type:
+            - "string"
+            - "null"
+          description: "다음 커서"
+        nextIdAfter:
+          type:
+            - "string"
+            - "null"
+          format: "uuid"
+          description: "다음 요청의 보조 커서"
+        hasNext:
+          type: "boolean"
+          description: "다음 데이터가 있는지 여부"
+        totalCount:
+          type: "integer"
+          format: "int64"
+          description: "총 데이터 개수"
+        sortBy:
+          type: "string"
+          description: "정렬 기준"
+        sortDirection:
+          type: "string"
+          description: "정렬 방향"
+          enum:
+            - "ASCENDING"
+            - "DESCENDING"
+      required:
+        - "data"
+        - "hasNext"
+        - "sortBy"
+        - "sortDirection"
+        - "totalCount"
+    WatchingSessionDto:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          description: "시청 세션 ID"
+        createdAt:
+          type: "string"
+          format: "date-time"
+          description: "시청 세션 생성 시간"
+        watcher:
+          "$ref": "#/components/schemas/UserSummary"
+          description: "시청자 정보"
+        content:
+          "$ref": "#/components/schemas/ContentSummary"
+          description: "시청 중인 콘텐츠 정보"
+      required:
+        - "content"
+        - "createdAt"
+        - "id"
+        - "watcher"
+    SseEmitter:
+      type: "object"
+      properties:
+        timeout:
+          type: "integer"
+          format: "int64"
+    CursorResponseReviewDto:
+      type: "object"
+      properties:
+        data:
+          type: "array"
+          description: "데이터 목록"
+          items:
+            "$ref": "#/components/schemas/ReviewDto"
+        nextCursor:
+          type:
+            - "string"
+            - "null"
+          description: "다음 커서"
+        nextIdAfter:
+          type:
+            - "string"
+            - "null"
+          format: "uuid"
+          description: "다음 요청의 보조 커서"
+        hasNext:
+          type: "boolean"
+          description: "다음 데이터가 있는지 여부"
+        totalCount:
+          type: "integer"
+          format: "int64"
+          description: "총 데이터 개수"
+        sortBy:
+          type: "string"
+          description: "정렬 기준"
+        sortDirection:
+          type: "string"
+          description: "정렬 방향"
+          enum:
+            - "ASCENDING"
+            - "DESCENDING"
+      required:
+        - "data"
+        - "hasNext"
+        - "sortBy"
+        - "sortDirection"
+        - "totalCount"
+    CursorResponseSubscriberItemDto:
+      type: "object"
+      properties:
+        data:
+          type: "array"
+          description: "구독자 목록"
+          items:
+            "$ref": "#/components/schemas/SubscriberItemDto"
+        nextCursor:
+          type:
+            - "string"
+            - "null"
+          description: "다음 커서"
+        nextIdAfter:
+          type:
+            - "string"
+            - "null"
+          format: "uuid"
+          description: "다음 요청의 보조 커서"
+        hasNext:
+          type: "boolean"
+          description: "다음 데이터가 있는지 여부"
+        totalCount:
+          type: "integer"
+          format: "int64"
+          description: "총 데이터 개수"
+        sortBy:
+          type: "string"
+          description: "정렬 기준"
+        sortDirection:
+          type: "string"
+          description: "정렬 방향"
+          enum:
+            - "ASCENDING"
+            - "DESCENDING"
+      required:
+        - "data"
+        - "hasNext"
+        - "sortBy"
+        - "sortDirection"
+        - "totalCount"
+    CursorResponsePlaylistDto:
+      type: "object"
+      properties:
+        data:
+          type: "array"
+          description: "데이터 목록"
+          items:
+            "$ref": "#/components/schemas/PlaylistDto"
+        nextCursor:
+          type:
+            - "string"
+            - "null"
+          description: "다음 커서"
+        nextIdAfter:
+          type:
+            - "string"
+            - "null"
+          format: "uuid"
+          description: "다음 요청의 보조 커서"
+        hasNext:
+          type: "boolean"
+          description: "다음 데이터가 있는지 여부"
+        totalCount:
+          type: "integer"
+          format: "int64"
+          description: "총 데이터 개수"
+        sortBy:
+          type: "string"
+          description: "정렬 기준"
+        sortDirection:
+          type: "string"
+          description: "정렬 방향"
+          enum:
+            - "ASCENDING"
+            - "DESCENDING"
+      required:
+        - "data"
+        - "hasNext"
+        - "sortBy"
+        - "sortDirection"
+        - "totalCount"
+    CursorResponseFollowUserItemDto:
+      type: "object"
+      properties:
+        data:
+          type: "array"
+          description: "팔로워/팔로잉 목록"
+          items:
+            "$ref": "#/components/schemas/FollowUserItemDto"
+        nextCursor:
+          type:
+            - "string"
+            - "null"
+          description: "다음 커서"
+        nextIdAfter:
+          type:
+            - "string"
+            - "null"
+          format: "uuid"
+          description: "다음 요청의 보조 커서"
+        hasNext:
+          type: "boolean"
+          description: "다음 데이터가 있는지 여부"
+        totalCount:
+          type: "integer"
+          format: "int64"
+          description: "총 데이터 개수"
+        sortBy:
+          type: "string"
+          description: "정렬 기준"
+        sortDirection:
+          type: "string"
+          description: "정렬 방향"
+          enum:
+            - "ASCENDING"
+            - "DESCENDING"
+      required:
+        - "data"
+        - "hasNext"
+        - "sortBy"
+        - "sortDirection"
+        - "totalCount"
+    CursorResponseNotificationDto:
+      type: "object"
+      properties:
+        data:
+          type: "array"
+          description: "데이터 목록"
+          items:
+            "$ref": "#/components/schemas/NotificationDto"
+        nextCursor:
+          type:
+            - "string"
+            - "null"
+          description: "다음 커서"
+        nextIdAfter:
+          type:
+            - "string"
+            - "null"
+          format: "uuid"
+          description: "다음 요청의 보조 커서"
+        hasNext:
+          type: "boolean"
+          description: "다음 데이터가 있는지 여부"
+        totalCount:
+          type: "integer"
+          format: "int64"
+          description: "총 데이터 개수"
+        sortBy:
+          type: "string"
+          description: "정렬 기준"
+        sortDirection:
+          type: "string"
+          description: "정렬 방향"
+          enum:
+            - "ASCENDING"
+            - "DESCENDING"
+      required:
+        - "data"
+        - "hasNext"
+        - "sortBy"
+        - "sortDirection"
+        - "totalCount"
+    NotificationDto:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          description: "알림 ID"
+        createdAt:
+          type: "string"
+          format: "date-time"
+          description: "알림 생성 시간"
+        receiverId:
+          type: "string"
+          format: "uuid"
+          description: "수신자 ID"
+        title:
+          type: "string"
+          description: "알림 제목"
+        content:
+          type: "string"
+          description: "알림 내용"
+        level:
+          type: "string"
+          description: "알림 수준"
+          enum:
+            - "INFO"
+            - "WARNING"
+            - "ERROR"
+        readAt:
+          type:
+            - "string"
+            - "null"
+          format: "date-time"
+          description: "알림을 읽은 시각. 읽지 않은 알림이면 null입니다."
+      required:
+        - "content"
+        - "createdAt"
+        - "id"
+        - "level"
+        - "receiverId"
+        - "title"
+    CursorResponseConversationDto:
+      type: "object"
+      properties:
+        data:
+          type: "array"
+          description: "데이터 목록"
+          items:
+            "$ref": "#/components/schemas/ConversationDto"
+        nextCursor:
+          type:
+            - "string"
+            - "null"
+          description: "다음 커서"
+        nextIdAfter:
+          type:
+            - "string"
+            - "null"
+          format: "uuid"
+          description: "다음 요청의 보조 커서"
+        hasNext:
+          type: "boolean"
+          description: "다음 데이터가 있는지 여부"
+        totalCount:
+          type: "integer"
+          format: "int64"
+          description: "총 데이터 개수"
+        sortBy:
+          type: "string"
+          description: "정렬 기준"
+        sortDirection:
+          type: "string"
+          description: "정렬 방향"
+          enum:
+            - "ASCENDING"
+            - "DESCENDING"
+      required:
+        - "data"
+        - "hasNext"
+        - "sortBy"
+        - "sortDirection"
+        - "totalCount"
+    CursorResponseDirectMessageDto:
+      type: "object"
+      properties:
+        data:
+          type: "array"
+          description: "데이터 목록"
+          items:
+            "$ref": "#/components/schemas/DirectMessageDto"
+        nextCursor:
+          type:
+            - "string"
+            - "null"
+          description: "다음 커서"
+        nextIdAfter:
+          type:
+            - "string"
+            - "null"
+          format: "uuid"
+          description: "다음 요청의 보조 커서"
+        hasNext:
+          type: "boolean"
+          description: "다음 데이터가 있는지 여부"
+        totalCount:
+          type: "integer"
+          format: "int64"
+          description: "총 데이터 개수"
+        sortBy:
+          type: "string"
+          description: "정렬 기준"
+        sortDirection:
+          type: "string"
+          description: "정렬 방향"
+          enum:
+            - "ASCENDING"
+            - "DESCENDING"
+      required:
+        - "data"
+        - "hasNext"
+        - "sortBy"
+        - "sortDirection"
+        - "totalCount"
+    CursorResponseContentDto:
+      type: "object"
+      properties:
+        data:
+          type: "array"
+          description: "데이터 목록"
+          items:
+            "$ref": "#/components/schemas/ContentDto"
+        nextCursor:
+          type:
+            - "string"
+            - "null"
+          description: "다음 커서"
+        nextIdAfter:
+          type:
+            - "string"
+            - "null"
+          format: "uuid"
+          description: "다음 요청의 보조 커서"
+        hasNext:
+          type: "boolean"
+          description: "다음 데이터가 있는지 여부"
+        totalCount:
+          type: "integer"
+          format: "int64"
+          description: "총 데이터 개수"
+        sortBy:
+          type: "string"
+          description: "정렬 기준"
+        sortDirection:
+          type: "string"
+          description: "정렬 방향"
+          enum:
+            - "ASCENDING"
+            - "DESCENDING"
+      required:
+        - "data"
+        - "hasNext"
+        - "sortBy"
+        - "sortDirection"
+        - "totalCount"
+    CursorResponseWatchingSessionDto:
+      type: "object"
+      properties:
+        data:
+          type: "array"
+          description: "데이터 목록"
+          items:
+            "$ref": "#/components/schemas/WatchingSessionDto"
+        nextCursor:
+          type:
+            - "string"
+            - "null"
+          description: "다음 커서"
+        nextIdAfter:
+          type:
+            - "string"
+            - "null"
+          format: "uuid"
+          description: "다음 요청의 보조 커서"
+        hasNext:
+          type: "boolean"
+          description: "다음 데이터가 있는지 여부"
+        totalCount:
+          type: "integer"
+          format: "int64"
+          description: "총 데이터 개수"
+        sortBy:
+          type: "string"
+          description: "정렬 기준"
+        sortDirection:
+          type: "string"
+          description: "정렬 방향"
+          enum:
+            - "ASCENDING"
+            - "DESCENDING"
+      required:
+        - "data"
+        - "hasNext"
+        - "sortBy"
+        - "sortDirection"
+        - "totalCount"
+    FollowerCountResponse:
+      type: "object"
+      properties:
+        count:
+          type: "integer"
+          format: "int64"
+          minimum: 0
+          description: "팔로워 수"
+      required:
+        - "count"
+  securitySchemes:
+    BearerAuth:
+      type: "http"
+      description: "로그인 후 발급받은 JWT 액세스 토큰"
+      scheme: "bearer"
+      bearerFormat: "JWT"
+    CsrfToken:
+      type: "apiKey"
+      description: "GET /api/auth/csrf-token 호출 후 XSRF-TOKEN 쿠키로 받은 값을 전달합니다."
+      name: "X-XSRF-TOKEN"
+      in: "header"

@@ -1,0 +1,82 @@
+name: 버그 신고
+description: 재현 가능한 오류나 예상과 다른 동작을 등록합니다.
+title: "[Bug] "
+body:
+  - type: dropdown
+    id: domain
+    attributes:
+      label: 관련 도메인
+      options:
+        - A. 사용자·인증
+        - B. 콘텐츠·리뷰
+        - C. 플레이리스트·팔로우
+        - D. 알림·DM
+        - E. 시청 세션·같이 보기
+        - F. 인프라·공통 작업
+        - 여러 도메인에 걸침
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: 영향도
+      options:
+        - 작업 진행을 막음
+        - 주요 기능이 동작하지 않음
+        - 일부 기능이 잘못 동작함
+        - 화면·문구 등 작은 문제
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: 발생 환경
+      options:
+        - 로컬
+        - 테스트
+        - 스테이징
+        - 운영
+        - 여러 환경
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 재현 방법
+      description: 오류를 다시 확인할 수 있도록 순서대로 작성해 주세요.
+      placeholder: |
+        1. 로그인한다.
+        2. 특정 API를 호출한다.
+        3. 오류를 확인한다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대한 결과
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 실제 결과
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 로그·화면·응답
+      description: 민감한 정보는 제거하고 로그, 응답 또는 화면을 첨부해 주세요.
+      render: shell
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: 추가 정보
+      description: 발생 시각, 관련 PR·이슈, 추정 원인 등을 작성해 주세요.
