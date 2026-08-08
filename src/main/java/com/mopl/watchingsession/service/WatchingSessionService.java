@@ -234,7 +234,7 @@ public class WatchingSessionService {
         UUID nextIdAfter = null;
         if (hasNext && !page.isEmpty()) {
             WatchingSessionSnapshot last = page.get(page.size() - 1);
-            nextCursor = CursorUtils.encodeInstant(last.getUpdatedAt());
+            nextCursor = CursorUtils.encodeInstant(last.getCreatedAt());
             nextIdAfter = last.getId();
         }
 

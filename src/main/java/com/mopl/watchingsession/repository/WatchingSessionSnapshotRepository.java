@@ -26,7 +26,7 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
       WHERE s.contentId = :contentId
         AND s.expiresAt > :now
         AND (cast(:watcherNameLike as string) IS NULL OR LOWER(u.name) LIKE LOWER(CONCAT('%', cast(:watcherNameLike as string), '%')) ESCAPE '\\')
-      ORDER BY s.updatedAt DESC, s.id DESC
+      ORDER BY s.createdAt DESC, s.id DESC
       """)
     List<WatchingSessionSnapshot> findByContentIdFirstPageDesc(
         @Param("contentId") UUID contentId,
@@ -42,9 +42,9 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
       WHERE s.contentId = :contentId
         AND s.expiresAt > :now
         AND (cast(:watcherNameLike as string) IS NULL OR LOWER(u.name) LIKE LOWER(CONCAT( '%', cast(:watcherNameLike as string), '%')) ESCAPE '\\')
-        AND (s.updatedAt < :cursor
-          OR (s.updatedAt = :cursor AND s.id < :idAfter))
-      ORDER BY s.updatedAt DESC, s.id DESC
+        AND (s.createdAt < :cursor
+          OR (s.createdAt = :cursor AND s.id < :idAfter))
+      ORDER BY s.createdAt DESC, s.id DESC
       """)
     List<WatchingSessionSnapshot> findByContentIdAfterDesc(
         @Param("contentId") UUID contentId,
@@ -62,7 +62,7 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
       WHERE s.contentId = :contentId
         AND s.expiresAt > :now
         AND (cast(:watcherNameLike as string) IS NULL OR LOWER(u.name) LIKE LOWER(CONCAT('%', cast(:watcherNameLike as string), '%')) ESCAPE '\\')
-      ORDER BY s.updatedAt ASC, s.id ASC
+      ORDER BY s.createdAt ASC, s.id ASC
       """)
     List<WatchingSessionSnapshot> findByContentIdFirstPageAsc(
         @Param("contentId") UUID contentId,
@@ -78,9 +78,9 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
       WHERE s.contentId = :contentId
         AND s.expiresAt > :now
         AND (cast(:watcherNameLike as string) IS NULL OR LOWER(u.name) LIKE LOWER(CONCAT('%', cast(:watcherNameLike as string), '%')) ESCAPE '\\')
-        AND (s.updatedAt > :cursor
-          OR (s.updatedAt = :cursor AND s.id > :idAfter))
-      ORDER BY s.updatedAt ASC, s.id ASC
+        AND (s.createdAt > :cursor
+          OR (s.createdAt = :cursor AND s.id > :idAfter))
+      ORDER BY s.createdAt ASC, s.id ASC
       """)
     List<WatchingSessionSnapshot> findByContentIdAfterAsc(
         @Param("contentId") UUID contentId,
