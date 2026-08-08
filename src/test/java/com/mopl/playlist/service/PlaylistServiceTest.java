@@ -422,8 +422,8 @@ class PlaylistServiceTest {
     @Test
     @DisplayName("구독 취소 성공 시 rows affected 1 을 얻고 subscriberCount 를 한 번 감소시킨다")
     void unsubscribe_success() {
-        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
-                .thenReturn(true);
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
         when(subscriptionRepository.deleteByPlaylistIdAndSubscriberIdReturningCount(
                 PLAYLIST_ID.toString(), OTHER_ID.toString()))
                 .thenReturn(1);
@@ -436,10 +436,28 @@ class PlaylistServiceTest {
     }
 
     @Test
-    @DisplayName("구독하지 않은 상태에서 취소 시도 시 RESOURCE_NOT_FOUND 예외가 발생한다")
-    void unsubscribe_fail_notSubscribed() {
-        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
-                .thenReturn(false);
+    @DisplayName("구독하지 않은 상태에서 재취소해도 예외 없이 204 흐름으로 종료되고 카운터도 감소하지 않는다")
+    void unsubscribe_notSubscribed_isIdempotent() {
+        // 플레이리스트는 존재하지만 해당 사용자의 구독 row 는 없는 상황.
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(subscriptionRepository.deleteByPlaylistIdAndSubscriberIdReturningCount(
+                PLAYLIST_ID.toString(), OTHER_ID.toString()))
+                .thenReturn(0);
+
+        // 예외 없이 정상 종료해야 하며 (컨트롤러가 204 로 응답한다)
+        playlistService.unsubscribe(PLAYLIST_ID, OTHER_ID);
+
+        // rows=0 경로에서는 카운터를 감소시키지 않아 실구독 수보다 낮게 떨어지지 않는다.
+        verify(playlistRepository, never()).decrementSubscriberCount(any(UUID.class));
+        verify(subscriptionRepository, never())
+                .existsByPlaylistIdAndSubscriberId(any(UUID.class), any(UUID.class));
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 플레이리스트를 취소 시도하면 RESOURCE_NOT_FOUND 예외가 발생한다")
+    void unsubscribe_fail_playlistNotFound() {
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> playlistService.unsubscribe(PLAYLIST_ID, OTHER_ID))
                 .isInstanceOf(BusinessException.class)
@@ -453,9 +471,9 @@ class PlaylistServiceTest {
     @Test
     @DisplayName("동시 unsubscribe race 로 rows affected 가 0 이면 decrement 를 호출하지 않는다")
     void unsubscribe_noDecrement_whenRaceLosesRow() {
-        // exists 통과 후 다른 트랜잭션이 먼저 DELETE 를 실행한 상황을 시뮬레이션한다.
-        when(subscriptionRepository.existsByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
-                .thenReturn(true);
+        // 두 트랜잭션이 동시에 진입해 한 쪽만 실제 DELETE 를 성공시킨 race 를 시뮬레이션한다.
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
         when(subscriptionRepository.deleteByPlaylistIdAndSubscriberIdReturningCount(
                 PLAYLIST_ID.toString(), OTHER_ID.toString()))
                 .thenReturn(0);

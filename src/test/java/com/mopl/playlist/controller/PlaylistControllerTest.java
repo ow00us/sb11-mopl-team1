@@ -338,8 +338,20 @@ class PlaylistControllerTest {
     }
 
     @Test
-    @DisplayName("구독하지 않은 플레이리스트 취소 시 404 를 반환한다")
-    void unsubscribe_fail_notSubscribed() throws Exception {
+    @DisplayName("이미 취소된 상태에서 재취소해도 서비스가 정상 종료하면 204 를 반환한다")
+    void unsubscribe_idempotent_returns204() throws Exception {
+        setAuth(OTHER_ID);
+        doNothing().when(playlistService).unsubscribe(PLAYLIST_ID, OTHER_ID);
+
+        mockMvc.perform(delete("/api/playlists/{playlistId}/subscription", PLAYLIST_ID))
+                .andExpect(status().isNoContent());
+
+        verify(playlistService).unsubscribe(PLAYLIST_ID, OTHER_ID);
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 플레이리스트 취소 시 404 를 반환한다")
+    void unsubscribe_fail_playlistNotFound() throws Exception {
         setAuth(OTHER_ID);
         doThrow(new BusinessException(ErrorCode.RESOURCE_NOT_FOUND))
                 .when(playlistService).unsubscribe(PLAYLIST_ID, OTHER_ID);
