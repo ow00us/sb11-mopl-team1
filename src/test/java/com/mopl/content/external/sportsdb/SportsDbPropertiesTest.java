@@ -39,4 +39,20 @@ class SportsDbPropertiesTest {
         assertThatThrownBy(() -> new SportsDbProperties("   ", "123", List.of(4569)))
                 .isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    @DisplayName("leagueIds가 null이면 예외를 던진다")
+    void constructor_nullLeagueIds_throwsException() {
+        assertThatThrownBy(() -> new SportsDbProperties(
+                "https://www.thesportsdb.com/api/v1/json", "123", null))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("leagueIds가 빈 목록이면 예외를 던진다")
+    void constructor_emptyLeagueIds_throwsException() {
+        assertThatThrownBy(() -> new SportsDbProperties(
+                "https://www.thesportsdb.com/api/v1/json", "123", List.of()))
+                .isInstanceOf(IllegalStateException.class);
+    }
 }
