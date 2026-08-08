@@ -23,6 +23,13 @@ sportsdb:
   api-key: test-dummy-key
   league-ids: 4569
 
+external-content-batch:
+  tmdb-max-pages: 1
+  sportsdb-past-days: 0
+  sportsdb-future-days: 0
+  cron: "0 0 4 * * *"
+  zone: Asia/Seoul
+
 logging:
   level:
     root: warn

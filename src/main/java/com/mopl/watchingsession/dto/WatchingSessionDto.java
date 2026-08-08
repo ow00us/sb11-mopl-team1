@@ -29,11 +29,10 @@ public record WatchingSessionDto (
                 List.copyOf(content.getTags()),
                 content.getAverageRating().doubleValue(),
                 content.getReviewCount().intValue()),
-            snapshot.getUpdatedAt() // 콘텐츠 교체 시점을 반영하기 위해 createdAt 대신 updatedAt 사용
+            snapshot.getCreatedAt()
         );
     }
 
-    // TODO: 추후 Content 쪽에 Enum 바인딩 들어오는 위치 확인 후 리팩토링 or 유지
     private static String toApiContentType(ContentType type) {
         return switch (type) {
             case MOVIE -> "movie";

@@ -3,6 +3,9 @@ spring:
     name: mopl
   profiles:
     active: dev
+  batch:
+    job:
+      enabled: false
   jpa:
     hibernate:
       ddl-auto: validate
@@ -45,7 +48,14 @@ tmdb:
 sportsdb:
   base-url: https://www.thesportsdb.com/api/v1/json
   api-key: ${SPORTSDB_API_KEY}
-  league-ids: 4569
+  league-ids: 4569,4328,4335,4331,4332,4334
+
+external-content-batch:
+  tmdb-max-pages: 5
+  sportsdb-past-days: 3
+  sportsdb-future-days: 3
+  cron: "0 0 4 * * *"
+  zone: Asia/Seoul
 
 app:
   cors:
