@@ -14,7 +14,7 @@ import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.watchingsession.dto.ContentChatSendRequest;
 import com.mopl.watchingsession.service.ContentChatService;
-import com.mopl.watchingsession.websocket.ChatSenderCache;
+import com.mopl.watchingsession.websocket.stompsession.ChatSenderCache;
 import java.security.Principal;
 import java.util.HashMap;
 import java.util.List;

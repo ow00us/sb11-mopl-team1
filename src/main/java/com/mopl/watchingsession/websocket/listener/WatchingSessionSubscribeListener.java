@@ -1,4 +1,4 @@
-package com.mopl.watchingsession.websocket;
+package com.mopl.watchingsession.websocket.listener;
 
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
@@ -7,6 +7,8 @@ import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.service.WatchingSessionService;
 import com.mopl.watchingsession.service.WatchingSessionService.ReplacedSession;
 import com.mopl.watchingsession.service.WatchingSessionService.StartFailedException;
+import com.mopl.watchingsession.websocket.stompsession.WatchSubscriptionAttributes;
+import com.mopl.watchingsession.websocket.broadcast.WatchingSessionBroadcaster;
 import java.security.Principal;
 import java.util.Map;
 import java.util.UUID;
