@@ -1,0 +1,59 @@
+package com.mopl.content.external.batch;
+
+import com.mopl.content.external.tmdb.TmdbApiClient;
+import com.mopl.content.external.tmdb.TmdbApiException;
+import com.mopl.content.external.tmdb.dto.TmdbMovieSummary;
+import com.mopl.content.external.tmdb.dto.TmdbPopularMoviesResponse;
+import io.micrometer.core.instrument.MeterRegistry;
+import java.util.Collections;
+import java.util.Iterator;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.batch.item.ItemReader;
+
+/**
+ * TMDB 인기 영화 목록을 페이지 단위로 순회하며 읽는다.
+ * 설정된 최대 페이지에 도달하거나, TMDB가 빈 결과를 반환하면(더 이상 데이터 없음) 종료한다.
+ * 특정 페이지 조회가 실패하면 로그를 남기고 Micrometer 카운터를 증가시킨 뒤 다음 페이지로 넘어간다 —
+ * 페이지 커서를 API 호출 전에 미리 전진시켜서, 같은 페이지를 반복 요청하다 skipLimit을 소진하는 것을 방지한다.
+ * Job 실행마다 상태(currentPage 등)가 초기화되어야 하므로 반드시 @StepScope 빈으로 등록한다.
+ */
+@Slf4j
+@RequiredArgsConstructor
+public class TmdbMoviePopularItemReader implements ItemReader<TmdbMovieSummary> {
+
+    private static final String FAILURE_METRIC_NAME = "external-content-batch.api.failures";
+
+    private final TmdbApiClient tmdbApiClient;
+    private final int maxPages;
+    private final MeterRegistry meterRegistry;
+
+    private int currentPage = 1;
+    private Iterator<TmdbMovieSummary> currentPageIterator = Collections.emptyIterator();
+
+    @Override
+    public TmdbMovieSummary read() {
+        while (!currentPageIterator.hasNext()) {
+            if (currentPage > maxPages) {
+                return null;
+            }
+            int pageToFetch = currentPage;
+            currentPage++;
+
+            TmdbPopularMoviesResponse response;
+            try {
+                response = tmdbApiClient.getPopularMovies(pageToFetch);
+            } catch (TmdbApiException e) {
+                log.warn("TMDB 인기 영화 {}페이지 조회 실패, 다음 페이지로 넘어갑니다.", pageToFetch, e);
+                meterRegistry.counter(FAILURE_METRIC_NAME, "source", "tmdb-movie").increment();
+                continue;
+            }
+
+            if (response.results().isEmpty()) {
+                return null;
+            }
+            currentPageIterator = response.results().iterator();
+        }
+        return currentPageIterator.next();
+    }
+}
