@@ -244,9 +244,54 @@ public class WatchingSessionServiceTest {
         when(userRepository.findById(WATCHER_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
-            .isInstanceOf(BusinessException.class);
+            .isInstanceOf(WatchingSessionService.StartFailedException.class)
+                .hasCauseInstanceOf(BusinessException.class);
 
         verify(watchingSessionSnapshotWriter, times(1)).delete(WATCHER_ID);
+    }
+
+    @Test
+    @DisplayName("재구독 중 enrich가 실패해 보상 삭제되면, 예외에 직전 세션(이전 콘텐츠)이 실려 나온다")
+    void start_throwsExceptionDuringEnrich_carriesEndedPreviousSession() {
+        mockContentExists(CONTENT_ID);
+        mockContentExists(NEW_CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        Instant notExpired = Instant.now().plus(1, ChronoUnit.HOURS);
+
+        // 콘텐츠 A로 정상 시작해 소유권을 확보한다
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(createSnapshotFixture(CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT, notExpired));
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        when(watchingSessionSnapshotRepository.findByWatcherId(WATCHER_ID))
+            .thenReturn(Optional.of(createSnapshotFixture(CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT, notExpired)));
+
+        // 콘텐츠 B로 재구독: upsert는 성공하지만 enrich 단계에서 실패하도록 유도
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(NEW_CONTENT_ID), any()))
+            .thenReturn(createSnapshotFixture(NEW_CONTENT_ID, FIRST_CREATED_AT, Instant.now(), notExpired));
+        when(contentRepository.findById(NEW_CONTENT_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> watchingSessionService.start(WATCHER_ID, NEW_CONTENT_ID, SESSION_ID, OTHER_SUBSCRIPTION_ID))
+            .isInstanceOf(WatchingSessionService.StartFailedException.class)
+            .extracting(e -> ((WatchingSessionService.StartFailedException) e).getEndedPrevious())
+            .extracting(previous -> ((WatchingSessionDto) previous).content().id())
+            .isEqualTo(CONTENT_ID);
+
+        verify(watchingSessionSnapshotWriter).delete(WATCHER_ID);
+    }
+
+    @Test
+    @DisplayName("이전 세션이 없던 첫 구독이 enrich에서 실패하면, 알릴 퇴장이 없으므로 endedPrevious는 null이다")
+    void start_throwsExceptionDuringEnrich_hasNoEndedPrevious_whenNoPreviousSession() {
+        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(createSnapshotFixture(CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT, FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS)));
+        when(userRepository.findById(WATCHER_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
+            .isInstanceOf(WatchingSessionService.StartFailedException.class)
+            .extracting(e -> ((WatchingSessionService.StartFailedException) e).getEndedPrevious())
+            .isNull();
     }
 
     @Test
