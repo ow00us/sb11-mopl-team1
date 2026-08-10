@@ -39,7 +39,7 @@ public class ContentChatService {
         // 캐시 미스 극단 케이스 대응
         UserSummary actualSender = (sender != null) ? sender : getSenderFallback(senderId);
 
-        // 브로드캐스트
+        // 브로드캐스트, 실패 시 예외 그대로 전파 (STOMP ERROR 프레임으로 발신자에게 전달되므로 발신자가 실패를 인지할 수 있음)
         ContentChatDto chatDto = new ContentChatDto(actualSender, content);
         messagingTemplate.convertAndSend(DESTINATION_TEMPLATE.formatted(contentId), chatDto);
     }
