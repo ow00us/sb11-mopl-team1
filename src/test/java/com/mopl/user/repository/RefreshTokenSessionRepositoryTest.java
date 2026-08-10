@@ -148,6 +148,7 @@ class RefreshTokenSessionRepositoryTest {
     void findAllByUserId_successWhenUserHasMultipleSessions() {
         // given
         User user = persistUser("multi-session@example.com");
+        User otherUser = persistUser("other-session@example.com");
 
         Instant expiresAt = Instant.now()
             .plus(Duration.ofDays(7))
@@ -167,8 +168,19 @@ class RefreshTokenSessionRepositoryTest {
                 .expiresAt(expiresAt)
                 .build();
 
+        RefreshTokenSession otherUserSession =
+            RefreshTokenSession.builder()
+                .userId(otherUser.getId())
+                .tokenHash("e".repeat(64))
+                .expiresAt(expiresAt)
+                .build();
+
         refreshTokenSessionRepository.saveAllAndFlush(
-            List.of(chromeSession, mobileSession)
+            List.of(
+                chromeSession,
+                mobileSession,
+                otherUserSession
+            )
         );
 
         entityManager.clear();

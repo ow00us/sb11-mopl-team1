@@ -18,4 +18,17 @@ public record IssuedRefreshToken(
     String rawToken,
     Instant expiresAt
 ) {
+    /**
+     * 객체 전체가 실수로 로그에 기록되더라도
+     * Refresh Token 원문이 노출되지 않도록 마스킹
+     *
+     * rawToken() 접근자는 이후 Cookie 생성 과정에서 그대로 사용할 수 있지만,
+     * record가 자동으로 생성하는 toString()에는 원문을 포함하지 않는다.
+     */
+    @Override
+    public String toString() {
+        return "IssuedRefreshToken[rawToken=***, expiresAt="
+            + expiresAt
+            + "]";
+    }
 }

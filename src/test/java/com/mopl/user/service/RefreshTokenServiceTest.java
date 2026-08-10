@@ -190,4 +190,26 @@ class RefreshTokenServiceTest {
             refreshTokenSessionRepository
         );
     }
+
+    @Test
+    @DisplayName("발급 결과 문자열에는 Refresh Token 원문을 노출하지 않는다")
+    void issuedRefreshToken_doesNotExposeRawTokenInToString() {
+        // given
+        String rawToken = "sensitive-refresh-token";
+
+        IssuedRefreshToken issuedRefreshToken =
+            new IssuedRefreshToken(
+                rawToken,
+                Instant.parse("2026-08-17T00:00:00Z")
+            );
+
+        // when
+        String result = issuedRefreshToken.toString();
+
+        // then
+        assertThat(result)
+            .doesNotContain(rawToken)
+            .contains("rawToken=***")
+            .contains("2026-08-17T00:00:00Z");
+    }
 }
