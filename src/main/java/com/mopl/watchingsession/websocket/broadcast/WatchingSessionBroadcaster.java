@@ -19,7 +19,7 @@ public class WatchingSessionBroadcaster {
     private static final String DESTINATION_TEMPLATE = "/sub/contents/%s/watch";
 
     // 시청자 수 조회가 실패했을 때 대신 내보내는 값
-    // 정상적인 시창자 수는 항상 0 이상이므로 집계 실패했을 때 0을 내보내면 진짜 0명과 구분되지 않음.
+    // 정상적인 시청자 수는 항상 0 이상이므로 집계 실패했을 때 0을 내보내면 진짜 0명과 구분되지 않음.
     private static final long WATCHER_COUNT_UNAVAILABLE = -1L;
 
     private final SimpMessagingTemplate messagingTemplate;
