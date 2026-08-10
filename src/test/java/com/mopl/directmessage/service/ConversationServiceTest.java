@@ -1008,14 +1008,240 @@ class ConversationServiceTest {
     }
 
     @Test
-    @DisplayName("cursor와 idAfter 중 하나만 전달하면 실패")
-    void getConversations_invalidCursorPair_fails() {
+    @DisplayName("cursor만 전달하면 대화 목록 조회에 실패")
+    void getConversations_cursorOnly_fails() {
+        // given
+        String cursor = CursorUtils.encodeInstant(Instant.parse("2026-08-01T01:00:00Z")
+        );
+
+        // when & then
+        assertThatThrownBy(() ->
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                cursor,
+                null,
+                20,
+                "DESCENDING",
+                "createdAt"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT)
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            directMessageRepository,
+            userRepository
+        );
+    }
+
+    @Test
+    @DisplayName("idAfter만 전달하면 대화 목록 조회 실패")
+    void getConversation_idAfterOnly_fails() {
         // when & then
         assertThatThrownBy(() ->
             conversationService.getConversations(
                 REQUESTER_ID,
                 null,
                 null,
+                CONVERSATION_ID,
+                20,
+                "DISCENDING",
+                "createdAt"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT)
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            directMessageRepository,
+            userRepository
+        );
+    }
+
+    @Test
+    @DisplayName("limit이 1보다 작으면 대화 목록 조회에 실패")
+    void getConversations_limitBelowMinimum_fails() {
+        assertThatThrownBy(() ->
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                null,
+                null,
+                0,
+                "DISECENDING",
+                "createdAt"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT)
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            directMessageRepository,
+            userRepository
+        );
+    }
+
+    @Test
+    @DisplayName("limit이 100보다 크면 대화 목록 조회에 실패")
+    void getConversations_limitAboveMaximum_fails() {
+        assertThatThrownBy(() ->
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                null,
+                null,
+                101,
+                "DESCENDING",
+                "createdAt"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT)
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            directMessageRepository,
+            userRepository
+        );
+    }
+
+    @Test
+    @DisplayName("sortBy가 createdAt이 아니면 대화 목록 조회에 실패")
+    void getConversation_invalidSortBy_fails() {
+        assertThatThrownBy(() ->
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                null,
+                null,
+                20,
+                "DESCENDING",
+                "name"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT)
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            directMessageRepository,
+            userRepository
+        );
+    }
+
+    @Test
+    @DisplayName("지원하지 않는 정렬 방향이면 대화 목록 조회에 실패")
+    void getConversations_invalidSortDirection_fails() {
+        assertThatThrownBy(() ->
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                null,
+                null,
+                20,
+                "INVALID",
+                "createdAt"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT)
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            directMessageRepository,
+            userRepository
+        );
+    }
+
+    @Test
+    @DisplayName("cursor와 idAfter를 함께 전달하면 다음 페이지를 조회")
+    void getConversations_cursorPair_success() {
+        // given
+        Instant cursorInstant =
+            Instant.parse("2026-08-01T01:00:00Z");
+
+        String cursor =
+            CursorUtils.encodeInstant(cursorInstant);
+
+        when(
+            participantRepository.findConversationListDesc(
+                eq(REQUESTER_ID),
+                isNull(),
+                eq(cursorInstant),
+                eq(CONVERSATION_ID),
+                any()
+            )
+        ).thenReturn(List.of());
+
+        when(
+            participantRepository.countConversationList(
+                REQUESTER_ID,
+                null
+            )
+        ).thenReturn(0L);
+
+        // when
+        CursorResponse<ConversationDto> result =
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                cursor,
+                CONVERSATION_ID,
+                20,
+                "DESCENDING",
+                "createdAt"
+            );
+
+        // then
+        assertThat(result.data()).isEmpty();
+        assertThat(result.hasNext()).isFalse();
+
+        verify(participantRepository)
+            .findConversationListDesc(
+                eq(REQUESTER_ID),
+                isNull(),
+                eq(cursorInstant),
+                eq(CONVERSATION_ID),
+                any()
+            );
+    }
+
+    @Test
+    @DisplayName("Base64 형식이 잘못된 커서면 대화 목록 조회에 실패")
+    void getConversations_invalidBase64Cursor_fails() {
+        assertThatThrownBy(() ->
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                "%%%",
                 CONVERSATION_ID,
                 20,
                 "DESCENDING",
@@ -1025,11 +1251,41 @@ class ConversationServiceTest {
             .isInstanceOfSatisfying(
                 BusinessException.class,
                 exception ->
-                    assertThat(
-                        exception.getErrorCode()
-                    ).isEqualTo(
-                        ErrorCode.INVALID_INPUT
-                    )
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT)
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            directMessageRepository,
+            userRepository
+        );
+    }
+
+    @Test
+    @DisplayName("날짜 형식이 잘못된 커서면 대화 목록 조회에 실패")
+    void getConversations_invalidCursorDate_fails() {
+        // given
+        String cursor =
+            CursorUtils.encode("not-an-instant");
+
+        // when & then
+        assertThatThrownBy(() ->
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                cursor,
+                CONVERSATION_ID,
+                20,
+                "DESCENDING",
+                "createdAt"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT)
             );
 
         verifyNoInteractions(
