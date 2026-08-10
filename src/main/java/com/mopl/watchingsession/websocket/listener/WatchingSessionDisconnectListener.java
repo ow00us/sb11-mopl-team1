@@ -1,7 +1,9 @@
-package com.mopl.watchingsession.websocket;
+package com.mopl.watchingsession.websocket.listener;
 
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.service.WatchingSessionService;
+import com.mopl.watchingsession.websocket.stompsession.WatchSubscriptionAttributes;
+import com.mopl.watchingsession.websocket.broadcast.WatchingSessionBroadcaster;
 import java.security.Principal;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;

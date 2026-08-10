@@ -1,4 +1,4 @@
-package com.mopl.watchingsession.websocket;
+package com.mopl.watchingsession.websocket.listener;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -17,6 +17,8 @@ import com.mopl.global.security.websocket.StompErrorFrameSender;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.service.WatchingSessionService;
 import com.mopl.watchingsession.service.WatchingSessionService.ReplacedSession;
+import com.mopl.watchingsession.websocket.broadcast.WatchingSessionBroadcaster;
+import com.mopl.watchingsession.websocket.stompsession.WatchSubscriptionAttributes;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;

@@ -1,4 +1,4 @@
-package com.mopl.watchingsession.websocket;
+package com.mopl.watchingsession.websocket.broadcast;
 
 import com.mopl.watchingsession.dto.WatchingSessionChange;
 import com.mopl.watchingsession.dto.WatchingSessionDto;

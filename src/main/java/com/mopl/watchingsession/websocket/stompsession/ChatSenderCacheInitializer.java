@@ -1,4 +1,4 @@
-package com.mopl.watchingsession.websocket;
+package com.mopl.watchingsession.websocket.stompsession;
 
 import com.mopl.global.common.UserSummary;
 import com.mopl.user.entity.User;
@@ -36,7 +36,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class ChatSenderCachingInterceptor implements ChannelInterceptor {
+public class ChatSenderCacheInitializer implements ChannelInterceptor {
 
     private final UserRepository userRepository;
 
