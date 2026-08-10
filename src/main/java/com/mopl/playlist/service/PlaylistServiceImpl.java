@@ -19,6 +19,8 @@ import com.mopl.playlist.entity.PlaylistSubscription;
 import com.mopl.playlist.repository.PlaylistContentRepository;
 import com.mopl.playlist.repository.PlaylistRepository;
 import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
+import com.mopl.user.entity.User;
+import com.mopl.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
@@ -44,12 +46,14 @@ public class PlaylistServiceImpl implements PlaylistService {
     private static final String SORT_SUBSCRIBE_COUNT = "subscriberCount";
     private static final String DIRECTION_ASC        = "ASCENDING";
     private static final String PG_UNIQUE_VIOLATION_SQLSTATE = "23505";
+    private static final String UNKNOWN_OWNER_NAME = "알 수 없는 사용자";
 
     private final PlaylistRepository playlistRepository;
     private final PlaylistSubscriptionRepository subscriptionRepository;
     private final PlaylistContentRepository playlistContentRepository;
     private final ContentRepository contentRepository;
     private final PlaylistContentSaver playlistContentSaver;
+    private final UserRepository userRepository;
 
     @Override
     @Transactional
@@ -59,7 +63,8 @@ public class PlaylistServiceImpl implements PlaylistService {
                 .title(request.title())
                 .description(request.description())
                 .build();
-        return PlaylistDto.from(playlistRepository.save(playlist));
+        Playlist saved = playlistRepository.save(playlist);
+        return PlaylistDto.from(saved, toOwnerSummary(saved.getOwnerId()), false, List.of());
     }
 
     @Override
@@ -68,7 +73,7 @@ public class PlaylistServiceImpl implements PlaylistService {
         boolean subscribedByMe = requesterId != null &&
                 subscriptionRepository.existsByPlaylistIdAndSubscriberId(playlistId, requesterId);
         List<ContentSummary> contents = loadContents(playlistId);
-        return PlaylistDto.from(playlist, subscribedByMe, contents);
+        return PlaylistDto.from(playlist, toOwnerSummary(playlist.getOwnerId()), subscribedByMe, contents);
     }
 
     @Override
@@ -103,8 +108,14 @@ public class PlaylistServiceImpl implements PlaylistService {
 
         Map<UUID, List<ContentSummary>> contentsByPlaylistId = loadContentsBatch(pageIds);
 
+        List<UUID> ownerIds = page.stream().map(Playlist::getOwnerId).distinct().toList();
+        Map<UUID, UserSummary> ownersById = toOwnerSummaryMap(ownerIds);
+
         List<PlaylistDto> data = page.stream()
-                .map(p -> PlaylistDto.from(p, finalSubscribedIds.contains(p.getId()),
+                .map(p -> PlaylistDto.from(
+                        p,
+                        ownersById.getOrDefault(p.getOwnerId(), unknownOwnerSummary(p.getOwnerId())),
+                        finalSubscribedIds.contains(p.getId()),
                         contentsByPlaylistId.getOrDefault(p.getId(), List.of())))
                 .toList();
 
@@ -121,7 +132,8 @@ public class PlaylistServiceImpl implements PlaylistService {
         Playlist playlist = findOrThrow(playlistId);
         verifyOwner(playlist, requesterId);
         playlist.update(request.title(), request.description());
-        return PlaylistDto.from(playlistRepository.saveAndFlush(playlist));
+        Playlist saved = playlistRepository.saveAndFlush(playlist);
+        return PlaylistDto.from(saved, toOwnerSummary(saved.getOwnerId()), false, List.of());
     }
 
     @Override
@@ -292,6 +304,30 @@ public class PlaylistServiceImpl implements PlaylistService {
             case TV_SERIES -> "tvSeries";
             case SPORT     -> "sport";
         };
+    }
+
+    // 단건 owner 조회. 배치 조회 API(findAllById)를 재사용해 진입점을 하나로 유지한다.
+    private UserSummary toOwnerSummary(UUID ownerId) {
+        return userRepository.findAllById(List.of(ownerId)).stream()
+                .findFirst()
+                .map(this::toUserSummary)
+                .orElseGet(() -> unknownOwnerSummary(ownerId));
+    }
+
+    // 페이지 owner 배치 조회. findAllById 1회로 N+1을 방지한다.
+    private Map<UUID, UserSummary> toOwnerSummaryMap(List<UUID> ownerIds) {
+        if (ownerIds.isEmpty()) return Map.of();
+        return userRepository.findAllById(ownerIds).stream()
+                .collect(Collectors.toMap(User::getId, this::toUserSummary));
+    }
+
+    private UserSummary toUserSummary(User user) {
+        return new UserSummary(user.getId(), user.getName(), user.getProfileImageUrl());
+    }
+
+    // owner user 가 조회되지 않은 경우의 대체값 (ReviewServiceImpl 의 UNKNOWN_AUTHOR_NAME 정책과 동일)
+    private UserSummary unknownOwnerSummary(UUID ownerId) {
+        return new UserSummary(ownerId, UNKNOWN_OWNER_NAME, null);
     }
 
     @Override
