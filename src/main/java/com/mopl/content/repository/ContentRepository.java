@@ -93,6 +93,8 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
     );
 
     // ── watcherCount 정렬 ───────────────────────────────────────────────────
+    // contents.watcher_count 컬럼은 갱신되지 않는 죽은 값이라, watching_session_snapshots를
+    // 상관 서브쿼리로 실시간 집계한 값으로 정렬·커서 비교를 대체한다.
 
     @Query(value = """
             SELECT c.* FROM contents c
@@ -104,11 +106,15 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
                    OR LOWER(c.title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\'
                    OR LOWER(c.description) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\')
               AND (:cursorCount IS NULL
-                   OR c.watcher_count > :cursorCount
-                   OR (c.watcher_count = :cursorCount AND c.id > CAST(:idAfter AS uuid)))
+                   OR (SELECT COUNT(*) FROM watching_session_snapshots wss
+                       WHERE wss.content_id = c.id AND wss.expires_at > :now) > :cursorCount
+                   OR ((SELECT COUNT(*) FROM watching_session_snapshots wss
+                        WHERE wss.content_id = c.id AND wss.expires_at > :now) = :cursorCount
+                       AND c.id > CAST(:idAfter AS uuid)))
             GROUP BY c.id
             HAVING (:tagCount = 0 OR COUNT(DISTINCT ct.tag) = :tagCount)
-            ORDER BY c.watcher_count ASC, c.id ASC
+            ORDER BY (SELECT COUNT(*) FROM watching_session_snapshots wss
+                      WHERE wss.content_id = c.id AND wss.expires_at > :now) ASC, c.id ASC
             LIMIT :limit
             """, nativeQuery = true)
     List<Content> findByWatcherCountAsc(
@@ -118,6 +124,7 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
             @Param("tagCount") int tagCount,
             @Param("cursorCount") Long cursorCount,
             @Param("idAfter") String idAfter,
+            @Param("now") Instant now,
             @Param("limit") int limit
     );
 
@@ -131,13 +138,20 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
                    OR LOWER(c.title) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\'
                    OR LOWER(c.description) LIKE LOWER('%' || CAST(:keywordLike AS text) || '%') ESCAPE '\\')
               AND (:cursorWatcherCount IS NULL
-                   OR c.watcher_count < :cursorWatcherCount
-                   OR (c.watcher_count = :cursorWatcherCount AND c.review_count < :cursorReviewCount)
-                   OR (c.watcher_count = :cursorWatcherCount AND c.review_count = :cursorReviewCount
+                   OR (SELECT COUNT(*) FROM watching_session_snapshots wss
+                       WHERE wss.content_id = c.id AND wss.expires_at > :now) < :cursorWatcherCount
+                   OR ((SELECT COUNT(*) FROM watching_session_snapshots wss
+                        WHERE wss.content_id = c.id AND wss.expires_at > :now) = :cursorWatcherCount
+                       AND c.review_count < :cursorReviewCount)
+                   OR ((SELECT COUNT(*) FROM watching_session_snapshots wss
+                        WHERE wss.content_id = c.id AND wss.expires_at > :now) = :cursorWatcherCount
+                       AND c.review_count = :cursorReviewCount
                        AND c.id > CAST(:idAfter AS uuid)))
             GROUP BY c.id
             HAVING (:tagCount = 0 OR COUNT(DISTINCT ct.tag) = :tagCount)
-            ORDER BY c.watcher_count DESC, c.review_count DESC, c.id ASC
+            ORDER BY (SELECT COUNT(*) FROM watching_session_snapshots wss
+                      WHERE wss.content_id = c.id AND wss.expires_at > :now) DESC,
+                     c.review_count DESC, c.id ASC
             LIMIT :limit
             """, nativeQuery = true)
     List<Content> findByWatcherCountDesc(
@@ -148,6 +162,7 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
             @Param("cursorWatcherCount") Long cursorWatcherCount,
             @Param("cursorReviewCount") Long cursorReviewCount,
             @Param("idAfter") String idAfter,
+            @Param("now") Instant now,
             @Param("limit") int limit
     );
 

@@ -2,6 +2,7 @@ package com.mopl.watchingsession.repository;
 
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -105,6 +106,15 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
         @Param("now") Instant now
     );
 
-
+    // 여러 콘텐츠의 실시간 시청자 수를 한 번에 집계한다 (목록 페이지의 N+1 방지용).
+    // 시청 세션이 하나도 없는 콘텐츠는 결과에 포함되지 않으므로, 호출부에서 0으로 기본값 처리해야 함.
+    @Query("""
+        SELECT s.contentId AS contentId, COUNT(s) AS watcherCount
+        FROM WatchingSessionSnapshot s
+        WHERE s.contentId IN :contentIds AND s.expiresAt > :now
+        GROUP BY s.contentId
+        """)
+    List<ContentWatcherCountView> countGroupedByContentIds(
+            @Param("contentIds") Collection<UUID> contentIds, @Param("now") Instant now);
 
 }

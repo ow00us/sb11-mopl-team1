@@ -23,4 +23,11 @@ public record ContentDto(
                 content.getThumbnailUrl(), Set.copyOf(content.getTags()), content.getAverageRating(),
                 content.getReviewCount(), content.getWatcherCount());
     }
+
+    public static ContentDto from(Content content, long liveWatcherCount) {
+        return new ContentDto(
+                content.getId(), content.getType(), content.getTitle(), content.getDescription(),
+                content.getThumbnailUrl(), Set.copyOf(content.getTags()), content.getAverageRating(),
+                content.getReviewCount(), liveWatcherCount);
+    }
 }
