@@ -1051,7 +1051,7 @@ class ConversationServiceTest {
                 null,
                 CONVERSATION_ID,
                 20,
-                "DISCENDING",
+                "DESCENDING",
                 "createdAt"
             )
         )
@@ -1079,7 +1079,7 @@ class ConversationServiceTest {
                 null,
                 null,
                 0,
-                "DISECENDING",
+                "DESCENDING",
                 "createdAt"
             )
         )
