@@ -99,6 +99,7 @@ public class WatchingSessionSubscribeListener {
                 // 다른 시청자들에게 LEAVE 브로드캐스트
                 WatchingSessionDto endedPrevious = startFailed.getEndedPrevious();
                 if (endedPrevious != null) {
+                    // WatchingSessionBroadcaster 내부에서 실패를 격리하므로 이 try-catch는 실제로는 도달하지 않지만 마지막 방어선으로 둠
                     try {
                         watchingSessionBroadcaster.broadcastLeave(endedPrevious, endedPrevious.content().id());
                     } catch (RuntimeException broadcastFailure) {
