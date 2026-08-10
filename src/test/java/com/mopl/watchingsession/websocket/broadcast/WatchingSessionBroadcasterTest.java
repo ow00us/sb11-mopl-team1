@@ -1,7 +1,6 @@
 package com.mopl.watchingsession.websocket.broadcast;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -60,8 +59,12 @@ public class WatchingSessionBroadcasterTest {
         doThrow(new RuntimeException("브로커 전송 실패"))
             .when(messagingTemplate).convertAndSend(anyString(), any((Object.class)));
 
-        // when & then
-        assertThatNoException().isThrownBy(() -> broadcaster.broadcastJoin(dtoFixture(), CONTENT_ID));
+        // when: 예외 없이 끝나야 함
+        broadcaster.broadcastJoin(dtoFixture(), CONTENT_ID);
+
+        // then: 전송 시도 자체는 실제로 있었는지 확인
+        verify(messagingTemplate).convertAndSend(eq("/sub/contents/" + CONTENT_ID + "/watch"), any(Object.class));
+
     }
 
     @Test
@@ -96,6 +99,4 @@ public class WatchingSessionBroadcasterTest {
             .convertAndSend(eq("/sub/contents/" + CONTENT_ID + "/watch"), payloadCaptor.capture());
         assertThat(payloadCaptor.getValue().watcherCount()).isEqualTo(5L);
     }
-
-
 }
