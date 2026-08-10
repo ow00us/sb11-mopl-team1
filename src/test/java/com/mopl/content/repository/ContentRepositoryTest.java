@@ -344,20 +344,23 @@ class ContentRepositoryTest {
     }
 
     @Test
-    @DisplayName("watcherCount ASC 정렬로 커서 페이지네이션이 정상 동작한다")
+    @DisplayName("watcherCount ASC 정렬로 커서 페이지네이션이 정상 동작한다 (watching_session_snapshots 실시간 집계 기준)")
     void findByWatcherCountAsc_pagination_acrossTwoPages() {
         Instant now = Instant.now();
-        UUID id1 = insertContent("W1", BigDecimal.ZERO, 10, now, "MOVIE");
-        UUID id2 = insertContent("W2", BigDecimal.ZERO, 20, now, "MOVIE");
-        UUID id3 = insertContent("W3", BigDecimal.ZERO, 30, now, "MOVIE");
+        UUID id1 = insertContent("W1", BigDecimal.ZERO, 0, now, "MOVIE");
+        UUID id2 = insertContent("W2", BigDecimal.ZERO, 0, now, "MOVIE");
+        UUID id3 = insertContent("W3", BigDecimal.ZERO, 0, now, "MOVIE");
+        insertWatchingSessions(id1, 1);
+        insertWatchingSessions(id2, 2);
+        insertWatchingSessions(id3, 3);
 
         List<Content> firstPage = contentRepository.findByWatcherCountAsc(
-                null, null, List.of(""), 0, null, null, 2);
+                null, null, List.of(""), 0, null, null, now, 2);
         assertThat(firstPage).extracting(Content::getId).containsExactly(id1, id2);
 
         Content last = firstPage.get(firstPage.size() - 1);
         List<Content> secondPage = contentRepository.findByWatcherCountAsc(
-                null, null, List.of(""), 0, last.getWatcherCount(), last.getId().toString(), 2);
+                null, null, List.of(""), 0, 2L, last.getId().toString(), now, 2);
         assertThat(secondPage).extracting(Content::getId).containsExactly(id3);
     }
 
@@ -380,35 +383,55 @@ class ContentRepositoryTest {
     }
 
     @Test
-    @DisplayName("watcherCount가 같으면 reviewCount가 많은 콘텐츠가 먼저 나온다(2차 정렬)")
+    @DisplayName("watcherCount가 같으면 reviewCount가 많은 콘텐츠가 먼저 나온다(2차 정렬, watching_session_snapshots 실시간 집계 기준)")
     void findByWatcherCountDesc_tieBreaksByReviewCount() {
         Instant now = Instant.now();
-        UUID lowReview = insertContent("Low Review", BigDecimal.ZERO, 10, 1, now, "MOVIE");
-        UUID highReview = insertContent("High Review", BigDecimal.ZERO, 10, 5, now.minusSeconds(1), "MOVIE");
+        UUID lowReview = insertContent("Low Review", BigDecimal.ZERO, 0, 1, now, "MOVIE");
+        UUID highReview = insertContent("High Review", BigDecimal.ZERO, 0, 5, now.minusSeconds(1), "MOVIE");
+        insertWatchingSessions(lowReview, 2);
+        insertWatchingSessions(highReview, 2);
 
         List<Content> result = contentRepository.findByWatcherCountDesc(
-                null, null, List.of(""), 0, null, null, null, 10);
+                null, null, List.of(""), 0, null, null, null, now, 10);
 
         assertThat(result).extracting(Content::getId).containsExactly(highReview, lowReview);
     }
 
     @Test
-    @DisplayName("watcherCount DESC 정렬은 (watcherCount, reviewCount, id) 복합 커서로 2페이지에 걸쳐 정상 동작한다")
+    @DisplayName("watcherCount DESC 정렬은 (watcherCount, reviewCount, id) 복합 커서로 2페이지에 걸쳐 정상 동작한다 (watching_session_snapshots 실시간 집계 기준)")
     void findByWatcherCountDesc_pagination_acrossTwoPages_withReviewCountTiebreak() {
         Instant now = Instant.now();
-        UUID id1 = insertContent("W1", BigDecimal.ZERO, 10, 1, now, "MOVIE");
-        UUID id2 = insertContent("W2", BigDecimal.ZERO, 10, 5, now, "MOVIE");
-        UUID id3 = insertContent("W3", BigDecimal.ZERO, 20, 0, now, "MOVIE");
+        UUID id1 = insertContent("W1", BigDecimal.ZERO, 0, 1, now, "MOVIE");
+        UUID id2 = insertContent("W2", BigDecimal.ZERO, 0, 5, now, "MOVIE");
+        UUID id3 = insertContent("W3", BigDecimal.ZERO, 0, 0, now, "MOVIE");
+        insertWatchingSessions(id1, 1);
+        insertWatchingSessions(id2, 1);
+        insertWatchingSessions(id3, 2);
 
         List<Content> firstPage = contentRepository.findByWatcherCountDesc(
-                null, null, List.of(""), 0, null, null, null, 2);
+                null, null, List.of(""), 0, null, null, null, now, 2);
         assertThat(firstPage).extracting(Content::getId).containsExactly(id3, id2);
 
         Content last = firstPage.get(firstPage.size() - 1);
         List<Content> secondPage = contentRepository.findByWatcherCountDesc(
-                null, null, List.of(""), 0, last.getWatcherCount(), last.getReviewCount(),
-                last.getId().toString(), 2);
+                null, null, List.of(""), 0, 1L, last.getReviewCount(),
+                last.getId().toString(), now, 2);
         assertThat(secondPage).extracting(Content::getId).containsExactly(id1);
+    }
+
+    @Test
+    @DisplayName("만료된 시청 세션은 watcherCount 정렬에 반영되지 않는다")
+    void findByWatcherCountDesc_excludesExpiredSessions() {
+        Instant now = Instant.now();
+        UUID manyExpired = insertContent("Many Expired", BigDecimal.ZERO, 0, now, "MOVIE");
+        UUID fewActive = insertContent("Few Active", BigDecimal.ZERO, 0, now, "MOVIE");
+        insertExpiredWatchingSessions(manyExpired, 5); // 전부 만료 -> 실시간 카운트는 0
+        insertWatchingSessions(fewActive, 1); // 활성 세션 1개
+
+        List<Content> result = contentRepository.findByWatcherCountDesc(
+                null, null, List.of(""), 0, null, null, null, now, 10);
+
+        assertThat(result).extracting(Content::getId).containsExactly(fewActive, manyExpired);
     }
 
     @Test
@@ -460,6 +483,47 @@ class ContentRepositoryTest {
                 .setParameter("averageRating", averageRating)
                 .setParameter("reviewCount", reviewCount)
                 .setParameter("watcherCount", watcherCount)
+                .executeUpdate();
+        return id;
+    }
+
+    // watching_session_snapshots에 활성(만료 안 됨) 세션을 activeCount개 만큼 심는다.
+    // watcherCount 정렬이 이제 이 테이블의 실시간 집계 기준이므로, contents.watcher_count 컬럼 대신 이걸 쓴다.
+    private void insertWatchingSessions(UUID contentId, int activeCount) {
+        for (int i = 0; i < activeCount; i++) {
+            insertWatchingSession(contentId, Instant.now().plusSeconds(300));
+        }
+    }
+
+    // 이미 만료된(expires_at이 과거인) 세션을 심는다. 실시간 집계에서 제외되어야 함을 검증하는 데 쓴다.
+    private void insertExpiredWatchingSessions(UUID contentId, int expiredCount) {
+        for (int i = 0; i < expiredCount; i++) {
+            insertWatchingSession(contentId, Instant.now().minusSeconds(60));
+        }
+    }
+
+    private void insertWatchingSession(UUID contentId, Instant expiresAt) {
+        UUID watcherId = insertUser();
+        entityManager.getEntityManager()
+                .createNativeQuery("INSERT INTO watching_session_snapshots "
+                        + "(id, watcher_id, content_id, expires_at, created_at, updated_at) "
+                        + "VALUES (:id, :watcherId, :contentId, :expiresAt, now(), now())")
+                .setParameter("id", UUID.randomUUID())
+                .setParameter("watcherId", watcherId)
+                .setParameter("contentId", contentId)
+                .setParameter("expiresAt", expiresAt)
+                .executeUpdate();
+    }
+
+    // watching_session_snapshots.watcher_id는 users를 FK로 참조하므로 제약을 만족하는 최소한의 사용자를 만든다.
+    private UUID insertUser() {
+        UUID id = UUID.randomUUID();
+        entityManager.getEntityManager()
+                .createNativeQuery("INSERT INTO users "
+                        + "(id, email, password_hash, name, role, locked, created_at, updated_at) "
+                        + "VALUES (:id, :email, 'stub', 'stub', 'USER', false, now(), now())")
+                .setParameter("id", id)
+                .setParameter("email", id + "@test.local")
                 .executeUpdate();
         return id;
     }

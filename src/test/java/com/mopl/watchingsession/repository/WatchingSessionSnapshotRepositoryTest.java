@@ -443,5 +443,70 @@ public class WatchingSessionSnapshotRepositoryTest {
         assertThat(result).hasSize(1);
     }
 
+    @Test
+    @DisplayName("countGroupedByContentIds는 콘텐츠별 실시간 시청자 수를 정확히 집계한다")
+    void countGroupedByContentIds_aggregatesCountsPerContent() {
+        // given
+        UUID content1 = insertContent();
+        UUID content2 = insertContent();
+        Instant now = Instant.now();
+
+        persistSnapshot(insertUser(), content1, now, now.plusSeconds(60));
+        persistSnapshot(insertUser(), content1, now, now.plusSeconds(60));
+        persistSnapshot(insertUser(), content2, now, now.plusSeconds(60));
+        entityManager.clear();
+
+        // when
+        List<ContentWatcherCountView> result = repository.countGroupedByContentIds(List.of(content1, content2), now);
+
+        // then
+        long content1Count = result.stream()
+            .filter(view -> view.getContentId().equals(content1))
+            .findFirst().orElseThrow().getWatcherCount();
+        long content2Count = result.stream()
+            .filter(view -> view.getContentId().equals(content2))
+            .findFirst().orElseThrow().getWatcherCount();
+        assertThat(content1Count).isEqualTo(2L);
+        assertThat(content2Count).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("countGroupedByContentIds는 만료된 세션을 카운트에서 제외한다")
+    void countGroupedByContentIds_excludesExpiredSessions() {
+        // given
+        UUID contentId = insertContent();
+        Instant now = Instant.now();
+
+        persistSnapshot(insertUser(), contentId, now, now.plusSeconds(60)); // 활성
+        persistSnapshot(insertUser(), contentId, now, now.minusSeconds(1)); // 만료
+        entityManager.clear();
+
+        // when
+        List<ContentWatcherCountView> result = repository.countGroupedByContentIds(List.of(contentId), now);
+
+        // then
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getWatcherCount()).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("세션이 하나도 없는 콘텐츠는 결과 리스트에 포함되지 않는다")
+    void countGroupedByContentIds_omitsContentsWithoutSessions() {
+        // given
+        UUID contentWithSession = insertContent();
+        UUID contentWithoutSession = insertContent();
+        Instant now = Instant.now();
+
+        persistSnapshot(insertUser(), contentWithSession, now, now.plusSeconds(60));
+        entityManager.clear();
+
+        // when
+        List<ContentWatcherCountView> result = repository.countGroupedByContentIds(
+            List.of(contentWithSession, contentWithoutSession), now);
+
+        // then
+        assertThat(result).extracting(ContentWatcherCountView::getContentId).containsExactly(contentWithSession);
+    }
+
 }
 

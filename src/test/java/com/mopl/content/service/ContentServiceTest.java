@@ -6,6 +6,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -22,10 +24,13 @@ import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.util.CursorUtils;
+import com.mopl.watchingsession.repository.ContentWatcherCountView;
+import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,8 +51,19 @@ class ContentServiceTest {
     @Mock
     ThumbnailStorage thumbnailStorage;
 
+    @Mock
+    WatchingSessionSnapshotRepository watchingSessionSnapshotRepository;
+
     @InjectMocks
     ContentServiceImpl contentService;
+
+    @BeforeEach
+    void setUp() {
+        // watcherCount 실시간 집계는 sortBy와 무관하게 매 getList() 호출마다 조회되므로,
+        // 이 값을 신경 쓰지 않는 기존 테스트들이 별도 스텁 없이 통과하도록 기본값(빈 목록)을 깔아둔다.
+        lenient().when(watchingSessionSnapshotRepository.countGroupedByContentIds(any(), any()))
+                .thenReturn(List.of());
+    }
 
     private static final UUID CONTENT_ID = UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc");
     private static final String THUMBNAIL_URL = "https://placeholder.mopl.local/thumbnails/x-thumb.png";
@@ -104,15 +120,17 @@ class ContentServiceTest {
     // ── get ──────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("존재하는 콘텐츠 단건 조회 시 ContentDto를 반환한다")
+    @DisplayName("존재하는 콘텐츠 단건 조회 시 실시간 watcherCount를 반영한 ContentDto를 반환한다")
     void get_success() {
         Content content = savedContent(CONTENT_ID, "제목", "설명", null);
         when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(content));
+        when(watchingSessionSnapshotRepository.countByContentId(any(), any(), any())).thenReturn(4L);
 
         ContentDto result = contentService.get(CONTENT_ID);
 
         assertThat(result.id()).isEqualTo(CONTENT_ID);
         assertThat(result.title()).isEqualTo("제목");
+        assertThat(result.watcherCount()).isEqualTo(4L);
     }
 
     @Test
@@ -268,29 +286,34 @@ class ContentServiceTest {
     @Test
     @DisplayName("watcherCount DESC 정렬이면 findByWatcherCountDesc를 호출한다")
     void getList_watcherCountSort_descending_callsFindByWatcherCountDesc() {
-        when(contentRepository.findByWatcherCountDesc(any(), any(), any(), anyInt(), any(), any(), any(), anyInt()))
+        when(contentRepository.findByWatcherCountDesc(
+                any(), any(), any(), anyInt(), any(), any(), any(), any(), anyInt()))
                 .thenReturn(List.of());
         when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(0L);
 
         contentService.getList(null, null, null, null, null, 10, "watcherCount", "DESCENDING");
 
         verify(contentRepository).findByWatcherCountDesc(
-                isNull(), isNull(), any(), anyInt(), isNull(), isNull(), isNull(), eq(11));
+                isNull(), isNull(), any(), anyInt(), isNull(), isNull(), isNull(), any(), eq(11));
     }
 
     @Test
-    @DisplayName("watcherCount DESC 정렬 시 다음 페이지가 있으면 (watcherCount, reviewCount) 복합 커서를 반환한다")
+    @DisplayName("watcherCount DESC 정렬 시 다음 페이지가 있으면 실시간 집계값으로 (watcherCount, reviewCount) 복합 커서를 반환한다")
     void getList_watcherCountDescSort_returnsCompositeCursor() {
         Content lastOfPage = savedContentWithId(UUID.randomUUID(), "B");
-        ReflectionTestUtils.setField(lastOfPage, "watcherCount", 10L);
         ReflectionTestUtils.setField(lastOfPage, "reviewCount", 3L);
         List<Content> rows = List.of(
                 savedContentWithId(UUID.randomUUID(), "A"),
                 lastOfPage,
                 savedContentWithId(UUID.randomUUID(), "C"));
-        when(contentRepository.findByWatcherCountDesc(any(), any(), any(), anyInt(), any(), any(), any(), eq(3)))
+        when(contentRepository.findByWatcherCountDesc(
+                any(), any(), any(), anyInt(), any(), any(), any(), any(), eq(3)))
                 .thenReturn(rows);
         when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(5L);
+        // watcher_count 컬럼(죽은 값)이 아니라 countGroupedByContentIds의 실시간 집계값이 커서에 쓰여야 한다.
+        ContentWatcherCountView liveCount = watcherCountView(lastOfPage.getId(), 10L);
+        when(watchingSessionSnapshotRepository.countGroupedByContentIds(any(), any()))
+                .thenReturn(List.of(liveCount));
 
         CursorResponse<ContentDto> result = contentService.getList(
                 null, null, null, null, null, 2, "watcherCount", "DESCENDING");
@@ -376,7 +399,7 @@ class ContentServiceTest {
                 savedContentWithId(UUID.randomUUID(), "A"),
                 savedContentWithId(UUID.randomUUID(), "B"),
                 savedContentWithId(UUID.randomUUID(), "C"));
-        when(contentRepository.findByWatcherCountAsc(any(), any(), any(), anyInt(), any(), any(), eq(3)))
+        when(contentRepository.findByWatcherCountAsc(any(), any(), any(), anyInt(), any(), any(), any(), eq(3)))
                 .thenReturn(rows);
         when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(5L);
 
@@ -406,6 +429,42 @@ class ContentServiceTest {
         assertThat(result.data()).hasSize(2);
         assertThat(result.hasNext()).isTrue();
         assertThat(result.nextCursor()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("createdAt 정렬로 조회해도 ContentDto.watcherCount는 실시간 집계값을 반영한다")
+    void getList_createdAtSort_reflectsLiveWatcherCountRegardlessOfSortBy() {
+        Content content = savedContentWithId(UUID.randomUUID(), "A");
+        when(contentRepository.findByCreatedAtDesc(any(), any(), any(), anyInt(), any(), any(), anyInt()))
+                .thenReturn(List.of(content));
+        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(1L);
+        ContentWatcherCountView liveCount = watcherCountView(content.getId(), 7L);
+        when(watchingSessionSnapshotRepository.countGroupedByContentIds(any(), any()))
+                .thenReturn(List.of(liveCount));
+
+        CursorResponse<ContentDto> result = contentService.getList(
+                null, null, null, null, null, 10, "createdAt", "DESCENDING");
+
+        assertThat(result.data()).hasSize(1);
+        assertThat(result.data().get(0).watcherCount()).isEqualTo(7L);
+    }
+
+    @Test
+    @DisplayName("averageRating 정렬로 조회해도 ContentDto.watcherCount는 실시간 집계값을 반영한다")
+    void getList_averageRatingSort_reflectsLiveWatcherCountRegardlessOfSortBy() {
+        Content content = savedContentWithId(UUID.randomUUID(), "A");
+        when(contentRepository.findByAverageRatingDesc(any(), any(), any(), anyInt(), any(), any(), anyInt()))
+                .thenReturn(List.of(content));
+        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(1L);
+        ContentWatcherCountView liveCount = watcherCountView(content.getId(), 3L);
+        when(watchingSessionSnapshotRepository.countGroupedByContentIds(any(), any()))
+                .thenReturn(List.of(liveCount));
+
+        CursorResponse<ContentDto> result = contentService.getList(
+                null, null, null, null, null, 10, "averageRating", "DESCENDING");
+
+        assertThat(result.data()).hasSize(1);
+        assertThat(result.data().get(0).watcherCount()).isEqualTo(3L);
     }
 
     // ── update ───────────────────────────────────────────────────────────────
@@ -524,5 +583,12 @@ class ContentServiceTest {
         ReflectionTestUtils.setField(content, "id", id);
         ReflectionTestUtils.setField(content, "createdAt", Instant.now());
         return content;
+    }
+
+    private ContentWatcherCountView watcherCountView(UUID contentId, long watcherCount) {
+        ContentWatcherCountView view = mock(ContentWatcherCountView.class);
+        when(view.getContentId()).thenReturn(contentId);
+        when(view.getWatcherCount()).thenReturn(watcherCount);
+        return view;
     }
 }
