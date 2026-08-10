@@ -38,7 +38,7 @@ springdoc:
 jwt:
   issuer: mopl
   secret: ${JWT_SECRET}
-  access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION:30m}
+  access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION:3h}
 
 tmdb:
   base-url: https://api.themoviedb.org/3
