@@ -61,7 +61,9 @@ public class ContentServiceImpl implements ContentService {
 
     @Override
     public ContentDto get(UUID contentId) {
-        return ContentDto.from(findOrThrow(contentId));
+        Content content = findOrThrow(contentId);
+        long liveWatcherCount = watchingSessionSnapshotRepository.countByContentId(contentId, null, Instant.now());
+        return ContentDto.from(content, liveWatcherCount);
     }
 
     // 정렬/커서 계산(fetchPage)과 표시용 실시간 시청자 수 집계(countGroupedByContentIds)가

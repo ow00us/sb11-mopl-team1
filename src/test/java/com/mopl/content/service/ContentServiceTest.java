@@ -120,15 +120,17 @@ class ContentServiceTest {
     // ── get ──────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("존재하는 콘텐츠 단건 조회 시 ContentDto를 반환한다")
+    @DisplayName("존재하는 콘텐츠 단건 조회 시 실시간 watcherCount를 반영한 ContentDto를 반환한다")
     void get_success() {
         Content content = savedContent(CONTENT_ID, "제목", "설명", null);
         when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(content));
+        when(watchingSessionSnapshotRepository.countByContentId(any(), any(), any())).thenReturn(4L);
 
         ContentDto result = contentService.get(CONTENT_ID);
 
         assertThat(result.id()).isEqualTo(CONTENT_ID);
         assertThat(result.title()).isEqualTo("제목");
+        assertThat(result.watcherCount()).isEqualTo(4L);
     }
 
     @Test
