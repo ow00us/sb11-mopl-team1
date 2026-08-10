@@ -93,6 +93,28 @@ class ClientErrorStatusMappingTest {
                 containsString(MediaType.APPLICATION_JSON_VALUE)));
     }
 
+    @Test
+    @DisplayName("서버가 만들 수 없는 Accept 헤더는 406을 반환하고 인증 상태에 영향을 주지 않는다")
+    void unacceptableAcceptHeader_returnsNotAcceptable() throws Exception {
+        mockMvc.perform(get("/api/exception-probe/body")
+                .with(user())
+                .accept(MediaType.APPLICATION_XML))
+            .andExpect(status().isNotAcceptable())
+            .andExpect(jsonPath("$.errorCode").value("COMMON_406_1"));
+    }
+
+    @Test
+    @DisplayName("오류 응답은 Accept가 JSON을 허용하지 않아도 JSON으로 직렬화된다")
+    void errorResponse_isJsonRegardlessOfAcceptHeader() throws Exception {
+        mockMvc.perform(get("/api/exception-probe/business-error")
+                .with(user())
+                .accept(MediaType.APPLICATION_XML))
+            .andExpect(status().isNotFound())
+            .andExpect(header().string(HttpHeaders.CONTENT_TYPE,
+                containsString(MediaType.APPLICATION_JSON_VALUE)))
+            .andExpect(jsonPath("$.errorCode").value("COMMON_404_1"));
+    }
+
     private RequestPostProcessor user() {
         return authentication(new UsernamePasswordAuthenticationToken(
             USER_ID, null, List.of(new SimpleGrantedAuthority("ROLE_USER"))));
