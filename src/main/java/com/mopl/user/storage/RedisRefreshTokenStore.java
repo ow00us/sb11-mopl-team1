@@ -51,18 +51,29 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
      *
      * ARGV[1]: 사용자 UUID 문자열
      * ARGV[2]: Refresh Token 해시
-     * ARGV[3]: TTL 밀리초
+     * ARGV[3]: 새 세션의 TTL 밀리초
      *
      * Redis는 Lua Script 전체를 하나의 명령처럼 실행하므로
      * 세션 Key만 저장되고 사용자별 인덱스 저장이 실패하는
      * 부분 저장 상태를 방지할 수 있다.
+     *
+     * 사용자별 세션 인덱스의 TTL은 기존 TTL과 새 세션 TTL 중
+     * 더 긴 값을 유지한다. 따라서 짧은 세션이 나중에 발급되더라도
+     * 기존의 긴 세션보다 인덱스가 먼저 만료되지 않는다.
      */
     private static final DefaultRedisScript<Long> SAVE_SESSION_SCRIPT =
         new DefaultRedisScript<>(
             """
             redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[3])
             redis.call('SADD', KEYS[2], ARGV[2])
-            redis.call('PEXPIRE', KEYS[2], ARGV[3])
+
+            local newExpirationMillis = tonumber(ARGV[3])
+            local currentIndexTtl = redis.call('PTTL', KEYS[2])
+
+            if currentIndexTtl < newExpirationMillis then
+                redis.call('PEXPIRE', KEYS[2], newExpirationMillis)
+            end
+
             return 1
             """,
             Long.class

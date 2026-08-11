@@ -317,4 +317,74 @@ class RedisRefreshTokenStoreTest {
         )
             .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    @DisplayName("짧은 세션을 추가해도 사용자 인덱스의 기존 TTL을 단축하지 않는다")
+    void save_doesNotShortenUserIndexExpiration() {
+        // given
+        UUID userId = UUID.randomUUID();
+        String longLivedTokenHash = "1".repeat(64);
+        String shortLivedTokenHash = "2".repeat(64);
+
+        Duration longExpiration =
+            Duration.ofSeconds(10);
+
+        Duration shortExpiration =
+            Duration.ofMillis(300);
+
+        /*
+         * 먼저 유효기간이 긴 Refresh Token 세션을 저장
+         * 사용자별 인덱스도 동일한 10초 TTL을 갖게 된다.
+         */
+        refreshTokenStore.save(
+            userId,
+            longLivedTokenHash,
+            longExpiration
+        );
+
+        /*
+         * 동일한 사용자에게 유효기간이 더 짧은 세션을 추가
+         *
+         * 이때 사용자별 인덱스 TTL을 300ms로 덮어쓰면
+         * 긴 세션이 유효한 동안 사용자 인덱스가 먼저 사라지는 문제가 발생
+         */
+        refreshTokenStore.save(
+            userId,
+            shortLivedTokenHash,
+            shortExpiration
+        );
+
+        /*
+         * 짧은 세션이 실제로 TTL에 의해 만료될 때까지 기다린다.
+         */
+        await()
+            .atMost(Duration.ofSeconds(3))
+            .untilAsserted(() ->
+                assertThat(
+                    refreshTokenStore.findUserIdByTokenHash(
+                        shortLivedTokenHash
+                    )
+                )
+                    .isEmpty()
+            );
+
+        /*
+         * 짧은 세션이 만료된 후에도 긴 세션은 여전히 유효해야 한다.
+         */
+        assertThat(
+            refreshTokenStore.findUserIdByTokenHash(
+                longLivedTokenHash
+            )
+        )
+            .contains(userId);
+
+        /*
+         * 사용자별 세션 인덱스 역시 만료되지 않아야 하며,
+         * 아직 유효한 긴 세션의 해시를 조회할 수 있어야 한다.
+         */
+        assertThat(
+            refreshTokenStore.findTokenHashesByUserId(userId)
+        )
+            .contains(longLivedTokenHash);
+    }
 }
