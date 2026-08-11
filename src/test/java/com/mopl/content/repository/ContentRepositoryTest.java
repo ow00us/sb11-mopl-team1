@@ -543,6 +543,66 @@ class ContentRepositoryTest {
                 .executeUpdate();
     }
 
+    // ── source 역매핑 방어 (버그 픽스: enum에 없는 source 값) ───────────────────
+
+    @Test
+    @DisplayName("source에 enum에 없는 값이 저장된 행이 섞여 있어도 목록 조회는 예외 없이 반환되고, 그 행의 source만 null로 매핑된다")
+    void findByWatcherCountDesc_unknownSourceValue_mappedToNullWithoutException() {
+        Instant now = Instant.now();
+        // 제약 도입 전(레거시 시드 등)에 enum에 없는 값이 이미 들어간 상황을 재현하기 위해
+        // 제약을 일시적으로 제거한다. DDL도 트랜잭션 내에서 실행되므로 테스트 종료 시 자동 롤백된다.
+        dropSourceCheckConstraint();
+        UUID brokenId = insertContentWithRawSource("Broken Source", "QA_SEED", now);
+        UUID validId = insertContentWithRawSource("Valid Source", "TMDB", now.minusSeconds(1));
+
+        List<Content> result = contentRepository.findByWatcherCountDesc(
+                null, null, List.of(""), 0, null, null, null, now, 10);
+
+        assertThat(result).extracting(Content::getId).containsExactlyInAnyOrder(brokenId, validId);
+        Content broken = result.stream().filter(c -> c.getId().equals(brokenId)).findFirst().orElseThrow();
+        Content valid = result.stream().filter(c -> c.getId().equals(validId)).findFirst().orElseThrow();
+        assertThat(broken.getSource()).isNull();
+        assertThat(valid.getSource()).isEqualTo(ContentSource.TMDB);
+    }
+
+    @Test
+    @DisplayName("source에 enum에 없는 값을 네이티브 INSERT로 저장하려 하면 CHECK 제약 위반이 발생한다")
+    void insertContent_unknownSourceValue_violatesCheckConstraint() {
+        assertThatThrownBy(() -> insertContentWithRawSource("Invalid", "QA_SEED", Instant.now()))
+                .isInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    @DisplayName("source가 NULL이면 CHECK 제약과 무관하게 정상 저장된다")
+    void insertContent_nullSource_savesSuccessfully() {
+        UUID id = insertContentWithRawSource("Null Source", null, Instant.now());
+        entityManager.getEntityManager().clear();
+
+        Content found = contentRepository.findById(id).orElseThrow();
+
+        assertThat(found.getSource()).isNull();
+    }
+
+    private UUID insertContentWithRawSource(String title, String rawSourceValue, Instant createdAt) {
+        UUID id = UUID.randomUUID();
+        String sourceLiteral = rawSourceValue == null ? "NULL" : "'" + rawSourceValue + "'";
+        entityManager.getEntityManager()
+                .createNativeQuery("INSERT INTO contents "
+                        + "(id, created_at, updated_at, type, source, title, description, average_rating, review_count, watcher_count) "
+                        + "VALUES (:id, :createdAt, :createdAt, 'MOVIE', " + sourceLiteral + ", :title, 'description', 0.0, 0, 0)")
+                .setParameter("id", id)
+                .setParameter("createdAt", createdAt)
+                .setParameter("title", title)
+                .executeUpdate();
+        return id;
+    }
+
+    private void dropSourceCheckConstraint() {
+        entityManager.getEntityManager()
+                .createNativeQuery("ALTER TABLE contents DROP CONSTRAINT ck_contents_source")
+                .executeUpdate();
+    }
+
     // ── findByIdForUpdate ────────────────────────────────────────────────────
 
     @Test
