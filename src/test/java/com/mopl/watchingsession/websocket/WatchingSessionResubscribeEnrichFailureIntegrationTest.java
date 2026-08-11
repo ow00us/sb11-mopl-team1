@@ -17,6 +17,7 @@ import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.ChangeType;
 import com.mopl.watchingsession.dto.WatchingSessionChange;
+import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import jakarta.annotation.Nullable;
 import java.lang.reflect.Type;
@@ -35,6 +36,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
 import org.springframework.messaging.simp.stomp.StompCommand;
@@ -88,6 +90,9 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
     private ContentRepository contentRepository;
     @Autowired
     private WatchingSessionSnapshotRepository snapshotRepository;
+
+    @Autowired
+    private RedisTemplate<String, Object> redisTemplate;
 
     private WebSocketStompClient stompClient;
     private ThreadPoolTaskScheduler taskScheduler;
@@ -170,6 +175,10 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
                 // ERROR 프레임 처리 직후 서버가 먼저 연결을 닫을 수 있습니다.
             }
         }
+    }
+
+    private String presenceKey(UUID watcherId) {
+        return "mopl:presence:watcher:" + watcherId;
     }
 
     private String wsUrl() {
@@ -255,6 +264,15 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
         await().atMost(5, TimeUnit.SECONDS).pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isPresent());
 
+        await().atMost(5, TimeUnit.SECONDS)
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .untilAsserted(() -> {
+                WatchingPresence presenceOnA =
+                    (WatchingPresence) redisTemplate.opsForValue().get(presenceKey(watcherId));
+                assertThat(presenceOnA).isNotNull();
+                assertThat(presenceOnA.contentId()).isEqualTo(contentAId);
+            });
+
         // when: 콘텐츠 B로 재구독. enrich(userRepository.findById)만 실패하도록 유도
         User realWatcher = userRepository.findById(watcherId).orElseThrow();
         doReturn(Optional.of(realWatcher))  // 1번째 호출: previous(A) 조회용 enrich - 성공
@@ -278,6 +296,12 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
         // then: 보상 삭제로 DB 세션 소멸 + A를 보던 관찰자는 LEAVE 수신
         await().atMost(5, TimeUnit.SECONDS).pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty());
+
+        // 보상삭제로 presence도 함께 삭제는지 확인
+        await().atMost(5, TimeUnit.SECONDS)
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .untilAsserted(() ->
+                assertThat(redisTemplate.opsForValue().get(presenceKey(watcherId))).isNull());
 
         WatchingSessionChange leaveChange = leaveOnA.get(5, TimeUnit.SECONDS);
         assertThat(leaveChange.watchingSessionDto().watcher().userId()).isEqualTo(watcherId);
