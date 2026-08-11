@@ -44,6 +44,9 @@ jwt:
   secret: ${JWT_SECRET}
   access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION:3h}
 
+refresh-token:
+  expiration: ${REFRESH_TOKEN_EXPIRATION:7d}
+
 tmdb:
   base-url: https://api.themoviedb.org/3
   access-token: ${TMDB_ACCESS_TOKEN}
