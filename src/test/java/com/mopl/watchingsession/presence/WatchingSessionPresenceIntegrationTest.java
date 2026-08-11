@@ -111,7 +111,7 @@ public class WatchingSessionPresenceIntegrationTest {
 
         writer.delete(neverWrittenWatcherId);
 
-        assertThat(redisTemplate.hasKey("mople:presence:watcher:" + neverWrittenWatcherId)).isFalse();
+        assertThat(redisTemplate.hasKey("mopl:presence:watcher:" + neverWrittenWatcherId)).isFalse();
     }
 
 
