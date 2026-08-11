@@ -4,33 +4,32 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.config.RefreshTokenProperties;
-import com.mopl.user.entity.RefreshTokenSession;
-import com.mopl.user.repository.RefreshTokenSessionRepository;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.user.security.RefreshTokenGenerator;
 import com.mopl.user.security.RefreshTokenHasher;
+import com.mopl.user.storage.RefreshTokenStore;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * RefreshTokenService의 발급 규칙을 검증하는 단위 테스트
+ * RefreshTokenService의 Refresh Token 발급 규칙을 검증하는 단위 테스트
  *
- * 실제 PostgreSQL 저장 동작은 RefreshTokenSessionRepositoryTest에서 검증했으므로
- * 이 테스트에서는 사용자 확인, 원문 생성, 해시 처리, 만료 시각 계산과
- * Repository에 전달되는 엔티티의 값을 검증
+ * <p>실제 Redis 명령과 TTL 동작은 RedisRefreshTokenStore 통합 테스트에서
+ * 검증합니다. 이 테스트에서는 사용자 확인, 원문 생성, 해시 처리,
+ * 만료 시각 계산과 RefreshTokenStore에 전달되는 값을 검증합니다.</p>
  */
 @ExtendWith(MockitoExtension.class)
 class RefreshTokenServiceTest {
@@ -38,8 +37,15 @@ class RefreshTokenServiceTest {
     @Mock
     UserRepository userRepository;
 
+    /**
+     * 실제 Redis에 연결하지 않고 RefreshTokenService가 저장소에 전달하는
+     * 사용자 UUID, 토큰 해시, TTL을 검증하기 위한 Mock
+     *
+     * Redis 명령과 실제 TTL 동작은 RedisRefreshTokenStore 통합 테스트에서
+     * 별도로 검증
+     */
     @Mock
-    RefreshTokenSessionRepository refreshTokenSessionRepository;
+    RefreshTokenStore refreshTokenStore;
 
     @Mock
     RefreshTokenGenerator refreshTokenGenerator;
@@ -92,44 +98,39 @@ class RefreshTokenServiceTest {
             Instant.now().plus(expiration);
 
         // then
-        ArgumentCaptor<RefreshTokenSession> sessionCaptor =
-            ArgumentCaptor.forClass(RefreshTokenSession.class);
-
-        verify(refreshTokenSessionRepository)
-            .save(sessionCaptor.capture());
-
-        RefreshTokenSession savedSession =
-            sessionCaptor.getValue();
-
-        assertThat(savedSession.getUserId())
-            .isEqualTo(userId);
-
-        assertThat(savedSession.getTokenHash())
-            .isEqualTo(tokenHash);
-
         /*
-         * DB에 저장되는 값이 Refresh Token 원문이 아니라
-         * 해시라는 사실을 명시적으로 검증
+         * Service가 Refresh Token 원문이 아니라 SHA-256 해시값을
+         * 사용자 UUID와 설정된 유효기간과 함께 저장소에 전달하는지 검증한다.
          */
-        assertThat(savedSession.getTokenHash())
-            .isNotEqualTo(rawToken);
-
-        assertThat(savedSession.getExpiresAt())
-            .isAfterOrEqualTo(earliestExpiration)
-            .isBeforeOrEqualTo(latestExpiration);
-
-        assertThat(savedSession.getRevokedAt())
-            .isNull();
+        verify(refreshTokenStore).save(
+            userId,
+            tokenHash,
+            expiration
+        );
 
         /*
-         * 외부로 반환하는 값은 원문이어야 하며,
-         * 만료 시각은 DB에 저장한 값과 정확히 같아야 한다.
+         * 검증한 해시 저장 외에 Refresh Token 원문 등을 이용한
+         * 추가 저장 호출이 없었는지 확인
+         */
+        verifyNoMoreInteractions(refreshTokenStore);
+
+        /*
+         * 클라이언트에게 전달할 결과에는 생성된 Refresh Token 원문이 포함되어야 한다.
+         * 원문은 Redis 저장소에는 전달되지 않고 반환값을 통해서만 외부로 전달
          */
         assertThat(result.rawToken())
             .isEqualTo(rawToken);
 
+        /*
+         * Service 내부에서 Instant.now()를 호출하므로 테스트에서 정확히 같은
+         * Instant 값을 미리 만들 수 없다.
+         *
+         * 따라서 Service 호출 직전과 직후에 계산한 만료 시각 범위 안에
+         * 실제 반환 만료 시각이 포함되는지 검증
+         */
         assertThat(result.expiresAt())
-            .isEqualTo(savedSession.getExpiresAt());
+            .isAfterOrEqualTo(earliestExpiration)
+            .isBeforeOrEqualTo(latestExpiration);
 
         verify(userRepository).existsById(userId);
         verify(refreshTokenGenerator).generate();
@@ -158,13 +159,13 @@ class RefreshTokenServiceTest {
 
         /*
          * 사용자가 존재하지 않으면 원문 생성과 해시 처리,
-         * DB 저장이 모두 수행되지 않아야 한다.
+         * Redis 저장이 모두 수행되지 않아야 한다.
          */
         verifyNoInteractions(
             refreshTokenGenerator,
             refreshTokenHasher,
             refreshTokenProperties,
-            refreshTokenSessionRepository
+            refreshTokenStore
         );
     }
 
@@ -187,7 +188,7 @@ class RefreshTokenServiceTest {
             refreshTokenGenerator,
             refreshTokenHasher,
             refreshTokenProperties,
-            refreshTokenSessionRepository
+            refreshTokenStore
         );
     }
 

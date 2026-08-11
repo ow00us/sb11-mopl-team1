@@ -3,36 +3,45 @@ package com.mopl.user.service;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.config.RefreshTokenProperties;
-import com.mopl.user.entity.RefreshTokenSession;
-import com.mopl.user.repository.RefreshTokenSessionRepository;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.user.security.RefreshTokenGenerator;
 import com.mopl.user.security.RefreshTokenHasher;
+import com.mopl.user.storage.RefreshTokenStore;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Refresh Token의 발급과 서버 저장을 담당하는 Service
+ * Refresh Token 발급과 서버 측 저장을 담당하는 Service
  *
- * 이 Service는 Refresh Token 원문을 생성한 뒤
- * 원문 자체가 아닌 SHA-256 해시만 PostgreSQL에 저장
+ * <p>이 Service는 Refresh Token 원문을 생성한 후 원문 자체는 저장하지 않고,
+ * SHA-256 해시와 사용자 식별 정보를 Redis에 저장합니다.</p>
  *
- * 로그인 API 및 HttpOnly Cookie와의 연동은 담당하지 않는다.
- * 후속 작업에서 로그인 성공 후 이 Service의 issue()를 호출하고
- * 반환된 원문을 Cookie에 담도록 연결
+ * <p>Redis 저장 데이터에는 Refresh Token 유효기간과 동일한 TTL을 적용하여
+ * 만료된 세션이 자동으로 제거되도록 합니다.</p>
+ *
+ * <p>로그인 API 및 HttpOnly Cookie 연동은 후속 작업에서 구현합니다.
+ * 후속 작업에서는 로그인 성공 후 issue()를 호출하고 반환된 원문을
+ * HttpOnly Cookie로 전달합니다.</p>
  */
 @Service
 @RequiredArgsConstructor
 public class RefreshTokenService {
 
     private final UserRepository userRepository;
-    private final RefreshTokenSessionRepository refreshTokenSessionRepository;
     private final RefreshTokenGenerator refreshTokenGenerator;
     private final RefreshTokenHasher refreshTokenHasher;
     private final RefreshTokenProperties refreshTokenProperties;
+
+    /**
+     * Refresh Token 해시와 사용자 세션 정보를 저장하는 저장소
+     *
+     * 현재 구현체는 RedisRefreshTokenStore이며, Service는 Redis의 키 구조나
+     * 명령어를 직접 알지 않고 저장소 인터페이스에만 의존
+     */
+    private final RefreshTokenStore refreshTokenStore;
 
     /**
      * 주어진 사용자에게 새로운 Refresh Token을 발급
@@ -44,7 +53,7 @@ public class RefreshTokenService {
      * 3. 256비트의 무작위 Refresh Token 원문을 생성
      * 4. 원문을 SHA-256 해시로 변환
      * 5. 설정된 만료 시간을 이용해 절대 만료 시각을 계산
-     * 6. 사용자 UUID, 토큰 해시와 만료 시각을 DB에 저장
+     * 6. 사용자 UUID와 토큰 해시를 Redis에 TTL과 함께 저장
      * 7. 클라이언트에 전달할 원문과 만료 시각을 반환
      *
      * 하나의 사용자에게 여러 번 호출할 수 있으며,
@@ -55,70 +64,63 @@ public class RefreshTokenService {
      * @throws BusinessException 사용자 UUID가 null인 경우
      * @throws BusinessException 사용자가 존재하지 않는 경우
      */
-    @Transactional
     public IssuedRefreshToken issue(UUID userId) {
         /*
-         * null을 Repository에 전달하면 Spring Data JPA의
-         * IllegalArgumentException이 발생할 수 있다.
-         *
-         * 애플리케이션의 일관된 오류 형식을 사용하기 위해
-         * Repository 호출 전에 명시적으로 입력값을 검증
+         * 토큰을 어느 사용자에게 발급하는지 반드시 식별할 수 있어야 하므로
+         * 사용자 UUID가 없는 요청은 즉시 거부
          */
         if (userId == null) {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
 
         /*
-         * 존재하지 않는 사용자에게 Refresh Token 세션이 발급되지 않도록 한다.
-         *
-         * DB의 외래 키도 존재하지 않는 사용자 ID 저장을 차단하지만,
-         * Service에서 먼저 확인하면 데이터 무결성 예외 대신
-         * 사용자 조회 실패라는 도메인 의미를 가진 예외를 반환할 수 있다.
+         * 존재하지 않는 사용자에게 Refresh Token 세션을 발급하지 않도록
+         * 실제 users 테이블에 사용자가 존재하는지 확인
          */
         if (!userRepository.existsById(userId)) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
         }
 
         /*
-         * 클라이언트에 전달할 Refresh Token 원문을 생성
-         *
-         * 원문은 이 메서드의 반환값으로만 전달하며
-         * 엔티티나 데이터베이스에는 저장하지 않는다.
+         * 외부에 전달할 Refresh Token 원문을 암호학적으로 안전한 난수로 생성
          */
         String rawToken = refreshTokenGenerator.generate();
 
         /*
-         * 데이터베이스 조회와 저장에 사용할 SHA-256 해시를 생성
+         * 원문은 Redis에 저장하지 않고 SHA-256 해시값만 저장
+         * 이후 재발급 요청에서도 Cookie로 받은 원문을 동일하게 해시하여 조회
          */
         String tokenHash = refreshTokenHasher.hash(rawToken);
 
         /*
-         * Instant는 UTC 기준의 절대 시각을 표현
+         * 설정된 유효기간을 한 번만 조회하여 반환값의 만료 시각과
+         * Redis 세션 TTL에 동일하게 적용
          *
-         * application.yml에 설정된 기본 만료 시간 7일을
-         * 현재 시각에 더해 절대 만료 시각을 계산
+         * 설정값을 각각 조회하면 설정 변경이나 테스트 구성에 따라
+         * 반환 만료 시각과 실제 저장소 TTL이 달라질 수 있으므로
+         * 하나의 Duration 값을 함께 사용
          */
-        Instant expiresAt = Instant.now()
-            .plus(refreshTokenProperties.getExpiration());
-
-        RefreshTokenSession session =
-            RefreshTokenSession.builder()
-                .userId(userId)
-                .tokenHash(tokenHash)
-                .expiresAt(expiresAt)
-                .build();
+        Duration expiration = refreshTokenProperties.getExpiration();
+        Instant expiresAt = Instant.now().plus(expiration);
 
         /*
-         * 저장되는 값은 원문이 아닌 tokenHash
+         * Refresh Token 원문은 클라이언트에게만 전달하고 서버 저장소에는 저장하지 않는다.
          *
-         * @Transactional이 적용되어 있으므로 저장 과정에서 예외가 발생하면
-         * Refresh Token 세션 저장 작업 전체가 롤백된다.
+         * 원문 대신 SHA-256 해시값을 저장하면 Redis 데이터가 노출되더라도
+         * 저장된 값만으로 Refresh Token 원문을 바로 사용할 수 없다.
+         *
+         * expiration은 Redis TTL로 사용된다. 따라서 Refresh Token이 만료되면
+         * Redis가 해당 세션 키를 자동으로 제거하며 별도의 만료 데이터 정리 작업이 필요 없다.
          */
-        refreshTokenSessionRepository.save(session);
+        refreshTokenStore.save(
+            userId,
+            tokenHash,
+            expiration
+        );
 
         /*
-         * 이후 로그인 연동에서는 rawToken을 HttpOnly Cookie에 담는다.
-         * expiresAt은 Cookie 만료 시각을 서버 세션과 일치시킬 때 사용
+         * 원문은 로그인 응답의 HttpOnly Cookie로 전달하기 위해 반환
+         * 현재 이슈에서는 발급 및 저장까지만 구현하며 Cookie 연동은 후속 작업
          */
         return new IssuedRefreshToken(
             rawToken,
