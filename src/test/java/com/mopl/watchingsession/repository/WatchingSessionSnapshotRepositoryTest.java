@@ -75,7 +75,7 @@ public class WatchingSessionSnapshotRepositoryTest {
         UUID id = UUID.randomUUID();
         entityManager.getEntityManager().createNativeQuery(
             "INSERT INTO contents (id, type, source, title, description, average_rating, review_count, watcher_count, created_at, updated_at)"
-            + "VALUES (:id, 'MOVIE', 'INTERNAL', 'stub', '테스트 설명', 0.0, 0, 0, now(), now())")
+            + "VALUES (:id, 'MOVIE', 'MANUAL', 'stub', '테스트 설명', 0.0, 0, 0, now(), now())")
             .setParameter("id", id)
             .executeUpdate();
         return id;
