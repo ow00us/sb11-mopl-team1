@@ -16,9 +16,13 @@ import com.mopl.content.repository.ContentRepository;
 import com.mopl.playlist.repository.PlaylistContentRepository;
 import com.mopl.playlist.repository.PlaylistRepository;
 import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
+import com.mopl.user.entity.User;
+import com.mopl.user.entity.UserRole;
+import com.mopl.user.repository.UserRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -47,6 +51,7 @@ class PlaylistServiceTest {
     @Mock PlaylistContentRepository playlistContentRepository;
     @Mock ContentRepository contentRepository;
     @Mock PlaylistContentSaver playlistContentSaver;
+    @Mock UserRepository userRepository;
 
     @InjectMocks
     PlaylistServiceImpl playlistService;
@@ -304,6 +309,29 @@ class PlaylistServiceTest {
         assertThat(result.description()).isEqualTo("원래 설명");
         assertThat(result.updatedAt()).isEqualTo(newUpdatedAt);
         verify(playlistRepository).saveAndFlush(any(Playlist.class));
+    }
+
+    @Test
+    @DisplayName("update 응답 contents 는 저장된 콘텐츠 목록으로 채워져 반환된다")
+    void update_returnsExistingContents() {
+        Instant newUpdatedAt = Instant.now();
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "원 제목", "설명", newUpdatedAt.minusSeconds(60));
+        Playlist flushed  = savedPlaylist(PLAYLIST_ID, OWNER_ID, "새 제목", "설명", newUpdatedAt);
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(playlistRepository.saveAndFlush(any(Playlist.class))).thenReturn(flushed);
+
+        UUID contentId = UUID.randomUUID();
+        when(playlistContentRepository.findAllByPlaylistIdOrderByCreatedAtAsc(PLAYLIST_ID))
+                .thenReturn(List.of(savedLink(PLAYLIST_ID, contentId, Instant.now())));
+        when(contentRepository.findAllWithTagsByIdIn(List.of(contentId)))
+                .thenReturn(List.of(savedContent(contentId, "콘텐츠 A")));
+
+        PlaylistDto result = playlistService.update(
+                PLAYLIST_ID, new PlaylistUpdateRequest("새 제목", null), OWNER_ID);
+
+        assertThat(result.contents()).hasSize(1);
+        assertThat(result.contents().get(0).id()).isEqualTo(contentId);
+        assertThat(result.contents().get(0).title()).isEqualTo("콘텐츠 A");
     }
 
     @Test
@@ -724,6 +752,95 @@ class PlaylistServiceTest {
         verify(playlistContentSaver).save(PLAYLIST_ID, contentId);
     }
 
+    // ── owner 필드 배치 조회 (이슈 #182) ────────────────────────────────────
+
+    @Test
+    @DisplayName("get 은 owner.name·profileImageUrl 을 실제 User 정보로 채운다")
+    void get_success_populatesOwnerNameAndProfileImageUrl() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        User owner = savedUser(OWNER_ID, "홍길동", "https://example.com/avatar.png");
+
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(userRepository.findAllById(List.of(OWNER_ID))).thenReturn(List.of(owner));
+
+        PlaylistDto result = playlistService.get(PLAYLIST_ID, null);
+
+        assertThat(result.owner().userId()).isEqualTo(OWNER_ID);
+        assertThat(result.owner().name()).isEqualTo("홍길동");
+        assertThat(result.owner().profileImageUrl()).isEqualTo("https://example.com/avatar.png");
+    }
+
+    @Test
+    @DisplayName("get 은 owner user 가 조회되지 않으면 알 수 없는 사용자 대체값을 사용한다")
+    void get_userNotFound_useUnknownName() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(userRepository.findAllById(List.of(OWNER_ID))).thenReturn(List.of());
+
+        PlaylistDto result = playlistService.get(PLAYLIST_ID, null);
+
+        assertThat(result.owner().userId()).isEqualTo(OWNER_ID);
+        assertThat(result.owner().name()).isEqualTo("알 수 없는 사용자");
+        assertThat(result.owner().profileImageUrl()).isNull();
+    }
+
+    @Test
+    @DisplayName("getList 는 페이지 각 항목의 owner.name·profileImageUrl 을 실제 User 정보로 채운다")
+    void getList_populatesOwnerFieldsForEachItem() {
+        UUID ownerA = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID ownerB = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        List<Playlist> rows = List.of(
+                savedPlaylist(UUID.randomUUID(), ownerA, "A", "a", Instant.now()),
+                savedPlaylist(UUID.randomUUID(), ownerB, "B", "b", Instant.now())
+        );
+        when(playlistRepository.findByUpdatedAtAsc(null, null, null, null, null, 3)).thenReturn(rows);
+        when(playlistRepository.countByFilter(null, null, null)).thenReturn(2L);
+        when(userRepository.findAllById(anyList())).thenReturn(List.of(
+                savedUser(ownerA, "사용자A", "https://a.png"),
+                savedUser(ownerB, "사용자B", null)
+        ));
+
+        CursorResponse<PlaylistDto> result = playlistService.getList(
+                null, null, null, null, null, 2, "updatedAt", "ASCENDING", null);
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.data().get(0).owner().userId()).isEqualTo(ownerA);
+        assertThat(result.data().get(0).owner().name()).isEqualTo("사용자A");
+        assertThat(result.data().get(0).owner().profileImageUrl()).isEqualTo("https://a.png");
+        assertThat(result.data().get(1).owner().userId()).isEqualTo(ownerB);
+        assertThat(result.data().get(1).owner().name()).isEqualTo("사용자B");
+        assertThat(result.data().get(1).owner().profileImageUrl()).isNull();
+    }
+
+    @Test
+    @DisplayName("getList 는 페이지 크기와 무관하게 owner 를 findAllById 로 1회만 배치 조회한다 (N+1 방지)")
+    @SuppressWarnings("unchecked")
+    void getList_batchFetchesOwnersOnce() {
+        UUID ownerA = UUID.fromString("aaaaaaa1-0000-0000-0000-000000000000");
+        UUID ownerB = UUID.fromString("bbbbbbb2-0000-0000-0000-000000000000");
+        List<Playlist> rows = List.of(
+                savedPlaylist(UUID.randomUUID(), ownerA, "A", "a", Instant.now()),
+                savedPlaylist(UUID.randomUUID(), ownerA, "B", "b", Instant.now()),
+                savedPlaylist(UUID.randomUUID(), ownerB, "C", "c", Instant.now())
+        );
+        when(playlistRepository.findByUpdatedAtAsc(null, null, null, null, null, 4)).thenReturn(rows);
+        when(playlistRepository.countByFilter(null, null, null)).thenReturn(3L);
+        when(userRepository.findAllById(anyList())).thenReturn(List.of(
+                savedUser(ownerA, "사용자A", null),
+                savedUser(ownerB, "사용자B", null)
+        ));
+
+        playlistService.getList(null, null, null, null, null, 3, "updatedAt", "ASCENDING", null);
+
+        // 배치 조회 계약: findAllById 1회, findById 는 호출되지 않음
+        ArgumentCaptor<Iterable<UUID>> captor = ArgumentCaptor.forClass(Iterable.class);
+        verify(userRepository, times(1)).findAllById(captor.capture());
+        verify(userRepository, never()).findById(any(UUID.class));
+
+        // ownerIds 는 distinct 로 전달되어야 함 (ownerA 중복 제거)
+        assertThat(captor.getValue()).containsExactlyInAnyOrder(ownerA, ownerB);
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
     private Content savedContentWithType(UUID id, String title, ContentType type) {
@@ -772,5 +889,18 @@ class PlaylistServiceTest {
         PlaylistContent link = PlaylistContent.create(playlistId, contentId);
         ReflectionTestUtils.setField(link, "createdAt", createdAt);
         return link;
+    }
+
+    private User savedUser(UUID id, String name, String profileImageUrl) {
+        User user = User.builder()
+                .email(id + "@example.com")
+                .passwordHash("hash")
+                .name(name)
+                .profileImageUrl(profileImageUrl)
+                .role(UserRole.USER)
+                .locked(false)
+                .build();
+        ReflectionTestUtils.setField(user, "id", id);
+        return user;
     }
 }
