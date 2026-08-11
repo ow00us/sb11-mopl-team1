@@ -79,6 +79,46 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
             Long.class
         );
 
+    /**
+     * 사용자별 세션 인덱스에서 현재 활성 상태인 Refresh Token 해시만 조회하고,
+     * 이미 만료된 세션 해시는 인덱스에서 제거하는 Lua Script
+     *
+     * <p>Redis Set의 Member에는 개별 TTL을 지정할 수 없습니다.
+     * 따라서 개별 세션 Key가 만료되더라도 사용자 Set에는 해당 토큰 해시가
+     * 남을 수 있습니다.</p>
+     *
+     * <p>사용자별 Set의 모든 토큰 해시를 확인하면서 대응하는 세션 Key가
+     * 존재하면 활성 목록에 포함하고, 존재하지 않으면 SREM으로 제거합니다.</p>
+     *
+     * <p>조회와 정리를 하나의 Lua Script 안에서 수행하므로 다른 Redis 명령이
+     * 중간에 끼어들지 않는 원자적인 정리 작업이 됩니다.</p>
+     *
+     * KEYS[1]: 사용자별 Refresh Token Set Key
+     * ARGV[1]: Refresh Token 세션 Key 접두어
+     */
+    @SuppressWarnings("rawtypes")
+    private static final DefaultRedisScript<List>
+        FIND_ACTIVE_SESSIONS_SCRIPT =
+        new DefaultRedisScript<>(
+            """
+            local tokenHashes = redis.call('SMEMBERS', KEYS[1])
+            local activeTokenHashes = {}
+
+            for _, tokenHash in ipairs(tokenHashes) do
+                local sessionKey = ARGV[1] .. tokenHash
+
+                if redis.call('EXISTS', sessionKey) == 1 then
+                    table.insert(activeTokenHashes, tokenHash)
+                else
+                    redis.call('SREM', KEYS[1], tokenHash)
+                end
+            end
+
+            return activeTokenHashes
+            """,
+            List.class
+        );
+
     private final StringRedisTemplate redisTemplate;
 
     /**
@@ -176,15 +216,21 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
     }
 
     /**
-     * 사용자별 Redis Set에서 Refresh Token 해시 목록을 조회
+     * 사용자별 Redis Set에서 현재 활성 상태인 Refresh Token 해시만 조회
      *
-     * 해당 사용자의 세션이 없거나 사용자별 Set이 만료됐다면
-     * 수정할 수 없는 빈 Set을 반환
+     * <p>Redis Set의 Member에는 개별 TTL을 적용할 수 없으므로
+     * 개별 세션 Key가 만료된 이후에도 사용자별 Set에는 만료된 토큰 해시가
+     * 남아 있을 수 있습니다.</p>
+     *
+     * <p>Lua Script에서 각 토큰 해시에 대응하는 세션 Key의 존재 여부를
+     * 확인하고, 세션 Key가 없는 만료 해시는 사용자 Set에서 제거합니다.
+     * 따라서 반환되는 값에는 현재 세션 Key가 존재하는 토큰 해시만 포함됩니다.</p>
      *
      * @param userId 조회할 사용자 UUID
-     * @return 사용자의 Refresh Token 해시 집합
+     * @return 현재 활성 상태인 Refresh Token 해시 집합
      */
     @Override
+    @SuppressWarnings("unchecked")
     public Set<String> findTokenHashesByUserId(
         UUID userId
     ) {
@@ -192,15 +238,27 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
             return Set.of();
         }
 
-        Set<String> tokenHashes =
-            redisTemplate.opsForSet()
-                .members(userSessionsKey(userId));
+        /*
+         * Lua Script의 반환값은 Redis의 다중 Bulk 응답이며,
+         * StringRedisTemplate이 각 값을 String으로 역직렬화
+         */
+        List<String> activeTokenHashes =
+            redisTemplate.execute(
+                FIND_ACTIVE_SESSIONS_SCRIPT,
+                List.of(userSessionsKey(userId)),
+                SESSION_KEY_PREFIX
+            );
 
-        if (tokenHashes == null || tokenHashes.isEmpty()) {
+        if (activeTokenHashes == null
+            || activeTokenHashes.isEmpty()) {
             return Set.of();
         }
 
-        return Set.copyOf(tokenHashes);
+        /*
+         * 외부 호출자가 저장소 내부 결과를 변경하지 못하도록
+         * 수정할 수 없는 Set으로 변환해 반환
+         */
+        return Set.copyOf(activeTokenHashes);
     }
 
     /**

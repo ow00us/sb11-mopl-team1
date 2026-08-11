@@ -369,7 +369,7 @@ class RedisRefreshTokenStoreTest {
             );
 
         /*
-         * 짧은 세션이 만료된 후에도 긴 세션은 여전히 유효해야 한다.
+         * 짧은 세션이 만료된 후에도 긴 세션은 여전히 유효해야 합니다.
          */
         assertThat(
             refreshTokenStore.findUserIdByTokenHash(
@@ -379,12 +379,30 @@ class RedisRefreshTokenStoreTest {
             .contains(userId);
 
         /*
-         * 사용자별 세션 인덱스 역시 만료되지 않아야 하며,
-         * 아직 유효한 긴 세션의 해시를 조회할 수 있어야 한다.
+         * 사용자별 세션 조회에는 현재 세션 Key가 존재하는
+         * 긴 세션 해시만 포함
+         *
+         * 이미 만료된 짧은 세션 해시는 조회 결과에서 제외
          */
+        Set<String> activeTokenHashes =
+            refreshTokenStore.findTokenHashesByUserId(userId);
+
+        assertThat(activeTokenHashes)
+            .containsExactly(longLivedTokenHash)
+            .doesNotContain(shortLivedTokenHash);
+
+        /*
+         * 조회 과정에서 만료된 짧은 세션 해시가 사용자별 Redis Set에서도
+         * 실제로 제거됐는지 확인
+         */
+        String userSessionsKey =
+            "auth:refresh-token:user:" + userId;
+
         assertThat(
-            refreshTokenStore.findTokenHashesByUserId(userId)
+            redisTemplate.opsForSet()
+                .members(userSessionsKey)
         )
-            .contains(longLivedTokenHash);
+            .containsExactly(longLivedTokenHash)
+            .doesNotContain(shortLivedTokenHash);
     }
 }
