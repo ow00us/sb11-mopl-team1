@@ -76,7 +76,14 @@ public class WatchingSessionUnsubscribeListener {
         // 다른 연결로 이미 소유권이 넘어갔다면 이 UNSUBSCRIBE는 오래된 연결의 정리 시도이므로 삭제 안함
         boolean actuallyDeleted = watchingSessionService.end(watcherId, sessionId, subscriptionId);
         if (actuallyDeleted) {
-            watchingSessionBroadcaster.broadcastLeave(session, contentId);
+            // WatchingSessionBroadcaster는 정상적으로는 실패를 내부에서 격리하지만 이 리스너 입장에서 그 보장을 전제할 수는 없으므로 두는 마지막 방어선
+            // @EventListener 경로라 여기서 예외가 새 나가면 로그 한 줄 없이 조용히 삼켜진다.
+            try {
+                watchingSessionBroadcaster.broadcastLeave(session, contentId);
+            } catch (RuntimeException broadcastFailure) {
+                log.error("UNSUBSCRIBE 처리 중 LEAVE 브로드캐스트 실패: watcherId={}, contentId={}",
+                    watcherId, contentId, broadcastFailure);
+            }
         }
     }
 

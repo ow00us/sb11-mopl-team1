@@ -646,7 +646,7 @@ public class ConversationService {
 
         try {
             return CursorUtils.decodeAsInstant(cursor);
-        } catch (DateTimeParseException exception) {
+        } catch (IllegalArgumentException | DateTimeParseException exception) {
             throw new BusinessException(
                 ErrorCode.INVALID_INPUT,
                 "커서 형식이 올바르지 않습니다."
