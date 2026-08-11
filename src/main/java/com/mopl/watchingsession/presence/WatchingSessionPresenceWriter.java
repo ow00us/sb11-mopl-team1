@@ -33,7 +33,7 @@ public class WatchingSessionPresenceWriter {
             // set(key, value, ttl) 단일 호출 - SET과 EXPIRE를 분리하면 중간 실패 시 만료 없는 키가 남음
             redisTemplate.opsForValue().set(key(watcherId), presence, ttl);
         } catch (RuntimeException e) {
-            log.error("Presence 쓰기 실패: watcherId={}, contentId={}", watcherId, contentId);
+            log.error("Presence 쓰기 실패: watcherId={}, contentId={}", watcherId, contentId, e);
         }
     }
 
