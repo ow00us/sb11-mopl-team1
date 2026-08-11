@@ -133,7 +133,8 @@ public class PlaylistServiceImpl implements PlaylistService {
         verifyOwner(playlist, requesterId);
         playlist.update(request.title(), request.description());
         Playlist saved = playlistRepository.saveAndFlush(playlist);
-        return PlaylistDto.from(saved, toOwnerSummary(saved.getOwnerId()), false, List.of());
+        List<ContentSummary> contents = loadContents(saved.getId());
+        return PlaylistDto.from(saved, toOwnerSummary(saved.getOwnerId()), false, contents);
     }
 
     @Override
