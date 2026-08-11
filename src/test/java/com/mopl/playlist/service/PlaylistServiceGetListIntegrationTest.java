@@ -79,7 +79,7 @@ class PlaylistServiceGetListIntegrationTest {
     }
 
     @Test
-    @DisplayName("getList는 페이지 크기·콘텐츠 수·태그 수와 무관하게 콘텐츠 로딩 SQL이 상수(playlist_contents 1 + contents+tags 1)로 완료된다")
+    @DisplayName("getList는 페이지 크기·콘텐츠 수·태그 수와 무관하게 콘텐츠·owner 로딩 SQL이 상수(playlist_contents 1 + contents+tags 1 + users 1)로 완료된다")
     void getList_batchQueries_areConstant() {
         int playlistCount = 5;
         int contentsPerPlaylist = 3;
@@ -102,10 +102,11 @@ class PlaylistServiceGetListIntegrationTest {
         //  2) countByFilter
         //  3) playlist_contents 배치 조회
         //  4) contents + content_tags EntityGraph 조인 조회
-        // → 4쿼리 상한 (limit·contents·tags 개수에 비례하지 않음)
+        //  5) users 배치 조회 (toOwnerSummaryMap, distinct ownerIds)
+        // → 5쿼리 상한 (limit·contents·tags 개수에 비례하지 않음)
         assertThat(queryCount)
                 .as("페이지 크기·콘텐츠 수·태그 수와 무관하게 상수 SQL로 완료되어야 한다")
-                .isLessThanOrEqualTo(4);
+                .isLessThanOrEqualTo(5);
 
         assertThat(result.data()).hasSize(playlistCount);
         assertThat(result.data().get(0).contents()).hasSize(contentsPerPlaylist);
