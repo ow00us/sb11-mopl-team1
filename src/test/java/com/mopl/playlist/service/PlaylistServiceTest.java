@@ -312,6 +312,29 @@ class PlaylistServiceTest {
     }
 
     @Test
+    @DisplayName("update 응답 contents 는 저장된 콘텐츠 목록으로 채워져 반환된다")
+    void update_returnsExistingContents() {
+        Instant newUpdatedAt = Instant.now();
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "원 제목", "설명", newUpdatedAt.minusSeconds(60));
+        Playlist flushed  = savedPlaylist(PLAYLIST_ID, OWNER_ID, "새 제목", "설명", newUpdatedAt);
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(playlistRepository.saveAndFlush(any(Playlist.class))).thenReturn(flushed);
+
+        UUID contentId = UUID.randomUUID();
+        when(playlistContentRepository.findAllByPlaylistIdOrderByCreatedAtAsc(PLAYLIST_ID))
+                .thenReturn(List.of(savedLink(PLAYLIST_ID, contentId, Instant.now())));
+        when(contentRepository.findAllWithTagsByIdIn(List.of(contentId)))
+                .thenReturn(List.of(savedContent(contentId, "콘텐츠 A")));
+
+        PlaylistDto result = playlistService.update(
+                PLAYLIST_ID, new PlaylistUpdateRequest("새 제목", null), OWNER_ID);
+
+        assertThat(result.contents()).hasSize(1);
+        assertThat(result.contents().get(0).id()).isEqualTo(contentId);
+        assertThat(result.contents().get(0).title()).isEqualTo("콘텐츠 A");
+    }
+
+    @Test
     @DisplayName("소유자가 아닌 사용자가 수정하면 FORBIDDEN 예외가 발생한다")
     void update_fail_forbidden() {
         Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
