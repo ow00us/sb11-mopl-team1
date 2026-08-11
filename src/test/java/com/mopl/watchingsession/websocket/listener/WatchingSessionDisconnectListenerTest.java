@@ -1,6 +1,9 @@
 package com.mopl.watchingsession.websocket.listener;
 
+import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -225,5 +228,22 @@ public class WatchingSessionDisconnectListenerTest {
         // then: 가장 마지막으로 activate된 sub-2를 기준으로 end()가 호출되어야 함
         verify(watchingSessionService).end(WATCHER_ID, SESSION_ID, "sub-2");
         verify(watchingSessionBroadcaster).broadcastLeave(dto, CONTENT_ID);
+    }
+
+    @Test
+    @DisplayName("브로드캐스트가 실패해도 리스너는 예외 없이 종료된다")
+    void onDisconnect_doesNotThrow_whenBroadcastFails() {
+        // given
+        WatchingSessionDto activeSession = dtoFixture(CONTENT_ID);
+        when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.of(activeSession));
+        when(watchingSessionService.end(eq(WATCHER_ID), eq(SESSION_ID), any())).thenReturn(true);
+        doThrow(new RuntimeException("브로커 전송 실패"))
+            .when(watchingSessionBroadcaster).broadcastLeave(activeSession, CONTENT_ID);
+
+        SessionDisconnectEvent event = createDisconnectEvent(SESSION_ID, principalOf(WATCHER_ID), new HashMap<>());
+
+        // when & then
+        assertThatNoException().isThrownBy(() -> listener.onDisconnect(event));
+        verify(watchingSessionBroadcaster).broadcastLeave(activeSession, CONTENT_ID);
     }
 }

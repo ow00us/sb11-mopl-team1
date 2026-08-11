@@ -6,6 +6,10 @@ spring:
   batch:
     job:
       enabled: false
+  data:
+    redis:
+      timeout: 2s
+      connect-timeout: 1s
   jpa:
     hibernate:
       ddl-auto: validate
@@ -93,6 +97,10 @@ spring:
   config:
     activate:
       on-profile: prod
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST}
+      port: ${SPRING_DATA_REDIS_PORT}
   jpa:
     properties:
       hibernate:
