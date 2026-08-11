@@ -25,6 +25,7 @@ import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
+import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
@@ -64,6 +65,9 @@ public class WatchingSessionServiceTest {
 
     @Mock
     WatchingSessionSnapshotWriter watchingSessionSnapshotWriter;
+
+    @Mock
+    WatchingSessionPresenceWriter watchingSessionPresenceWriter;
 
     @Mock
     UserRepository userRepository;
@@ -146,6 +150,20 @@ public class WatchingSessionServiceTest {
         assertThat(replaced.session().watcher().userId()).isEqualTo(WATCHER_ID);
         assertThat(replaced.session().content().id()).isEqualTo(CONTENT_ID);
         assertThat(replaced.previous()).isNull();
+    }
+
+    @Test
+    @DisplayName("start() 성공 시 presence writer에 소유권 정보와 TTL을 기록")
+    void start_success_writesPresence() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(createSnapshotFixture(CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT, FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS)));
+
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionPresenceWriter).write(
+            eq(WATCHER_ID), eq(CONTENT_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), any(), any());
     }
 
     @Test
@@ -355,6 +373,36 @@ public class WatchingSessionServiceTest {
 
         assertThat(actuallyDeleted).isTrue();
         verify(watchingSessionSnapshotWriter).delete(WATCHER_ID);
+    }
+
+    @Test
+    @DisplayName("end()가 실제로 삭제(소유권 일치)했을 때만 presence writer에서도 삭제")
+    void end_success_deletesPresence_onlyWhenOwnershipMatches() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        when(watchingSessionSnapshotWriter.upsert(any(), any(), any()))
+            .thenReturn(createSnapshotFixture(CONTENT_ID, Instant.now(), Instant.now(), Instant.now()));
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        boolean actuallyDeleted = watchingSessionService.end(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(actuallyDeleted).isTrue();
+        verify(watchingSessionPresenceWriter).delete(WATCHER_ID);
+    }
+
+    @Test
+    @DisplayName("end()가 소유권 불일치로 삭제하지 않으면 presence writer도 호출하지 않음")
+    void end_skipsPresenceDelete_whenOwnershipMismatches() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        when(watchingSessionSnapshotWriter.upsert(any(), any(), any()))
+            .thenReturn(createSnapshotFixture(CONTENT_ID, Instant.now(), Instant.now(), Instant.now()));
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        boolean actuallyDeleted = watchingSessionService.end(WATCHER_ID, OTHER_SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(actuallyDeleted).isFalse();
+        verify(watchingSessionPresenceWriter, never()).delete(any());
     }
 
     @Test
