@@ -33,6 +33,12 @@ import org.hibernate.annotations.SQLRestriction;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @SQLRestriction("deleted_at IS NULL")
 @SQLDelete(sql = "UPDATE contents SET deleted_at = now(), updated_at = now() WHERE id = ?")
+// V6 마이그레이션이 ck_contents_source 제약을 NOT VALID로 추가해서, enum에 없는 레거시 source 값이
+// 검증 없이 남아있을 수 있다. ContentSourceConverter는 그런 값을 읽을 때 예외 대신 null로 매핑하는데,
+// @DynamicUpdate가 없으면 Hibernate가 UPDATE 시 변경 안 된 컬럼까지 전부 다시 써서, title/description만
+// 고치는 Content.update() 호출에도 메모리상 null이 된 source가 DB에 그대로 덮어써져 레거시 값이 사라지고
+// external_id가 있는 행이면 ck_contents_external_source 제약까지 위반할 수 있다.
+// @DynamicUpdate로 실제로 변경된 컬럼만 UPDATE하게 해서 이 문제를 막는다.
 @DynamicUpdate
 public class Content extends BaseEntity {
 
