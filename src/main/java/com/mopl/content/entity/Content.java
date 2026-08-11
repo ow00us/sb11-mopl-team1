@@ -5,6 +5,7 @@ import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -37,7 +38,7 @@ public class Content extends BaseEntity {
     @Column(nullable = false, length = 20)
     private ContentType type;
 
-    @Enumerated(EnumType.STRING)
+    @Convert(converter = ContentSourceConverter.class)
     @Column(length = 50)
     private ContentSource source;
 
