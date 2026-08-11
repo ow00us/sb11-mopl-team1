@@ -35,8 +35,14 @@ class ExceptionMappingProbeController {
     void json(@RequestBody String body) {
     }
 
-    /** 본문을 JSON 으로만 만들 수 있으므로 Accept 가 JSON 을 허용하지 않으면 406 이 발생합니다. */
-    @GetMapping("/body")
+    /**
+     * JSON 만 생산하므로 Accept 가 JSON 을 허용하지 않으면 406 이 발생합니다.
+     *
+     * produces 를 명시해 생산 가능한 형식을 이 매핑에 고정합니다. 지정하지 않으면
+     * 406 여부와 details.supportedMediaTypes 가 클래스패스의 메시지 컨버터 구성에
+     * 따라 달라져, 검증이 테스트 대상 밖의 변화에 흔들립니다.
+     */
+    @GetMapping(path = "/body", produces = MediaType.APPLICATION_JSON_VALUE)
     Map<String, String> body() {
         return Map.of("value", "ok");
     }

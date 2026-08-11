@@ -100,7 +100,9 @@ class ClientErrorStatusMappingTest {
                 .with(user())
                 .accept(MediaType.APPLICATION_XML))
             .andExpect(status().isNotAcceptable())
-            .andExpect(jsonPath("$.errorCode").value("COMMON_406_1"));
+            .andExpect(jsonPath("$.errorCode").value("COMMON_406_1"))
+            .andExpect(jsonPath("$.details.supportedMediaTypes")
+                .value(containsString(MediaType.APPLICATION_JSON_VALUE)));
     }
 
     @Test
