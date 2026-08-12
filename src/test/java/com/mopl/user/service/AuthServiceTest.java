@@ -51,11 +51,14 @@ class AuthServiceTest {
     @Mock
     JwtProvider jwtProvider;
 
+    @Mock
+    RefreshTokenService refreshTokenService;
+
     @InjectMocks
     AuthService authService;
 
     @Test
-    @DisplayName("로그인 성공 시 사용자 정보와 JWT 액세스 토큰을 반환한다")
+    @DisplayName("로그인 성공 시 사용자 정보와 Access Token, Refresh Token을 반환한다")
     void signIn_success() {
         // given
         SignInRequest request = new SignInRequest(
@@ -73,13 +76,23 @@ class AuthServiceTest {
             .build();
 
         /*
-         * 실제 저장 과정에서는 JPA가 UUID와 생성 시각을 채웁니다.
-         * 단위 테스트에서는 로그인 응답을 검증하기 위해 직접 설정합니다.
+         * 실제 저장 과정에서는 JPA가 UUID와 생성 시각을 채운다.
+         * 단위 테스트에서는 로그인 결과를 검증하기 위해 직접 설정
          */
-        ReflectionTestUtils.setField(user, "id", USER_ID);
-        ReflectionTestUtils.setField(user, "createdAt", CREATED_AT);
+        ReflectionTestUtils.setField(
+            user,
+            "id",
+            USER_ID
+        );
 
-        MoplUserDetails principal = new MoplUserDetails(user);
+        ReflectionTestUtils.setField(
+            user,
+            "createdAt",
+            CREATED_AT
+        );
+
+        MoplUserDetails principal =
+            new MoplUserDetails(user);
 
         Authentication authenticated =
             UsernamePasswordAuthenticationToken.authenticated(
@@ -88,43 +101,84 @@ class AuthServiceTest {
                 principal.getAuthorities()
             );
 
-        when(authenticationManager.authenticate(any(UsernamePasswordAuthenticationToken.class)))
+        when(authenticationManager.authenticate(
+            any(UsernamePasswordAuthenticationToken.class)
+        ))
             .thenReturn(authenticated);
 
         when(jwtProvider.createAccessToken(USER_ID, "USER"))
             .thenReturn("access-token");
 
+        IssuedRefreshToken issuedRefreshToken =
+            new IssuedRefreshToken(
+                "refresh-token",
+                Instant.parse("2026-08-18T03:00:00Z")
+            );
+
+        when(refreshTokenService.issue(USER_ID))
+            .thenReturn(issuedRefreshToken);
+
         // when
-        JwtDto response = authService.signIn(request);
+        SignInResult result =
+            authService.signIn(request);
+
+        JwtDto response =
+            result.jwtDto();
 
         // then
-        assertThat(response.accessToken()).isEqualTo("access-token");
+        assertThat(response.accessToken())
+            .isEqualTo("access-token");
 
-        assertThat(response.userDto().id()).isEqualTo(USER_ID);
-        assertThat(response.userDto().createdAt()).isEqualTo(CREATED_AT);
-        assertThat(response.userDto().email()).isEqualTo("user@example.com");
-        assertThat(response.userDto().name()).isEqualTo("테스트 사용자");
+        assertThat(response.userDto().id())
+            .isEqualTo(USER_ID);
+
+        assertThat(response.userDto().createdAt())
+            .isEqualTo(CREATED_AT);
+
+        assertThat(response.userDto().email())
+            .isEqualTo("user@example.com");
+
+        assertThat(response.userDto().name())
+            .isEqualTo("테스트 사용자");
+
         assertThat(response.userDto().profileImageUrl())
             .isEqualTo("https://example.com/profile.png");
-        assertThat(response.userDto().role()).isEqualTo(UserRole.USER);
-        assertThat(response.userDto().locked()).isFalse();
+
+        assertThat(response.userDto().role())
+            .isEqualTo(UserRole.USER);
+
+        assertThat(response.userDto().locked())
+            .isFalse();
+
+        assertThat(result.issuedRefreshToken())
+            .isEqualTo(issuedRefreshToken);
 
         /*
          * 클라이언트가 보낸 이메일과 비밀번호가 인증 객체에
          * 정확하게 담겨 AuthenticationManager로 전달됐는지 확인합니다.
          */
         ArgumentCaptor<UsernamePasswordAuthenticationToken> tokenCaptor =
-            ArgumentCaptor.forClass(UsernamePasswordAuthenticationToken.class);
+            ArgumentCaptor.forClass(
+                UsernamePasswordAuthenticationToken.class
+            );
 
-        verify(authenticationManager).authenticate(tokenCaptor.capture());
+        verify(authenticationManager)
+            .authenticate(tokenCaptor.capture());
 
         UsernamePasswordAuthenticationToken authenticationToken =
             tokenCaptor.getValue();
 
-        assertThat(authenticationToken.getPrincipal()).isEqualTo("User@Example.Com");
-        assertThat(authenticationToken.getCredentials()).isEqualTo("passwordTest1!");
+        assertThat(authenticationToken.getPrincipal())
+            .isEqualTo("User@Example.Com");
 
-        verify(jwtProvider).createAccessToken(USER_ID, "USER");
+        assertThat(authenticationToken.getCredentials())
+            .isEqualTo("passwordTest1!");
+
+        verify(jwtProvider)
+            .createAccessToken(USER_ID, "USER");
+
+        verify(refreshTokenService)
+            .issue(USER_ID);
     }
 
     @Test
@@ -145,10 +199,10 @@ class AuthServiceTest {
             .extracting("errorCode")
             .isEqualTo(ErrorCode.UNAUTHORIZED);
 
-        /*
-         * 인증 실패 후에는 사용자 정보를 조회하거나 JWT를 발급하면 안 됨
-         */
-        verifyNoInteractions(jwtProvider);
+        verifyNoInteractions(
+            jwtProvider,
+            refreshTokenService
+        );
     }
 
     @Test
@@ -169,6 +223,9 @@ class AuthServiceTest {
             .extracting("errorCode")
             .isEqualTo(ErrorCode.UNAUTHORIZED);
 
-        verifyNoInteractions(jwtProvider);
+        verifyNoInteractions(
+            jwtProvider,
+            refreshTokenService
+        );
     }
 }
