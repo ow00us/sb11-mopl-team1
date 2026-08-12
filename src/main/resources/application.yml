@@ -76,6 +76,9 @@ mopl:
     topic:
       # 공통 토픽과 DLT 를 기동 시 선언적으로 생성할지 여부입니다.
       auto-create: ${KAFKA_TOPIC_AUTO_CREATE:true}
+      # 토픽을 만들지 않는 환경에서 필요한 토픽이 있는지 기동 시 확인할지 여부입니다.
+      # 브로커 없이 개발할 때 기동이 실패하지 않도록 기본값은 false 입니다.
+      verify: ${KAFKA_TOPIC_VERIFY:false}
     listener:
       # 로컬에 Kafka 를 띄우지 않고 개발할 때 false 로 두면 연결 경고가 반복되지 않습니다.
       auto-startup: ${KAFKA_LISTENER_AUTO_STARTUP:true}
@@ -140,6 +143,9 @@ mopl:
     topic:
       # 운영 토픽은 미리 준비합니다. 파티션 수 결정이 코드 배포에 묶이지 않게 합니다.
       auto-create: false
+      # 만들지 않는 대신 있는지 확인합니다. 특히 DLT 가 없으면 DLT 발행 실패로
+      # 원본 처리까지 막히므로 기동 시 드러냅니다.
+      verify: true
 
 app:
   cors:

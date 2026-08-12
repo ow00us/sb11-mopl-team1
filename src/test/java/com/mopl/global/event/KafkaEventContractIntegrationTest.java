@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -235,8 +236,13 @@ class KafkaEventContractIntegrationTest {
      * 동안 수십 개가 생성·폐기되며 로그가 지저분해지고 느려집니다.
      */
     private void drainDltInto(Set<String> keys) {
-        dltConsumer.poll(Duration.ofMillis(500))
-            .forEach(record -> keys.add(new String(record.key())));
+        dltConsumer.poll(Duration.ofMillis(500)).forEach(record -> {
+            // 키가 없는 DLT 레코드도 올 수 있으므로 방어합니다. 문자셋은 producer 의
+            // StringSerializer 와 같은 UTF-8 로 고정해 플랫폼 기본값에 의존하지 않습니다.
+            if (record.key() != null) {
+                keys.add(new String(record.key(), StandardCharsets.UTF_8));
+            }
+        });
     }
 
     /** 공통 직렬화기를 우회해 깨진 원본 바이트를 그대로 넣습니다. */

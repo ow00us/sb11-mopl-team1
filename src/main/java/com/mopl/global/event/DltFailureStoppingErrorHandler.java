@@ -88,15 +88,19 @@ public class DltFailureStoppingErrorHandler extends DefaultErrorHandler {
         log.error("DLT 발행이 {}회 연속 실패해 리스너 컨테이너를 중지합니다. record={}",
             failures, CountingDeadLetterRecoverer.recordKey(record));
 
-        // 컨테이너가 멈추므로 더 추적할 필요가 없습니다. 맵이 남지 않게 정리합니다.
-        recoverer.forget(record);
-
         try {
             containerStopper.handleOne(
                 new KafkaException("DLT 발행이 반복 실패해 컨테이너를 중지했습니다."),
                 record, consumer, container);
         } catch (RuntimeException stopFailure) {
-            log.error("리스너 컨테이너 중지에 실패했습니다.", stopFailure);
+            // 중지에 실패했으면 카운트를 남겨 둡니다. 여기서 지우면 컨테이너가 계속
+            // 돌면서 같은 레코드가 임계값까지 다시 쌓여야 재시도되고, 중지 실패가
+            // 반복되는 동안 에스컬레이션 없이 같은 주기만 돕니다.
+            log.error("리스너 컨테이너 중지에 실패했습니다. 실패 카운트를 유지합니다.", stopFailure);
+            return;
         }
+
+        // 중지에 성공했으므로 더 추적할 필요가 없습니다. 맵이 남지 않게 정리합니다.
+        recoverer.forget(record);
     }
 }

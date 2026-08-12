@@ -123,6 +123,12 @@ public class KafkaConsumerConfig {
             (record, exception) ->
                 new TopicPartition(MoplTopics.deadLetterTopicOf(record.topic()), -1));
 
+        // 발행 실패를 예외로 전파해야 아래 실패 카운트와 컨테이너 중지 정책이 동작합니다.
+        // 현재 버전의 기본값도 true 지만, 계약에 걸린 동작을 라이브러리 기본값에 맡기지
+        // 않기 위해 명시합니다. 결과 대기 시간은 DLT producer 의 delivery.timeout.ms
+        // 에서 파생되므로 별도로 두지 않습니다.
+        publisher.setFailIfSendResultIsError(true);
+
         ExponentialBackOffWithMaxRetries backOff = new ExponentialBackOffWithMaxRetries(3);
         backOff.setInitialInterval(1_000L);
         backOff.setMultiplier(2.0);
