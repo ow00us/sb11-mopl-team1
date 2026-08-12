@@ -157,6 +157,56 @@ class PlaylistControllerTest {
                 .andExpect(status().isBadRequest());
     }
 
+    // ── GET /api/playlists/popular ───────────────────────────────────────────
+
+    @Test
+    @DisplayName("인기 랭킹 조회 성공 시 200과 CursorResponse (sortBy=subscriberCount·sortDirection=DESCENDING) 를 반환한다")
+    void getPopular_success() throws Exception {
+        CursorResponse<PlaylistDto> response = CursorResponse.of(
+                List.of(sampleDto("인기 플리", "설명")),
+                null, null, false, 1L, "subscriberCount", "DESCENDING");
+
+        when(playlistService.getPopular(any(), any(), eq(10), any())).thenReturn(response);
+
+        mockMvc.perform(get("/api/playlists/popular")
+                        .param("limit", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].id").value(PLAYLIST_ID.toString()))
+                .andExpect(jsonPath("$.sortBy").value("subscriberCount"))
+                .andExpect(jsonPath("$.sortDirection").value("DESCENDING"))
+                .andExpect(jsonPath("$.hasNext").value(false));
+    }
+
+    @Test
+    @DisplayName("인기 랭킹 조회는 인증 없이도 200 을 반환한다 (기존 getList 정책 준용)")
+    void getPopular_optionalAuth_allowedWithoutAuth() throws Exception {
+        CursorResponse<PlaylistDto> response = CursorResponse.of(
+                List.of(), null, null, false, 0L, "subscriberCount", "DESCENDING");
+        when(playlistService.getPopular(any(), any(), eq(10), any())).thenReturn(response);
+
+        mockMvc.perform(get("/api/playlists/popular")
+                        .param("limit", "10"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("인기 랭킹 조회 limit 이 0 이하면 400 을 반환한다")
+    void getPopular_fail_invalidLimit() throws Exception {
+        mockMvc.perform(get("/api/playlists/popular")
+                        .param("limit", "0"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(playlistService);
+    }
+
+    @Test
+    @DisplayName("인기 랭킹 조회 limit 이 100 초과면 400 을 반환한다")
+    void getPopular_fail_limitExceedsMax() throws Exception {
+        mockMvc.perform(get("/api/playlists/popular")
+                        .param("limit", "101"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(playlistService);
+    }
+
     // ── GET /api/playlists/{playlistId} ───────────────────────────────────────
 
     @Test
