@@ -106,6 +106,56 @@ class SecurityAccessPolicyTest {
     }
 
     @Test
+    @DisplayName("토큰 재발급 응답에는 인증 정보 캐시 방지 헤더를 포함한다")
+    void refresh_withCsrf_returnsNoStoreHeaders()
+        throws Exception {
+
+        /*
+         * 토큰 재발급 API는 Access Token과 Refresh Token을 새로 발급하는
+         * 인증 API이므로 응답이 브라우저나 중간 캐시에 저장되면 안 된다.
+         *
+         * SecurityConfig에서 Spring Security 기본 보안 헤더를
+         * 비활성화하지 않았으므로 HeaderWriterFilter가
+         * 캐시 방지 응답 헤더를 추가
+         */
+        mockMvc.perform(
+                post("/api/auth/refresh")
+                    .with(csrf())
+            )
+            .andExpect(status().isNoContent())
+            .andExpect(
+                header().string(
+                    HttpHeaders.CACHE_CONTROL,
+                    org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString(
+                            "no-cache"
+                        ),
+                        org.hamcrest.Matchers.containsString(
+                            "no-store"
+                        )
+                    )
+                )
+            )
+            .andExpect(
+                header().string(
+                    "Pragma",
+                    "no-cache"
+                )
+            );
+
+        /*
+         * 재발급 API는 JWT 없이 접근 가능한 공개 POST 경로이므로
+         * Access Token 검증은 실행되지 않아야 한다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
+    @Test
     @DisplayName("CSRF 토큰 발급 API는 JWT 없이 접근할 수 있다")
     void csrfTokenEndpoint_doesNotRequireJwt() throws Exception {
         mockMvc.perform(get("/api/auth/csrf-token"))
