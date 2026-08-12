@@ -231,22 +231,19 @@ class PlaylistRepositoryTest {
     @Test
     @DisplayName("findPopular — subscriber_count·updated_at 모두 동률 시 id DESC 최종 tie-break")
     void findPopular_tieBreaksByIdDesc() {
+        // PostgreSQL 은 UUID 를 memcmp 바이트 단위로 비교하므로 Java UUID.compareTo(signed long)
+        // 결과와 정렬 순서가 다를 수 있다. 랜덤 UUID 로는 flaky 하게 실패할 수 있어 두 UUID 를
+        // 바이트 단위로도·signed 로도 순서가 자명한 값으로 고정한다.
+        UUID smaller = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID larger  = UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff");
         Instant sameTime = Instant.parse("2026-08-12T00:00:00Z");
 
-        Playlist a = em.persistAndFlush(playlist(OWNER_A, "A", "a"));
-        Playlist b = em.persistAndFlush(playlist(OWNER_A, "B", "b"));
-        setSubscriberCount(a, 5L);
-        setSubscriberCount(b, 5L);
-        setUpdatedAt(a, sameTime);
-        setUpdatedAt(b, sameTime);
-        em.flush();
+        insertPlaylistNative(smaller, OWNER_A, "A", "a", 5L, sameTime);
+        insertPlaylistNative(larger,  OWNER_A, "B", "b", 5L, sameTime);
         em.clear();
 
         List<Playlist> result = playlistRepository.findPopular(null, null, null, 10);
 
-        // id 는 DESC 이므로 UUID 값이 큰 쪽이 먼저
-        UUID larger  = a.getId().compareTo(b.getId()) > 0 ? a.getId() : b.getId();
-        UUID smaller = a.getId().compareTo(b.getId()) > 0 ? b.getId() : a.getId();
         assertThat(result).extracting(Playlist::getId)
                 .containsExactly(larger, smaller);
     }
@@ -404,5 +401,24 @@ class PlaylistRepositoryTest {
                 .setParameter("ts", updatedAt)
                 .setParameter("id", p.getId())
                 .executeUpdate();
+    }
+
+    // @UuidGenerator 우회를 위해 native INSERT 로 id·subscriber_count·created_at·updated_at 을 명시 지정한다.
+    // PostgreSQL 이 UUID 를 바이트 단위로 비교하는 특성을 검증할 때, JPA persist 로는 랜덤 UUID 가 할당되어
+    // 두 UUID 의 바이트 순서를 테스트가 미리 알 수 없기 때문이다.
+    private void insertPlaylistNative(UUID id, UUID ownerId, String title, String desc,
+                                       long subscriberCount, Instant updatedAt) {
+        em.getEntityManager().createNativeQuery("""
+                INSERT INTO playlists (id, owner_id, title, description, subscriber_count, created_at, updated_at)
+                VALUES (:id, :owner, :title, :desc, :count, :ts, :ts)
+                """)
+                .setParameter("id", id)
+                .setParameter("owner", ownerId)
+                .setParameter("title", title)
+                .setParameter("desc", desc)
+                .setParameter("count", subscriberCount)
+                .setParameter("ts", updatedAt)
+                .executeUpdate();
+        em.flush();
     }
 }
