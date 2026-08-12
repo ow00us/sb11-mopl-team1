@@ -124,6 +124,7 @@ class OpenApiRuntimeContractTest {
         "GET /api/playlists/{playlistId}",
         "GET /api/playlists/{playlistId}/subscribers",
         "GET /api/reviews",
+        "GET /api/reviews/me",
         "GET /api/users",
         "GET /api/users/{userId}",
         "GET /api/users/{watcherId}/watching-sessions",
