@@ -2,10 +2,18 @@ package com.mopl.user.controller;
 
 import com.mopl.user.dto.JwtDto;
 import com.mopl.user.dto.SignInRequest;
+import com.mopl.user.cookie.RefreshTokenCookieFactory;
+import com.mopl.user.service.SignInResult;
 import com.mopl.user.service.AuthService;
+import io.swagger.v3.oas.annotations.headers.Header;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,20 +34,61 @@ public class AuthController {
     private final AuthService authService;
 
     /**
-     * 이메일과 비밀번호로 로그인하고 JWT 액세스 토큰을 반환
+     * Service가 발급한 Refresh Token 원문을
+     * 보안 속성이 적용된 HttpOnly Cookie로 변환
+     */
+    private final RefreshTokenCookieFactory refreshTokenCookieFactory;
+
+    /**
+     * 이메일과 비밀번호로 로그인하고 Access Token과 Refresh Token을 반환
      *
      * @Valid가 SignInRequest의 Bean Validation을 실행
      * 이메일 또는 비밀번호 형식이 잘못되면 서비스 호출 전 400 Bad Request가 반환
      *
      * @param request JSON 형식의 로그인 요청
-     * @return JSON 형식의 JWT 액세스 토큰과 200 OK
+     * @return 사용자 정보와 Access Token이 담긴 JSON 본문, Refresh Token이 담긴 Set-Cookie 헤더와 200 OK
      */
     @PostMapping("/sign-in")
+    @ApiResponse(
+        responseCode = "200",
+        description = "로그인 성공",
+        headers = @Header(
+            name = HttpHeaders.SET_COOKIE,
+            description = "HttpOnly Refresh Token Cookie",
+            schema = @Schema(implementation = String.class)
+        ),
+        content = @Content(
+            schema = @Schema(implementation = JwtDto.class)
+        )
+    )
     public ResponseEntity<JwtDto> signIn(
         @Valid @RequestBody SignInRequest request
     ) {
-        JwtDto response = authService.signIn(request);
+        /*
+         * AuthService는 JSON 응답용 JwtDto와 Cookie 전달용
+         * Refresh Token 발급 결과를 분리하여 반환
+         */
+        SignInResult result =
+            authService.signIn(request);
 
-        return ResponseEntity.ok(response);
+        /*
+         * Refresh Token 원문은 JSON 본문에 넣지 않고
+         * HttpOnly Cookie로 변환
+         */
+        ResponseCookie refreshTokenCookie =
+            refreshTokenCookieFactory.create(
+                result.issuedRefreshToken().rawToken()
+            );
+
+        /*
+         * JwtDto만 JSON 본문으로 반환하고 Refresh Token은
+         * Set-Cookie 응답 헤더를 통해 전달
+         */
+        return ResponseEntity.ok()
+            .header(
+                HttpHeaders.SET_COOKIE,
+                refreshTokenCookie.toString()
+            )
+            .body(result.jwtDto());
     }
 }

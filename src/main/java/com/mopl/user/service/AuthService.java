@@ -14,7 +14,6 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 로그인 API의 인증 및 JWT 발급 흐름을 담당하는 서비스
@@ -25,20 +24,25 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-@Transactional(readOnly = true)
 public class AuthService {
 
     private final AuthenticationManager authenticationManager;
     private final JwtProvider jwtProvider;
 
     /**
+     * 로그인에 성공한 사용자에게 Refresh Token을 발급하고
+     * Redis에 서버 세션을 저장하는 Service
+     */
+    private final RefreshTokenService refreshTokenService;
+
+    /**
      * 이메일과 비밀번호로 사용자를 인증하고 로그인 결과를 반환
      *
      * @param request 로그인 요청 데이터
-     * @return 인증된 사용자 정보와 JWT 액세스 토큰
+     * @return 인증된 사용자 정보, Access Token과 Refresh Token 발급 결과
      * @throws BusinessException 인증 정보가 올바르지 않거나 계정이 잠긴 경우
      */
-    public JwtDto signIn(SignInRequest request) {
+    public SignInResult signIn(SignInRequest request) {
         Authentication authentication;
 
         try {
@@ -87,9 +91,27 @@ public class AuthService {
             user.getRole().name()
         );
 
-        return new JwtDto(
-            UserDto.from(user),
-            accessToken
+        /*
+         * Access Token 생성이 성공한 뒤 Refresh Token을 발급
+         *
+         * RefreshTokenService.issue()는 Refresh Token 원문을 생성하고
+         * SHA-256 해시를 Redis에 TTL과 함께 저장
+         *
+         * Redis 저장에 실패하면 예외가 전파되므로 Controller가 로그인 성공 응답이나
+         * 저장되지 않은 Refresh Token Cookie를 반환하지 않는다.
+         */
+        IssuedRefreshToken issuedRefreshToken =
+            refreshTokenService.issue(user.getId());
+
+        JwtDto jwtDto =
+            new JwtDto(
+                UserDto.from(user),
+                accessToken
+            );
+
+        return new SignInResult(
+            jwtDto,
+            issuedRefreshToken
         );
     }
 
