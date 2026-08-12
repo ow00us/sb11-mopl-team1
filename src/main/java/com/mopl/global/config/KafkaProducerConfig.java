@@ -79,10 +79,16 @@ public class KafkaProducerConfig {
      * 여기서 무엇이 빠졌는지 알려주고 멈춥니다.
      */
     private void requireResolved(List<String> bootstrapServers) {
-        boolean unresolved = bootstrapServers.stream().anyMatch(server -> server.contains("${"));
-        if (bootstrapServers.isEmpty() || unresolved) {
+        // 빈 문자열이나 공백 항목도 거부합니다. 목록이 비어 있지 않다는 것만 보면
+        // KAFKA_BOOTSTRAP_SERVERS="a,,b" 같은 값이 통과해 Producer 생성이나 첫 발행에서
+        // 뒤늦게 실패합니다.
+        boolean invalid = bootstrapServers.isEmpty()
+            || bootstrapServers.stream()
+                .anyMatch(server -> server == null || server.isBlank() || server.contains("${"));
+
+        if (invalid) {
             throw new IllegalStateException(
-                "Kafka bootstrap 주소가 설정되지 않았습니다. KAFKA_BOOTSTRAP_SERVERS 를 지정하세요. 현재 값: "
+                "Kafka bootstrap 주소가 올바르지 않습니다. KAFKA_BOOTSTRAP_SERVERS 를 지정하세요. 현재 값: "
                     + bootstrapServers);
         }
     }
