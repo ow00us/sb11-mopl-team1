@@ -841,6 +841,72 @@ class PlaylistServiceTest {
         assertThat(captor.getValue()).containsExactlyInAnyOrder(ownerA, ownerB);
     }
 
+    // ── getPopular ───────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("getPopular — cursor 만 있고 idAfter 가 없으면 INVALID_INPUT")
+    void getPopular_orphanCursorPair_throws400() {
+        String cursor = CursorUtils.encodePopularCursor(5L, Instant.parse("2026-08-12T00:00:00Z"));
+
+        assertThatThrownBy(() -> playlistService.getPopular(cursor, null, 10, null))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
+    @DisplayName("getPopular — 잘못된 커서 형식은 INVALID_INPUT")
+    void getPopular_invalidCursorFormat_throws400() {
+        String malformed = CursorUtils.encode("not-a-popular-cursor");
+
+        assertThatThrownBy(() -> playlistService.getPopular(malformed, UUID.randomUUID(), 10, null))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.INVALID_INPUT);
+    }
+
+    @Test
+    @DisplayName("getPopular — owner 정보를 findAllById 1회 배치 호출로 채운다 (distinct)")
+    void getPopular_batchFetchesOwnersOnce() {
+        UUID ownerA = UUID.randomUUID();
+        UUID ownerB = UUID.randomUUID();
+        Playlist p1 = savedPlaylist(UUID.randomUUID(), ownerA, "A", "a", Instant.now());
+        Playlist p2 = savedPlaylist(UUID.randomUUID(), ownerA, "B", "b", Instant.now()); // ownerA 중복
+        Playlist p3 = savedPlaylist(UUID.randomUUID(), ownerB, "C", "c", Instant.now());
+
+        when(playlistRepository.findPopular(any(), any(), any(), anyInt()))
+                .thenReturn(List.of(p1, p2, p3));
+        when(playlistRepository.countByFilter(any(), any(), any())).thenReturn(3L);
+        when(userRepository.findAllById(anyList())).thenReturn(List.of(
+                savedUser(ownerA, "UserA", null),
+                savedUser(ownerB, "UserB", null)));
+
+        playlistService.getPopular(null, null, 10, null);
+
+        ArgumentCaptor<List<UUID>> captor = ArgumentCaptor.forClass(List.class);
+        verify(userRepository, times(1)).findAllById(captor.capture());
+        // ownerIds 는 distinct 로 전달되어야 함
+        assertThat(captor.getValue()).containsExactlyInAnyOrder(ownerA, ownerB);
+    }
+
+    @Test
+    @DisplayName("getPopular — 응답에 sortBy=subscriberCount·sortDirection=DESCENDING 이 포함된다")
+    void getPopular_success_returnsSortMetadata() {
+        UUID owner = UUID.randomUUID();
+        Playlist p = savedPlaylist(UUID.randomUUID(), owner, "P", "d", Instant.now());
+
+        when(playlistRepository.findPopular(any(), any(), any(), anyInt())).thenReturn(List.of(p));
+        when(playlistRepository.countByFilter(any(), any(), any())).thenReturn(1L);
+        when(userRepository.findAllById(anyList())).thenReturn(List.of(savedUser(owner, "U", null)));
+
+        CursorResponse<PlaylistDto> result = playlistService.getPopular(null, null, 10, null);
+
+        assertThat(result.sortBy()).isEqualTo("subscriberCount");
+        assertThat(result.sortDirection()).isEqualTo("DESCENDING");
+        assertThat(result.hasNext()).isFalse();
+        assertThat(result.totalCount()).isEqualTo(1L);
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
     private Content savedContentWithType(UUID id, String title, ContentType type) {

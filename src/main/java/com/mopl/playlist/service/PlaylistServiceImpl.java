@@ -127,6 +127,12 @@ public class PlaylistServiceImpl implements PlaylistService {
     }
 
     @Override
+    public CursorResponse<PlaylistDto> getPopular(
+            String cursor, UUID idAfter, int limit, UUID requesterId) {
+        throw new UnsupportedOperationException("구현 예정");
+    }
+
+    @Override
     @Transactional
     public PlaylistDto update(UUID playlistId, PlaylistUpdateRequest request, UUID requesterId) {
         Playlist playlist = findOrThrow(playlistId);
