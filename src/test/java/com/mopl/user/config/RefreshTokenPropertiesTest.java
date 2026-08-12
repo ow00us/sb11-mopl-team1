@@ -111,7 +111,7 @@ class RefreshTokenPropertiesTest {
         assertThat(violations)
             .extracting(ConstraintViolation::getMessage)
             .contains(
-                "Refresh Token 만료 시간은 0보다 커야 합니다."
+                "Refresh Token 만료 시간은 1초 이상의 정수 초여야 합니다."
             );
     }
 
@@ -132,7 +132,80 @@ class RefreshTokenPropertiesTest {
         assertThat(violations)
             .extracting(ConstraintViolation::getMessage)
             .contains(
-                "Refresh Token 만료 시간은 0보다 커야 합니다."
+                "Refresh Token 만료 시간은 1초 이상의 정수 초여야 합니다."
             );
+    }
+
+    @Test
+    @DisplayName("Refresh Token 만료 시간이 1초 미만이면 검증에 실패한다")
+    void validate_fail_whenExpirationIsLessThanOneSecond() {
+        // given
+        RefreshTokenProperties properties =
+            new RefreshTokenProperties();
+
+        /*
+         * Redis에는 1ms TTL로 저장할 수 있지만 Cookie Max-Age는
+         * 0초가 되므로 허용하지 않는다.
+         */
+        properties.setExpiration(
+            Duration.ofMillis(1)
+        );
+
+        // when
+        Set<ConstraintViolation<RefreshTokenProperties>>
+            violations = validator.validate(properties);
+
+        // then
+        assertThat(violations)
+            .extracting(ConstraintViolation::getMessage)
+            .contains(
+                "Refresh Token 만료 시간은 1초 이상의 정수 초여야 합니다."
+            );
+    }
+
+    @Test
+    @DisplayName("Refresh Token 만료 시간에 소수 초가 포함되면 검증에 실패한다")
+    void validate_fail_whenExpirationContainsFractionalSecond() {
+        // given
+        RefreshTokenProperties properties =
+            new RefreshTokenProperties();
+
+        /*
+         * Redis에서는 1500ms이지만 Cookie Max-Age는 1초로
+         * 내림 처리되므로 허용하지 않는다.
+         */
+        properties.setExpiration(
+            Duration.ofMillis(1500)
+        );
+
+        // when
+        Set<ConstraintViolation<RefreshTokenProperties>>
+            violations = validator.validate(properties);
+
+        // then
+        assertThat(violations)
+            .extracting(ConstraintViolation::getMessage)
+            .contains(
+                "Refresh Token 만료 시간은 1초 이상의 정수 초여야 합니다."
+            );
+    }
+
+    @Test
+    @DisplayName("Refresh Token 만료 시간이 정확히 1초이면 허용한다")
+    void validate_success_whenExpirationIsExactlyOneSecond() {
+        // given
+        RefreshTokenProperties properties =
+            new RefreshTokenProperties();
+
+        properties.setExpiration(
+            Duration.ofSeconds(1)
+        );
+
+        // when
+        Set<ConstraintViolation<RefreshTokenProperties>>
+            violations = validator.validate(properties);
+
+        // then
+        assertThat(violations).isEmpty();
     }
 }

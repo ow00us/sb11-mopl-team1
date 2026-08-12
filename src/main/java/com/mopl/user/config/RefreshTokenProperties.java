@@ -39,25 +39,35 @@ public class RefreshTokenProperties {
     private Duration expiration;
 
     /**
-     * Refresh Token 만료 시간이 0보다 큰지 검증
+     * Refresh Token 만료 시간이 Cookie와 Redis에서
+     * 동일하게 표현될 수 있는 유효한 값인지 검증
      *
-     * <p>0 또는 음수로 설정되면 Redis 세션이 즉시 만료되거나
-     * Cookie의 Max-Age가 유효하지 않게 됩니다. 따라서 잘못된 설정으로
-     * 애플리케이션이 실행되지 않도록 시작 시점에 차단합니다.</p>
+     * <p>Redis TTL은 밀리초 단위를 지원하지만 Cookie의 Max-Age는
+     * 초 단위로 표현됩니다. 따라서 1초 미만이거나 소수 초가 포함된
+     * Duration을 허용하면 Redis 세션과 Cookie의 만료 시간이 달라집니다.</p>
      *
-     * @return 만료 시간이 null이거나 0보다 크면 true
+     * <p>만료 시간은 최소 1초 이상이며 나노초 부분이 없는
+     * 양의 정수 초로 제한합니다.</p>
+     *
+     * @return null이거나 1초 이상의 양의 정수 초이면 true
      */
     @AssertTrue(
-        message = "Refresh Token 만료 시간은 0보다 커야 합니다."
+        message = "Refresh Token 만료 시간은 1초 이상의 정수 초여야 합니다."
     )
-    public boolean isExpirationPositive() {
+    public boolean isExpirationValid() {
         /*
-         * null은 @NotNull이 별도로 처리합니다.
-         * null에서 true를 반환하여 같은 설정 오류에 대해
-         * 검증 메시지가 중복으로 생성되지 않도록 합니다.
+         * null은 @NotNull이 별도로 처리
+         *
+         * compareTo(Duration.ofSeconds(1)) >= 0:
+         * 최소 1초 이상인지 검사
+         *
+         * getNano() == 0:
+         * 1.5초와 같이 소수 초가 포함되지 않았는지 검사
          */
         return expiration == null
-            || (!expiration.isZero()
-            && !expiration.isNegative());
+            || (
+            expiration.compareTo(Duration.ofSeconds(1)) >= 0
+                && expiration.getNano() == 0
+        );
     }
 }
