@@ -19,6 +19,7 @@ import com.mopl.watchingsession.dto.ChangeType;
 import com.mopl.watchingsession.dto.ContentChatDto;
 import com.mopl.watchingsession.dto.WatchingSessionChange;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
+import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
@@ -40,6 +41,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
 import org.springframework.messaging.simp.stomp.StompCommand;
@@ -56,9 +58,11 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
 
 /**
@@ -66,9 +70,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  *
  * 목적: 개별 리스너 단위 테스트(WatchingSessionSubscribeListenerTest 등)는 Mock 기반이라
  * "실제 STOMP 파이프라인을 통해 입장→채팅→퇴장→에러 응답이 이어지는 전체 흐름"이
- * 깨지지 않는지는 검증하지 못한다. 특히 이번 E-05 작업(StompErrorFrameSender 도입,
- * @ EventListener(SessionSubscribeEvent) 경로의 에러 프레임 전달)이 기존 E-03(입장),
- * E-04(같이보기 채팅) 흐름을 회귀시키지 않는지 확인하는 것이 이 테스트의 목적이다.
+ * 깨지지 않는지는 검증하지 못한다.
  */
 @Testcontainers
 @ActiveProfiles("test")
@@ -80,6 +82,11 @@ class WatchingSessionE2ERegressionTest {
     @Container
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
+
+    @Container
+    @ServiceConnection(name = "redis")
+    static GenericContainer<?> redis = new GenericContainer<>(DockerImageName.parse("redis:7"))
+        .withExposedPorts(6379);
 
     private static final long[] CLIENT_HEARTBEAT = {4000, 4000};
     private static final long SETTLE_MILLIS = 300;
@@ -98,6 +105,9 @@ class WatchingSessionE2ERegressionTest {
 
     @Autowired
     private WatchingSessionSnapshotRepository snapshotRepository;
+
+    @Autowired
+    private RedisTemplate<String, Object> redisTemplate;
 
     private WebSocketStompClient stompClient;
     private ThreadPoolTaskScheduler taskScheduler;
@@ -166,6 +176,24 @@ class WatchingSessionE2ERegressionTest {
         scheduler.setThreadNamePrefix("watch-e2e-regression-client-");
         scheduler.initialize();
         return scheduler;
+    }
+
+    private StompFrameHandler noopHandler() {
+        return new StompFrameHandler() {
+            @Override
+            public Type getPayloadType(StompHeaders headers) {
+                return WatchingSessionChange.class;
+            }
+
+            @Override
+            public void handleFrame(StompHeaders headers, @Nullable Object payload) {
+                // 이 구독은 JOIN/LEAVE를 발생시키는 용도일 뿐, 수신 내용은 관찰자 구독에서 검증한다.
+            }
+        };
+    }
+
+    private String presenceKey(UUID watcherId) {
+        return "mopl:presence:watcher:" + watcherId;
     }
 
     private String wsUrl() {
@@ -244,6 +272,11 @@ class WatchingSessionE2ERegressionTest {
         WatchingSessionChange joinChange = joinResult.future.get(5, TimeUnit.SECONDS);
         assertThat(joinChange.watchingSessionDto().watcher().userId()).isEqualTo(watcherId);
 
+        // then 1-1: Redis presence도 실제로 기록되었는지 확인
+        WatchingPresence presence = (WatchingPresence) redisTemplate.opsForValue().get(presenceKey(watcherId));
+        assertThat(presence).isNotNull();
+        assertThat(presence.contentId()).isEqualTo(contentId);
+
         // when 2: 채팅 전송
         SubscriptionResult<ContentChatDto> chatResult =
             subscribeAndWait(session, chatDestination, ContentChatDto.class);
@@ -258,9 +291,15 @@ class WatchingSessionE2ERegressionTest {
 
         // then 3: 세션이 실제로 DB에서 삭제되었는지로 정상 퇴장을 확인 (구독 해제 후 세션 없어야 함)
         await().atMost(5, TimeUnit.SECONDS)
-                .pollInterval(100, TimeUnit.MILLISECONDS)
-                    .untilAsserted(() ->
-                        assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty());
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .untilAsserted(() ->
+                assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty());
+
+        // then 3-1: Redis presence도 함께 삭제되었는지 확인
+        await().atMost(5, TimeUnit.SECONDS)
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .untilAsserted(() ->
+                assertThat(redisTemplate.opsForValue().get(presenceKey(watcherId))).isNull());
     }
 
     @Test
@@ -460,20 +499,6 @@ class WatchingSessionE2ERegressionTest {
             .untilAsserted(() -> assertThat(leaveCount.get()).isEqualTo(1));
     }
 
-    private StompFrameHandler noopHandler() {
-        return new StompFrameHandler() {
-            @Override
-            public Type getPayloadType(StompHeaders headers) {
-                return WatchingSessionChange.class;
-            }
-
-            @Override
-            public void handleFrame(StompHeaders headers, @Nullable Object payload) {
-                // 이 구독은 JOIN/LEAVE를 발생시키는 용도일 뿐, 수신 내용은 관찰자 구독에서 검증한다.
-            }
-        };
-    }
-
     @Test
     @DisplayName("[E2E 회귀] 활성 watch 구독 상태에서 연결 자체가 끊기면(session.disconnect()), DB에서 세션이 삭제되고 다른 관찰자에게 LEAVE가 브로드캐스트")
     void disconnectWhileActivelyWatching_deletesSessionAndBroadcastsLeaveToObserver() throws Exception {
@@ -495,6 +520,11 @@ class WatchingSessionE2ERegressionTest {
         await().atMost(5, TimeUnit.SECONDS)
             .pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isPresent());
+
+        await().atMost(5, TimeUnit.SECONDS)
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .untilAsserted(() ->
+                assertThat(redisTemplate.opsForValue().get(presenceKey(watcherId))).isNotNull());
 
         // 별도 관찰자(다른 유저)가 같은 콘텐츠의 watch 토픽을 구독해 LEAVE 수신 여부를 확인한다.
         User observer = userRepository.save(User.builder()
@@ -531,6 +561,11 @@ class WatchingSessionE2ERegressionTest {
             await().atMost(5, TimeUnit.SECONDS)
                 .pollInterval(100, TimeUnit.MILLISECONDS)
                 .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty());
+
+            await().atMost(5, TimeUnit.SECONDS)
+                .pollInterval(100, TimeUnit.MILLISECONDS)
+                .untilAsserted(() ->
+                    assertThat(redisTemplate.opsForValue().get(presenceKey(watcherId))).isNull());
 
             WatchingSessionChange leaveChange = leaveReceived.get(5, TimeUnit.SECONDS);
             assertThat(leaveChange.watchingSessionDto().watcher().userId()).isEqualTo(watcherId);

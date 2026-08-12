@@ -10,6 +10,7 @@ import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
+import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.time.Duration;
 import java.time.Instant;
@@ -74,6 +75,7 @@ public class WatchingSessionService {
     private final ContentRepository contentRepository;
     private final UserRepository userRepository;
     private final WatchingSessionSnapshotWriter watchingSessionSnapshotWriter;
+    private final WatchingSessionPresenceWriter watchingSessionPresenceWriter;
 
     /**
      * watcherId 기준 "지금 이 세션을 소유한 WebSocket 연결(sessionId)"을 추적한다. 다중 탭/새로고침 시 오래된 연결의 DISCONNECT가 새
@@ -139,7 +141,8 @@ public class WatchingSessionService {
 
                 previous = get(watcherId).orElse(null);
 
-                Instant expiresAt = Instant.now().plus(DEFAULT_SESSION_TTL);
+                Instant now = Instant.now();
+                Instant expiresAt = now.plus(DEFAULT_SESSION_TTL);
 
                 // DB 스냅샷 갱신
                 try {
@@ -152,6 +155,9 @@ public class WatchingSessionService {
 
                 // DB 반영까지 안전하게 성공했을 때 비로소 소유권을 갱신
                 activeSessions.put(watcherId, new SubscriptionOwner(sessionId, subscriptionId));
+
+                // Redis presence 기록 (실패해도 로그만 남기고 흐름은 계속됨)
+                watchingSessionPresenceWriter.write(watcherId, contentId, sessionId, subscriptionId, now, DEFAULT_SESSION_TTL);
             }
         } finally {
             // validateContentExists()가 CONTENT_NOT_FOUND를 던지는 경로에서도 락 엔트리가 남지 않아야 함
@@ -193,6 +199,9 @@ public class WatchingSessionService {
 
                 // DB 삭제까지 완벽히 성공한 후 메모리 소유권 정리
                 activeSessions.remove(watcherId);
+
+                // 실제로 이 연결이 소유권을 가지고 있어 삭제까지 완료된 경우에만 presence 삭제
+                watchingSessionPresenceWriter.delete(watcherId);
                 return true;
             }
         } finally {
