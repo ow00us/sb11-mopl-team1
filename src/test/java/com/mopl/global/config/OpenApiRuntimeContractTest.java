@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -26,6 +27,7 @@ import com.mopl.review.service.ReviewService;
 import com.mopl.sample.controller.SampleController;
 import com.mopl.sse.controller.SseController;
 import com.mopl.sse.service.SseEmitterManager;
+import com.mopl.user.cookie.RefreshTokenCookieFactory;
 import com.mopl.user.controller.AuthController;
 import com.mopl.user.controller.UserController;
 import com.mopl.user.service.AuthService;
@@ -178,6 +180,9 @@ class OpenApiRuntimeContractTest {
     AuthService authService;
 
     @MockitoBean
+    RefreshTokenCookieFactory refreshTokenCookieFactory;
+
+    @MockitoBean
     UserService userService;
 
     @MockitoBean
@@ -219,6 +224,26 @@ class OpenApiRuntimeContractTest {
         mockMvc.perform(get("/swagger-ui.html"))
             .andExpect(status().is3xxRedirection())
             .andExpect(header().string("Location", "/swagger-ui/index.html"));
+    }
+
+    /**
+     * 로그인 성공 응답에 Refresh Token Set-Cookie 계약이
+     * 런타임 OpenAPI 문서에도 포함되는지 검증
+     */
+    @Test
+    void documentsRefreshTokenCookieHeaderOnSignInSuccess()
+        throws Exception {
+
+        mockMvc.perform(get("/v3/api-docs"))
+            .andExpect(status().isOk())
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/sign-in']"
+                        + ".post.responses['200']"
+                        + ".headers['Set-Cookie']"
+                        + ".schema.type"
+                ).value("string")
+            );
     }
 
     @Test
