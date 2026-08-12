@@ -5,6 +5,10 @@ import com.mopl.user.dto.SignInRequest;
 import com.mopl.user.cookie.RefreshTokenCookieFactory;
 import com.mopl.user.service.SignInResult;
 import com.mopl.user.service.AuthService;
+import io.swagger.v3.oas.annotations.headers.Header;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -45,6 +49,18 @@ public class AuthController {
      * @return 사용자 정보와 Access Token이 담긴 JSON 본문, Refresh Token이 담긴 Set-Cookie 헤더와 200 OK
      */
     @PostMapping("/sign-in")
+    @ApiResponse(
+        responseCode = "200",
+        description = "로그인 성공",
+        headers = @Header(
+            name = HttpHeaders.SET_COOKIE,
+            description = "HttpOnly Refresh Token Cookie",
+            schema = @Schema(implementation = String.class)
+        ),
+        content = @Content(
+            schema = @Schema(implementation = JwtDto.class)
+        )
+    )
     public ResponseEntity<JwtDto> signIn(
         @Valid @RequestBody SignInRequest request
     ) {
