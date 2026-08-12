@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.event.EventEnvelope;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
@@ -58,12 +59,32 @@ public class KafkaProducerConfig {
         // 연결 주소는 KafkaProperties 가 아니라 KafkaConnectionDetails 에서 가져옵니다.
         // Boot 의 자동 구성이 쓰는 경로이며, Testcontainers 의 @ServiceConnection 처럼
         // 속성 파일 밖에서 주소를 주입하는 방식이 여기서만 반영됩니다.
-        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, connectionDetails.getBootstrapServers());
+        List<String> bootstrapServers = connectionDetails.getBootstrapServers();
+        requireResolved(bootstrapServers);
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
 
         props.put(ProducerConfig.ACKS_CONFIG, "all");
         props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
         props.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, 5);
         return props;
+    }
+
+    /**
+     * 해석되지 않은 플레이스홀더가 그대로 넘어오는 것을 막습니다.
+     *
+     * <p>{@code @ConfigurationProperties} 바인딩은 해석하지 못한 플레이스홀더를 예외 없이
+     * 문자열 그대로 남깁니다. 그래서 prod 의 {@code ${KAFKA_BOOTSTRAP_SERVERS}} 가 비어
+     * 있어도 기동이 실패하지 않고, 한참 뒤에 kafka-clients 의
+     * {@code Invalid url in bootstrap.servers} 로 드러납니다. 원인을 찾기 어려우므로
+     * 여기서 무엇이 빠졌는지 알려주고 멈춥니다.
+     */
+    private void requireResolved(List<String> bootstrapServers) {
+        boolean unresolved = bootstrapServers.stream().anyMatch(server -> server.contains("${"));
+        if (bootstrapServers.isEmpty() || unresolved) {
+            throw new IllegalStateException(
+                "Kafka bootstrap 주소가 설정되지 않았습니다. KAFKA_BOOTSTRAP_SERVERS 를 지정하세요. 현재 값: "
+                    + bootstrapServers);
+        }
     }
 
     @Bean

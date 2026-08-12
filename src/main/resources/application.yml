@@ -155,9 +155,10 @@ mopl:
     topic:
       # 운영 토픽은 미리 준비합니다. 파티션 수 결정이 코드 배포에 묶이지 않게 합니다.
       auto-create: false
-      # 만들지 않는 대신 있는지 확인합니다. 특히 DLT 가 없으면 DLT 발행 실패로
-      # 원본 처리까지 막히므로 기동 시 드러냅니다.
-      verify: true
+      # verify 는 기본값 false 를 그대로 씁니다. true 로 두면 기동 시 AdminClient 로
+      # 브로커에 접속하므로 애플리케이션 기동이 Kafka 가용성에 묶입니다. 지금은 도메인
+      # 리스너가 없어 그 결합을 만들 이유가 없고, 결합 여부는 운영에서 결정할 사안입니다.
+      # 브로커가 보장되는 환경에서 KAFKA_TOPIC_VERIFY=true 로 켭니다.
 
 app:
   cors:
