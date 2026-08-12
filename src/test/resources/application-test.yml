@@ -11,6 +11,10 @@ spring:
   batch:
     job:
       enabled: false
+  kafka:
+    consumer:
+      # 테스트는 컨테이너를 새로 띄우므로 처음부터 읽어야 합니다.
+      auto-offset-reset: earliest
 
 mopl:
   kafka:

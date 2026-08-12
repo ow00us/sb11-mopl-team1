@@ -105,8 +105,16 @@ public class KafkaProducerConfig {
         delegates.put(byte[].class, new ByteArraySerializer());
         delegates.put(Object.class, jsonSerializer);
 
+        Map<String, Object> props = baseProducerProperties();
+
+        // DLT 발행은 마지막 수단이므로 실패를 빨리 드러내야 합니다. 기본값(전달 2분,
+        // 요청 30초)이면 연속 실패 판정까지 수 분이 걸리고 그동안 파티션이 멈춥니다.
+        // 짧게 잡아 브로커가 응답하지 않는 상황이 곧 컨테이너 중지로 이어지게 합니다.
+        props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 5_000);
+        props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 10_000);
+
         ProducerFactory<String, Object> factory = new DefaultKafkaProducerFactory<>(
-            baseProducerProperties(),
+            props,
             new StringSerializer(),
             new DelegatingByTypeSerializer(delegates, true));
         return new KafkaTemplate<>(factory);

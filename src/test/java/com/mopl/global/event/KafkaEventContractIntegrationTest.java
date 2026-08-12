@@ -9,13 +9,20 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -78,6 +85,12 @@ class KafkaEventContractIntegrationTest {
     @Autowired
     TestEventListener listener;
 
+    /** DLT 를 이어서 읽는 프로브입니다. 클래스 전체에서 하나만 씁니다. */
+    static KafkaConsumer<byte[], byte[]> dltConsumer;
+
+    /** 지금까지 DLT 에서 관찰한 레코드 키입니다. 케이스 사이에 누적됩니다. */
+    static final Set<String> dltRecordKeys = ConcurrentHashMap.newKeySet();
+
     @BeforeEach
     void resetListener() {
         listener.reset();
@@ -132,16 +145,17 @@ class KafkaEventContractIntegrationTest {
 
         awaitDltRecordWithKey(key);
 
-        // 역직렬화 실패는 리스너에 도달하지 않으므로 처리 시도가 없어야 합니다.
-        assertThat(listener.attempts()).isZero();
+        // 역직렬화 실패는 리스너에 도달하지 않으므로 이 키로는 처리 시도가 없어야 합니다.
+        assertThat(listener.attempts(key)).isZero();
 
         // 컨테이너가 살아 있으면 이어지는 정상 메시지가 계속 소비됩니다.
         UUID aggregateId = UUID.randomUUID();
-        eventKafkaTemplate.send(TOPIC, aggregateId.toString(),
+        String healthyKey = aggregateId.toString();
+        eventKafkaTemplate.send(TOPIC, healthyKey,
             envelope("follow.created", aggregateId, Map.of("followerId", "a", "followeeId", "b"))).get();
 
-        await().atMost(TIMEOUT).until(() -> !listener.received().isEmpty());
-        assertThat(listener.received()).hasSize(1);
+        await().atMost(TIMEOUT).until(() -> listener.received().stream()
+            .anyMatch(record -> healthyKey.equals(record.key())));
     }
 
     @Test
@@ -155,10 +169,10 @@ class KafkaEventContractIntegrationTest {
             envelope("follow.created", aggregateId, Map.of("followerId", "a", "followeeId", "b"))).get();
 
         // 1초, 2초, 4초 backoff 를 모두 지나야 재시도 횟수가 확정됩니다.
-        await().atMost(TIMEOUT).until(() -> listener.attempts() >= 4);
+        await().atMost(TIMEOUT).until(() -> listener.attempts(key) >= 4);
         awaitDltRecordWithKey(key);
 
-        assertThat(listener.attempts()).isEqualTo(4);
+        assertThat(listener.attempts(key)).isEqualTo(4);
     }
 
     @Test
@@ -173,7 +187,32 @@ class KafkaEventContractIntegrationTest {
 
         awaitDltRecordWithKey(key);
 
-        assertThat(listener.attempts()).isEqualTo(1);
+        assertThat(listener.attempts(key)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("occurredAt은 초 미만 정밀도까지 보존된다")
+    void occurredAt_preservesSubSecondPrecision() throws Exception {
+        // 실제 occurredAt 은 Instant.now() 에서 오므로 나노초 자리가 있습니다. 초 단위로
+        // 깔끔한 값만 검증하면 정밀도가 깎이는 설정을 놓칩니다.
+        Instant precise = Instant.parse("2026-08-11T03:00:00Z").plusNanos(123_456_789L);
+        UUID aggregateId = UUID.randomUUID();
+        String key = aggregateId.toString();
+        EventEnvelope sent = new EventEnvelope(
+            UUID.randomUUID(), "follow.created", 1, precise, aggregateId,
+            objectMapper.valueToTree(Map.of("followerId", "a", "followeeId", "b")));
+
+        eventKafkaTemplate.send(TOPIC, key, sent).get();
+
+        await().atMost(TIMEOUT).until(() -> listener.received().stream()
+            .anyMatch(record -> key.equals(record.key())));
+
+        EventEnvelope got = listener.received().stream()
+            .filter(record -> key.equals(record.key()))
+            .findFirst()
+            .orElseThrow()
+            .value();
+        assertThat(got.occurredAt()).isEqualTo(precise);
     }
 
     /**
@@ -183,8 +222,21 @@ class KafkaEventContractIntegrationTest {
      * 충족되고, 재시도 backoff 가 끝나기 전에 단정이 실행됩니다.
      */
     private void awaitDltRecordWithKey(String key) {
-        await().atMost(TIMEOUT).until(() -> readDlt().stream()
-            .anyMatch(record -> key.equals(new String(record.key()))));
+        await().atMost(TIMEOUT).until(() -> {
+            drainDltInto(dltRecordKeys);
+            return dltRecordKeys.contains(key);
+        });
+    }
+
+    /**
+     * DLT 를 이어서 읽어 키를 모읍니다.
+     *
+     * <p>Consumer 를 한 번만 만들어 재사용합니다. Awaitility 루프마다 새로 만들면 30초
+     * 동안 수십 개가 생성·폐기되며 로그가 지저분해지고 느려집니다.
+     */
+    private void drainDltInto(Set<String> keys) {
+        dltConsumer.poll(Duration.ofMillis(500))
+            .forEach(record -> keys.add(new String(record.key())));
     }
 
     /** 공통 직렬화기를 우회해 깨진 원본 바이트를 그대로 넣습니다. */
@@ -203,19 +255,23 @@ class KafkaEventContractIntegrationTest {
         }
     }
 
-    private List<ConsumerRecord<byte[], byte[]>> readDlt() {
+    @BeforeAll
+    static void openDltConsumer() {
         Map<String, Object> props = KafkaTestUtils.consumerProps(
-            kafka.getBootstrapServers(), "dlt-probe-" + UUID.randomUUID(), "true");
-        props.put("key.deserializer", "org.apache.kafka.common.serialization.ByteArrayDeserializer");
-        props.put("value.deserializer", "org.apache.kafka.common.serialization.ByteArrayDeserializer");
-        props.put("auto.offset.reset", "earliest");
+            kafka.getBootstrapServers(), "dlt-probe", "true");
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class);
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class);
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
 
-        List<ConsumerRecord<byte[], byte[]>> found = new java.util.ArrayList<>();
-        try (var consumer = new org.apache.kafka.clients.consumer.KafkaConsumer<byte[], byte[]>(props)) {
-            consumer.subscribe(List.of(DLT));
-            consumer.poll(Duration.ofSeconds(2)).forEach(found::add);
+        dltConsumer = new KafkaConsumer<>(props);
+        dltConsumer.subscribe(List.of(DLT));
+    }
+
+    @AfterAll
+    static void closeDltConsumer() {
+        if (dltConsumer != null) {
+            dltConsumer.close();
         }
-        return found;
     }
 
     @TestConfiguration
@@ -236,7 +292,14 @@ class KafkaEventContractIntegrationTest {
     static class TestEventListener {
 
         private final List<ConsumerRecord<String, EventEnvelope>> received = new CopyOnWriteArrayList<>();
-        private final AtomicInteger attempts = new AtomicInteger();
+
+        /**
+         * 시도 횟수를 키별로 셉니다.
+         *
+         * <p>전역 카운터를 쓰면 앞선 케이스의 레코드가 늦게 재전달될 때 값이 오염되어
+         * 케이스 순서에 따라 결과가 달라집니다.
+         */
+        private final Map<String, AtomicInteger> attemptsByKey = new ConcurrentHashMap<>();
         private volatile RuntimeException failure;
 
         @KafkaListener(
@@ -244,7 +307,8 @@ class KafkaEventContractIntegrationTest {
             groupId = "mopl.test-consumer",
             containerFactory = "eventKafkaListenerContainerFactory")
         void onEvent(ConsumerRecord<String, EventEnvelope> record) {
-            attempts.incrementAndGet();
+            attemptsByKey.computeIfAbsent(record.key(), key -> new AtomicInteger())
+                .incrementAndGet();
             if (failure != null) {
                 throw failure;
             }
@@ -253,7 +317,7 @@ class KafkaEventContractIntegrationTest {
 
         void reset() {
             received.clear();
-            attempts.set(0);
+            attemptsByKey.clear();
             failure = null;
         }
 
@@ -265,8 +329,9 @@ class KafkaEventContractIntegrationTest {
             return received;
         }
 
-        int attempts() {
-            return attempts.get();
+        int attempts(String key) {
+            AtomicInteger counter = attemptsByKey.get(key);
+            return counter == null ? 0 : counter.get();
         }
     }
 }

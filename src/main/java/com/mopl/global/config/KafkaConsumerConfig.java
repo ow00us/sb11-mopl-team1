@@ -1,16 +1,14 @@
 package com.mopl.global.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mopl.global.event.CountingDeadLetterRecoverer;
+import com.mopl.global.event.DltFailureStoppingErrorHandler;
 import com.mopl.global.event.EventContractViolationException;
 import com.mopl.global.event.EventEnvelope;
 import com.mopl.global.event.MoplTopics;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -23,12 +21,9 @@ import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.listener.CommonContainerStoppingErrorHandler;
-import org.springframework.kafka.listener.ConsumerRecordRecoverer;
 import org.springframework.kafka.listener.ContainerProperties.AckMode;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
-import org.springframework.kafka.listener.MessageListenerContainer;
 import org.springframework.kafka.support.ExponentialBackOffWithMaxRetries;
 import org.springframework.kafka.support.serializer.DeserializationException;
 import org.springframework.kafka.support.serializer.ErrorHandlingDeserializer;
@@ -43,9 +38,11 @@ import org.springframework.messaging.converter.MessageConversionException;
  * 공유합니다. 각 리스너가 {@code @KafkaListener(groupId = "mopl.notification")} 처럼
  * 소비 목적을 명시해야 합니다.
  */
-@Slf4j
 @Configuration
 public class KafkaConsumerConfig {
+
+    /** DLT 발행이 같은 레코드에서 이 횟수만큼 연속 실패하면 컨테이너를 중지합니다. */
+    private static final int MAX_CONSECUTIVE_DLT_FAILURES = 3;
 
     private final KafkaProperties kafkaProperties;
     private final KafkaConnectionDetails connectionDetails;
@@ -80,9 +77,10 @@ public class KafkaConsumerConfig {
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, connectionDetails.getBootstrapServers());
 
         // 타입 헤더를 신뢰하지 않고 EventEnvelope 로만 읽습니다.
+        // 대상 타입을 EventEnvelope 로 고정하고 헤더를 쓰지 않으므로 신뢰 패키지 설정은
+        // 관여하지 않습니다.
         JsonDeserializer<EventEnvelope> delegate =
             new JsonDeserializer<>(EventEnvelope.class, objectMapper, false);
-        delegate.addTrustedPackages("com.mopl.*");
 
         // 역직렬화 실패를 리스너 예외가 아니라 DeserializationException 으로 표면화해
         // 재시도 없이 DLT 로 보낼 수 있게 합니다.
@@ -119,7 +117,7 @@ public class KafkaConsumerConfig {
     public DefaultErrorHandler eventErrorHandler(
         @Qualifier("deadLetterKafkaTemplate") KafkaTemplate<String, Object> deadLetterKafkaTemplate
     ) {
-        DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
+        DeadLetterPublishingRecoverer publisher = new DeadLetterPublishingRecoverer(
             deadLetterKafkaTemplate,
             // 파티션을 -1 로 두어 DLT 의 파티션 수가 원본과 달라도 문제가 없게 합니다.
             (record, exception) ->
@@ -129,7 +127,8 @@ public class KafkaConsumerConfig {
         backOff.setInitialInterval(1_000L);
         backOff.setMultiplier(2.0);
 
-        DefaultErrorHandler errorHandler = new DltFailureStoppingErrorHandler(recoverer, backOff);
+        DefaultErrorHandler errorHandler = new DltFailureStoppingErrorHandler(
+            new CountingDeadLetterRecoverer(publisher), backOff, MAX_CONSECUTIVE_DLT_FAILURES);
         errorHandler.addNotRetryableExceptions(
             DeserializationException.class,
             MessageConversionException.class,
@@ -137,93 +136,4 @@ public class KafkaConsumerConfig {
         return errorHandler;
     }
 
-    /**
-     * DLT 발행이 반복 실패하면 리스너 컨테이너를 멈춥니다.
-     *
-     * <p>계약은 DLT 발행이 실패하면 원본 offset 을 성공 처리하지 않도록 요구합니다. 그
-     * 규칙만 지키면 같은 레코드를 무한히 다시 소비하므로, 같은 레코드에서 연속 실패가
-     * 한도를 넘으면 컨테이너를 중지해 유한하게 만들고 운영자가 인지할 수 있게 합니다.
-     *
-     * <p>중지는 리스너 스레드에서 직접 호출하면 교착될 수 있어
-     * {@link CommonContainerStoppingErrorHandler} 에 위임합니다.
-     */
-    static class DltFailureStoppingErrorHandler extends DefaultErrorHandler {
-
-        private static final int MAX_CONSECUTIVE_DLT_FAILURES = 3;
-
-        private final CommonContainerStoppingErrorHandler containerStopper =
-            new CommonContainerStoppingErrorHandler();
-
-        private String lastFailedRecord;
-        private int consecutiveFailures;
-
-        DltFailureStoppingErrorHandler(
-            ConsumerRecordRecoverer recoverer, ExponentialBackOffWithMaxRetries backOff) {
-            super(recoverer, backOff);
-        }
-
-        @Override
-        public boolean handleOne(
-            Exception thrownException,
-            ConsumerRecord<?, ?> record,
-            Consumer<?, ?> consumer,
-            MessageListenerContainer container
-        ) {
-            try {
-                boolean handled = super.handleOne(thrownException, record, consumer, container);
-                resetCounter();
-                return handled;
-            } catch (RuntimeException dltFailure) {
-                if (exceededLimit(record)) {
-                    stop(dltFailure, record, consumer, container);
-                }
-                throw dltFailure;
-            }
-        }
-
-        @Override
-        public void handleRemaining(
-            Exception thrownException,
-            List<ConsumerRecord<?, ?>> records,
-            Consumer<?, ?> consumer,
-            MessageListenerContainer container
-        ) {
-            try {
-                super.handleRemaining(thrownException, records, consumer, container);
-                resetCounter();
-            } catch (RuntimeException dltFailure) {
-                if (!records.isEmpty() && exceededLimit(records.get(0))) {
-                    stop(dltFailure, records.get(0), consumer, container);
-                }
-                throw dltFailure;
-            }
-        }
-
-        private boolean exceededLimit(ConsumerRecord<?, ?> record) {
-            String id = record.topic() + "-" + record.partition() + "@" + record.offset();
-            if (!id.equals(lastFailedRecord)) {
-                lastFailedRecord = id;
-                consecutiveFailures = 0;
-            }
-            return ++consecutiveFailures >= MAX_CONSECUTIVE_DLT_FAILURES;
-        }
-
-        private void resetCounter() {
-            lastFailedRecord = null;
-            consecutiveFailures = 0;
-        }
-
-        private void stop(
-            RuntimeException dltFailure,
-            ConsumerRecord<?, ?> record,
-            Consumer<?, ?> consumer,
-            MessageListenerContainer container
-        ) {
-            log.error(
-                "DLT 발행이 {}회 연속 실패해 리스너 컨테이너를 중지합니다. record={}-{}@{}",
-                consecutiveFailures, record.topic(), record.partition(), record.offset(),
-                dltFailure);
-            containerStopper.handleOne(dltFailure, record, consumer, container);
-        }
-    }
 }
