@@ -18,6 +18,7 @@
 | `SEND` | `/pub/contents/{contentId}/chat` | 콘텐츠 존재와 채팅 요청 검증 |
 | `SUBSCRIBE` | `/sub/conversations/{conversationId}/direct-messages` | 대화 참여자 여부 |
 | `SEND` | `/pub/conversations/{conversationId}/direct-messages` | 대화 참여자와 요청 검증 |
+| `SEND` | `/pub/contents/{contentId}/watch/heartbeat` | 시청 세션 소유권 |
 
 `{contentId}`와 `{conversationId}`는 UUID 형식이어야 합니다.
 

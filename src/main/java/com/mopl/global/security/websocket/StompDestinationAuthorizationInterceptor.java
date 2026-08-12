@@ -33,6 +33,7 @@ public class StompDestinationAuthorizationInterceptor implements ChannelIntercep
 
     private static final List<Pattern> ALLOWED_SEND_DESTINATIONS = List.of(
         Pattern.compile("^/pub/contents/" + UUID_PATTERN + "/chat$"),
+        Pattern.compile("^/pub/contents/" + UUID_PATTERN + "/watch/heartbeat$"),
         Pattern.compile("^/pub/conversations/" + UUID_PATTERN + "/direct-messages$")
     );
 
