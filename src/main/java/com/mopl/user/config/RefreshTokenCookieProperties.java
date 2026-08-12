@@ -2,6 +2,10 @@ package com.mopl.user.config;
 
 import lombok.Getter;
 import lombok.Setter;
+import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
@@ -23,6 +27,7 @@ import org.springframework.stereotype.Component;
 @Getter
 @Setter
 @Component
+@Validated
 @ConfigurationProperties(prefix = "refresh-token.cookie")
 public class RefreshTokenCookieProperties {
 
@@ -32,6 +37,11 @@ public class RefreshTokenCookieProperties {
      * <p>기존 OpenAPI의 토큰 재발급 계약에서 사용하는
      * {@code REFRESH_TOKEN}과 동일하게 설정합니다.</p>
      */
+    @NotBlank(message = "Refresh Token Cookie 이름은 비어 있을 수 없습니다.")
+    @Pattern(
+        regexp = "^[A-Za-z0-9_-]+$",
+        message = "Refresh Token Cookie 이름은 영문, 숫자, 밑줄과 하이픈만 사용할 수 있습니다."
+    )
     private String name;
 
     /**
@@ -41,6 +51,11 @@ public class RefreshTokenCookieProperties {
      * 인증 API에서만 Cookie가 전송되고 다른 도메인 API에는 불필요하게
      * 포함되지 않습니다.</p>
      */
+    @NotBlank(message = "Refresh Token Cookie 경로는 비어 있을 수 없습니다.")
+    @Pattern(
+        regexp = "^/[A-Za-z0-9/_-]*$",
+        message = "Refresh Token Cookie 경로는 /로 시작하는 올바른 경로여야 합니다."
+    )
     private String path;
 
     /**
@@ -50,6 +65,11 @@ public class RefreshTokenCookieProperties {
      * 프론트엔드와 백엔드가 서로 다른 사이트에 배포되는 경우에는
      * 운영 환경에서 None으로 변경하고 Secure를 함께 사용해야 합니다.</p>
      */
+    @NotBlank(message = "Refresh Token Cookie SameSite 값은 비어 있을 수 없습니다.")
+    @Pattern(
+        regexp = "Strict|Lax|None",
+        message = "Refresh Token Cookie SameSite는 Strict, Lax 또는 None이어야 합니다."
+    )
     private String sameSite;
 
     /**
@@ -59,4 +79,24 @@ public class RefreshTokenCookieProperties {
      * 운영 HTTPS 환경에서는 true를 사용합니다.</p>
      */
     private boolean secure;
+
+    /**
+     * SameSite=None Cookie는 교차 사이트 요청에 사용되므로
+     * HTTPS에서만 전송되도록 Secure 속성이 반드시 필요
+     *
+     * <p>잘못된 운영 환경 변수가 설정되면 브라우저가 Cookie를 거부할 수 있으므로
+     * 애플리케이션 시작 시점에 설정 오류로 차단합니다.</p>
+     *
+     * @return SameSite와 Secure 설정 조합이 유효하면 true
+     */
+    @AssertTrue(
+        message = "Refresh Token Cookie의 SameSite가 None이면 Secure는 true여야 합니다."
+    )
+    public boolean isSecureValidForSameSite() {
+        /*
+         * sameSite가 null인 경우에는 @NotBlank가 별도로 처리
+         * "None".equals(...) 형태를 사용하면 null에서도 예외가 발생하지 않는다.
+         */
+        return !"None".equals(sameSite) || secure;
+    }
 }
