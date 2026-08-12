@@ -52,7 +52,8 @@ class SecurityAccessPolicyTest {
     @ParameterizedTest
     @ValueSource(strings = {
         "/api/users",
-        "/api/auth/sign-in"
+        "/api/auth/sign-in",
+        "/api/auth/refresh"
     })
     @DisplayName("공개 POST API는 CSRF 토큰이 있으면 JWT 없이 접근할 수 있다")
     void publicPost_withCsrf_doesNotRequireJwt(String path) throws Exception {
@@ -68,6 +69,40 @@ class SecurityAccessPolicyTest {
         mockMvc.perform(post("/api/users"))
             .andExpect(status().isForbidden())
             .andExpect(jsonPath("$.errorCode").value("COMMON_403_1"));
+    }
+
+    @Test
+    @DisplayName("토큰 재발급 API는 CSRF 토큰이 없으면 403을 반환한다")
+    void refresh_withoutCsrf_returnsForbidden()
+        throws Exception {
+
+        /*
+         * /api/auth/refresh는 Access Token 인증이 필요 없는 공개 경로지만
+         * Refresh Token Cookie를 사용하는 상태 변경 POST 요청이므로
+         * CSRF 검증 대상
+         *
+         * SecurityPolicyProbeController를 사용하므로 실제 Refresh Token
+         * Cookie 바인딩이나 재발급 Service 로직에는 진입하지 않는다.
+         */
+        mockMvc.perform(
+                post("/api/auth/refresh")
+            )
+            .andExpect(status().isForbidden())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_403_1")
+            );
+
+        /*
+         * 이번 403은 JWT 인증 실패가 아니라 CSRF 검증 실패로
+         * 발생해야 하므로 JwtProvider는 호출되지 않는다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
     }
 
     @Test
