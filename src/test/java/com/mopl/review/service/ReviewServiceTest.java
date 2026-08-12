@@ -426,6 +426,46 @@ class ReviewServiceTest {
         assertThat(result.nextIdAfter()).isNotNull();
     }
 
+    // ── getMyReview ──────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("콘텐츠와 본인 리뷰가 모두 존재하면 ReviewDto를 반환한다")
+    void getMyReview_success() {
+        Review review = savedReview(REVIEW_ID, AUTHOR_ID, CONTENT_ID, "재밌어요", new BigDecimal("4.5"));
+        when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(movie()));
+        when(reviewRepository.findByAuthorIdAndContentId(AUTHOR_ID, CONTENT_ID)).thenReturn(Optional.of(review));
+        when(userRepository.findById(AUTHOR_ID)).thenReturn(Optional.of(savedUser(AUTHOR_ID, "닉네임", null)));
+
+        ReviewDto result = reviewService.getMyReview(CONTENT_ID, AUTHOR_ID);
+
+        assertThat(result.text()).isEqualTo("재밌어요");
+        assertThat(result.rating()).isEqualByComparingTo("4.5");
+        assertThat(result.author().userId()).isEqualTo(AUTHOR_ID);
+    }
+
+    @Test
+    @DisplayName("콘텐츠가 존재하지 않으면 CONTENT_NOT_FOUND 예외가 발생하고, 리뷰 조회는 호출되지 않는다")
+    void getMyReview_fail_contentNotFound() {
+        when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> reviewService.getMyReview(CONTENT_ID, AUTHOR_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.CONTENT_NOT_FOUND);
+
+        verify(reviewRepository, never()).findByAuthorIdAndContentId(any(), any());
+    }
+
+    @Test
+    @DisplayName("콘텐츠는 존재하지만 본인 리뷰가 없으면 REVIEW_NOT_FOUND 예외가 발생한다")
+    void getMyReview_fail_reviewNotFound() {
+        when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(movie()));
+        when(reviewRepository.findByAuthorIdAndContentId(AUTHOR_ID, CONTENT_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> reviewService.getMyReview(CONTENT_ID, AUTHOR_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.REVIEW_NOT_FOUND);
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
     private Content movie() {

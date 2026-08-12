@@ -166,6 +166,40 @@ class ReviewRepositoryTest {
         assertThat(reviewRepository.existsByAuthorIdAndContentId(authorId, UUID.randomUUID())).isFalse();
     }
 
+    // ── findByAuthorIdAndContentId ──────────────────────────────────────────
+
+    @Test
+    @DisplayName("findByAuthorIdAndContentId는 리뷰가 존재하면 해당 리뷰를 담은 Optional을 반환한다")
+    void findByAuthorIdAndContentId_reviewExists_returnsReview() {
+        // given
+        UUID authorId = insertUser();
+        UUID contentId = insertContent();
+        Review saved = entityManager.persistAndFlush(Review.builder()
+                .authorId(authorId).contentId(contentId).text("text").rating(new BigDecimal("3.0")).build());
+        entityManager.clear();
+
+        // when
+        Optional<Review> result = reviewRepository.findByAuthorIdAndContentId(authorId, contentId);
+
+        // then
+        assertThat(result).isPresent();
+        assertThat(result.get().getId()).isEqualTo(saved.getId());
+    }
+
+    @Test
+    @DisplayName("findByAuthorIdAndContentId는 리뷰가 없으면 빈 Optional을 반환한다")
+    void findByAuthorIdAndContentId_reviewMissing_returnsEmpty() {
+        // given
+        UUID authorId = insertUser();
+        UUID contentId = insertContent();
+
+        // when
+        Optional<Review> result = reviewRepository.findByAuthorIdAndContentId(authorId, contentId);
+
+        // then
+        assertThat(result).isEmpty();
+    }
+
     // ── countByFilter ──────────────────────────────────────────────────────
 
     @Test
