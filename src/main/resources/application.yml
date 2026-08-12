@@ -17,6 +17,13 @@ spring:
     properties:
       hibernate:
         format_sql: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      auto-offset-reset: earliest
+      # offset 은 소비 결과가 성공한 뒤 컨테이너가 커밋합니다. 자동 커밋을 쓰면
+      # 처리 실패한 레코드의 offset 까지 넘어갑니다.
+      enable-auto-commit: false
   flyway:
     postgresql:
       # V4 의 CREATE INDEX CONCURRENTLY 는 트랜잭션 밖 실행이 필요.
@@ -64,6 +71,15 @@ external-content-batch:
   cron: "0 0 4 * * *"
   zone: Asia/Seoul
 
+mopl:
+  kafka:
+    topic:
+      # 공통 토픽과 DLT 를 기동 시 선언적으로 생성할지 여부입니다.
+      auto-create: ${KAFKA_TOPIC_AUTO_CREATE:true}
+    listener:
+      # 로컬에 Kafka 를 띄우지 않고 개발할 때 false 로 두면 연결 경고가 반복되지 않습니다.
+      auto-startup: ${KAFKA_LISTENER_AUTO_STARTUP:true}
+
 app:
   cors:
     # 콤마로 구분한 브라우저 REST API 허용 origin 목록
@@ -105,6 +121,15 @@ spring:
     properties:
       hibernate:
         format_sql: false
+  kafka:
+    # prod는 기본값 없이 강제 - 값이 누락되면 애플리케이션 시작 시점에 실패
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+
+mopl:
+  kafka:
+    topic:
+      # 운영 토픽은 미리 준비합니다. 파티션 수 결정이 코드 배포에 묶이지 않게 합니다.
+      auto-create: false
 
 app:
   cors:
