@@ -12,6 +12,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mopl.global.exception.BusinessException;
+import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.dto.JwtDto;
 import com.mopl.user.dto.SignInRequest;
 import com.mopl.user.dto.UserDto;
@@ -441,6 +443,116 @@ class AuthControllerTest {
 
         verify(refreshTokenCookieFactory)
             .create("new-refresh-token");
+    }
+
+    @Test
+    @DisplayName("유효하지 않은 Refresh Token이면 401을 반환하고 새 Cookie를 발급하지 않는다")
+    void refresh_failWhenTokenIsInvalid()
+        throws Exception {
+
+        // given
+        Cookie invalidRefreshTokenCookie =
+            new Cookie(
+                "REFRESH_TOKEN",
+                "invalid-refresh-token"
+            );
+
+        /*
+         * Cookie 자체는 존재하지만 Redis에 세션이 없거나,
+         * 만료·폐기·재사용된 Refresh Token이라고 가정한다.
+         */
+        when(
+            refreshTokenService.refresh(
+                "invalid-refresh-token"
+            )
+        ).thenThrow(
+            new BusinessException(
+                ErrorCode.UNAUTHORIZED,
+                "유효하지 않은 Refresh Token입니다."
+            )
+        );
+
+        // when & then
+        mockMvc.perform(
+                post("/api/auth/refresh")
+                    .cookie(invalidRefreshTokenCookie)
+            )
+            .andExpect(status().isUnauthorized())
+            .andExpect(
+                content().contentType("application/json")
+            )
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_401_1")
+            )
+            /*
+             * Refresh Token의 구체적인 실패 원인을 응답으로
+             * 구분해서 노출하지 않는다.
+             */
+            .andExpect(
+                jsonPath("$.message")
+                    .value("유효하지 않은 Refresh Token입니다.")
+            )
+            /*
+             * 재발급에 실패했으므로 새 Refresh Token Cookie가
+             * 응답에 포함되면 안 된다.
+             */
+            .andExpect(
+                header().doesNotExist(
+                    HttpHeaders.SET_COOKIE
+                )
+            );
+
+        verify(refreshTokenService)
+            .refresh("invalid-refresh-token");
+
+        /*
+         * Service가 재발급에 실패했으므로 새 Refresh Token을
+         * Cookie로 변환하는 Factory는 실행되면 안 된다.
+         */
+        verifyNoInteractions(
+            refreshTokenCookieFactory
+        );
+    }
+
+    @Test
+    @DisplayName("REFRESH_TOKEN Cookie가 공백이면 400을 반환한다")
+    void refresh_failWhenCookieIsBlank() throws Exception {
+        // given
+        Cookie blankRefreshTokenCookie =
+            new Cookie(
+                "REFRESH_TOKEN",
+                "   "
+            );
+
+        // when & then
+        mockMvc.perform(
+                post("/api/auth/refresh")
+                    .cookie(blankRefreshTokenCookie)
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            )
+            /*
+             * 유효하지 않은 입력이므로 새로운 Refresh Token Cookie가
+             * 응답에 포함되면 안 된다.
+             */
+            .andExpect(
+                header().doesNotExist(
+                    HttpHeaders.SET_COOKIE
+                )
+            );
+
+        /*
+         * Controller의 Cookie 입력 검증에서 요청이 차단되므로
+         * Service와 Cookie Factory는 호출되면 안 된다.
+         */
+        verifyNoInteractions(
+            refreshTokenService,
+            refreshTokenCookieFactory
+        );
     }
 
     @Test
