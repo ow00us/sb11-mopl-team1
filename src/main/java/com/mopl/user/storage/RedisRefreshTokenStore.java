@@ -80,6 +80,64 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
         );
 
     /**
+     * 기존 Refresh Token 세션을 새 세션으로 교체하는 Lua Script
+     *
+     * <p>기존 세션 확인과 삭제, 새 세션 저장을 하나의 Redis 명령으로
+     * 실행합니다. 동일한 기존 토큰으로 요청이 동시에 들어오면 첫 번째
+     * 요청이 기존 세션을 삭제한 뒤 나머지 요청은 실패합니다.</p>
+     *
+     * <p>기존 세션에 저장된 사용자 UUID가 요청 사용자 UUID와 다르면
+     * 다른 사용자의 세션을 변경하지 않고 실패합니다.</p>
+     *
+     * KEYS[1]: 기존 Refresh Token 세션 Key
+     * KEYS[2]: 사용자별 Refresh Token Set Key
+     * KEYS[3]: 새로운 Refresh Token 세션 Key
+     *
+     * ARGV[1]: 사용자 UUID 문자열
+     * ARGV[2]: 기존 Refresh Token 해시
+     * ARGV[3]: 새로운 Refresh Token 해시
+     * ARGV[4]: 새로운 세션 TTL 밀리초
+     *
+     * 반환값:
+     * 1 - 교체 성공
+     * 0 - 기존 세션이 없거나 사용자 불일치 또는 새 세션 Key 충돌
+     */
+    private static final DefaultRedisScript<Long> ROTATE_SESSION_SCRIPT =
+        new DefaultRedisScript<>(
+            """
+            local storedUserId = redis.call('GET', KEYS[1])
+
+            if not storedUserId or storedUserId ~= ARGV[1] then
+                return 0
+            end
+
+            if redis.call('EXISTS', KEYS[3]) == 1 then
+                return 0
+            end
+
+            redis.call('DEL', KEYS[1])
+            redis.call('SREM', KEYS[2], ARGV[2])
+
+            redis.call('SET', KEYS[3], ARGV[1], 'PX', ARGV[4])
+            redis.call('SADD', KEYS[2], ARGV[3])
+
+            local newExpirationMillis = tonumber(ARGV[4])
+            local currentIndexTtl = redis.call('PTTL', KEYS[2])
+
+            if currentIndexTtl < newExpirationMillis then
+                redis.call(
+                    'PEXPIRE',
+                    KEYS[2],
+                    newExpirationMillis
+                )
+            end
+
+            return 1
+            """,
+            Long.class
+        );
+
+    /**
      * 사용자별 세션 인덱스에서 현재 활성 상태인 Refresh Token 해시만 조회하고,
      * 이미 만료된 세션 해시는 인덱스에서 제거하는 Lua Script
      *
@@ -216,6 +274,55 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
     }
 
     /**
+     * 기존 Refresh Token 세션을 새로운 Refresh Token 세션으로 교체
+     *
+     * <p>Lua Script가 기존 세션 확인부터 새 세션 저장까지 원자적으로
+     * 수행하므로 동일 토큰을 이용한 중복 재발급을 차단합니다.</p>
+     *
+     * @param userId Refresh Token 소유 사용자 UUID
+     * @param oldTokenHash 기존 Refresh Token SHA-256 해시
+     * @param newTokenHash 새로운 Refresh Token SHA-256 해시
+     * @param expiration 새로운 Refresh Token 세션 TTL
+     * @return 교체에 성공하면 true, 기존 세션이 유효하지 않으면 false
+     */
+    @Override
+    public boolean rotate(
+        UUID userId,
+        String oldTokenHash,
+        String newTokenHash,
+        Duration expiration
+    ) {
+        validateRotateArguments(
+            userId,
+            oldTokenHash,
+            newTokenHash,
+            expiration
+        );
+
+        Long result =
+            redisTemplate.execute(
+                ROTATE_SESSION_SCRIPT,
+                List.of(
+                    sessionKey(oldTokenHash),
+                    userSessionsKey(userId),
+                    sessionKey(newTokenHash)
+                ),
+                userId.toString(),
+                oldTokenHash,
+                newTokenHash,
+                Long.toString(expiration.toMillis())
+            );
+
+        /*
+         * Redis Script 실행 결과가 1인 경우에만 교체 성공
+         *
+         * null은 Redis 연결 또는 응답 문제로 정상 성공을 확인할 수 없는
+         * 상태이므로 false로 처리하여 재발급 성공으로 오인하지 않는다.
+         */
+        return Long.valueOf(1L).equals(result);
+    }
+
+    /**
      * 사용자별 Redis Set에서 현재 활성 상태인 Refresh Token 해시만 조회
      *
      * <p>Redis Set의 Member에는 개별 TTL을 적용할 수 없으므로
@@ -286,6 +393,43 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
             || expiration.isNegative()) {
             throw new IllegalArgumentException(
                 "Refresh Token 만료 시간은 0보다 커야 합니다."
+            );
+        }
+    }
+
+    /**
+     * Refresh Token Rotation에 필요한 인자가 올바른지 검증
+     */
+    private void validateRotateArguments(
+        UUID userId,
+        String oldTokenHash,
+        String newTokenHash,
+        Duration expiration
+    ) {
+        /*
+         * 사용자 UUID, 새로운 해시와 만료 시간은 save()와
+         * 동일한 저장 조건을 만족해야 한다.
+         */
+        validateSaveArguments(
+            userId,
+            newTokenHash,
+            expiration
+        );
+
+        if (oldTokenHash == null
+            || oldTokenHash.isBlank()) {
+            throw new IllegalArgumentException(
+                "기존 Refresh Token 해시는 비어 있을 수 없습니다."
+            );
+        }
+
+        /*
+         * 기존 해시와 새 해시가 같으면 기존 토큰을 폐기하지 않고
+         * 수명만 연장하는 결과가 되므로 Rotation으로 허용하지 않는다.
+         */
+        if (oldTokenHash.equals(newTokenHash)) {
+            throw new IllegalArgumentException(
+                "기존 Refresh Token 해시와 새로운 해시는 달라야 합니다."
             );
         }
     }

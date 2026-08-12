@@ -1289,6 +1289,11 @@ paths:
       responses:
         "200":
           description: "성공"
+          headers:
+            Set-Cookie:
+              description: "교체된 HttpOnly Refresh Token Cookie"
+              schema:
+                type: "string"
           content:
             "*/*":
               schema:

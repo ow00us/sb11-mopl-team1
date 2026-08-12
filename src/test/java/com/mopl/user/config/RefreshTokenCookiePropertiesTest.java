@@ -174,6 +174,47 @@ class RefreshTokenCookiePropertiesTest {
     }
 
     @Test
+    @DisplayName("OpenAPI 계약과 다른 Cookie 이름이면 검증에 실패한다")
+    void validate_fail_whenNameDiffersFromApiContract() {
+        // given
+        RefreshTokenCookieProperties properties =
+            validProperties();
+
+        /*
+         * 영문과 밑줄만 사용했기 때문에 Cookie 이름 문법 자체는
+         * 올바르지만, OpenAPI와 Controller가 사용하는
+         * REFRESH_TOKEN 계약과는 일치하지 않는다.
+         */
+        properties.setName(
+            "ANOTHER_REFRESH_TOKEN"
+        );
+
+        // when
+        var violations =
+            validator.validate(properties);
+
+        // then
+        /*
+         * 애플리케이션 시작 시 잘못된 Cookie 이름 설정을 차단
+         *
+         * 이를 통해 로그인 응답에서 발급한 Cookie를 재발급 API가
+         * 찾지 못하는 설정 오류를 방지
+         */
+        assertHasViolationForProperty(
+            violations,
+            "name"
+        );
+    }
+
+    @Test
+    @DisplayName("Refresh Token Cookie 계약 이름은 REFRESH_TOKEN이다")
+    void requiredCookieName_matchesOpenApiContract() {
+        assertThat(
+            RefreshTokenCookieProperties.REQUIRED_COOKIE_NAME
+        ).isEqualTo("REFRESH_TOKEN");
+    }
+
+    @Test
     @DisplayName("Cookie 경로가 공백이면 검증에 실패한다")
     void validate_fail_whenPathIsBlank() {
         // given
