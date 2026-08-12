@@ -258,11 +258,47 @@ public class RefreshTokenService {
             Instant.now().plus(expiration);
 
         /*
-         * 기존 세션 폐기와 신규 세션 저장을 Redis Lua 스크립트로
-         * 원자적으로 수행
+         * Redis 세션을 교체하기 전에 Access Token을 먼저 생성
          *
-         * 같은 기존 Refresh Token으로 동시에 두 요청이 들어와도
-         * 정확히 하나만 기존 세션을 소비하고 성공할 수 있다.
+         * Rotation을 먼저 수행한 뒤 JWT 발급이 실패하면 기존 Refresh Token은
+         * 이미 폐기되고, Redis에 저장된 새 Refresh Token은 클라이언트가
+         * 전달받지 못하는 상태가 된다.
+         *
+         * 따라서 응답에 필요한 값들을 먼저 안전하게 생성하고,
+         * 외부 상태를 변경하는 Redis Rotation을 마지막에 수행
+         */
+        String accessToken =
+            jwtProvider.createAccessToken(
+                user.getId(),
+                user.getRole().name()
+            );
+
+        /*
+         * Access Token과 현재 사용자 정보는 JSON 응답에 사용할
+         * JwtDto로 구성
+         */
+        JwtDto jwtDto =
+            new JwtDto(
+                UserDto.from(user),
+                accessToken
+            );
+
+        /*
+         * 새로운 Refresh Token 원문은 JSON에 포함하지 않고
+         * Controller에서 HttpOnly Cookie로 만들 수 있도록 분리
+         */
+        IssuedRefreshToken issuedRefreshToken =
+            new IssuedRefreshToken(
+                newRawToken,
+                expiresAt
+            );
+
+        /*
+         * JWT 발급과 응답 객체 구성이 모두 성공한 다음,
+         * 기존 Refresh Token 세션과 신규 세션을 원자적으로 교체
+         *
+         * 이 호출 이전에 예외가 발생하면 Redis는 변경되지 않으므로
+         * 사용자는 기존 Refresh Token으로 다시 재발급을 요청할 수 있다.
          */
         boolean rotated =
             refreshTokenStore.rotate(
@@ -273,10 +309,11 @@ public class RefreshTokenService {
             );
 
         /*
-         * 앞선 조회 이후 다른 요청이 먼저 기존 토큰을 소비했을 수 있다.
+         * 기존 토큰 조회 이후 다른 요청이 먼저 해당 토큰을 소비했다면
+         * rotate()가 false를 반환
          *
-         * 이 경우 rotate()가 false를 반환하며, 현재 요청에서는
-         * Access Token과 Refresh Token을 발급하지 않는다.
+         * 이때 미리 만들어진 Access Token은 클라이언트에 반환되지 않으므로
+         * 인증 수단으로 사용될 수 없다.
          */
         if (!rotated) {
             throw new BusinessException(
@@ -284,35 +321,6 @@ public class RefreshTokenService {
                 "이미 사용되었거나 유효하지 않은 Refresh Token입니다."
             );
         }
-
-        /*
-         * Redis Rotation이 성공한 이후 현재 사용자 UUID와 역할로
-         * 새로운 Access Token을 발급
-         */
-        String accessToken =
-            jwtProvider.createAccessToken(
-                user.getId(),
-                user.getRole().name()
-            );
-
-        /*
-         * Access Token과 사용자 정보는 JSON 응답용 JwtDto에 담는다.
-         */
-        JwtDto jwtDto =
-            new JwtDto(
-                UserDto.from(user),
-                accessToken
-            );
-
-        /*
-         * 새 Refresh Token 원문은 JSON 본문에 넣지 않고 Controller에서
-         * HttpOnly Cookie로 변환할 수 있도록 별도 객체에 담는다.
-         */
-        IssuedRefreshToken issuedRefreshToken =
-            new IssuedRefreshToken(
-                newRawToken,
-                expiresAt
-            );
 
         return new RefreshResult(
             jwtDto,

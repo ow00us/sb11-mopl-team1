@@ -513,6 +513,89 @@ class RefreshTokenServiceTest {
     }
 
     @Test
+    @DisplayName("Access Token 발급에 실패하면 기존 Refresh Token을 소비하지 않는다")
+    void refresh_doesNotRotateWhenAccessTokenIssuanceFails() {
+        // given
+        UUID userId = UUID.randomUUID();
+
+        String oldRawToken = "old-refresh-token";
+        String oldTokenHash = "a".repeat(64);
+
+        String newRawToken = "new-refresh-token";
+        String newTokenHash = "b".repeat(64);
+
+        Duration expiration = Duration.ofDays(7);
+
+        User user = createUser(
+            userId,
+            UserRole.USER,
+            false
+        );
+
+        when(refreshTokenHasher.hash(oldRawToken))
+            .thenReturn(oldTokenHash);
+
+        when(
+            refreshTokenStore.findUserIdByTokenHash(oldTokenHash)
+        ).thenReturn(Optional.of(userId));
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        when(refreshTokenGenerator.generate())
+            .thenReturn(newRawToken);
+
+        when(refreshTokenHasher.hash(newRawToken))
+            .thenReturn(newTokenHash);
+
+        when(refreshTokenProperties.getExpiration())
+            .thenReturn(expiration);
+
+        /*
+         * JWT 발급 과정에서 예외가 발생하는 상황을 만든다.
+         */
+        when(
+            jwtProvider.createAccessToken(
+                userId,
+                UserRole.USER.name()
+            )
+        ).thenThrow(
+            new IllegalStateException(
+                "Access Token 발급 실패"
+            )
+        );
+
+        // when & then
+        assertThatThrownBy(() ->
+            refreshTokenService.refresh(oldRawToken)
+        )
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Access Token 발급 실패");
+
+        verify(jwtProvider).createAccessToken(
+            userId,
+            UserRole.USER.name()
+        );
+
+        /*
+         * Access Token 발급에 실패했으므로 기존 Refresh Token을
+         * 폐기하는 Redis Rotation은 절대로 실행되면 안 된다.
+         *
+         * 이를 통해 사용자는 일시적인 JWT 발급 오류가 해결된 뒤
+         * 기존 Refresh Token으로 재발급을 다시 시도할 수 있다.
+         */
+        verify(
+            refreshTokenStore,
+            never()
+        ).rotate(
+            userId,
+            oldTokenHash,
+            newTokenHash,
+            expiration
+        );
+    }
+
+    @Test
     @DisplayName("기존 Refresh Token이 먼저 소비되면 재발급에 실패한다")
     void refresh_failWhenRotationLosesRace() {
         // given
@@ -552,6 +635,17 @@ class RefreshTokenServiceTest {
             .thenReturn(expiration);
 
         /*
+         * 외부 상태를 변경하기 전에 Access Token 생성까지는
+         * 정상적으로 완료된 상황을 가정
+         */
+        when(
+            jwtProvider.createAccessToken(
+                userId,
+                UserRole.USER.name()
+            )
+        ).thenReturn("unused-access-token");
+
+        /*
          * 조회 직후 다른 요청이 먼저 기존 Refresh Token을 소비한 상황을 표현
          */
         when(
@@ -579,9 +673,14 @@ class RefreshTokenServiceTest {
         );
 
         /*
-         * Rotation에 실패했으므로 클라이언트에 전달할 Access Token도 발급하지 않는다.
+         * Access Token은 Redis 상태를 변경하기 전에 생성되지만,
+         * Rotation이 실패하면 RefreshResult가 반환되지 않으므로
+         * 클라이언트에는 전달되지 않는다.
          */
-        verifyNoInteractions(jwtProvider);
+        verify(jwtProvider).createAccessToken(
+            userId,
+            UserRole.USER.name()
+        );
     }
 
     @Test
