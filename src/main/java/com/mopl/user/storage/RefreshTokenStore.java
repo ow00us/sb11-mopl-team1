@@ -43,6 +43,29 @@ public interface RefreshTokenStore {
     Optional<UUID> findUserIdByTokenHash(String tokenHash);
 
     /**
+     * 기존 Refresh Token 세션을 새로운 세션으로 원자적으로 교체
+     *
+     * <p>기존 세션 확인, 기존 세션 삭제와 새로운 세션 저장을 하나의
+     * Redis 연산으로 수행합니다. 따라서 동일한 Refresh Token으로
+     * 동시에 재발급을 요청하더라도 하나의 요청만 성공할 수 있습니다.</p>
+     *
+     * <p>기존 Refresh Token 세션이 존재하지 않거나 해당 사용자의
+     * 세션이 아니면 아무 값도 변경하지 않고 false를 반환합니다.</p>
+     *
+     * @param userId Refresh Token 세션의 사용자 UUID
+     * @param oldTokenHash 재발급에 사용된 기존 Refresh Token 해시
+     * @param newTokenHash 새로 발급할 Refresh Token 해시
+     * @param expiration 새로운 Refresh Token 세션의 유효 기간
+     * @return 교체에 성공하면 true, 기존 세션이 유효하지 않으면 false
+     */
+    boolean rotate(
+        UUID userId,
+        String oldTokenHash,
+        String newTokenHash,
+        Duration expiration
+    );
+
+    /**
      * 특정 사용자가 보유한 Refresh Token 해시 목록을 조회
      *
      * 비밀번호 변경, 계정 잠금 및 전체 로그아웃에서
