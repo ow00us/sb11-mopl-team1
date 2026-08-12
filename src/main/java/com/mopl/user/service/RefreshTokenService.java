@@ -22,9 +22,8 @@ import org.springframework.stereotype.Service;
  * <p>Redis 저장 데이터에는 Refresh Token 유효기간과 동일한 TTL을 적용하여
  * 만료된 세션이 자동으로 제거되도록 합니다.</p>
  *
- * <p>로그인 API 및 HttpOnly Cookie 연동은 후속 작업에서 구현합니다.
- * 후속 작업에서는 로그인 성공 후 issue()를 호출하고 반환된 원문을
- * HttpOnly Cookie로 전달합니다.</p>
+ * <p>로그인 성공 시 {@link AuthService}가 {@link #issue(UUID)}를 호출하며,
+ * 반환된 Refresh Token 원문은 Controller에서 HttpOnly Cookie로 전달합니다.</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -120,7 +119,7 @@ public class RefreshTokenService {
 
         /*
          * 원문은 로그인 응답의 HttpOnly Cookie로 전달하기 위해 반환
-         * 현재 이슈에서는 발급 및 저장까지만 구현하며 Cookie 연동은 후속 작업
+         * 서버에는 원문을 저장하지 않고 해시값만 유지
          */
         return new IssuedRefreshToken(
             rawToken,
