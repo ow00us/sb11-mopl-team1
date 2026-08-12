@@ -32,15 +32,27 @@ import org.springframework.stereotype.Component;
 public class RefreshTokenCookieProperties {
 
     /**
+     * OpenAPI와 인증 API에서 사용하는 Refresh Token Cookie 이름
+     *
+     * <p>Cookie를 발급하는 코드와 재발급 요청에서 Cookie를 읽는 코드가
+     * 서로 다른 이름을 사용하면 로그인 후 재발급이 항상 실패합니다.
+     * 따라서 하나의 상수를 공통 계약으로 사용합니다.</p>
+     */
+    public static final String REQUIRED_COOKIE_NAME =
+        "REFRESH_TOKEN";
+
+    /**
      * 클라이언트에 전달할 Refresh Token Cookie 이름
      *
      * <p>기존 OpenAPI의 토큰 재발급 계약에서 사용하는
      * {@code REFRESH_TOKEN}과 동일하게 설정합니다.</p>
      */
-    @NotBlank(message = "Refresh Token Cookie 이름은 비어 있을 수 없습니다.")
+    @NotBlank(
+        message = "Refresh Token Cookie 이름은 비어 있을 수 없습니다."
+    )
     @Pattern(
-        regexp = "^[A-Za-z0-9_-]+$",
-        message = "Refresh Token Cookie 이름은 영문, 숫자, 밑줄과 하이픈만 사용할 수 있습니다."
+        regexp = "^" + REQUIRED_COOKIE_NAME + "$",
+        message = "Refresh Token Cookie 이름은 REFRESH_TOKEN이어야 합니다."
     )
     private String name;
 

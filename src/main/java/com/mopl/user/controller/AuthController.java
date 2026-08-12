@@ -5,6 +5,7 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.dto.JwtDto;
 import com.mopl.user.dto.SignInRequest;
 import com.mopl.user.cookie.RefreshTokenCookieFactory;
+import com.mopl.user.config.RefreshTokenCookieProperties;
 import com.mopl.user.service.SignInResult;
 import com.mopl.user.service.AuthService;
 import com.mopl.user.service.RefreshResult;
@@ -134,13 +135,13 @@ public class AuthController {
     )
     public ResponseEntity<JwtDto> refresh(
         @Parameter(
-            name = "REFRESH_TOKEN",
+            name = RefreshTokenCookieProperties.REQUIRED_COOKIE_NAME,
             description = "재발급에 사용할 Refresh Token",
             required = true,
             in = ParameterIn.COOKIE
         )
         @CookieValue(
-            name = "REFRESH_TOKEN",
+            name = RefreshTokenCookieProperties.REQUIRED_COOKIE_NAME,
             required = false
         )
         String rawRefreshToken
