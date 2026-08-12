@@ -20,6 +20,9 @@ import com.mopl.user.cookie.RefreshTokenCookieFactory;
 import com.mopl.user.service.IssuedRefreshToken;
 import com.mopl.user.service.SignInResult;
 import com.mopl.user.service.AuthService;
+import com.mopl.user.service.RefreshResult;
+import com.mopl.user.service.RefreshTokenService;
+import jakarta.servlet.http.Cookie;
 import java.time.Instant;
 import java.time.Duration;
 import java.util.UUID;
@@ -52,6 +55,13 @@ class AuthControllerTest {
 
     @MockitoBean
     AuthService authService;
+
+    /**
+     * Refresh Token 재발급 비즈니스 로직은 Service 단위 테스트에서
+     * 검증하므로 Controller 테스트에서는 Mock으로 교체
+     */
+    @MockitoBean
+    RefreshTokenService refreshTokenService;
 
     @MockitoBean
     RefreshTokenCookieFactory refreshTokenCookieFactory;
@@ -252,6 +262,202 @@ class AuthControllerTest {
          */
         verifyNoInteractions(
             authService,
+            refreshTokenCookieFactory
+        );
+    }
+
+    @Test
+    @DisplayName("Refresh Token 재발급 성공 시 200과 새 토큰 Cookie를 반환한다")
+    void refresh_success() throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        Instant createdAt =
+            Instant.parse("2026-07-31T03:00:00Z");
+
+        UserDto userDto =
+            new UserDto(
+                userId,
+                createdAt,
+                "user@example.com",
+                "테스트 사용자",
+                "https://example.com/profile.png",
+                UserRole.USER,
+                false
+            );
+
+        JwtDto jwtDto =
+            new JwtDto(
+                userDto,
+                "new-access-token"
+            );
+
+        IssuedRefreshToken issuedRefreshToken =
+            new IssuedRefreshToken(
+                "new-refresh-token",
+                Instant.parse("2026-08-19T03:00:00Z")
+            );
+
+        /*
+         * 기존 Refresh Token을 전달하면 Service가 새로운 Access Token과
+         * 새로운 Refresh Token 발급 결과를 반환한다고 가정
+         */
+        when(
+            refreshTokenService.refresh(
+                "old-refresh-token"
+            )
+        ).thenReturn(
+            new RefreshResult(
+                jwtDto,
+                issuedRefreshToken
+            )
+        );
+
+        /*
+         * 새 Refresh Token 원문을 로그인과 동일한 보안 속성의
+         * HttpOnly Cookie로 변환한다고 가정
+         */
+        ResponseCookie responseCookie =
+            ResponseCookie.from(
+                    "REFRESH_TOKEN",
+                    "new-refresh-token"
+                )
+                .httpOnly(true)
+                .secure(false)
+                .sameSite("Lax")
+                .path("/api/auth")
+                .maxAge(Duration.ofDays(7))
+                .build();
+
+        when(
+            refreshTokenCookieFactory.create(
+                "new-refresh-token"
+            )
+        ).thenReturn(responseCookie);
+
+        Cookie requestCookie =
+            new Cookie(
+                "REFRESH_TOKEN",
+                "old-refresh-token"
+            );
+
+        // when & then
+        mockMvc.perform(
+                post("/api/auth/refresh")
+                    .cookie(requestCookie)
+            )
+            .andExpect(status().isOk())
+            .andExpect(
+                content().contentType("application/json")
+            )
+            /*
+             * 새 Access Token은 JSON 본문으로 반환
+             */
+            .andExpect(
+                jsonPath("$.accessToken")
+                    .value("new-access-token")
+            )
+            .andExpect(
+                jsonPath("$.userDto.id")
+                    .value(userId.toString())
+            )
+            .andExpect(
+                jsonPath("$.userDto.email")
+                    .value("user@example.com")
+            )
+            .andExpect(
+                jsonPath("$.userDto.name")
+                    .value("테스트 사용자")
+            )
+            .andExpect(
+                jsonPath("$.userDto.role")
+                    .value("USER")
+            )
+            .andExpect(
+                jsonPath("$.userDto.locked")
+                    .value(false)
+            )
+            /*
+             * Refresh Token 원문이나 내부 Service 결과 객체가
+             * JSON 응답에 포함되면 안 된다.
+             */
+            .andExpect(
+                jsonPath("$.refreshToken")
+                    .doesNotExist()
+            )
+            .andExpect(
+                jsonPath("$.issuedRefreshToken")
+                    .doesNotExist()
+            )
+            /*
+             * 기존 Cookie를 교체할 새로운 Refresh Token Cookie를 반환
+             */
+            .andExpect(
+                cookie().value(
+                    "REFRESH_TOKEN",
+                    "new-refresh-token"
+                )
+            )
+            .andExpect(
+                cookie().httpOnly(
+                    "REFRESH_TOKEN",
+                    true
+                )
+            )
+            .andExpect(
+                cookie().secure(
+                    "REFRESH_TOKEN",
+                    false
+                )
+            )
+            .andExpect(
+                cookie().path(
+                    "REFRESH_TOKEN",
+                    "/api/auth"
+                )
+            )
+            .andExpect(
+                cookie().maxAge(
+                    "REFRESH_TOKEN",
+                    Math.toIntExact(
+                        Duration.ofDays(7).toSeconds()
+                    )
+                )
+            )
+            .andExpect(
+                header().string(
+                    HttpHeaders.SET_COOKIE,
+                    org.hamcrest.Matchers.containsString(
+                        "SameSite=Lax"
+                    )
+                )
+            );
+
+        verify(refreshTokenService)
+            .refresh("old-refresh-token");
+
+        verify(refreshTokenCookieFactory)
+            .create("new-refresh-token");
+    }
+
+    @Test
+    @DisplayName("REFRESH_TOKEN Cookie가 없으면 400을 반환한다")
+    void refresh_failWhenCookieIsMissing() throws Exception {
+        // when & then
+        mockMvc.perform(
+                post("/api/auth/refresh")
+            )
+            .andExpect(status().isBadRequest());
+
+        /*
+         * 필수 Cookie 바인딩 단계에서 요청이 거부되므로
+         * 재발급 Service와 Cookie Factory는 호출되면 안 된다.
+         */
+        verifyNoInteractions(
+            refreshTokenService,
             refreshTokenCookieFactory
         );
     }
