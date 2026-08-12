@@ -18,6 +18,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -182,6 +183,111 @@ class PlaylistRepositoryTest {
         assertThat(result.get(1).getTitle()).isEqualTo("구독낮음");
     }
 
+    // ── 인기 랭킹 (subscriber_count DESC → updated_at DESC → id DESC) ────────
+
+    @Test
+    @DisplayName("findPopular — subscriber_count DESC 정렬 (기본 정렬)")
+    void findPopular_sortsBySubscriberCountDesc() {
+        Playlist low  = em.persistAndFlush(playlist(OWNER_A, "낮음", "a"));
+        Playlist mid  = em.persistAndFlush(playlist(OWNER_A, "중간", "b"));
+        Playlist high = em.persistAndFlush(playlist(OWNER_A, "높음", "c"));
+        setSubscriberCount(low, 1L);
+        setSubscriberCount(mid, 5L);
+        setSubscriberCount(high, 10L);
+        em.flush();
+        em.clear();
+
+        List<Playlist> result = playlistRepository.findPopular(null, null, null, 10);
+
+        assertThat(result).extracting(Playlist::getTitle)
+                .containsExactly("높음", "중간", "낮음");
+    }
+
+    @Test
+    @DisplayName("findPopular — subscriber_count 동률 시 updated_at DESC tie-break")
+    void findPopular_tieBreaksByUpdatedAtDesc() {
+        Instant t1 = Instant.parse("2026-08-01T00:00:00Z");
+        Instant t2 = Instant.parse("2026-08-05T00:00:00Z");
+        Instant t3 = Instant.parse("2026-08-10T00:00:00Z");
+
+        Playlist p1 = em.persistAndFlush(playlist(OWNER_A, "오래된", "a"));
+        Playlist p2 = em.persistAndFlush(playlist(OWNER_A, "중간", "b"));
+        Playlist p3 = em.persistAndFlush(playlist(OWNER_A, "최신", "c"));
+        setSubscriberCount(p1, 10L);
+        setSubscriberCount(p2, 10L);
+        setSubscriberCount(p3, 10L);
+        setUpdatedAt(p1, t1);
+        setUpdatedAt(p2, t2);
+        setUpdatedAt(p3, t3);
+        em.flush();
+        em.clear();
+
+        List<Playlist> result = playlistRepository.findPopular(null, null, null, 10);
+
+        assertThat(result).extracting(Playlist::getTitle)
+                .containsExactly("최신", "중간", "오래된");
+    }
+
+    @Test
+    @DisplayName("findPopular — subscriber_count·updated_at 모두 동률 시 id DESC 최종 tie-break")
+    void findPopular_tieBreaksByIdDesc() {
+        Instant sameTime = Instant.parse("2026-08-12T00:00:00Z");
+
+        Playlist a = em.persistAndFlush(playlist(OWNER_A, "A", "a"));
+        Playlist b = em.persistAndFlush(playlist(OWNER_A, "B", "b"));
+        setSubscriberCount(a, 5L);
+        setSubscriberCount(b, 5L);
+        setUpdatedAt(a, sameTime);
+        setUpdatedAt(b, sameTime);
+        em.flush();
+        em.clear();
+
+        List<Playlist> result = playlistRepository.findPopular(null, null, null, 10);
+
+        // id 는 DESC 이므로 UUID 값이 큰 쪽이 먼저
+        UUID larger  = a.getId().compareTo(b.getId()) > 0 ? a.getId() : b.getId();
+        UUID smaller = a.getId().compareTo(b.getId()) > 0 ? b.getId() : a.getId();
+        assertThat(result).extracting(Playlist::getId)
+                .containsExactly(larger, smaller);
+    }
+
+    @Test
+    @DisplayName("findPopular — 커서 페이지네이션이 중복·누락 없이 연속된다")
+    void findPopular_cursorPagination_noDuplicatesNoGaps() {
+        Instant base = Instant.parse("2026-08-12T00:00:00Z");
+        Playlist p1 = em.persistAndFlush(playlist(OWNER_A, "P1", "a"));
+        Playlist p2 = em.persistAndFlush(playlist(OWNER_A, "P2", "b"));
+        Playlist p3 = em.persistAndFlush(playlist(OWNER_A, "P3", "c"));
+        Playlist p4 = em.persistAndFlush(playlist(OWNER_A, "P4", "d"));
+        setSubscriberCount(p1, 40L);
+        setSubscriberCount(p2, 30L);
+        setSubscriberCount(p3, 20L);
+        setSubscriberCount(p4, 10L);
+        setUpdatedAt(p1, base);
+        setUpdatedAt(p2, base);
+        setUpdatedAt(p3, base);
+        setUpdatedAt(p4, base);
+        em.flush();
+        em.clear();
+
+        List<Playlist> firstPage = playlistRepository.findPopular(null, null, null, 2);
+        assertThat(firstPage).hasSize(2);
+        assertThat(firstPage).extracting(Playlist::getTitle).containsExactly("P1", "P2");
+
+        Playlist last = firstPage.get(1);
+        List<Playlist> secondPage = playlistRepository.findPopular(
+                last.getSubscriberCount(),
+                last.getUpdatedAt(),
+                last.getId().toString(),
+                2);
+
+        assertThat(secondPage).hasSize(2);
+        assertThat(secondPage).extracting(Playlist::getTitle).containsExactly("P3", "P4");
+        // 페이지 사이 중복 없음
+        assertThat(secondPage).extracting(Playlist::getId).doesNotContainAnyElementsOf(
+                firstPage.stream().map(Playlist::getId).toList());
+    }
+
     @Test
     @DisplayName("countByFilter — 필터 없이 전체 개수를 반환한다")
     void countByFilter_noFilter() {
@@ -289,5 +395,14 @@ class PlaylistRepositoryTest {
 
     private void setSubscriberCount(Playlist p, long count) {
         ReflectionTestUtils.setField(p, "subscriberCount", count);
+    }
+
+    private void setUpdatedAt(Playlist p, java.time.Instant updatedAt) {
+        // BaseEntity 의 @LastModifiedDate 를 우회해 인기 랭킹 tie-break 시나리오를 재현한다.
+        em.getEntityManager().createNativeQuery(
+                "UPDATE playlists SET updated_at = :ts WHERE id = :id")
+                .setParameter("ts", updatedAt)
+                .setParameter("id", p.getId())
+                .executeUpdate();
     }
 }
