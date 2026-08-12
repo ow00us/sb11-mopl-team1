@@ -37,6 +37,18 @@ public class WatchingSessionPresenceWriter {
         }
     }
 
+    // 기존 presence 키의 TTL만 재설정 (heartbeat 갱신용)
+    // 키가 있을 때만 TTL 설정, 없으면 아무 일도 하지 않음
+    // 리턴값: TTL을 재설정했으면 true, 키가 없거나 redis 실패면 false
+    public boolean renew(UUID watcherId, Duration ttl) {
+        try {
+            return Boolean.TRUE.equals(redisTemplate.expire(key(watcherId), ttl));
+        } catch (RuntimeException e) {
+            log.error("Presence TTL 갱신 실패: watcherId={}", watcherId, e);
+            return false;
+        }
+    }
+
     public void delete(UUID watcherId) {
         try {
             redisTemplate.delete(key(watcherId));

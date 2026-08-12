@@ -8,6 +8,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
@@ -104,6 +105,19 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
         @Param("contentId") UUID contentId,
         @Param("watcherNameLike") String watcherNameLike,
         @Param("now") Instant now
+    );
+
+    // 아직 만료되지 않은 활성 세션의 expiresAt만 연장 (heartbeat 갱신용)
+    // 벌크 업데이트라 JPA auditing을 거치지 않아 updatedAt은 변경되지 않음 (마지막 heartbeat 시각으로 오염되지 않는 편이 스냅샷에 맞음)
+    // 리턴값: 갱신된 행 수 (0이면 활성 세션 없음 -> heartbeat 무효)
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE WatchingSessionSnapshot s SET s.expiresAt = :newExpiresAt "
+    + "WHERE s.watcherId = :watcherId AND s.contentId = :contentId AND s.expiresAt > :now")
+    int renewExpiresAt(
+        @Param("watcherId") UUID watcherId,
+        @Param("contentId") UUID contentId,
+        @Param("now") Instant now,
+        @Param("newExpiresAt") Instant newExpiresAt
     );
 
     // 여러 콘텐츠의 실시간 시청자 수를 한 번에 집계한다 (목록 페이지의 N+1 방지용).

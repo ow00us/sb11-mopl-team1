@@ -47,6 +47,11 @@ jwt:
 refresh-token:
   expiration: ${REFRESH_TOKEN_EXPIRATION:7d}
 
+watching-session:
+  presence-ttl: ${WATCHING_SESSION_PRESENCE_TTL:60s}
+  session-ttl: ${WATCHING_SESSION_SESSION_TTL:30m}
+  heartbeat-interval: ${WATCHING_SESSION_HEARTBEAT_INTERVAL:20s}
+
 tmdb:
   base-url: https://api.themoviedb.org/3
   access-token: ${TMDB_ACCESS_TOKEN}
