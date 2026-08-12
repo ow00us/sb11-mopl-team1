@@ -11,6 +11,19 @@ spring:
   batch:
     job:
       enabled: false
+  kafka:
+    consumer:
+      # 테스트는 컨테이너를 새로 띄우므로 처음부터 읽어야 합니다.
+      auto-offset-reset: earliest
+
+mopl:
+  kafka:
+    # Kafka 를 쓰지 않는 대다수 테스트가 broker 연결을 시도하지 않도록 기본값을 끕니다.
+    # Kafka 통합 테스트가 자기 클래스에서만 다시 켭니다.
+    topic:
+      auto-create: false
+    listener:
+      auto-startup: false
 
 jwt:
   secret: MVB4n0vCRFADVbcto73tHp0Ghw2bWmriymBGLOuR2Q4=
