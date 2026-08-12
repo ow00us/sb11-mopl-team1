@@ -41,6 +41,7 @@ class StompDestinationAuthorizationInterceptorTest {
     @ParameterizedTest
     @ValueSource(strings = {
         "/pub/contents/00000000-0000-0000-0000-000000000001/chat",
+        "/pub/contents/00000000-0000-0000-0000-000000000001/watch/heartbeat",
         "/pub/conversations/00000000-0000-0000-0000-000000000001/direct-messages"
     })
     @DisplayName("인증 사용자는 계약에 등록된 애플리케이션 목적지로 송신할 수 있음")
@@ -121,6 +122,45 @@ class StompDestinationAuthorizationInterceptorTest {
 
         assertThat(interceptor.preSend(connect, null)).isSameAs(connect);
         assertThat(interceptor.preSend(disconnect, null)).isSameAs(disconnect);
+    }
+
+    @Test
+    @DisplayName("heartbeat 목적지를 SUBSCRIBE로 시도하면 FORBIDDEN (SEND 전용 목적지)")
+    void subscribe_heartbeatDestination_throwsForbidden() {
+        Message<?> message = stompMessage(
+            StompCommand.SUBSCRIBE,
+            "/sub/contents/" + RESOURCE_ID + "/watch/heartbeat",
+            authenticatedPrincipal()
+        );
+
+        assertForbidden(message);
+    }
+
+    @Test
+    @DisplayName("heartbeat 목적지의 리소스 식별자가 UUID 형식이 아니면 FORBIDDEN")
+    void send_malformedHeartbeatResourceId_throwsForbidden() {
+        Message<?> message = stompMessage(
+            StompCommand.SEND,
+            "/pub/contents/not-a-uuid/watch/heartbeat",
+            authenticatedPrincipal()
+        );
+
+        assertForbidden(message);
+    }
+
+    @Test
+    @DisplayName("인증 정보 없이 heartbeat 목적지로 송신하면 UNAUTHORIZED")
+    void send_heartbeatDestinationWithoutAuth_throwsUnauthorized() {
+        Message<?> message = stompMessage(
+            StompCommand.SEND,
+            "/pub/contents/" + RESOURCE_ID + "/watch/heartbeat",
+            null
+        );
+
+        assertThatThrownBy(() -> interceptor.preSend(message, null))
+            .isInstanceOf(BusinessException.class)
+            .extracting(e -> ((BusinessException) e).getErrorCode())
+            .isEqualTo(ErrorCode.UNAUTHORIZED);
     }
 
     private void assertForbidden(Message<?> message) {

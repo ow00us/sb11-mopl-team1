@@ -1,10 +1,12 @@
 package com.mopl.watchingsession.presence;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -69,6 +71,50 @@ public class WatchingSessionPresenceWriterTest {
         doThrow(new RuntimeException("Redis 연결 끊김")).when(redisTemplate).delete(any(String.class));
 
         assertThatCode(() -> writer.delete(WATCHER_ID)).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("renew()는 watcherId 기준 키에 TTL을 재설정하고 true를 반환한다")
+    void renew_resetsTtlAndReturnsTrue_whenKeyExists() {
+        when(redisTemplate.expire(eq(EXPECTED_KEY), any(Duration.class))).thenReturn(true);
+        Duration ttl = Duration.ofSeconds(60);
+
+        boolean result = writer.renew(WATCHER_ID, ttl);
+
+        assertThat(result).isTrue();
+        verify(redisTemplate).expire(EXPECTED_KEY, ttl);
+    }
+
+    @Test
+    @DisplayName("renew()는 키가 없으면 false를 반환하고 새로 생성하지 않는다")
+    void renew_returnsFalse_whenKeyDoesNotExists() {
+        when(redisTemplate.expire(eq(EXPECTED_KEY), any(Duration.class))).thenReturn(false);
+
+        boolean result = writer.renew(WATCHER_ID, Duration.ofSeconds(60));
+
+        assertThat(result).isFalse();
+        verify(redisTemplate, never()).opsForValue();
+    }
+
+    @Test
+    @DisplayName("renew()는 expire()가 null을 반홚해도 false로 안전하게 처리한다")
+    void renew_returnsFalse_whenExpireReturnsNull() {
+        when(redisTemplate.expire(eq(EXPECTED_KEY), any(Duration.class))).thenReturn(null);
+
+        boolean result = writer.renew(WATCHER_ID, Duration.ofSeconds(60));
+
+        assertThat(result).isFalse();
+    }
+
+    @Test
+    @DisplayName("renew() 도중 Redis 예외가 발생해도 호출자에게 전파되지 않고 false를 반환한다")
+    void renew_isolatesRedisFailure() {
+        when(redisTemplate.expire(eq(EXPECTED_KEY), any(Duration.class)))
+            .thenThrow(new RuntimeException("Redis 연결 끊김"));
+
+        boolean result = writer.renew(WATCHER_ID, Duration.ofSeconds(60));
+
+        assertThat(result).isFalse();
     }
 
 }
