@@ -388,7 +388,8 @@ paths:
         -
           name: "sortBy"
           in: "query"
-          description: "정렬 기준"
+          description: |
+            정렬 기준. `subscriberCount` 는 인기 랭킹 전용 엔드포인트 `GET /api/playlists/popular` 로 이관 예정입니다. FE 이관이 완료되면 이 옵션은 제거됩니다.
           required: true
           schema:
             type: "string"
@@ -452,6 +453,63 @@ paths:
                 "$ref": "#/components/schemas/ErrorResponse"
         "401":
           description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/playlists/popular":
+    get:
+      tags:
+        - "플레이리스트 관리"
+      summary: "인기 플레이리스트 랭킹 조회 (커서 페이지네이션)"
+      description: |
+        구독자 수 기준으로 정렬된 인기 플레이리스트 목록을 커서 페이지네이션으로 조회합니다.
+        정렬은 `subscriber_count DESC → updated_at DESC → id DESC` 3단 tie-break 로 페이지 경계까지 안정적입니다.
+        인증 없이도 조회할 수 있으며, 인증 상태로 요청하면 응답의 `subscribedByMe` 가 채워집니다.
+
+        기존 `GET /api/playlists?sortBy=subscriberCount` 옵션은 하위 호환을 위해 유지되며, FE 이관 완료 후 별도 이슈로 제거를 검토합니다.
+      operationId: "findPopularPlaylists"
+      parameters:
+        -
+          name: "cursor"
+          in: "query"
+          description: "커서 (subscriber_count 와 updated_at 을 인코딩한 값). idAfter 와 짝으로만 유효합니다."
+          required: false
+          schema:
+            type: "string"
+        -
+          name: "idAfter"
+          in: "query"
+          description: "보조 커서 (마지막 항목의 id). cursor 와 짝으로만 유효합니다."
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "limit"
+          in: "query"
+          description: "한 번에 가져올 개수 (1~100)"
+          required: true
+          schema:
+            type: "integer"
+            format: "int32"
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/CursorResponsePlaylistDto"
+        "400":
+          description: "잘못된 요청 (limit 범위 밖 · cursor·idAfter 짝 불일치 · 잘못된 커서 형식)"
           content:
             "*/*":
               schema:
