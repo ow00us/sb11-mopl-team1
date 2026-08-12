@@ -45,6 +45,7 @@ public class PlaylistServiceImpl implements PlaylistService {
     private static final String SORT_UPDATED_AT      = "updatedAt";
     private static final String SORT_SUBSCRIBE_COUNT = "subscriberCount";
     private static final String DIRECTION_ASC        = "ASCENDING";
+    private static final String DIRECTION_DESC       = "DESCENDING";
     private static final String PG_UNIQUE_VIOLATION_SQLSTATE = "23505";
     private static final String UNKNOWN_OWNER_NAME = "알 수 없는 사용자";
 
@@ -129,7 +130,67 @@ public class PlaylistServiceImpl implements PlaylistService {
     @Override
     public CursorResponse<PlaylistDto> getPopular(
             String cursor, UUID idAfter, int limit, UUID requesterId) {
-        throw new UnsupportedOperationException("구현 예정");
+
+        // cursor·idAfter 는 짝으로만 유효. 한쪽만 있으면 부분 상태 방지 (기존 fetchPage 패턴)
+        if ((cursor != null) != (idAfter != null)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        Long cursorCount = null;
+        Instant cursorUpdatedAt = null;
+        if (cursor != null) {
+            try {
+                CursorUtils.PopularCursor decoded = CursorUtils.decodeAsPopularCursor(cursor);
+                cursorCount = decoded.subscriberCount();
+                cursorUpdatedAt = decoded.updatedAt();
+            } catch (IllegalArgumentException | java.time.format.DateTimeParseException e) {
+                // Instant.parse·Long.parseLong 실패는 잘못된 커서로 400 매핑 (getSubscribers 패턴)
+                throw new BusinessException(ErrorCode.INVALID_INPUT);
+            }
+        }
+
+        int fetchSize = limit + 1;
+        String idAfterStr = idAfter != null ? idAfter.toString() : null;
+        List<Playlist> rows = playlistRepository.findPopular(
+                cursorCount, cursorUpdatedAt, idAfterStr, fetchSize);
+
+        boolean hasNext = rows.size() == fetchSize;
+        List<Playlist> page = hasNext ? rows.subList(0, limit) : rows;
+
+        String nextCursor  = null;
+        UUID   nextIdAfter = null;
+        if (hasNext && !page.isEmpty()) {
+            Playlist last = page.get(page.size() - 1);
+            nextCursor  = CursorUtils.encodePopularCursor(last.getSubscriberCount(), last.getUpdatedAt());
+            nextIdAfter = last.getId();
+        }
+
+        List<UUID> pageIds = page.stream().map(Playlist::getId).toList();
+
+        Set<UUID> subscribedIds = Set.of();
+        if (requesterId != null && !pageIds.isEmpty()) {
+            subscribedIds = subscriptionRepository.findSubscribedPlaylistIds(requesterId, pageIds);
+        }
+        final Set<UUID> finalSubscribedIds = subscribedIds;
+
+        Map<UUID, List<ContentSummary>> contentsByPlaylistId = loadContentsBatch(pageIds);
+
+        List<UUID> ownerIds = page.stream().map(Playlist::getOwnerId).distinct().toList();
+        Map<UUID, UserSummary> ownersById = toOwnerSummaryMap(ownerIds);
+
+        List<PlaylistDto> data = page.stream()
+                .map(p -> PlaylistDto.from(
+                        p,
+                        ownersById.getOrDefault(p.getOwnerId(), unknownOwnerSummary(p.getOwnerId())),
+                        finalSubscribedIds.contains(p.getId()),
+                        contentsByPlaylistId.getOrDefault(p.getId(), List.of())))
+                .toList();
+
+        // 인기 랭킹은 필터가 없으므로 전체 카운트를 반환
+        long total = playlistRepository.countByFilter(null, null, null);
+
+        return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, total,
+                SORT_SUBSCRIBE_COUNT, DIRECTION_DESC);
     }
 
     @Override
