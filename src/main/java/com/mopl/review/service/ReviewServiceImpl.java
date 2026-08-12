@@ -135,6 +135,18 @@ public class ReviewServiceImpl implements ReviewService {
         return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, total, sortBy, sortDirection);
     }
 
+    @Override
+    public ReviewDto getMyReview(UUID contentId, UUID authorId) {
+        contentRepository.findById(contentId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.CONTENT_NOT_FOUND));
+
+        Review review = reviewRepository.findByAuthorIdAndContentId(authorId, contentId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.REVIEW_NOT_FOUND));
+
+        UserSummary author = toUserSummary(authorId);
+        return ReviewDto.from(review, author);
+    }
+
     // ── 내부 헬퍼 ──────────────────────────────────────────────────────────
 
     private Review findOrThrow(UUID reviewId) {
