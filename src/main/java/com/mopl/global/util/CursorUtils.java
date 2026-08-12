@@ -71,11 +71,15 @@ public final class CursorUtils {
 
     /** 인기 랭킹 커서를 인코딩합니다. 형식: base64("<count>:<updatedAt.toString()>"). */
     public static String encodePopularCursor(long subscriberCount, Instant updatedAt) {
-        throw new UnsupportedOperationException("구현 예정");
+        return encode(subscriberCount + ":" + updatedAt.toString());
     }
 
-    /** 인기 랭킹 커서를 디코딩합니다. */
+    /** 커서 문자열을 인기 랭킹 3-tuple 로 디코딩합니다. Instant.toString() 이 콜론을 포함하므로 첫 콜론만 구분자로 사용합니다. */
     public static PopularCursor decodeAsPopularCursor(String cursor) {
-        throw new UnsupportedOperationException("구현 예정");
+        String[] parts = decode(cursor).split(":", 2);
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("잘못된 커서 형식입니다.");
+        }
+        return new PopularCursor(Long.parseLong(parts[0]), Instant.parse(parts[1]));
     }
 }
