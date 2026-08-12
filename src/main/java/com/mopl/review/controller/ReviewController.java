@@ -58,6 +58,13 @@ public class ReviewController {
         return reviewService.getList(contentId, cursor, idAfter, limit, sortBy, sortDirection);
     }
 
+    /** 특정 콘텐츠에 대한 내 리뷰를 조회합니다. 인증된 사용자만 호출 가능합니다. */
+    @GetMapping("/me")
+    public ReviewDto getMyReview(@RequestParam UUID contentId) {
+        UUID authorId = resolveUserId();
+        return reviewService.getMyReview(contentId, authorId);
+    }
+
     /** 리뷰를 수정합니다. 작성자만 호출 가능합니다. */
     @PatchMapping("/{reviewId}")
     public ReviewDto update(@PathVariable UUID reviewId, @Valid @RequestBody ReviewUpdateRequest request) {

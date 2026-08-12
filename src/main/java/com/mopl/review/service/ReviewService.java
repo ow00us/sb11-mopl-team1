@@ -16,4 +16,6 @@ public interface ReviewService {
 
     CursorResponse<ReviewDto> getList(
             UUID contentId, String cursor, UUID idAfter, int limit, String sortBy, String sortDirection);
+
+    ReviewDto getMyReview(UUID contentId, UUID authorId);
 }
