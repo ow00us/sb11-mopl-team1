@@ -1613,6 +1613,12 @@ paths:
             "*/*":
               schema:
                 "$ref": "#/components/schemas/ReviewDto"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
         "401":
           description: "인증 오류"
           content:

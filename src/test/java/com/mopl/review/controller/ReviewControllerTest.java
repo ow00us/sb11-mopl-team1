@@ -269,6 +269,30 @@ class ReviewControllerTest {
                 .andExpect(jsonPath("$.errorCode").value("REVIEW_404_1"));
     }
 
+    @Test
+    @DisplayName("contentId 파라미터가 없으면 400을 반환한다")
+    void getMyReview_fail_missingContentId() throws Exception {
+        setAuth(AUTHOR_ID);
+
+        mockMvc.perform(get("/api/reviews/me"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
+
+        verifyNoInteractions(reviewService);
+    }
+
+    @Test
+    @DisplayName("contentId가 UUID 형식이 아니면 400을 반환한다")
+    void getMyReview_fail_invalidContentIdFormat() throws Exception {
+        setAuth(AUTHOR_ID);
+
+        mockMvc.perform(get("/api/reviews/me").param("contentId", "not-a-uuid"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
+
+        verifyNoInteractions(reviewService);
+    }
+
     // ── PATCH /api/reviews/{reviewId} ───────────────────────────────────────
 
     @Test
