@@ -42,6 +42,7 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -56,9 +57,6 @@ import org.springframework.test.util.ReflectionTestUtils;
 @MockitoSettings(strictness = Strictness.LENIENT)
 @ExtendWith(MockitoExtension.class)
 public class WatchingSessionServiceTest {
-
-    private static final String SUBSCRIPTION_ID = "sub-1";
-    private static final String OTHER_SUBSCRIPTION_ID = "sub-2";
 
     @Mock
     WatchingSessionSnapshotRepository watchingSessionSnapshotRepository;
@@ -88,6 +86,16 @@ public class WatchingSessionServiceTest {
     private static final Instant FIRST_CREATED_AT = Instant.parse("2026-07-29T10:00:00Z");
     private static final String SESSION_ID = "session-123";
     private static final String OTHER_SESSION_ID = "session-999";
+    private static final String SUBSCRIPTION_ID = "sub-1";
+    private static final String OTHER_SUBSCRIPTION_ID = "sub-2";
+    private static final Duration DEFAULT_SESSION_TTL_FIXTURE = Duration.ofMinutes(30);
+    private static final Duration DEFAULT_PRESENCE_TTL_FIXTURE = Duration.ofSeconds(60);
+
+    @BeforeEach
+    void setUpDefaultTtlStubs() {
+        when(watchingSessionProperties.getSessionTtl()).thenReturn(DEFAULT_SESSION_TTL_FIXTURE);
+        when(watchingSessionProperties.getPresenceTtl()).thenReturn(DEFAULT_PRESENCE_TTL_FIXTURE);
+    }
 
     // Content 도메인 전용 헬퍼
     private void mockContentExists(UUID contentId) {
@@ -1017,8 +1025,6 @@ public class WatchingSessionServiceTest {
             .thenReturn(createSnapshotFixture(CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT, FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS)));
         watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
 
-        when(watchingSessionProperties.getSessionTtl()).thenReturn(Duration.ofMinutes(30));
-        when(watchingSessionProperties.getPresenceTtl()).thenReturn(Duration.ofSeconds(60));
         when(watchingSessionSnapshotWriter.renewExpiresAt(eq(WATCHER_ID), eq(CONTENT_ID), any(), any()))
             .thenReturn(1);
 
@@ -1060,9 +1066,7 @@ public class WatchingSessionServiceTest {
         mockUserExists(WATCHER_ID);
         when(watchingSessionSnapshotWriter.upsert(any(), any(), any()))
             .thenReturn(createSnapshotFixture(CONTENT_ID, Instant.now(), Instant.now(), Instant.now()));
-        when(watchingSessionProperties.getSessionTtl()).thenReturn(Duration.ofMinutes(30));
-        when(watchingSessionProperties.getPresenceTtl()).thenReturn(Duration.ofSeconds(60));
-        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+       watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
 
         when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any(), any())).thenReturn(0);
 
@@ -1079,9 +1083,7 @@ public class WatchingSessionServiceTest {
         mockUserExists(WATCHER_ID);
         when(watchingSessionSnapshotWriter.upsert(any(), any(), any()))
             .thenReturn(createSnapshotFixture(CONTENT_ID, Instant.now(), Instant.now(), Instant.now()));
-        when(watchingSessionProperties.getSessionTtl()).thenReturn(Duration.ofMinutes(30));
-        when(watchingSessionProperties.getPresenceTtl()).thenReturn(Duration.ofSeconds(60));
-        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+       watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
 
         when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any(), any()))
             .thenThrow(new RuntimeException("DB 연결 끊김"));
@@ -1100,8 +1102,6 @@ public class WatchingSessionServiceTest {
         mockUserExists(WATCHER_ID);
         when(watchingSessionSnapshotWriter.upsert(any(), any(), any()))
             .thenReturn(createSnapshotFixture(CONTENT_ID, Instant.now(), Instant.now(), Instant.now()));
-        when(watchingSessionProperties.getSessionTtl()).thenReturn(Duration.ofMinutes(30));
-        when(watchingSessionProperties.getPresenceTtl()).thenReturn(Duration.ofSeconds(60));
         watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
 
         watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
