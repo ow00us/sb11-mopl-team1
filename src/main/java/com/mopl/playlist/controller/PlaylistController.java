@@ -56,6 +56,16 @@ public class PlaylistController {
                 limit, sortBy, sortDirection, requesterId);
     }
 
+    // 리터럴 매핑을 UUID 매핑보다 앞에 배치. Spring 은 리터럴 우선 매칭이지만 명시적 순서로 안전 확보.
+    @GetMapping("/popular")
+    public CursorResponse<PlaylistDto> getPopular(
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false) UUID idAfter,
+            @RequestParam @Min(1) @Max(100) int limit) {
+        UUID requesterId = resolveUserIdOptional();
+        return playlistService.getPopular(cursor, idAfter, limit, requesterId);
+    }
+
     @GetMapping("/{playlistId}")
     public PlaylistDto get(@PathVariable UUID playlistId) {
         UUID requesterId = resolveUserIdOptional();
