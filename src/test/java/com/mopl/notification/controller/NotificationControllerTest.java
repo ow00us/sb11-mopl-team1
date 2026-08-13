@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.mopl.global.common.CursorResponse;
 import com.mopl.notification.dto.NotificationDto;
+import com.mopl.notification.entity.NotificationType;
 import com.mopl.notification.entity.NotificationLevel;
 import com.mopl.notification.service.NotificationService;
 import java.time.Instant;
@@ -36,6 +37,10 @@ class NotificationControllerTest {
         "22222222-2222-2222-2222-222222222222"
     );
 
+    private static final UUID RESOURCE_ID = UUID.fromString(
+        "33333333-3333-3333-3333-333333333333"
+    );
+
     private static final Instant CREATED_AT =
         Instant.parse("2026-07-28T03:00:00Z");
 
@@ -55,7 +60,9 @@ class NotificationControllerTest {
             RECEIVER_ID,
             "새로운 알림",
             "알림 내용",
-            NotificationLevel.INFO
+            NotificationLevel.INFO,
+            NotificationType.DIRECT_MESSAGE,
+            RESOURCE_ID
         );
 
         CursorResponse<NotificationDto> response =
@@ -130,6 +137,14 @@ class NotificationControllerTest {
             .andExpect(
                 jsonPath("$.sortDirection")
                     .value("DESCENDING")
+            )
+            .andExpect(
+                jsonPath("$.data[0].type")
+                    .value("DIRECT_MESSAGE")
+            )
+            .andExpect(
+                jsonPath("$.data[0].resourceId")
+                    .value(RESOURCE_ID.toString())
             );
 
         verify(notificationService)
