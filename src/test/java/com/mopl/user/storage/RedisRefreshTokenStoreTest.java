@@ -699,4 +699,225 @@ class RedisRefreshTokenStoreTest {
             executor.shutdownNow();
         }
     }
+
+    @Test
+    @DisplayName("Refresh Token 세션과 사용자별 인덱스를 함께 폐기한다")
+    void revoke_success() {
+        // given
+        UUID userId = UUID.randomUUID();
+        String revokedTokenHash = "revoked-token-hash";
+        String remainingTokenHash = "remaining-token-hash";
+        Duration expiration = Duration.ofMinutes(30);
+
+        /*
+         * 같은 사용자가 두 개의 기기에서 로그인한 상황을 구성
+         *
+         * 이번 로그아웃에서는 revokedTokenHash에 해당하는 현재 기기
+         * 세션만 삭제하고, 다른 기기의 remainingTokenHash 세션은
+         * 그대로 유지되어야 한다.
+         */
+        refreshTokenStore.save(
+            userId,
+            revokedTokenHash,
+            expiration
+        );
+
+        refreshTokenStore.save(
+            userId,
+            remainingTokenHash,
+            expiration
+        );
+
+        // when
+        boolean revoked = refreshTokenStore.revoke(
+            userId,
+            revokedTokenHash
+        );
+
+        // then
+        assertThat(revoked).isTrue();
+
+        /*
+         * 로그아웃에 사용한 Refresh Token 세션 Key는 삭제되어
+         * 더 이상 사용자 UUID를 조회할 수 없어야 한다.
+         */
+        assertThat(
+            refreshTokenStore.findUserIdByTokenHash(
+                revokedTokenHash
+            )
+        ).isEmpty();
+
+        /*
+         * 현재 기기 로그아웃은 다른 기기의 Refresh Token 세션까지
+         * 삭제하는 전체 로그아웃이 아니므로 나머지 세션은 유지
+         */
+        assertThat(
+            refreshTokenStore.findUserIdByTokenHash(
+                remainingTokenHash
+            )
+        ).contains(userId);
+
+        /*
+         * 사용자별 세션 인덱스에서도 폐기한 토큰 해시만 제거되고
+         * 아직 유효한 다른 세션 해시는 유지
+         */
+        assertThat(
+            refreshTokenStore.findTokenHashesByUserId(userId)
+        ).containsExactly(remainingTokenHash);
+    }
+
+    @Test
+    @DisplayName("사용자의 마지막 Refresh Token을 폐기하면 세션 목록이 비워진다")
+    void revoke_removesLastUserSession() {
+        // given
+        UUID userId = UUID.randomUUID();
+        String tokenHash = "last-token-hash";
+        Duration expiration = Duration.ofMinutes(30);
+
+        refreshTokenStore.save(
+            userId,
+            tokenHash,
+            expiration
+        );
+
+        // when
+        boolean revoked = refreshTokenStore.revoke(
+            userId,
+            tokenHash
+        );
+
+        // then
+        assertThat(revoked).isTrue();
+
+        /*
+         * 마지막 세션이 폐기되면 개별 세션과 사용자별 세션 목록이
+         * 모두 비어 있어야 한다.
+         */
+        assertThat(
+            refreshTokenStore.findUserIdByTokenHash(tokenHash)
+        ).isEmpty();
+
+        assertThat(
+            refreshTokenStore.findTokenHashesByUserId(userId)
+        ).isEmpty();
+    }
+
+    @Test
+    @DisplayName("이미 없거나 폐기된 Refresh Token 세션은 다시 폐기하지 않는다")
+    void revoke_returnsFalseWhenSessionDoesNotExist() {
+        // given
+        UUID userId = UUID.randomUUID();
+        String tokenHash = "missing-token-hash";
+
+        // when
+        boolean revoked = refreshTokenStore.revoke(
+            userId,
+            tokenHash
+        );
+
+        // then
+        /*
+         * 로그아웃 Service에서는 false도 멱등한 로그아웃 성공으로
+         * 처리할 예정이지만, 저장소는 실제 삭제 여부를 구분해 반환
+         */
+        assertThat(revoked).isFalse();
+
+        assertThat(
+            refreshTokenStore.findUserIdByTokenHash(tokenHash)
+        ).isEmpty();
+
+        assertThat(
+            refreshTokenStore.findTokenHashesByUserId(userId)
+        ).isEmpty();
+    }
+
+    @Test
+    @DisplayName("다른 사용자가 소유한 Refresh Token 세션은 폐기하지 않는다")
+    void revoke_returnsFalseWhenUserDoesNotOwnToken() {
+        // given
+        UUID ownerId = UUID.randomUUID();
+        UUID otherUserId = UUID.randomUUID();
+        String tokenHash = "owner-token-hash";
+        Duration expiration = Duration.ofMinutes(30);
+
+        refreshTokenStore.save(
+            ownerId,
+            tokenHash,
+            expiration
+        );
+
+        // when
+        boolean revoked = refreshTokenStore.revoke(
+            otherUserId,
+            tokenHash
+        );
+
+        // then
+        assertThat(revoked).isFalse();
+
+        /*
+         * 인증된 사용자 UUID와 세션 소유자가 다르면
+         * 기존 세션 Key를 삭제하면 안 된다.
+         */
+        assertThat(
+            refreshTokenStore.findUserIdByTokenHash(tokenHash)
+        ).contains(ownerId);
+
+        /*
+         * 실제 소유자의 사용자별 인덱스도 변경되지 않아야 한다.
+         */
+        assertThat(
+            refreshTokenStore.findTokenHashesByUserId(ownerId)
+        ).containsExactly(tokenHash);
+
+        /*
+         * 로그아웃을 요청한 다른 사용자의 세션 인덱스에는
+         * 새로운 값이 생기면 안 된다.
+         */
+        assertThat(
+            refreshTokenStore.findTokenHashesByUserId(otherUserId)
+        ).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Refresh Token 세션 폐기 인자가 올바르지 않으면 요청을 거부한다")
+    void revoke_rejectsInvalidArguments() {
+        // given
+        UUID userId = UUID.randomUUID();
+        String tokenHash = "valid-token-hash";
+
+        // when & then
+        assertThatThrownBy(() ->
+            refreshTokenStore.revoke(
+                null,
+                tokenHash
+            )
+        )
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage(
+                "Refresh Token 사용자 UUID는 null일 수 없습니다."
+            );
+
+        assertThatThrownBy(() ->
+            refreshTokenStore.revoke(
+                userId,
+                null
+            )
+        )
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage(
+                "폐기할 Refresh Token 해시는 비어 있을 수 없습니다."
+            );
+
+        assertThatThrownBy(() ->
+            refreshTokenStore.revoke(
+                userId,
+                "   "
+            )
+        )
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage(
+                "폐기할 Refresh Token 해시는 비어 있을 수 없습니다."
+            );
+    }
 }

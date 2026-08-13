@@ -66,6 +66,25 @@ public interface RefreshTokenStore {
     );
 
     /**
+     * 특정 사용자가 소유한 Refresh Token 세션을 원자적으로 폐기
+     *
+     * <p>Refresh Token 세션 Key와 사용자별 세션 인덱스에서
+     * 해당 토큰 해시를 하나의 저장소 연산으로 제거합니다.</p>
+     *
+     * <p>세션이 존재하지 않거나 저장된 사용자 UUID가 요청 사용자 UUID와
+     * 일치하지 않으면 아무 값도 변경하지 않고 false를 반환합니다.
+     * 따라서 다른 사용자의 Refresh Token 세션을 폐기할 수 없습니다.</p>
+     *
+     * @param userId Refresh Token 세션의 소유 사용자 UUID
+     * @param tokenHash 폐기할 Refresh Token SHA-256 해시
+     * @return 세션을 폐기했으면 true, 세션이 없거나 소유자가 다르면 false
+     */
+    boolean revoke(
+        UUID userId,
+        String tokenHash
+    );
+
+    /**
      * 특정 사용자가 보유한 Refresh Token 해시 목록을 조회
      *
      * 비밀번호 변경, 계정 잠금 및 전체 로그아웃에서

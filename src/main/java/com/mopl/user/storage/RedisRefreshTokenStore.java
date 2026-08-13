@@ -138,6 +138,47 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
         );
 
     /**
+     * 특정 Refresh Token 세션을 원자적으로 폐기하는 Lua Script
+     *
+     * <p>세션 Key에 저장된 사용자 UUID와 요청 사용자의 UUID가 일치할 때만
+     * 세션 Key와 사용자별 세션 인덱스의 토큰 해시를 함께 제거합니다.</p>
+     *
+     * <p>Redis가 Lua Script 전체를 하나의 명령처럼 실행하므로
+     * 세션 Key만 삭제되고 사용자별 인덱스에는 해시가 남는
+     * 부분 삭제 상태를 방지할 수 있습니다.</p>
+     *
+     * KEYS[1]: 폐기할 Refresh Token 세션 Key
+     * KEYS[2]: 사용자별 Refresh Token Set Key
+     *
+     * ARGV[1]: 인증된 사용자 UUID 문자열
+     * ARGV[2]: 폐기할 Refresh Token 해시
+     *
+     * 반환값:
+     * 1 - 세션 폐기 성공
+     * 0 - 세션이 없거나 세션 소유자 불일치
+     */
+    private static final DefaultRedisScript<Long> REVOKE_SESSION_SCRIPT =
+        new DefaultRedisScript<>(
+            """
+            local storedUserId = redis.call('GET', KEYS[1])
+
+            if not storedUserId or storedUserId ~= ARGV[1] then
+                return 0
+            end
+
+            redis.call('DEL', KEYS[1])
+            redis.call('SREM', KEYS[2], ARGV[2])
+
+            if redis.call('SCARD', KEYS[2]) == 0 then
+                redis.call('DEL', KEYS[2])
+            end
+
+            return 1
+            """,
+            Long.class
+        );
+
+    /**
      * 사용자별 세션 인덱스에서 현재 활성 상태인 Refresh Token 해시만 조회하고,
      * 이미 만료된 세션 해시는 인덱스에서 제거하는 Lua Script
      *
@@ -323,6 +364,50 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
     }
 
     /**
+     * 인증된 사용자가 소유한 Refresh Token 세션을 폐기
+     *
+     * <p>Lua Script에서 세션 소유자 확인, 세션 Key 삭제와
+     * 사용자별 세션 인덱스 정리를 하나의 원자적인 연산으로 처리합니다.</p>
+     *
+     * <p>세션이 이미 만료되거나 폐기된 경우와 다른 사용자가 소유한
+     * 세션인 경우에는 Redis 값을 변경하지 않고 false를 반환합니다.</p>
+     *
+     * @param userId Refresh Token 세션의 소유 사용자 UUID
+     * @param tokenHash 폐기할 Refresh Token SHA-256 해시
+     * @return 세션을 폐기했으면 true, 세션이 없거나 소유자가 다르면 false
+     */
+    @Override
+    public boolean revoke(
+        UUID userId,
+        String tokenHash
+    ) {
+        validateRevokeArguments(
+            userId,
+            tokenHash
+        );
+
+        Long result =
+            redisTemplate.execute(
+                REVOKE_SESSION_SCRIPT,
+                List.of(
+                    sessionKey(tokenHash),
+                    userSessionsKey(userId)
+                ),
+                userId.toString(),
+                tokenHash
+            );
+
+        /*
+         * Redis Script가 명시적으로 1을 반환한 경우에만
+         * 실제 세션이 폐기된 것으로 판단
+         *
+         * 세션이 없거나 소유자가 다르면 0이 반환되며,
+         * Redis 실행 결과를 확인할 수 없는 null도 성공으로 처리하지 않는다.
+         */
+        return Long.valueOf(1L).equals(result);
+    }
+
+    /**
      * 사용자별 Redis Set에서 현재 활성 상태인 Refresh Token 해시만 조회
      *
      * <p>Redis Set의 Member에는 개별 TTL을 적용할 수 없으므로
@@ -430,6 +515,29 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
         if (oldTokenHash.equals(newTokenHash)) {
             throw new IllegalArgumentException(
                 "기존 Refresh Token 해시와 새로운 해시는 달라야 합니다."
+            );
+        }
+    }
+
+    /**
+     * Refresh Token 세션 폐기에 필요한 인자가 올바른지 검증
+     *
+     * @param userId Refresh Token 세션의 소유 사용자 UUID
+     * @param tokenHash 폐기할 Refresh Token SHA-256 해시
+     */
+    private void validateRevokeArguments(
+        UUID userId,
+        String tokenHash
+    ) {
+        if (userId == null) {
+            throw new IllegalArgumentException(
+                "Refresh Token 사용자 UUID는 null일 수 없습니다."
+            );
+        }
+
+        if (tokenHash == null || tokenHash.isBlank()) {
+            throw new IllegalArgumentException(
+                "폐기할 Refresh Token 해시는 비어 있을 수 없습니다."
             );
         }
     }
