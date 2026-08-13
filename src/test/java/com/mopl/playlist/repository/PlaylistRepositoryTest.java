@@ -377,6 +377,30 @@ class PlaylistRepositoryTest {
         assertThat(updated.getSubscriberCount()).isEqualTo(0L);
     }
 
+    // ── 인기 랭킹 정렬 인덱스 (V7) ────────────────────────────────────────────
+
+    @Test
+    @DisplayName("playlists 테이블에 인기 랭킹 정렬 조합 인덱스가 존재한다")
+    void popularSortingIndex_exists() {
+        // findPopular 의 ORDER BY subscriber_count DESC, updated_at DESC, id DESC 에 대응하는
+        // 조합 인덱스로 정렬·LIMIT 을 순차 읽기로 처리한다.
+        // V4 의 idx_playlist_subscriptions_playlist_id_created_at_id 패턴과 동일하게
+        // pg_indexes 시스템 카탈로그로 정의를 검증한다.
+        Object result = em.getEntityManager().createNativeQuery("""
+                SELECT indexdef FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND tablename  = 'playlists'
+                  AND indexname  = 'idx_playlists_subscriber_count_updated_at_id'
+                """)
+                .getSingleResult();
+
+        assertThat(result).isNotNull();
+        String indexDef = result.toString();
+        assertThat(indexDef).contains("subscriber_count DESC");
+        assertThat(indexDef).contains("updated_at DESC");
+        assertThat(indexDef).contains("id DESC");
+    }
+
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
     private Playlist playlist(UUID ownerId, String title, String desc) {
