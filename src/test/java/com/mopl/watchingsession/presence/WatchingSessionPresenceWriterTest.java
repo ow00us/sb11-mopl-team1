@@ -97,7 +97,7 @@ public class WatchingSessionPresenceWriterTest {
     }
 
     @Test
-    @DisplayName("renew()는 expire()가 null을 반홚해도 false로 안전하게 처리한다")
+    @DisplayName("renew()는 expire()가 null을 반환해도 false로 안전하게 처리한다")
     void renew_returnsFalse_whenExpireReturnsNull() {
         when(redisTemplate.expire(eq(EXPECTED_KEY), any(Duration.class))).thenReturn(null);
 
