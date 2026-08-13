@@ -125,10 +125,13 @@ class WatchingSessionSubscribeInfraFailureIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        StompTestCleanup.closeAll(stompClient, taskScheduler, session);
-        snapshotRepository.deleteAll();
-        contentRepository.deleteAll();
-        userRepository.deleteAll();
+        try {
+            StompTestCleanup.closeAll(stompClient, taskScheduler, session);
+        } finally {
+            snapshotRepository.deleteAll();
+            contentRepository.deleteAll();
+            userRepository.deleteAll();
+        }
     }
 
     @Test

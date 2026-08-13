@@ -133,10 +133,13 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        StompTestCleanup.closeAll(stompClient, taskScheduler, session, observerSession);
-        snapshotRepository.deleteAll();
-        contentRepository.deleteAll();
-        userRepository.deleteAll();
+        try {
+            StompTestCleanup.closeAll(stompClient, taskScheduler, session, observerSession);
+        } finally {
+            snapshotRepository.deleteAll();
+            contentRepository.deleteAll();
+            userRepository.deleteAll();
+        }
     }
 
     private WebSocketStompClient createNativeStompClient() {
