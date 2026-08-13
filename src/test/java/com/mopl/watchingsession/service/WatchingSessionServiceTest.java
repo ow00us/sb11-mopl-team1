@@ -46,6 +46,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -1030,8 +1031,13 @@ public class WatchingSessionServiceTest {
 
         watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
 
-        verify(watchingSessionSnapshotWriter).renewExpiresAt(eq(WATCHER_ID), eq(CONTENT_ID), any(), any());
-        verify(watchingSessionPresenceWriter).renew(eq(WATCHER_ID), any());
+        ArgumentCaptor<Instant> renewedAt = ArgumentCaptor.forClass(Instant.class);
+        ArgumentCaptor<Instant> expiresAt = ArgumentCaptor.forClass(Instant.class);
+        verify(watchingSessionSnapshotWriter).renewExpiresAt(eq(WATCHER_ID), eq(CONTENT_ID),
+            renewedAt.capture(), expiresAt.capture());
+        assertThat(expiresAt.getValue()).isEqualTo(renewedAt.getValue().plus(DEFAULT_SESSION_TTL_FIXTURE));
+        verify(watchingSessionPresenceWriter)
+            .renew(eq(WATCHER_ID), eq(DEFAULT_PRESENCE_TTL_FIXTURE));
     }
 
     @Test
