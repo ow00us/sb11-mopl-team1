@@ -300,7 +300,7 @@ class FollowServiceTest {
         when(followRepository.findFollowersByFolloweeIdDesc(eq(FOLLOWEE_ID.toString()), any(), any(), eq(11)))
                 .thenReturn(List.of(f1, f2));
         when(followRepository.countByFolloweeId(FOLLOWEE_ID)).thenReturn(2L);
-        when(userRepository.findAllById(anyList())).thenReturn(List.of(u1, u2));
+        when(userRepository.findAllById(any())).thenReturn(List.of(u1, u2));
 
         CursorResponse<FollowUserItemDto> result = followService.getFollowers(
                 FOLLOWEE_ID, null, null, 10, "followedAt", "DESCENDING");
@@ -311,7 +311,7 @@ class FollowServiceTest {
         assertThat(result.data().get(1).user().name()).isEqualTo("userB");
         assertThat(result.data().get(1).user().profileImageUrl()).isEqualTo("https://cdn/b.png");
         // N+1 방지 검증: follower 수와 무관하게 findAllById 1회 호출
-        verify(userRepository).findAllById(anyList());
+        verify(userRepository).findAllById(any());
     }
 
     @Test
@@ -324,7 +324,7 @@ class FollowServiceTest {
         when(followRepository.findFollowersByFolloweeIdDesc(eq(FOLLOWEE_ID.toString()), any(), any(), eq(11)))
                 .thenReturn(List.of(f1));
         when(followRepository.countByFolloweeId(FOLLOWEE_ID)).thenReturn(1L);
-        when(userRepository.findAllById(anyList())).thenReturn(List.of());
+        when(userRepository.findAllById(any())).thenReturn(List.of());
 
         CursorResponse<FollowUserItemDto> result = followService.getFollowers(
                 FOLLOWEE_ID, null, null, 10, "followedAt", "DESCENDING");
@@ -375,7 +375,7 @@ class FollowServiceTest {
         when(followRepository.findFollowingsByFollowerIdDesc(eq(FOLLOWER_ID.toString()), any(), any(), eq(11)))
                 .thenReturn(List.of(f1, f2));
         when(followRepository.countByFollowerId(FOLLOWER_ID)).thenReturn(2L);
-        when(userRepository.findAllById(anyList())).thenReturn(List.of(u1, u2));
+        when(userRepository.findAllById(any())).thenReturn(List.of(u1, u2));
 
         CursorResponse<FollowUserItemDto> result = followService.getFollowings(
                 FOLLOWER_ID, null, null, 10, "followedAt", "DESCENDING");
@@ -385,7 +385,7 @@ class FollowServiceTest {
         assertThat(result.data().get(0).user().profileImageUrl()).isEqualTo("https://cdn/a.png");
         assertThat(result.data().get(1).user().name()).isEqualTo("userB");
         assertThat(result.data().get(1).user().profileImageUrl()).isEqualTo("https://cdn/b.png");
-        verify(userRepository).findAllById(anyList());
+        verify(userRepository).findAllById(any());
     }
 
     // ── Phase E: 남은 조건 분기 커버 ─────────────────────────────────────

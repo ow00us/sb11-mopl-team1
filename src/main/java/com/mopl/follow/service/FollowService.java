@@ -16,9 +16,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -151,7 +153,8 @@ public class FollowService {
             nextIdAfter = last.getId();
         }
 
-        List<UUID> userIds = page.stream().map(userIdExtractor).distinct().toList();
+        // 페이지 내 user ID 중복 제거는 Set 로 확보한다 (page 순서는 하단에서 별도 유지).
+        Set<UUID> userIds = page.stream().map(userIdExtractor).collect(Collectors.toSet());
         Map<UUID, UserSummary> usersById = toUserSummaryMap(userIds);
 
         List<FollowUserItemDto> data = page.stream()
@@ -169,7 +172,7 @@ public class FollowService {
     }
 
     // 페이지 user ID 배치 조회로 N+1 을 방지한다. userRepository.findAllById 1회.
-    private Map<UUID, UserSummary> toUserSummaryMap(List<UUID> userIds) {
+    private Map<UUID, UserSummary> toUserSummaryMap(Collection<UUID> userIds) {
         if (userIds.isEmpty()) return Map.of();
         return userRepository.findAllById(userIds).stream()
                 .collect(Collectors.toMap(User::getId,
