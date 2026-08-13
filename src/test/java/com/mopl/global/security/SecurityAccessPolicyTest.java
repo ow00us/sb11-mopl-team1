@@ -52,7 +52,8 @@ class SecurityAccessPolicyTest {
     @ParameterizedTest
     @ValueSource(strings = {
         "/api/users",
-        "/api/auth/sign-in"
+        "/api/auth/sign-in",
+        "/api/auth/refresh"
     })
     @DisplayName("공개 POST API는 CSRF 토큰이 있으면 JWT 없이 접근할 수 있다")
     void publicPost_withCsrf_doesNotRequireJwt(String path) throws Exception {
@@ -68,6 +69,90 @@ class SecurityAccessPolicyTest {
         mockMvc.perform(post("/api/users"))
             .andExpect(status().isForbidden())
             .andExpect(jsonPath("$.errorCode").value("COMMON_403_1"));
+    }
+
+    @Test
+    @DisplayName("토큰 재발급 API는 CSRF 토큰이 없으면 403을 반환한다")
+    void refresh_withoutCsrf_returnsForbidden()
+        throws Exception {
+
+        /*
+         * /api/auth/refresh는 Access Token 인증이 필요 없는 공개 경로지만
+         * Refresh Token Cookie를 사용하는 상태 변경 POST 요청이므로
+         * CSRF 검증 대상
+         *
+         * SecurityPolicyProbeController를 사용하므로 실제 Refresh Token
+         * Cookie 바인딩이나 재발급 Service 로직에는 진입하지 않는다.
+         */
+        mockMvc.perform(
+                post("/api/auth/refresh")
+            )
+            .andExpect(status().isForbidden())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_403_1")
+            );
+
+        /*
+         * 이번 403은 JWT 인증 실패가 아니라 CSRF 검증 실패로
+         * 발생해야 하므로 JwtProvider는 호출되지 않는다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
+    @Test
+    @DisplayName("토큰 재발급 응답에는 인증 정보 캐시 방지 헤더를 포함한다")
+    void refresh_withCsrf_returnsNoStoreHeaders()
+        throws Exception {
+
+        /*
+         * 토큰 재발급 API는 Access Token과 Refresh Token을 새로 발급하는
+         * 인증 API이므로 응답이 브라우저나 중간 캐시에 저장되면 안 된다.
+         *
+         * SecurityConfig에서 Spring Security 기본 보안 헤더를
+         * 비활성화하지 않았으므로 HeaderWriterFilter가
+         * 캐시 방지 응답 헤더를 추가
+         */
+        mockMvc.perform(
+                post("/api/auth/refresh")
+                    .with(csrf())
+            )
+            .andExpect(status().isNoContent())
+            .andExpect(
+                header().string(
+                    HttpHeaders.CACHE_CONTROL,
+                    org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString(
+                            "no-cache"
+                        ),
+                        org.hamcrest.Matchers.containsString(
+                            "no-store"
+                        )
+                    )
+                )
+            )
+            .andExpect(
+                header().string(
+                    "Pragma",
+                    "no-cache"
+                )
+            );
+
+        /*
+         * 재발급 API는 JWT 없이 접근 가능한 공개 POST 경로이므로
+         * Access Token 검증은 실행되지 않아야 한다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
     }
 
     @Test

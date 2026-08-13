@@ -6,9 +6,14 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
 
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.security.JwtProvider;
+import com.mopl.user.dto.UserDto;
+import com.mopl.user.entity.User;
+import com.mopl.user.entity.UserRole;
 import com.mopl.user.config.RefreshTokenProperties;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.user.security.RefreshTokenGenerator;
@@ -17,6 +22,8 @@ import com.mopl.user.storage.RefreshTokenStore;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.Optional;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,6 +43,13 @@ class RefreshTokenServiceTest {
 
     @Mock
     UserRepository userRepository;
+
+    /**
+     * Refresh Token 재발급 성공 시 새로운 Access Token이
+     * 발급되는지 검증하기 위한 Mock
+     */
+    @Mock
+    JwtProvider jwtProvider;
 
     /**
      * 실제 Redis에 연결하지 않고 RefreshTokenService가 저장소에 전달하는
@@ -212,5 +226,535 @@ class RefreshTokenServiceTest {
             .doesNotContain(rawToken)
             .contains("rawToken=***")
             .contains("2026-08-17T00:00:00Z");
+    }
+
+    @Test
+    @DisplayName("유효한 Refresh Token을 새 토큰으로 교체하고 Access Token을 발급한다")
+    void refresh_success() {
+        // given
+        UUID userId = UUID.randomUUID();
+
+        String oldRawToken = "old-refresh-token";
+        String oldTokenHash = "a".repeat(64);
+
+        String newRawToken = "new-refresh-token";
+        String newTokenHash = "b".repeat(64);
+
+        String accessToken = "new-access-token";
+        Duration expiration = Duration.ofDays(7);
+
+        User user = createUser(
+            userId,
+            UserRole.ADMIN,
+            false
+        );
+
+        /*
+         * Cookie로 받은 기존 Refresh Token 원문을 해시
+         */
+        when(refreshTokenHasher.hash(oldRawToken))
+            .thenReturn(oldTokenHash);
+
+        /*
+         * Redis에 기존 세션이 존재하며 해당 세션의 소유자는
+         * userId라고 가정
+         */
+        when(
+            refreshTokenStore.findUserIdByTokenHash(oldTokenHash)
+        ).thenReturn(Optional.of(userId));
+
+        /*
+         * Redis에서 확인한 사용자 UUID로 현재 사용자 정보를 조회
+         */
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        /*
+         * Rotation에 사용할 새로운 Refresh Token을 생성하고 해시
+         */
+        when(refreshTokenGenerator.generate())
+            .thenReturn(newRawToken);
+
+        when(refreshTokenHasher.hash(newRawToken))
+            .thenReturn(newTokenHash);
+
+        when(refreshTokenProperties.getExpiration())
+            .thenReturn(expiration);
+
+        /*
+         * 기존 세션과 새로운 세션의 원자적 교체가 성공한다고 가정
+         */
+        when(
+            refreshTokenStore.rotate(
+                userId,
+                oldTokenHash,
+                newTokenHash,
+                expiration
+            )
+        ).thenReturn(true);
+
+        /*
+         * 사용자의 현재 역할이 ADMIN이므로 새 Access Token에도
+         * ADMIN 역할이 반영
+         */
+        when(
+            jwtProvider.createAccessToken(
+                userId,
+                UserRole.ADMIN.name()
+            )
+        ).thenReturn(accessToken);
+
+        Instant earliestExpiration =
+            Instant.now().plus(expiration);
+
+        // when
+        RefreshResult result =
+            refreshTokenService.refresh(oldRawToken);
+
+        Instant latestExpiration =
+            Instant.now().plus(expiration);
+
+        // then
+        assertThat(result.jwtDto().accessToken())
+            .isEqualTo(accessToken);
+
+        assertThat(result.jwtDto().userDto())
+            .isEqualTo(UserDto.from(user));
+
+        assertThat(result.issuedRefreshToken().rawToken())
+            .isEqualTo(newRawToken);
+
+        assertThat(result.issuedRefreshToken().expiresAt())
+            .isAfterOrEqualTo(earliestExpiration)
+            .isBeforeOrEqualTo(latestExpiration);
+
+        verify(refreshTokenHasher).hash(oldRawToken);
+
+        verify(refreshTokenStore)
+            .findUserIdByTokenHash(oldTokenHash);
+
+        verify(userRepository).findById(userId);
+        verify(refreshTokenGenerator).generate();
+        verify(refreshTokenHasher).hash(newRawToken);
+        verify(refreshTokenProperties).getExpiration();
+
+        verify(refreshTokenStore).rotate(
+            userId,
+            oldTokenHash,
+            newTokenHash,
+            expiration
+        );
+
+        verify(jwtProvider).createAccessToken(
+            userId,
+            UserRole.ADMIN.name()
+        );
+    }
+
+    @Test
+    @DisplayName("Redis에 존재하지 않는 Refresh Token은 재발급에 실패한다")
+    void refresh_failWhenTokenDoesNotExist() {
+        // given
+        String rawToken = "unknown-refresh-token";
+        String tokenHash = "a".repeat(64);
+
+        when(refreshTokenHasher.hash(rawToken))
+            .thenReturn(tokenHash);
+
+        when(
+            refreshTokenStore.findUserIdByTokenHash(tokenHash)
+        ).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() ->
+            refreshTokenService.refresh(rawToken)
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.UNAUTHORIZED);
+
+        verify(refreshTokenHasher).hash(rawToken);
+
+        verify(refreshTokenStore)
+            .findUserIdByTokenHash(tokenHash);
+
+        /*
+         * 기존 Refresh Token 세션을 찾지 못했으므로 사용자 조회,
+         * 신규 토큰 생성, Rotation 및 Access Token 발급은 실행되면 안 된다.
+         */
+        verifyNoInteractions(
+            userRepository,
+            refreshTokenGenerator,
+            refreshTokenProperties,
+            jwtProvider
+        );
+
+        verify(
+            refreshTokenStore,
+            never()
+        ).rotate(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any()
+        );
+    }
+
+    @Test
+    @DisplayName("Refresh Token의 사용자가 존재하지 않으면 재발급에 실패한다")
+    void refresh_failWhenUserDoesNotExist() {
+        // given
+        UUID userId = UUID.randomUUID();
+        String rawToken = "deleted-user-refresh-token";
+        String tokenHash = "a".repeat(64);
+
+        when(refreshTokenHasher.hash(rawToken))
+            .thenReturn(tokenHash);
+
+        when(
+            refreshTokenStore.findUserIdByTokenHash(tokenHash)
+        ).thenReturn(Optional.of(userId));
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() ->
+            refreshTokenService.refresh(rawToken)
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.UNAUTHORIZED);
+
+        verify(refreshTokenHasher).hash(rawToken);
+
+        verify(refreshTokenStore)
+            .findUserIdByTokenHash(tokenHash);
+
+        verify(userRepository).findById(userId);
+
+        /*
+         * 사용자가 삭제된 상태이므로 새로운 토큰은 생성하거나 저장하면 안 된다.
+         */
+        verifyNoInteractions(
+            refreshTokenGenerator,
+            refreshTokenProperties,
+            jwtProvider
+        );
+
+        verify(
+            refreshTokenStore,
+            never()
+        ).rotate(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any()
+        );
+    }
+
+    @Test
+    @DisplayName("잠긴 계정은 Refresh Token으로 토큰을 재발급할 수 없다")
+    void refresh_failWhenUserIsLocked() {
+        // given
+        UUID userId = UUID.randomUUID();
+        String rawToken = "locked-user-refresh-token";
+        String tokenHash = "a".repeat(64);
+
+        User lockedUser = createUser(
+            userId,
+            UserRole.USER,
+            true
+        );
+
+        when(refreshTokenHasher.hash(rawToken))
+            .thenReturn(tokenHash);
+
+        when(
+            refreshTokenStore.findUserIdByTokenHash(tokenHash)
+        ).thenReturn(Optional.of(userId));
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(lockedUser));
+
+        // when & then
+        assertThatThrownBy(() ->
+            refreshTokenService.refresh(rawToken)
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.UNAUTHORIZED);
+
+        verify(refreshTokenHasher).hash(rawToken);
+
+        verify(refreshTokenStore)
+            .findUserIdByTokenHash(tokenHash);
+
+        verify(userRepository).findById(userId);
+
+        /*
+         * 계정 잠금이 확인된 이후에는 새로운 Refresh Token 생성과 Access Token 발급이 진행되면 안 된다.
+         */
+        verifyNoInteractions(
+            refreshTokenGenerator,
+            refreshTokenProperties,
+            jwtProvider
+        );
+
+        verify(
+            refreshTokenStore,
+            never()
+        ).rotate(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any()
+        );
+    }
+
+    @Test
+    @DisplayName("Access Token 발급에 실패하면 기존 Refresh Token을 소비하지 않는다")
+    void refresh_doesNotRotateWhenAccessTokenIssuanceFails() {
+        // given
+        UUID userId = UUID.randomUUID();
+
+        String oldRawToken = "old-refresh-token";
+        String oldTokenHash = "a".repeat(64);
+
+        String newRawToken = "new-refresh-token";
+        String newTokenHash = "b".repeat(64);
+
+        Duration expiration = Duration.ofDays(7);
+
+        User user = createUser(
+            userId,
+            UserRole.USER,
+            false
+        );
+
+        when(refreshTokenHasher.hash(oldRawToken))
+            .thenReturn(oldTokenHash);
+
+        when(
+            refreshTokenStore.findUserIdByTokenHash(oldTokenHash)
+        ).thenReturn(Optional.of(userId));
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        when(refreshTokenGenerator.generate())
+            .thenReturn(newRawToken);
+
+        when(refreshTokenHasher.hash(newRawToken))
+            .thenReturn(newTokenHash);
+
+        when(refreshTokenProperties.getExpiration())
+            .thenReturn(expiration);
+
+        /*
+         * JWT 발급 과정에서 예외가 발생하는 상황을 만든다.
+         */
+        when(
+            jwtProvider.createAccessToken(
+                userId,
+                UserRole.USER.name()
+            )
+        ).thenThrow(
+            new IllegalStateException(
+                "Access Token 발급 실패"
+            )
+        );
+
+        // when & then
+        assertThatThrownBy(() ->
+            refreshTokenService.refresh(oldRawToken)
+        )
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Access Token 발급 실패");
+
+        verify(jwtProvider).createAccessToken(
+            userId,
+            UserRole.USER.name()
+        );
+
+        /*
+         * Access Token 발급에 실패했으므로 기존 Refresh Token을
+         * 폐기하는 Redis Rotation은 절대로 실행되면 안 된다.
+         *
+         * 이를 통해 사용자는 일시적인 JWT 발급 오류가 해결된 뒤
+         * 기존 Refresh Token으로 재발급을 다시 시도할 수 있다.
+         */
+        verify(
+            refreshTokenStore,
+            never()
+        ).rotate(
+            userId,
+            oldTokenHash,
+            newTokenHash,
+            expiration
+        );
+    }
+
+    @Test
+    @DisplayName("기존 Refresh Token이 먼저 소비되면 재발급에 실패한다")
+    void refresh_failWhenRotationLosesRace() {
+        // given
+        UUID userId = UUID.randomUUID();
+
+        String oldRawToken = "old-refresh-token";
+        String oldTokenHash = "a".repeat(64);
+
+        String newRawToken = "new-refresh-token";
+        String newTokenHash = "b".repeat(64);
+
+        Duration expiration = Duration.ofDays(7);
+
+        User user = createUser(
+            userId,
+            UserRole.USER,
+            false
+        );
+
+        when(refreshTokenHasher.hash(oldRawToken))
+            .thenReturn(oldTokenHash);
+
+        when(
+            refreshTokenStore.findUserIdByTokenHash(oldTokenHash)
+        ).thenReturn(Optional.of(userId));
+
+        when(userRepository.findById(userId))
+            .thenReturn(Optional.of(user));
+
+        when(refreshTokenGenerator.generate())
+            .thenReturn(newRawToken);
+
+        when(refreshTokenHasher.hash(newRawToken))
+            .thenReturn(newTokenHash);
+
+        when(refreshTokenProperties.getExpiration())
+            .thenReturn(expiration);
+
+        /*
+         * 외부 상태를 변경하기 전에 Access Token 생성까지는
+         * 정상적으로 완료된 상황을 가정
+         */
+        when(
+            jwtProvider.createAccessToken(
+                userId,
+                UserRole.USER.name()
+            )
+        ).thenReturn("unused-access-token");
+
+        /*
+         * 조회 직후 다른 요청이 먼저 기존 Refresh Token을 소비한 상황을 표현
+         */
+        when(
+            refreshTokenStore.rotate(
+                userId,
+                oldTokenHash,
+                newTokenHash,
+                expiration
+            )
+        ).thenReturn(false);
+
+        // when & then
+        assertThatThrownBy(() ->
+            refreshTokenService.refresh(oldRawToken)
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.UNAUTHORIZED);
+
+        verify(refreshTokenStore).rotate(
+            userId,
+            oldTokenHash,
+            newTokenHash,
+            expiration
+        );
+
+        /*
+         * Access Token은 Redis 상태를 변경하기 전에 생성되지만,
+         * Rotation이 실패하면 RefreshResult가 반환되지 않으므로
+         * 클라이언트에는 전달되지 않는다.
+         */
+        verify(jwtProvider).createAccessToken(
+            userId,
+            UserRole.USER.name()
+        );
+    }
+
+    @Test
+    @DisplayName("Refresh Token이 null이면 재발급에 실패한다")
+    void refresh_failWhenTokenIsNull() {
+        assertThatThrownBy(() ->
+            refreshTokenService.refresh(null)
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.UNAUTHORIZED);
+
+        verifyNoInteractions(
+            userRepository,
+            refreshTokenGenerator,
+            refreshTokenHasher,
+            refreshTokenProperties,
+            refreshTokenStore,
+            jwtProvider
+        );
+    }
+
+    @Test
+    @DisplayName("Refresh Token이 공백이면 재발급에 실패한다")
+    void refresh_failWhenTokenIsBlank() {
+        assertThatThrownBy(() ->
+            refreshTokenService.refresh("   ")
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.UNAUTHORIZED);
+
+        verifyNoInteractions(
+            userRepository,
+            refreshTokenGenerator,
+            refreshTokenHasher,
+            refreshTokenProperties,
+            refreshTokenStore,
+            jwtProvider
+        );
+    }
+
+    /**
+     * Refresh Token 재발급 테스트에 사용할 사용자 엔티티를 생성
+     *
+     * <p>User의 UUID는 실제 저장 시 JPA가 생성하지만 이 테스트는
+     * Repository Mock을 사용하는 단위 테스트이므로 ReflectionTestUtils로
+     * 테스트용 UUID를 설정합니다.</p>
+     *
+     * @param userId 테스트에서 사용할 사용자 UUID
+     * @param role 현재 사용자 역할
+     * @param locked 계정 잠금 여부
+     * @return 재발급 테스트용 사용자 엔티티
+     */
+    private User createUser(
+        UUID userId,
+        UserRole role,
+        boolean locked
+    ) {
+        User user =
+            User.builder()
+                .email("user@example.com")
+                .passwordHash("encoded-password")
+                .name("테스트 사용자")
+                .role(role)
+                .locked(locked)
+                .build();
+
+        ReflectionTestUtils.setField(
+            user,
+            "id",
+            userId
+        );
+
+        return user;
     }
 }

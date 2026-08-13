@@ -55,7 +55,8 @@ public class SecurityConfig {
     /** JWT 인증 없이 접근 가능한 공개 POST 경로입니다. */
     private static final String[] PUBLIC_POST_PATHS = {
             "/api/users",
-            "/api/auth/sign-in"
+            "/api/auth/sign-in",
+            "/api/auth/refresh"
     };
 
     /** 별도 프로토콜에서 인증하는 공개 handshake 경로입니다. */

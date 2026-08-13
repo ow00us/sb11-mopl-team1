@@ -8,6 +8,10 @@ import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -404,5 +408,295 @@ class RedisRefreshTokenStoreTest {
         )
             .containsExactly(longLivedTokenHash)
             .doesNotContain(shortLivedTokenHash);
+    }
+
+    @Test
+    @DisplayName("기존 Refresh Token을 새로운 Refresh Token으로 원자적으로 교체한다")
+    void rotate_success() {
+        // given
+        UUID userId = UUID.randomUUID();
+        String oldTokenHash = "old-token-hash";
+        String newTokenHash = "new-token-hash";
+        Duration expiration = Duration.ofMinutes(30);
+
+        /*
+         * 교체 대상이 되는 기존 Refresh Token 세션을 Redis에 저장
+         */
+        refreshTokenStore.save(
+            userId,
+            oldTokenHash,
+            expiration
+        );
+
+        // when
+        boolean rotated = refreshTokenStore.rotate(
+            userId,
+            oldTokenHash,
+            newTokenHash,
+            expiration
+        );
+
+        // then
+        assertThat(rotated).isTrue();
+
+        /*
+         * Rotation이 성공하면 기존 세션 Key는 제거
+         */
+        assertThat(
+            refreshTokenStore.findUserIdByTokenHash(oldTokenHash)
+        ).isEmpty();
+
+        /*
+         * 새로 발급한 Refresh Token 해시에는 기존 사용자 UUID가
+         * 연결되어 있어야 한다.
+         */
+        assertThat(
+            refreshTokenStore.findUserIdByTokenHash(newTokenHash)
+        ).contains(userId);
+
+        /*
+         * 사용자별 세션 인덱스에서도 기존 해시는 제거되고
+         * 새로운 해시만 남아 있어야 한다.
+         */
+        assertThat(
+            refreshTokenStore.findTokenHashesByUserId(userId)
+        ).containsExactly(newTokenHash);
+    }
+
+    @Test
+    @DisplayName("이미 Rotation에 사용한 Refresh Token은 다시 사용할 수 없다")
+    void rotate_failWhenOldTokenIsReused() {
+        // given
+        UUID userId = UUID.randomUUID();
+        String oldTokenHash = "old-token-hash";
+        String firstNewTokenHash = "first-new-token-hash";
+        String secondNewTokenHash = "second-new-token-hash";
+        Duration expiration = Duration.ofMinutes(30);
+
+        refreshTokenStore.save(
+            userId,
+            oldTokenHash,
+            expiration
+        );
+
+        /*
+         * 첫 번째 재발급 요청에서 기존 Refresh Token을 정상적으로 소비
+         */
+        boolean firstRotation = refreshTokenStore.rotate(
+            userId,
+            oldTokenHash,
+            firstNewTokenHash,
+            expiration
+        );
+
+        // when
+        /*
+         * 이미 소비된 기존 Refresh Token으로 다시 재발급을 시도
+         */
+        boolean secondRotation = refreshTokenStore.rotate(
+            userId,
+            oldTokenHash,
+            secondNewTokenHash,
+            expiration
+        );
+
+        // then
+        assertThat(firstRotation).isTrue();
+        assertThat(secondRotation).isFalse();
+
+        /*
+         * 첫 번째 요청에서 발급한 세션은 그대로 유지되어야 한다.
+         */
+        assertThat(
+            refreshTokenStore.findUserIdByTokenHash(firstNewTokenHash)
+        ).contains(userId);
+
+        /*
+         * 실패한 두 번째 요청의 토큰은 저장되면 안 된다.
+         */
+        assertThat(
+            refreshTokenStore.findUserIdByTokenHash(secondNewTokenHash)
+        ).isEmpty();
+
+        assertThat(
+            refreshTokenStore.findTokenHashesByUserId(userId)
+        ).containsExactly(firstNewTokenHash);
+    }
+
+    @Test
+    @DisplayName("Refresh Token 소유자가 다르면 Rotation에 실패한다")
+    void rotate_failWhenUserDoesNotOwnToken() {
+        // given
+        UUID ownerId = UUID.randomUUID();
+        UUID otherUserId = UUID.randomUUID();
+        String oldTokenHash = "owner-old-token-hash";
+        String newTokenHash = "other-user-new-token-hash";
+        Duration expiration = Duration.ofMinutes(30);
+
+        refreshTokenStore.save(
+            ownerId,
+            oldTokenHash,
+            expiration
+        );
+
+        // when
+        boolean rotated = refreshTokenStore.rotate(
+            otherUserId,
+            oldTokenHash,
+            newTokenHash,
+            expiration
+        );
+
+        // then
+        assertThat(rotated).isFalse();
+
+        /*
+         * 소유자가 일치하지 않았으므로 기존 Refresh Token 세션은
+         * 삭제되지 않고 그대로 유지
+         */
+        assertThat(
+            refreshTokenStore.findUserIdByTokenHash(oldTokenHash)
+        ).contains(ownerId);
+
+        /*
+         * 권한이 없는 요청에서 전달한 새로운 토큰은 저장되지 않아야 한다.
+         */
+        assertThat(
+            refreshTokenStore.findUserIdByTokenHash(newTokenHash)
+        ).isEmpty();
+
+        assertThat(
+            refreshTokenStore.findTokenHashesByUserId(ownerId)
+        ).containsExactly(oldTokenHash);
+
+        assertThat(
+            refreshTokenStore.findTokenHashesByUserId(otherUserId)
+        ).isEmpty();
+    }
+
+    @Test
+    @DisplayName("같은 Refresh Token의 동시 Rotation 요청은 하나만 성공한다")
+    void rotate_onlyOneRequestSucceedsWhenCalledConcurrently()
+        throws Exception {
+
+        // given
+        UUID userId = UUID.randomUUID();
+        String oldTokenHash = "concurrent-old-token-hash";
+        String firstNewTokenHash = "concurrent-first-new-token-hash";
+        String secondNewTokenHash = "concurrent-second-new-token-hash";
+        Duration expiration = Duration.ofMinutes(30);
+
+        refreshTokenStore.save(
+            userId,
+            oldTokenHash,
+            expiration
+        );
+
+        /*
+         * 두 요청을 서로 다른 스레드에서 실행하기 위한 스레드 풀
+         */
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        /*
+         * 두 작업이 모두 실행 준비를 마칠 때까지 기다리는 용도
+         */
+        CountDownLatch ready = new CountDownLatch(2);
+
+        /*
+         * 두 작업을 가능한 한 같은 시점에 시작시키기 위한 신호
+         */
+        CountDownLatch start = new CountDownLatch(1);
+
+        try {
+            Future<Boolean> firstResult = executor.submit(() -> {
+                ready.countDown();
+                start.await();
+
+                return refreshTokenStore.rotate(
+                    userId,
+                    oldTokenHash,
+                    firstNewTokenHash,
+                    expiration
+                );
+            });
+
+            Future<Boolean> secondResult = executor.submit(() -> {
+                ready.countDown();
+                start.await();
+
+                return refreshTokenStore.rotate(
+                    userId,
+                    oldTokenHash,
+                    secondNewTokenHash,
+                    expiration
+                );
+            });
+
+            /*
+             * 두 스레드가 모두 시작 신호를 기다리는 상태가 됐는지 확인
+             */
+            assertThat(
+                ready.await(5, TimeUnit.SECONDS)
+            ).isTrue();
+
+            /*
+             * 두 Rotation 요청을 동시에 시작
+             */
+            start.countDown();
+
+            boolean firstSucceeded =
+                firstResult.get(5, TimeUnit.SECONDS);
+
+            boolean secondSucceeded =
+                secondResult.get(5, TimeUnit.SECONDS);
+
+            assertThat(
+                firstSucceeded ^ secondSucceeded
+            ).isTrue();
+
+            String successfulTokenHash =
+                firstSucceeded
+                    ? firstNewTokenHash
+                    : secondNewTokenHash;
+
+            String failedTokenHash =
+                firstSucceeded
+                    ? secondNewTokenHash
+                    : firstNewTokenHash;
+
+            /*
+             * 기존 Refresh Token은 성공한 요청에서 소비
+             */
+            assertThat(
+                refreshTokenStore.findUserIdByTokenHash(oldTokenHash)
+            ).isEmpty();
+
+            /*
+             * 경쟁에서 성공한 요청의 새 토큰만 저장
+             */
+            assertThat(
+                refreshTokenStore.findUserIdByTokenHash(
+                    successfulTokenHash
+                )
+            ).contains(userId);
+
+            /*
+             * 경쟁에서 실패한 요청의 새 토큰은 저장되면 안 된다.
+             */
+            assertThat(
+                refreshTokenStore.findUserIdByTokenHash(
+                    failedTokenHash
+                )
+            ).isEmpty();
+
+            assertThat(
+                refreshTokenStore.findTokenHashesByUserId(userId)
+            ).containsExactly(successfulTokenHash);
+        } finally {
+            /*
+             * 테스트 성공 여부와 관계없이 생성한 스레드를 정리
+             */
+            executor.shutdownNow();
+        }
     }
 }
