@@ -10,6 +10,7 @@ import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.exception.ErrorResponse;
 import com.mopl.global.security.JwtProvider;
+import com.mopl.support.websocket.StompTestCleanup;
 import java.io.IOException;
 import java.lang.reflect.Type;
 import java.util.List;
@@ -27,7 +28,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.converter.StringMessageConverter;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.simp.stomp.ConnectionLostException;
@@ -112,19 +112,7 @@ public class StompAuthIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        if (session != null && session.isConnected()) {
-            try {
-                session.disconnect();
-            } catch (MessageDeliveryException ignored) {
-                // ERROR 프레임 처리 직후 서버가 먼저 연결을 닫을 수 있습니다.
-            }
-        }
-        if (stompClient != null) {
-            stompClient.stop();
-        }
-        if (taskScheduler != null) {
-            taskScheduler.shutdown();
-        }
+        StompTestCleanup.closeAll(stompClient, taskScheduler, session);
     }
 
     @Test
