@@ -1164,17 +1164,40 @@ paths:
       tags:
         - "인증 관리"
       summary: "로그아웃"
-      description: "SecurityFilterChain에서 처리합니다."
+      description: "현재 브라우저의 Refresh Token 세션을 폐기하고 Refresh Token Cookie를 삭제합니다."
       operationId: "signOut"
       security:
-        -
-          BearerAuth: []
-          CsrfToken: []
+        - BearerAuth: [ ]
+          CsrfToken: [ ]
+      parameters:
+        - name: "REFRESH_TOKEN"
+          in: "cookie"
+          description: "폐기할 현재 브라우저의 Refresh Token"
+          required: false
+          schema:
+            type: "string"
       responses:
         "204":
-          description: "성공"
+          description: "로그아웃 성공"
+          headers:
+            Set-Cookie:
+              description: "Refresh Token 삭제 Cookie"
+              schema:
+                type: "string"
         "400":
           description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "Access Token이 없거나 유효하지 않음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "CSRF 검증 실패"
           content:
             "*/*":
               schema:

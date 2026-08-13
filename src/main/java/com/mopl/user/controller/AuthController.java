@@ -228,6 +228,13 @@ public class AuthController {
         )
     )
     public ResponseEntity<Void> signOut(
+        /*
+         * authenticatedUserId는 클라이언트가 직접 전달하는 요청 파라미터가 아니라
+         * JWT 인증이 끝난 뒤 Spring Security가 주입하는 내부 인증 정보
+         *
+         * 따라서 런타임 OpenAPI 문서에는 요청 파라미터로 노출되지 않도록 숨긴다.
+         */
+        @Parameter(hidden = true)
         @AuthenticationPrincipal
         UUID authenticatedUserId,
 
