@@ -1,10 +1,12 @@
 package com.mopl.watchingsession.config;
 
+import jakarta.validation.constraints.NotNull;
 import java.time.Duration;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
+import org.springframework.validation.annotation.Validated;
 
 /**
  * 시청 세션 TTL 정책을 관리하는 설정 클래스.
@@ -24,23 +26,27 @@ import org.springframework.stereotype.Component;
 @Setter
 @Component
 @ConfigurationProperties(prefix = "watching-session")
+@Validated
 public class WatchingSessionProperties {
 
 
     /**
      * Redis presence 키의 TTL. heartbeat마다 이 값으로 재설정된다.
      */
+    @NotNull
     private Duration presenceTtl;
 
     /**
      * DB 시청 세션 스냅샷(expires_at)의 만료 여유. heartbeat마다 현재 시각 + 이 값으로 연장된다.
      */
+    @NotNull
     private Duration sessionTtl;
 
     /**
      * 클라이언트가 heartbeat를 보내는 주기. 서버는 이 값을 직접 사용하지 않고
      * (주기 결정은 클라이언트 책임), openapi 계약 문서와의 정합 확인용으로 보관한다.
      */
+    @NotNull
     private Duration heartbeatInterval;
 
 }

@@ -7,7 +7,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.context.properties.bind.validation.BindValidationException;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.context.ActiveProfiles;
 
@@ -35,5 +37,22 @@ class WatchingSessionPropertiesBindingTest {
         assertThat(properties.getPresenceTtl()).isEqualTo(Duration.ofSeconds(2));
         assertThat(properties.getSessionTtl()).isEqualTo(Duration.ofSeconds(3));
         assertThat(properties.getHeartbeatInterval()).isEqualTo(Duration.ofMillis(500));
+    }
+
+    @Test
+    @DisplayName("presence-ttl이 빈 값으로 바인딩되면 애플리케이션 기동이 실패한다")
+    void binding_fails_whenPresenceTtlIsMissing() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(TestConfig.class)
+            .withPropertyValues(
+                "watching-session.presence-ttl=",
+                "watching-session.session-ttl=3s",
+                "watching-session.heartbeat-interval=500ms"
+            )
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasRootCauseInstanceOf(BindValidationException.class);
+            });
     }
 }
