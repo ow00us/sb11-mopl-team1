@@ -17,8 +17,9 @@ import org.springframework.validation.annotation.Validated;
  * <p>관리자 이메일, 비밀번호와 이름을 코드에 직접 작성하지 않고
  * 실행 환경의 환경변수로 전달받기 위한 설정 객체입니다.</p>
  *
- * <p>이 설정 객체는 seed 프로파일에서만 Spring Bean으로 등록됩니다.
- * 따라서 기본 실행이나 운영 프로파일에서는 초기 관리자 설정을
+ * <p>이 설정 객체는 seed 프로파일이 활성화되고 prod 프로파일이
+ * 비활성화된 경우에만 Spring Bean으로 등록됩니다.
+ * 따라서 기본 실행과 운영 환경에서는 초기 관리자 설정을
  * 읽거나 검증하지 않습니다.</p>
  *
  * <p>관리자 계정도 일반 회원과 동일한 이메일·이름·비밀번호 정책을
@@ -28,7 +29,7 @@ import org.springframework.validation.annotation.Validated;
 @Setter
 @Component
 @Validated
-@Profile("seed")
+@Profile("seed & !prod")
 @ConfigurationProperties(prefix = "seed.admin")
 public class SeedAdminProperties {
 

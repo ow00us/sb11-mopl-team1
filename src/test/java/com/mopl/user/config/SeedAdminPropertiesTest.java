@@ -71,7 +71,7 @@ class SeedAdminPropertiesTest {
     }
 
     @Test
-    @DisplayName("Seed 관리자 설정은 seed 프로파일에서만 등록된다")
+    @DisplayName("Seed 관리자 설정은 seed이면서 prod가 아닐 때만 등록된다")
     void propertiesIsRegisteredOnlyInSeedProfile() {
         /*
          * Seed 관리자 설정이 기본·운영 프로파일에 등록되면
@@ -87,7 +87,7 @@ class SeedAdminPropertiesTest {
             .isNotNull();
 
         assertThat(profile.value())
-            .containsExactly("seed");
+            .containsExactly("seed & !prod");
     }
 
     @Test

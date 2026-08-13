@@ -178,3 +178,18 @@ refresh-token:
   cookie:
     # 운영 환경에서는 별도 설정이 없어도 HTTPS 전용 Cookie를 기본으로 사용
     secure: ${REFRESH_TOKEN_COOKIE_SECURE:true}
+
+
+---
+spring:
+  config:
+    activate:
+      # 시연·QA용 초기 데이터가 필요한 경우에만 추가로 활성화
+      on-profile: seed
+
+seed:
+  admin:
+    # 실제 관리자 정보는 Git에 기록하지 않고 실행 환경에서 주입
+    name: ${SEED_ADMIN_NAME}
+    email: ${SEED_ADMIN_EMAIL}
+    password: ${SEED_ADMIN_PASSWORD}
