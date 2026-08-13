@@ -49,4 +49,9 @@ public class WatchingSessionSnapshotWriter {
         watchingSessionSnapshotRepository.deleteByWatcherId(watcherId);
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public int renewExpiresAt(UUID watcherId, UUID contentId, Instant now, Instant newExpiresAt) {
+        return watchingSessionSnapshotRepository.renewExpiresAt(watcherId, contentId, now, newExpiresAt);
+    }
+
 }
