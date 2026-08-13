@@ -8,6 +8,7 @@ import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.util.CursorUtils;
+import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,6 +26,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -283,6 +285,56 @@ class FollowServiceTest {
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
     }
 
+    @Test
+    @DisplayName("getFollowers 는 페이지 follower ID 를 배치 조회해 user.name/profileImageUrl 을 채운다")
+    void getFollowers_populatesUserNameAndProfileImageUrl() {
+        UUID follower1 = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID follower2 = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        Follow f1 = savedFollowWithCreatedAt(UUID.randomUUID(), follower1, FOLLOWEE_ID,
+                Instant.parse("2026-08-01T11:00:00Z"));
+        Follow f2 = savedFollowWithCreatedAt(UUID.randomUUID(), follower2, FOLLOWEE_ID,
+                Instant.parse("2026-08-01T10:00:00Z"));
+        User u1 = savedUser(follower1, "userA", "https://cdn/a.png");
+        User u2 = savedUser(follower2, "userB", "https://cdn/b.png");
+
+        when(followRepository.findFollowersByFolloweeIdDesc(eq(FOLLOWEE_ID.toString()), any(), any(), eq(11)))
+                .thenReturn(List.of(f1, f2));
+        when(followRepository.countByFolloweeId(FOLLOWEE_ID)).thenReturn(2L);
+        when(userRepository.findAllById(anyList())).thenReturn(List.of(u1, u2));
+
+        CursorResponse<FollowUserItemDto> result = followService.getFollowers(
+                FOLLOWEE_ID, null, null, 10, "followedAt", "DESCENDING");
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.data().get(0).user().name()).isEqualTo("userA");
+        assertThat(result.data().get(0).user().profileImageUrl()).isEqualTo("https://cdn/a.png");
+        assertThat(result.data().get(1).user().name()).isEqualTo("userB");
+        assertThat(result.data().get(1).user().profileImageUrl()).isEqualTo("https://cdn/b.png");
+        // N+1 방지 검증: follower 수와 무관하게 findAllById 1회 호출
+        verify(userRepository).findAllById(anyList());
+    }
+
+    @Test
+    @DisplayName("getFollowers 는 user 조회 결과에 없는 follower 에 대해 UNKNOWN fallback 을 반환한다")
+    void getFollowers_fallbackToUnknownWhenUserMissing() {
+        UUID follower1 = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        Follow f1 = savedFollowWithCreatedAt(UUID.randomUUID(), follower1, FOLLOWEE_ID,
+                Instant.parse("2026-08-01T11:00:00Z"));
+
+        when(followRepository.findFollowersByFolloweeIdDesc(eq(FOLLOWEE_ID.toString()), any(), any(), eq(11)))
+                .thenReturn(List.of(f1));
+        when(followRepository.countByFolloweeId(FOLLOWEE_ID)).thenReturn(1L);
+        when(userRepository.findAllById(anyList())).thenReturn(List.of());
+
+        CursorResponse<FollowUserItemDto> result = followService.getFollowers(
+                FOLLOWEE_ID, null, null, 10, "followedAt", "DESCENDING");
+
+        assertThat(result.data()).hasSize(1);
+        assertThat(result.data().get(0).user().userId()).isEqualTo(follower1);
+        assertThat(result.data().get(0).user().name()).isEqualTo("알 수 없는 사용자");
+        assertThat(result.data().get(0).user().profileImageUrl()).isNull();
+    }
+
     // ── getFollowings ─────────────────────────────────────────────────────────
 
     @Test
@@ -306,6 +358,34 @@ class FollowServiceTest {
         assertThat(result.data().get(0).followedAt()).isEqualTo(t1);
         assertThat(result.hasNext()).isFalse();
         assertThat(result.totalCount()).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("getFollowings 는 페이지 followee ID 를 배치 조회해 user.name/profileImageUrl 을 채운다")
+    void getFollowings_populatesUserNameAndProfileImageUrl() {
+        UUID followee1 = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID followee2 = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        Follow f1 = savedFollowWithCreatedAt(UUID.randomUUID(), FOLLOWER_ID, followee1,
+                Instant.parse("2026-08-01T11:00:00Z"));
+        Follow f2 = savedFollowWithCreatedAt(UUID.randomUUID(), FOLLOWER_ID, followee2,
+                Instant.parse("2026-08-01T10:00:00Z"));
+        User u1 = savedUser(followee1, "userA", "https://cdn/a.png");
+        User u2 = savedUser(followee2, "userB", "https://cdn/b.png");
+
+        when(followRepository.findFollowingsByFollowerIdDesc(eq(FOLLOWER_ID.toString()), any(), any(), eq(11)))
+                .thenReturn(List.of(f1, f2));
+        when(followRepository.countByFollowerId(FOLLOWER_ID)).thenReturn(2L);
+        when(userRepository.findAllById(anyList())).thenReturn(List.of(u1, u2));
+
+        CursorResponse<FollowUserItemDto> result = followService.getFollowings(
+                FOLLOWER_ID, null, null, 10, "followedAt", "DESCENDING");
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.data().get(0).user().name()).isEqualTo("userA");
+        assertThat(result.data().get(0).user().profileImageUrl()).isEqualTo("https://cdn/a.png");
+        assertThat(result.data().get(1).user().name()).isEqualTo("userB");
+        assertThat(result.data().get(1).user().profileImageUrl()).isEqualTo("https://cdn/b.png");
+        verify(userRepository).findAllById(anyList());
     }
 
     // ── Phase E: 남은 조건 분기 커버 ─────────────────────────────────────
@@ -392,5 +472,16 @@ class FollowServiceTest {
         Follow f = savedFollow(id, followerId, followeeId);
         ReflectionTestUtils.setField(f, "createdAt", createdAt);
         return f;
+    }
+
+    private User savedUser(UUID id, String name, String profileImageUrl) {
+        User u = User.builder()
+                .email(id + "@example.com")
+                .passwordHash("hash")
+                .name(name)
+                .profileImageUrl(profileImageUrl)
+                .build();
+        ReflectionTestUtils.setField(u, "id", id);
+        return u;
     }
 }
