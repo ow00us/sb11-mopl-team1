@@ -402,6 +402,91 @@ class SecurityAccessPolicyTest {
     }
 
     @Test
+    @DisplayName("로그아웃은 유효한 JWT와 CSRF 토큰이 있으면 접근할 수 있다")
+    void signOut_withValidTokenAndCsrf_returnsNoContent()
+        throws Exception {
+
+        /*
+         * 로그아웃 API는 공개 인증 API가 아니라
+         * Access Token 인증이 필요한 보호 API
+         *
+         * JWT에서 복원한 사용자 UUID는 실제 AuthController에서
+         * 현재 사용자의 Refresh Token 세션을 폐기할 때 사용
+         */
+        var authentication =
+            UsernamePasswordAuthenticationToken.authenticated(
+                UUID.fromString(USER_ID),
+                null,
+                List.of(
+                    new SimpleGrantedAuthority("ROLE_USER")
+                )
+            );
+
+        when(jwtProvider.validate("valid-token"))
+            .thenReturn(true);
+        when(jwtProvider.getAuthentication("valid-token"))
+            .thenReturn(authentication);
+
+        /*
+         * POST /api/auth/sign-out은 상태를 변경하는 요청이므로
+         * 유효한 Access Token뿐만 아니라 CSRF 토큰도 필요
+         */
+        mockMvc.perform(
+                post("/api/auth/sign-out")
+                    .with(csrf())
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer valid-token"
+                    )
+            )
+            .andExpect(status().isNoContent());
+
+        /*
+         * JWT 필터가 토큰을 검증한 뒤 Authentication을 생성했는지 확인
+         */
+        verify(jwtProvider).validate("valid-token");
+        verify(jwtProvider)
+            .getAuthentication("valid-token");
+    }
+
+    @Test
+    @DisplayName("로그아웃은 유효한 JWT가 있어도 CSRF 토큰이 없으면 403을 반환한다")
+    void signOut_withoutCsrf_returnsForbidden()
+        throws Exception {
+
+        /*
+         * 유효한 형태의 Bearer Token을 전달하더라도
+         * CSRF 토큰이 없으면 상태 변경 요청을 허용하면 안된다.
+         *
+         * CsrfFilter는 JwtAuthenticationFilter보다 먼저 실행되므로
+         * 요청은 JWT 검증 단계에 도달하기 전에 차단
+         */
+        mockMvc.perform(
+                post("/api/auth/sign-out")
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer valid-token"
+                    )
+            )
+            .andExpect(status().isForbidden())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_403_1")
+            );
+
+        /*
+         * CSRF 검증에서 요청이 차단됐으므로
+         * 불필요한 JWT 검증도 실행되지 않아야 합니다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
+    @Test
     @DisplayName("일반 사용자가 계정 잠금 API에 잘못된 본문을 보내도 403을 반환한다")
     void updateLocked_userWithInvalidBody_returnsForbidden() throws Exception {
         // given
