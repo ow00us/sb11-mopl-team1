@@ -8,11 +8,11 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.util.CursorUtils;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
+import com.mopl.watchingsession.config.WatchingSessionProperties;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -23,12 +23,14 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -66,9 +68,8 @@ public class WatchingSessionService {
         }
     }
 
-    // Redis presence + heartbeat/TTL이 들어오기 전 쓰는 임시 고정 TTL
-    // TODO(심화필수): Redis 쓰기 모델로 옮기면서 heartbeat 기반 갱신으로 대체
-    private static final Duration DEFAULT_SESSION_TTL = Duration.ofMinutes(30);
+    private final WatchingSessionProperties watchingSessionProperties;
+
     private static final String LIKE_ESCAPE_CHAR = "\\";
 
     private final WatchingSessionSnapshotRepository watchingSessionSnapshotRepository;
@@ -142,7 +143,7 @@ public class WatchingSessionService {
                 previous = get(watcherId).orElse(null);
 
                 Instant now = Instant.now();
-                Instant expiresAt = now.plus(DEFAULT_SESSION_TTL);
+                Instant expiresAt = now.plus(watchingSessionProperties.getSessionTtl());
 
                 // DB 스냅샷 갱신
                 try {
@@ -157,7 +158,7 @@ public class WatchingSessionService {
                 activeSessions.put(watcherId, new SubscriptionOwner(sessionId, subscriptionId));
 
                 // Redis presence 기록 (실패해도 로그만 남기고 흐름은 계속됨)
-                watchingSessionPresenceWriter.write(watcherId, contentId, sessionId, subscriptionId, now, DEFAULT_SESSION_TTL);
+                watchingSessionPresenceWriter.write(watcherId, contentId, sessionId, subscriptionId, now, watchingSessionProperties.getPresenceTtl());
             }
         } finally {
             // validateContentExists()가 CONTENT_NOT_FOUND를 던지는 경로에서도 락 엔트리가 남지 않아야 함
@@ -334,6 +335,44 @@ public class WatchingSessionService {
             .replace(LIKE_ESCAPE_CHAR, LIKE_ESCAPE_CHAR + LIKE_ESCAPE_CHAR)
             .replace("%", LIKE_ESCAPE_CHAR + "%")
             .replace("_", LIKE_ESCAPE_CHAR + "_");
+    }
+
+     // 시청 중 신호를 받아 presence TTL과 DB 스냅샷 만료 시각을 함께 연장
+    // 소유권 확인만 임계구역 안에서 수행하고 DB UPDATE와 Redis expire는 밖에서 처리 (두 갱신이 모두 조건부라 락 밖으로 빼도 안전)
+    public void heartbeat(UUID watcherId, UUID contentId, String sessionId, String subscriptionId) {
+        SubscriptionOwner requester = new SubscriptionOwner(sessionId, subscriptionId);
+
+        WatcherLock watcherLock = acquireWatcherLock(watcherId);
+        try {
+            synchronized (watcherLock) {
+                if (!requester.equals(activeSessions.get(watcherId))) {
+                    // 낡은 탭이거나 재구독 전환 중이라 다음 heartbeat에서 정상화됨 -> 무동작
+                    log.debug("소유권이 없는 heartbeat 무시: watcherId={}, contentId={}", watcherId, contentId);
+                    return;
+                }
+            }
+        } finally {
+            releaseWatcherLock(watcherId);
+        }
+
+        Instant now = Instant.now();
+        try {
+            int renewed = watchingSessionSnapshotWriter.renewExpiresAt(
+                watcherId, contentId, now, now.plus(watchingSessionProperties.getSessionTtl()));
+
+                if (renewed == 0) {
+                    log.debug("연장할 활성 세션이 없어 heartbeat 종료: watcherId={}, contentId={}", watcherId,
+                        contentId);
+                    return;
+                }
+        } catch (RuntimeException e) {
+            log.error("세션 만료 시각 갱신 실패: watcherId={}, contentId={}", watcherId, contentId, e);
+            return;
+        }
+
+        if (!watchingSessionPresenceWriter.renew(watcherId, watchingSessionProperties.getPresenceTtl())) {
+            log.warn("presence 키가 없어 TTL을 갱신하지 못함: watcherId={}", watcherId);
+        }
     }
 
 }

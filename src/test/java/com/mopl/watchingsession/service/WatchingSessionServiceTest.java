@@ -3,6 +3,7 @@ package com.mopl.watchingsession.service;
 import static java.util.Collections.synchronizedList;
 import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -23,12 +24,14 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.util.CursorUtils;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
+import com.mopl.watchingsession.config.WatchingSessionProperties;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -39,9 +42,11 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -53,9 +58,6 @@ import org.springframework.test.util.ReflectionTestUtils;
 @MockitoSettings(strictness = Strictness.LENIENT)
 @ExtendWith(MockitoExtension.class)
 public class WatchingSessionServiceTest {
-
-    private static final String SUBSCRIPTION_ID = "sub-1";
-    private static final String OTHER_SUBSCRIPTION_ID = "sub-2";
 
     @Mock
     WatchingSessionSnapshotRepository watchingSessionSnapshotRepository;
@@ -70,6 +72,9 @@ public class WatchingSessionServiceTest {
     WatchingSessionPresenceWriter watchingSessionPresenceWriter;
 
     @Mock
+    WatchingSessionProperties watchingSessionProperties;
+
+    @Mock
     UserRepository userRepository;
 
     @InjectMocks
@@ -82,6 +87,16 @@ public class WatchingSessionServiceTest {
     private static final Instant FIRST_CREATED_AT = Instant.parse("2026-07-29T10:00:00Z");
     private static final String SESSION_ID = "session-123";
     private static final String OTHER_SESSION_ID = "session-999";
+    private static final String SUBSCRIPTION_ID = "sub-1";
+    private static final String OTHER_SUBSCRIPTION_ID = "sub-2";
+    private static final Duration DEFAULT_SESSION_TTL_FIXTURE = Duration.ofMinutes(30);
+    private static final Duration DEFAULT_PRESENCE_TTL_FIXTURE = Duration.ofSeconds(60);
+
+    @BeforeEach
+    void setUpDefaultTtlStubs() {
+        when(watchingSessionProperties.getSessionTtl()).thenReturn(DEFAULT_SESSION_TTL_FIXTURE);
+        when(watchingSessionProperties.getPresenceTtl()).thenReturn(DEFAULT_PRESENCE_TTL_FIXTURE);
+    }
 
     // Content 도메인 전용 헬퍼
     private void mockContentExists(UUID contentId) {
@@ -153,17 +168,19 @@ public class WatchingSessionServiceTest {
     }
 
     @Test
-    @DisplayName("start() 성공 시 presence writer에 소유권 정보와 TTL을 기록")
+    @DisplayName("start() 성공 시 presence writer에 소유권 정보와 설정된 TTL을 기록")
     void start_success_writesPresence() {
         mockContentExists(CONTENT_ID);
         mockUserExists(WATCHER_ID);
         when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
             .thenReturn(createSnapshotFixture(CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT, FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS)));
+        Duration presenceTtl = Duration.ofSeconds(60);
+        when(watchingSessionProperties.getPresenceTtl()).thenReturn(presenceTtl);
 
         watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
 
         verify(watchingSessionPresenceWriter).write(
-            eq(WATCHER_ID), eq(CONTENT_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), any(), any());
+            eq(WATCHER_ID), eq(CONTENT_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), any(), eq(presenceTtl));
     }
 
     @Test
@@ -996,5 +1013,105 @@ public class WatchingSessionServiceTest {
         assertThat(watcherLockMapSize())
             .as("N명의 watcher가 정상 종료했음에도 락 맵 크기가 N으로 단조 증가하면 안 됨")
             .isZero();
+    }
+
+    /* --- heartbeat() 메서드 검증 --- */
+
+    @Test
+    @DisplayName("소유권이 일치하면 DB expiresAt과 Redis presence TTL을 함께 갱신한다")
+    void heartbeat_success_renewsDbAndPresence_whenOwnershipMatches() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(createSnapshotFixture(CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT, FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS)));
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        when(watchingSessionSnapshotWriter.renewExpiresAt(eq(WATCHER_ID), eq(CONTENT_ID), any(), any()))
+            .thenReturn(1);
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        ArgumentCaptor<Instant> renewedAt = ArgumentCaptor.forClass(Instant.class);
+        ArgumentCaptor<Instant> expiresAt = ArgumentCaptor.forClass(Instant.class);
+        verify(watchingSessionSnapshotWriter).renewExpiresAt(eq(WATCHER_ID), eq(CONTENT_ID),
+            renewedAt.capture(), expiresAt.capture());
+        assertThat(expiresAt.getValue()).isEqualTo(renewedAt.getValue().plus(DEFAULT_SESSION_TTL_FIXTURE));
+        verify(watchingSessionPresenceWriter)
+            .renew(eq(WATCHER_ID), eq(DEFAULT_PRESENCE_TTL_FIXTURE));
+    }
+
+    @Test
+    @DisplayName("소유권이 일치하지 않으면(낡은 탭·재구독으로 밀려남) DB·Redis 어느 쪽도 갱신하지 않는다")
+    void heartbeat_noop_whenOwnershipMismatches() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        when(watchingSessionSnapshotWriter.upsert(any(), any(), any()))
+            .thenReturn(createSnapshotFixture(CONTENT_ID, Instant.now(), Instant.now(), Instant.now()));
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        // 다른 sessionId로 도착한 heartbeat (다른 탭에서 이미 소유권을 넘겨받은 상황을 흉내)
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, OTHER_SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionSnapshotWriter, never()).renewExpiresAt(any(), any(), any(), any());
+        verify(watchingSessionPresenceWriter, never()).renew(any(), any());
+    }
+
+    @Test
+    @DisplayName("활성 세션(메모리 소유권)이 없으면 DB·Redis 어느 쪽도 갱신하지 않는다")
+    void heartbeat_noop_whenNoActiveSession() {
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionSnapshotWriter, never()).renewExpiresAt(any(), any(), any(), any());
+        verify(watchingSessionPresenceWriter, never()).renew(any(), any());
+    }
+
+    @Test
+    @DisplayName("DB 갱신이 0건이면(그 사이 end()로 삭제됨) Redis presence는 갱신하지 않는다")
+    void heartbeat_skipsPresenceRenew_whenDbRenewReturnsZero() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        when(watchingSessionSnapshotWriter.upsert(any(), any(), any()))
+            .thenReturn(createSnapshotFixture(CONTENT_ID, Instant.now(), Instant.now(), Instant.now()));
+       watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any(), any())).thenReturn(0);
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionSnapshotWriter).renewExpiresAt(any(), any(), any(), any());
+        verify(watchingSessionPresenceWriter, never()).renew(any(), any());
+    }
+
+    @Test
+    @DisplayName("DB 갱신 중 예외가 발생해도 호출자에게 전파되지 않고 Redis 갱신도 시도하지 않는다")
+    void heartbeat_isolatesDbFailure() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        when(watchingSessionSnapshotWriter.upsert(any(), any(), any()))
+            .thenReturn(createSnapshotFixture(CONTENT_ID, Instant.now(), Instant.now(), Instant.now()));
+       watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any(), any()))
+            .thenThrow(new RuntimeException("DB 연결 끊김"));
+
+        assertThatCode(() ->
+            watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
+            .doesNotThrowAnyException();
+
+        verify(watchingSessionPresenceWriter, never()).renew(any(), any());
+    }
+
+    @Test
+    @DisplayName("heartbeat 처리 후 watcherLocks 맵에 엔트리가 남지 않는다")
+    void heartbeat_stillReleasesWatcherLock() throws Exception {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        when(watchingSessionSnapshotWriter.upsert(any(), any(), any()))
+            .thenReturn(createSnapshotFixture(CONTENT_ID, Instant.now(), Instant.now(), Instant.now()));
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(watcherLockMapSize()).isZero();
     }
 }
