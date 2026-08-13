@@ -32,6 +32,7 @@ import com.mopl.user.controller.AuthController;
 import com.mopl.user.controller.UserController;
 import com.mopl.user.service.AuthService;
 import com.mopl.user.service.UserService;
+import com.mopl.user.service.RefreshTokenService;
 import com.mopl.watchingsession.controller.WatchingSessionController;
 import com.mopl.watchingsession.service.WatchingSessionService;
 import java.io.InputStream;
@@ -126,6 +127,7 @@ class OpenApiRuntimeContractTest {
         "GET /api/playlists/{playlistId}",
         "GET /api/playlists/{playlistId}/subscribers",
         "GET /api/reviews",
+        "GET /api/reviews/me",
         "GET /api/users",
         "GET /api/users/{userId}",
         "GET /api/users/{watcherId}/watching-sessions",
@@ -137,6 +139,7 @@ class OpenApiRuntimeContractTest {
         "PATCH /api/users/{userId}/password",
         "PATCH /api/users/{userId}/role",
         "POST /api/auth/sign-in",
+        "POST /api/auth/refresh",
         "POST /api/contents",
         "POST /api/conversations",
         "POST /api/conversations/{conversationId}/direct-messages/{directMessageId}/read",
@@ -178,6 +181,9 @@ class OpenApiRuntimeContractTest {
 
     @MockitoBean
     AuthService authService;
+
+    @MockitoBean
+    RefreshTokenService refreshTokenService;
 
     @MockitoBean
     RefreshTokenCookieFactory refreshTokenCookieFactory;
@@ -239,6 +245,28 @@ class OpenApiRuntimeContractTest {
             .andExpect(
                 jsonPath(
                     "$.paths['/api/auth/sign-in']"
+                        + ".post.responses['200']"
+                        + ".headers['Set-Cookie']"
+                        + ".schema.type"
+                ).value("string")
+            );
+    }
+
+    /**
+     * 토큰 재발급 성공 응답에도 교체된 Refresh Token을 전달하는
+     * Set-Cookie 헤더가 런타임 OpenAPI 문서에 포함되는지 검증
+     */
+    @Test
+    void documentsRefreshTokenCookieHeaderOnRefreshSuccess()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/v3/api-docs")
+            )
+            .andExpect(status().isOk())
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/refresh']"
                         + ".post.responses['200']"
                         + ".headers['Set-Cookie']"
                         + ".schema.type"

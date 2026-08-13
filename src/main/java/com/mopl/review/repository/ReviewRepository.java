@@ -4,6 +4,7 @@ import com.mopl.review.entity.Review;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -12,6 +13,8 @@ import org.springframework.data.repository.query.Param;
 public interface ReviewRepository extends JpaRepository<Review, UUID> {
 
     boolean existsByAuthorIdAndContentId(UUID authorId, UUID contentId);
+
+    Optional<Review> findByAuthorIdAndContentId(UUID authorId, UUID contentId);
 
     @Query(value = """
             SELECT COUNT(*) FROM reviews

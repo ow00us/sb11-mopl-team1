@@ -222,6 +222,77 @@ class ReviewControllerTest {
                 .andExpect(status().isBadRequest());
     }
 
+    // ── GET /api/reviews/me ──────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("내 리뷰 조회 성공 시 200과 ReviewDto를 반환한다")
+    void getMyReview_success() throws Exception {
+        setAuth(AUTHOR_ID);
+        when(reviewService.getMyReview(CONTENT_ID, AUTHOR_ID)).thenReturn(sampleDto());
+
+        mockMvc.perform(get("/api/reviews/me").param("contentId", CONTENT_ID.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(REVIEW_ID.toString()))
+                .andExpect(jsonPath("$.author.userId").value(AUTHOR_ID.toString()));
+    }
+
+    @Test
+    @DisplayName("미인증 사용자가 내 리뷰 조회 시도 시 401을 반환한다")
+    void getMyReview_fail_unauthorized() throws Exception {
+        mockMvc.perform(get("/api/reviews/me").param("contentId", CONTENT_ID.toString()))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(reviewService);
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 콘텐츠에 대한 내 리뷰 조회 시 404를 반환한다")
+    void getMyReview_fail_contentNotFound() throws Exception {
+        setAuth(AUTHOR_ID);
+        when(reviewService.getMyReview(CONTENT_ID, AUTHOR_ID))
+                .thenThrow(new BusinessException(ErrorCode.CONTENT_NOT_FOUND));
+
+        mockMvc.perform(get("/api/reviews/me").param("contentId", CONTENT_ID.toString()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("CONTENT_404_1"));
+    }
+
+    @Test
+    @DisplayName("본인이 작성한 리뷰가 없으면 404를 반환한다")
+    void getMyReview_fail_reviewNotFound() throws Exception {
+        setAuth(AUTHOR_ID);
+        when(reviewService.getMyReview(CONTENT_ID, AUTHOR_ID))
+                .thenThrow(new BusinessException(ErrorCode.REVIEW_NOT_FOUND));
+
+        mockMvc.perform(get("/api/reviews/me").param("contentId", CONTENT_ID.toString()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("REVIEW_404_1"));
+    }
+
+    @Test
+    @DisplayName("contentId 파라미터가 없으면 400을 반환한다")
+    void getMyReview_fail_missingContentId() throws Exception {
+        setAuth(AUTHOR_ID);
+
+        mockMvc.perform(get("/api/reviews/me"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
+
+        verifyNoInteractions(reviewService);
+    }
+
+    @Test
+    @DisplayName("contentId가 UUID 형식이 아니면 400을 반환한다")
+    void getMyReview_fail_invalidContentIdFormat() throws Exception {
+        setAuth(AUTHOR_ID);
+
+        mockMvc.perform(get("/api/reviews/me").param("contentId", "not-a-uuid"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("COMMON_400_1"));
+
+        verifyNoInteractions(reviewService);
+    }
+
     // ── PATCH /api/reviews/{reviewId} ───────────────────────────────────────
 
     @Test

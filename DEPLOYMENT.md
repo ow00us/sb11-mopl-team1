@@ -23,10 +23,19 @@ Dockerfile은 빌드 단계와 실행 단계를 분리합니다. 실행 이미�
 | `JWT_SECRET` | HS256용 32바이트 이상 키를 Base64로 인코딩한 값 |
 | `CORS_ALLOWED_ORIGINS` | 브라우저 REST 요청을 허용할 프론트엔드 origin 목록 |
 | `WS_ALLOWED_ORIGINS` | WebSocket handshake를 허용할 프론트엔드 origin 목록 |
+| `KAFKA_BOOTSTRAP_SERVERS` | Kafka bootstrap 주소 목록 |
 
 여러 origin은 쉼표로 구분합니다. 실제 비밀 값은 저장소나 이미지에 포함하지 않고 배포 환경의 Secret으로 주입합니다.
 
 `JWT_ACCESS_TOKEN_EXPIRATION`은 선택 값이며, 지정하지 않으면 애플리케이션 기본값 `30m`을 사용합니다.
+
+`KAFKA_TOPIC_VERIFY`는 선택 값이며 기본값은 `false`입니다. `true`로 두면 기동 시 필요한 토픽과 DLT가 있는지 확인하고 없으면 기동을 실패시킵니다. 애플리케이션 기동이 Kafka 가용성에 묶이므로, 브로커가 보장되는 환경에서만 켭니다. 운영 토픽은 애플리케이션이 만들지 않으므로(`KAFKA_TOPIC_AUTO_CREATE` 기본 동작과 무관하게 prod는 생성하지 않습니다) 배포 전에 다음 토픽을 준비합니다.
+
+```text
+mopl.follow.events        mopl.follow.events.DLT
+mopl.playlist.events      mopl.playlist.events.DLT
+mopl.premiere.events      mopl.premiere.events.DLT
+```
 
 ## 실행 예시
 
@@ -45,6 +54,7 @@ docker run --rm \
   -e JWT_SECRET=<base64-secret> \
   -e CORS_ALLOWED_ORIGINS=<frontend-origin> \
   -e WS_ALLOWED_ORIGINS=<frontend-origin> \
+  -e KAFKA_BOOTSTRAP_SERVERS=mopl-kafka:9092 \
   mopl:local
 ```
 
