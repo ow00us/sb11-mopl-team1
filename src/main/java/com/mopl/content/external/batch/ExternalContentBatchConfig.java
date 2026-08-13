@@ -20,11 +20,14 @@ import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
 import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.builder.JobBuilder;
+import org.springframework.batch.core.launch.JobLauncher;
+import org.springframework.batch.core.launch.support.TaskExecutorJobLauncher;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.item.ItemWriter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
 import org.springframework.transaction.PlatformTransactionManager;
 
 @Configuration
@@ -44,6 +47,15 @@ public class ExternalContentBatchConfig {
     private final ExternalContentBatchProperties batchProperties;
     private final SportsDbProperties sportsDbProperties;
     private final MeterRegistry meterRegistry;
+
+    @Bean
+    public JobLauncher jobLauncher() throws Exception {
+        TaskExecutorJobLauncher jobLauncher = new TaskExecutorJobLauncher();
+        jobLauncher.setJobRepository(jobRepository);
+        jobLauncher.setTaskExecutor(new SimpleAsyncTaskExecutor("external-content-batch-"));
+        jobLauncher.afterPropertiesSet();
+        return jobLauncher;
+    }
 
     @Bean
     public Job externalContentCollectionJob() {

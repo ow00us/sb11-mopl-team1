@@ -30,6 +30,6 @@ public class ExternalContentJobScheduler {
                 .addLocalDateTime("runDateTime", LocalDateTime.now())
                 .toJobParameters();
         JobExecution execution = jobLauncher.run(externalContentCollectionJob, jobParameters);
-        log.info("외부 콘텐츠 수집 Job 실행 완료: status={}", execution.getStatus());
+        log.info("외부 콘텐츠 수집 Job 실행 시작: jobExecutionId={}, status={}", execution.getId(), execution.getStatus());
     }
 }
