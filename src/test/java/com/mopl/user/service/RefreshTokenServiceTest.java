@@ -723,6 +723,170 @@ class RefreshTokenServiceTest {
         );
     }
 
+    @Test
+    @DisplayName("로그아웃 시 현재 사용자의 Refresh Token 세션을 폐기한다")
+    void signOut_revokesCurrentRefreshTokenSession() {
+        // given
+        UUID authenticatedUserId = UUID.randomUUID();
+        String rawRefreshToken = "current-refresh-token";
+        String tokenHash = "a".repeat(64);
+
+        when(
+            refreshTokenHasher.hash(rawRefreshToken)
+        ).thenReturn(tokenHash);
+
+        when(
+            refreshTokenStore.revoke(
+                authenticatedUserId,
+                tokenHash
+            )
+        ).thenReturn(true);
+
+        // when
+        refreshTokenService.signOut(
+            authenticatedUserId,
+            rawRefreshToken
+        );
+
+        // then
+        verify(refreshTokenHasher)
+            .hash(rawRefreshToken);
+
+        verify(refreshTokenStore)
+            .revoke(
+                authenticatedUserId,
+                tokenHash
+            );
+
+        /*
+         * 로그아웃은 Access Token 인증 결과와 Redis 세션만 사용하므로
+         * 사용자 DB 조회, 새 토큰 생성과 JWT 발급은 수행하지 않는다.
+         */
+        verifyNoInteractions(
+            userRepository,
+            refreshTokenGenerator,
+            refreshTokenProperties,
+            jwtProvider
+        );
+    }
+
+    @Test
+    @DisplayName("이미 폐기된 Refresh Token으로 로그아웃해도 정상 종료한다")
+    void signOut_succeedsWhenSessionIsAlreadyRevoked() {
+        // given
+        UUID authenticatedUserId = UUID.randomUUID();
+        String rawRefreshToken = "already-revoked-token";
+        String tokenHash = "b".repeat(64);
+
+        when(
+            refreshTokenHasher.hash(rawRefreshToken)
+        ).thenReturn(tokenHash);
+
+        /*
+         * 세션이 이미 만료되거나 폐기되어 실제 삭제할 값이 없는 상황
+         */
+        when(
+            refreshTokenStore.revoke(
+                authenticatedUserId,
+                tokenHash
+            )
+        ).thenReturn(false);
+
+        // when
+        refreshTokenService.signOut(
+            authenticatedUserId,
+            rawRefreshToken
+        );
+
+        // then
+        /*
+         * revoke()가 false여도 예외 없이 종료되어
+         * 반복 로그아웃의 멱등성이 유지되어야 한다.
+         */
+        verify(refreshTokenHasher)
+            .hash(rawRefreshToken);
+
+        verify(refreshTokenStore)
+            .revoke(
+                authenticatedUserId,
+                tokenHash
+            );
+    }
+
+    @Test
+    @DisplayName("Refresh Token Cookie가 없으면 저장소를 호출하지 않고 로그아웃한다")
+    void signOut_succeedsWithoutRefreshTokenCookie() {
+        // given
+        UUID authenticatedUserId = UUID.randomUUID();
+
+        // when
+        refreshTokenService.signOut(
+            authenticatedUserId,
+            null
+        );
+
+        // then
+        verifyNoInteractions(
+            userRepository,
+            refreshTokenGenerator,
+            refreshTokenHasher,
+            refreshTokenProperties,
+            refreshTokenStore,
+            jwtProvider
+        );
+    }
+
+    @Test
+    @DisplayName("Refresh Token Cookie가 공백이면 저장소를 호출하지 않고 로그아웃한다")
+    void signOut_succeedsWithBlankRefreshTokenCookie() {
+        // given
+        UUID authenticatedUserId = UUID.randomUUID();
+
+        // when
+        refreshTokenService.signOut(
+            authenticatedUserId,
+            "   "
+        );
+
+        // then
+        verifyNoInteractions(
+            userRepository,
+            refreshTokenGenerator,
+            refreshTokenHasher,
+            refreshTokenProperties,
+            refreshTokenStore,
+            jwtProvider
+        );
+    }
+
+    @Test
+    @DisplayName("인증 사용자 UUID가 없으면 로그아웃에 실패한다")
+    void signOut_failsWhenAuthenticatedUserIdIsNull() {
+        // when & then
+        assertThatThrownBy(() ->
+            refreshTokenService.signOut(
+                null,
+                "refresh-token"
+            )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.UNAUTHORIZED);
+
+        /*
+         * 인증 사용자 확인이 가장 먼저 수행되어야 하므로
+         * 토큰 해시와 Redis 접근을 포함한 어떤 작업도 실행하지 않는다.
+         */
+        verifyNoInteractions(
+            userRepository,
+            refreshTokenGenerator,
+            refreshTokenHasher,
+            refreshTokenProperties,
+            refreshTokenStore,
+            jwtProvider
+        );
+    }
+
     /**
      * Refresh Token 재발급 테스트에 사용할 사용자 엔티티를 생성
      *

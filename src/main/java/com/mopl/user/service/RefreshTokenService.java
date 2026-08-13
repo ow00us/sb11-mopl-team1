@@ -327,4 +327,77 @@ public class RefreshTokenService {
             issuedRefreshToken
         );
     }
+
+    /**
+     * 인증된 사용자의 현재 Refresh Token 세션을 폐기
+     *
+     * <p>로그아웃 요청에 Refresh Token Cookie가 포함되어 있다면
+     * 원문을 SHA-256으로 해시한 뒤, 인증된 사용자 UUID와 함께
+     * RefreshTokenStore에 전달합니다.</p>
+     *
+     * <p>Cookie가 없거나 비어 있는 경우와 이미 만료·폐기된 세션은
+     * 이미 로그아웃된 상태와 동일하므로 예외를 발생시키지 않습니다.
+     * 이를 통해 같은 로그아웃 요청을 반복해도 결과가 달라지지 않는
+     * 멱등성을 보장합니다.</p>
+     *
+     * <p>저장소는 세션에 저장된 사용자 UUID와 인증된 사용자 UUID가
+     * 일치하는 경우에만 세션을 폐기합니다. 따라서 다른 사용자가
+     * 소유한 Refresh Token 세션은 삭제되지 않습니다.</p>
+     *
+     * @param authenticatedUserId Access Token 인증 사용자 UUID
+     * @param rawRefreshToken REFRESH_TOKEN Cookie 원문, 없으면 null
+     * @throws BusinessException 인증 사용자 UUID가 없는 경우
+     */
+    public void signOut(
+        UUID authenticatedUserId,
+        String rawRefreshToken
+    ) {
+        /*
+         * 로그아웃 API는 기존 OpenAPI 계약에 따라 유효한 Access Token이
+         * 필요한 보호 API
+         *
+         * 실제 HTTP 요청에서는 SecurityFilterChain이 인증되지 않은 요청을
+         * 먼저 차단하지만, Service를 직접 호출하거나 인증 정보 전달에
+         * 문제가 생기는 경우를 대비해 Service에서도 확인
+         */
+        if (authenticatedUserId == null) {
+            throw new BusinessException(
+                ErrorCode.UNAUTHORIZED
+            );
+        }
+
+        /*
+         * Refresh Token Cookie가 없거나 공백이면 Redis에서 폐기할
+         * 현재 기기 세션이 없는 상태
+         *
+         * 이미 로그아웃된 사용자에게 다시 로그아웃을 요청해도
+         * 동일하게 성공하도록 아무 작업 없이 종료
+         */
+        if (
+            rawRefreshToken == null
+                || rawRefreshToken.isBlank()
+        ) {
+            return;
+        }
+
+        /*
+         * Redis에는 Refresh Token 원문이 아닌 SHA-256 해시만 저장하므로
+         * Cookie로 전달된 원문도 동일한 방식으로 해시
+         */
+        String tokenHash =
+            refreshTokenHasher.hash(rawRefreshToken);
+
+        /*
+         * 저장소에서 세션 소유자 확인과 세션 Key·사용자 인덱스 삭제를
+         * 원자적으로 수행
+         *
+         * 반환값이 false이면 세션이 이미 없거나 다른 사용자의 세션이라는
+         * 뜻이지만, 로그아웃 API의 멱등성을 위해 예외를 발생시키지 않는다.
+         * 브라우저 Cookie 삭제는 Controller에서 별도로 항상 수행
+         */
+        refreshTokenStore.revoke(
+            authenticatedUserId,
+            tokenHash
+        );
+    }
 }
