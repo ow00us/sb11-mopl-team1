@@ -47,7 +47,7 @@ public class PlaylistServiceImpl implements PlaylistService {
     private static final String DIRECTION_ASC        = "ASCENDING";
     private static final String DIRECTION_DESC       = "DESCENDING";
     private static final String PG_UNIQUE_VIOLATION_SQLSTATE = "23505";
-    private static final String UNKNOWN_OWNER_NAME = "알 수 없는 사용자";
+    private static final String UNKNOWN_USER_NAME = "알 수 없는 사용자";
 
     private final PlaylistRepository playlistRepository;
     private final PlaylistSubscriptionRepository subscriptionRepository;
@@ -110,12 +110,12 @@ public class PlaylistServiceImpl implements PlaylistService {
         Map<UUID, List<ContentSummary>> contentsByPlaylistId = loadContentsBatch(pageIds);
 
         List<UUID> ownerIds = page.stream().map(Playlist::getOwnerId).distinct().toList();
-        Map<UUID, UserSummary> ownersById = toOwnerSummaryMap(ownerIds);
+        Map<UUID, UserSummary> ownersById = toUserSummaryMap(ownerIds);
 
         List<PlaylistDto> data = page.stream()
                 .map(p -> PlaylistDto.from(
                         p,
-                        ownersById.getOrDefault(p.getOwnerId(), unknownOwnerSummary(p.getOwnerId())),
+                        ownersById.getOrDefault(p.getOwnerId(), unknownUserSummary(p.getOwnerId())),
                         finalSubscribedIds.contains(p.getId()),
                         contentsByPlaylistId.getOrDefault(p.getId(), List.of())))
                 .toList();
@@ -176,12 +176,12 @@ public class PlaylistServiceImpl implements PlaylistService {
         Map<UUID, List<ContentSummary>> contentsByPlaylistId = loadContentsBatch(pageIds);
 
         List<UUID> ownerIds = page.stream().map(Playlist::getOwnerId).distinct().toList();
-        Map<UUID, UserSummary> ownersById = toOwnerSummaryMap(ownerIds);
+        Map<UUID, UserSummary> ownersById = toUserSummaryMap(ownerIds);
 
         List<PlaylistDto> data = page.stream()
                 .map(p -> PlaylistDto.from(
                         p,
-                        ownersById.getOrDefault(p.getOwnerId(), unknownOwnerSummary(p.getOwnerId())),
+                        ownersById.getOrDefault(p.getOwnerId(), unknownUserSummary(p.getOwnerId())),
                         finalSubscribedIds.contains(p.getId()),
                         contentsByPlaylistId.getOrDefault(p.getId(), List.of())))
                 .toList();
@@ -379,11 +379,11 @@ public class PlaylistServiceImpl implements PlaylistService {
         return userRepository.findAllById(List.of(ownerId)).stream()
                 .findFirst()
                 .map(this::toUserSummary)
-                .orElseGet(() -> unknownOwnerSummary(ownerId));
+                .orElseGet(() -> unknownUserSummary(ownerId));
     }
 
     // 페이지 owner 배치 조회. findAllById 1회로 N+1을 방지한다.
-    private Map<UUID, UserSummary> toOwnerSummaryMap(List<UUID> ownerIds) {
+    private Map<UUID, UserSummary> toUserSummaryMap(List<UUID> ownerIds) {
         if (ownerIds.isEmpty()) return Map.of();
         return userRepository.findAllById(ownerIds).stream()
                 .collect(Collectors.toMap(User::getId, this::toUserSummary));
@@ -394,8 +394,8 @@ public class PlaylistServiceImpl implements PlaylistService {
     }
 
     // owner user 가 조회되지 않은 경우의 대체값 (ReviewServiceImpl 의 UNKNOWN_AUTHOR_NAME 정책과 동일)
-    private UserSummary unknownOwnerSummary(UUID ownerId) {
-        return new UserSummary(ownerId, UNKNOWN_OWNER_NAME, null);
+    private UserSummary unknownUserSummary(UUID ownerId) {
+        return new UserSummary(ownerId, UNKNOWN_USER_NAME, null);
     }
 
     @Override
@@ -474,10 +474,13 @@ public class PlaylistServiceImpl implements PlaylistService {
             nextIdAfter = last.getId();
         }
 
+        List<UUID> subscriberIds = page.stream().map(PlaylistSubscription::getSubscriberId).distinct().toList();
+        Map<UUID, UserSummary> usersById = toUserSummaryMap(subscriberIds);
+
         List<SubscriberItemDto> data = page.stream()
                 .map(s -> new SubscriberItemDto(
                         s.getId(),
-                        new UserSummary(s.getSubscriberId(), null, null),
+                        usersById.getOrDefault(s.getSubscriberId(), unknownUserSummary(s.getSubscriberId())),
                         s.getCreatedAt()))
                 .toList();
 
