@@ -65,4 +65,21 @@ public final class CursorUtils {
         }
         return new LongPair(Long.parseLong(parts[0]), Long.parseLong(parts[1]));
     }
+
+    /** 인기 랭킹 커서 3-tuple. id 는 idAfter 파라미터로 별도 전달하므로 이 record 에 포함하지 않는다. */
+    public record PopularCursor(long subscriberCount, Instant updatedAt) {}
+
+    /** 인기 랭킹 커서를 인코딩합니다. 형식: base64("<count>:<updatedAt.toString()>"). */
+    public static String encodePopularCursor(long subscriberCount, Instant updatedAt) {
+        return encode(subscriberCount + ":" + updatedAt.toString());
+    }
+
+    /** 커서 문자열을 인기 랭킹 3-tuple 로 디코딩합니다. Instant.toString() 이 콜론을 포함하므로 첫 콜론만 구분자로 사용합니다. */
+    public static PopularCursor decodeAsPopularCursor(String cursor) {
+        String[] parts = decode(cursor).split(":", 2);
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("잘못된 커서 형식입니다.");
+        }
+        return new PopularCursor(Long.parseLong(parts[0]), Instant.parse(parts[1]));
+    }
 }

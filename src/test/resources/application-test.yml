@@ -28,6 +28,11 @@ mopl:
 jwt:
   secret: MVB4n0vCRFADVbcto73tHp0Ghw2bWmriymBGLOuR2Q4=
 
+watching-session:
+  presence-ttl: 2s
+  session-ttl: 3s
+  heartbeat-interval: 500ms
+
 tmdb:
   access-token: test-dummy-token
   image-base-url: https://image.tmdb.org/t/p/w500

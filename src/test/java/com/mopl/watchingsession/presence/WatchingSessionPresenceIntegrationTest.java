@@ -7,6 +7,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,6 +50,11 @@ public class WatchingSessionPresenceIntegrationTest {
 
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
+
+    @BeforeEach
+    void clearPresenceKeys() {
+        redisTemplate.delete(KEY);
+    }
 
     @Test
     @DisplayName("write()는 실제 Redis에 WatchingPresence 값을 그대로 저장한다")
@@ -114,9 +120,37 @@ public class WatchingSessionPresenceIntegrationTest {
         assertThat(redisTemplate.hasKey("mopl:presence:watcher:" + neverWrittenWatcherId)).isFalse();
     }
 
+    @Test
+    @DisplayName("renew()는 실제 Redis에서 기존 키의 TTL을 재설정한다")
+    void renew_actuallyResetsTtlInRedis() {
+        writer.write(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), Duration.ofSeconds(5));
 
+        boolean result = writer.renew(WATCHER_ID, Duration.ofSeconds(60));
 
+        assertThat(result).isTrue();
+        Long ttl = redisTemplate.getExpire(KEY, TimeUnit.SECONDS);
+        assertThat(ttl).isGreaterThan(5).isLessThanOrEqualTo(60);
+    }
 
+    @Test
+    @DisplayName("renew()는 존재하지 않는 키에 대해 false를 반환하고 키를 새로 생성하지 않는다")
+    void renew_doesNotCreateKey_whenKeyDoesNotExists() {
+        boolean result = writer.renew(WATCHER_ID, Duration.ofSeconds(60));
 
+        assertThat(result).isFalse();
+        assertThat(redisTemplate.hasKey(KEY)).isFalse();
+    }
 
+    @Test
+    @DisplayName("renew()는 저장된 presence 값 자체는 변경하지 않는다")
+    void renew_doesNotModifyStoredValue() {
+        Instant startedAt = Instant.now();
+        writer.write(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, startedAt, DEFAULT_TTL);
+
+        writer.renew(WATCHER_ID, Duration.ofSeconds(60));
+
+        WatchingPresence presence = (WatchingPresence) redisTemplate.opsForValue().get(KEY);
+        assertThat(presence.contentId()).isEqualTo(CONTENT_ID);
+        assertThat(presence.startedAt()).isEqualTo(startedAt);
+    }
 }

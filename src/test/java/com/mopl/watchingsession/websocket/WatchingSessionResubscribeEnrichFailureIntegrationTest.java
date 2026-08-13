@@ -12,6 +12,7 @@ import com.mopl.content.entity.ContentType;
 import com.mopl.content.repository.ContentRepository;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.security.JwtProvider;
+import com.mopl.support.websocket.StompTestCleanup;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
@@ -37,7 +38,6 @@ import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
@@ -133,18 +133,13 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        disconnectQuietly(session);
-        disconnectQuietly(observerSession);
-
-        if (stompClient != null) {
-            stompClient.stop();
+        try {
+            StompTestCleanup.closeAll(stompClient, taskScheduler, session, observerSession);
+        } finally {
+            snapshotRepository.deleteAll();
+            contentRepository.deleteAll();
+            userRepository.deleteAll();
         }
-        if (taskScheduler != null) {
-            taskScheduler.shutdown();
-        }
-        snapshotRepository.deleteAll();
-        contentRepository.deleteAll();
-        userRepository.deleteAll();
     }
 
     private WebSocketStompClient createNativeStompClient() {
@@ -165,16 +160,6 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
         scheduler.setThreadNamePrefix("watch-e2e-regression-client-");
         scheduler.initialize();
         return scheduler;
-    }
-
-    private void disconnectQuietly(StompSession target) {
-        if (target != null && target.isConnected()) {
-            try {
-                target.disconnect();
-            } catch (MessageDeliveryException ignored) {
-                // ERROR 프레임 처리 직후 서버가 먼저 연결을 닫을 수 있습니다.
-            }
-        }
     }
 
     private String presenceKey(UUID watcherId) {
