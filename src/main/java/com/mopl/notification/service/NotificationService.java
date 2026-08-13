@@ -6,6 +6,7 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.notification.dto.NotificationDto;
 import com.mopl.notification.entity.Notification;
 import com.mopl.notification.entity.NotificationLevel;
+import com.mopl.notification.entity.NotificationType;
 import com.mopl.notification.event.NotificationCreatedEvent;
 import com.mopl.notification.repository.NotificationRepository;
 import java.time.Instant;
@@ -40,9 +41,35 @@ public class NotificationService {
         String content,
         NotificationLevel level
     ) {
+        return create(
+            receiverId,
+            sourceEventId,
+            null,
+            null,
+            null,
+            title,
+            content,
+            level
+        );
+    }
+
+    @Transactional
+    public NotificationDto create(
+        UUID receiverId,
+        UUID sourceEventId,
+        NotificationType type,
+        UUID resourceId,
+        UUID sourceEntityId,
+        String title,
+        String content,
+        NotificationLevel level
+    ) {
         Notification notification = Notification.create(
             receiverId,
             sourceEventId,
+            type,
+            resourceId,
+            sourceEntityId,
             title,
             content,
             level
