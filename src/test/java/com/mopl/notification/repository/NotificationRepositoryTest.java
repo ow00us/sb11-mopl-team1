@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.mopl.global.config.JpaConfig;
 import com.mopl.notification.entity.Notification;
 import com.mopl.notification.entity.NotificationLevel;
+import com.mopl.notification.entity.NotificationType;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
@@ -129,6 +130,56 @@ class NotificationRepositoryTest {
         assertThat(result.get().getReadAt()).isNull();
         assertThat(result.get().getCreatedAt()).isNotNull();
         assertThat(result.get().getUpdatedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("알림 유형과 대상 정보를 저장하고 조회")
+    void saveAndFindByTargetInformation_success() {
+        // given
+        UUID sourceEventId = UUID.fromString(
+            "33333333-3333-3333-3333-333333333333"
+        );
+
+        UUID resourceId = UUID.fromString(
+            "44444444-4444-4444-4444-444444444444"
+        );
+
+        UUID sourceEntityId = UUID.fromString(
+            "55555555-5555-5555-5555-555555555555"
+        );
+
+        Notification notification = Notification.create(
+            RECEIVER_ID,
+            sourceEventId,
+            NotificationType.DIRECT_MESSAGE,
+            resourceId,
+            sourceEntityId,
+            "새로운 DM",
+            "메시지가 도착했습니다.",
+            NotificationLevel.INFO
+        );
+
+        Notification saved = notificationRepository.saveAndFlush(notification);
+
+        UUID notificationId = saved.getId();
+        entityManager.clear();
+
+        // when
+        Notification result = notificationRepository.findById(notificationId)
+            .orElseThrow();
+
+        // then
+        assertThat(result.getSourceEventId())
+            .isEqualTo(sourceEventId);
+
+        assertThat(result.getType())
+            .isEqualTo(NotificationType.DIRECT_MESSAGE);
+
+        assertThat(result.getResourceId())
+            .isEqualTo(resourceId);
+
+        assertThat(result.getSourceEntityId())
+            .isEqualTo(sourceEntityId);
     }
 
     @Test

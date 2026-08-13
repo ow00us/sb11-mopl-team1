@@ -2,6 +2,8 @@ package com.mopl.notification.dto;
 
 import com.mopl.notification.entity.Notification;
 import com.mopl.notification.entity.NotificationLevel;
+import com.mopl.notification.entity.NotificationType;
+
 import java.time.Instant;
 import java.util.UUID;
 
@@ -11,7 +13,9 @@ public record NotificationDto(
     UUID receiverId,
     String title,
     String content,
-    NotificationLevel level
+    NotificationLevel level,
+    NotificationType type,
+    UUID resourceId
 ) {
 
     public static NotificationDto from(Notification notification) {
@@ -21,7 +25,9 @@ public record NotificationDto(
             notification.getReceiverId(),
             notification.getTitle(),
             notification.getContent(),
-            notification.getLevel()
+            notification.getLevel(),
+            notification.getType(),
+            notification.getResourceId()
         );
     }
 }

@@ -3760,12 +3760,22 @@ components:
             - "INFO"
             - "WARNING"
             - "ERROR"
-        readAt:
+        type:
+          type:
+           - "string"
+           - "null"
+          description: "알림 유형"
+          enum:
+            - "DIRECT_MESSAGE"
+            - "FOLLOW"
+            - "PLAYLIST_SUBSCRIPTION"
+            - null
+        resourceId:
           type:
             - "string"
             - "null"
-          format: "date-time"
-          description: "알림을 읽은 시각. 읽지 않은 알림이면 null입니다."
+          format: "uuid"
+          description: "알림 클릭 시 이동할 대상 리소스 ID"
       required:
         - "content"
         - "createdAt"
