@@ -117,6 +117,27 @@ public interface PlaylistRepository extends JpaRepository<Playlist, UUID> {
             @Param("limit") int limit
     );
 
+    // ── 인기 랭킹 (subscriber_count DESC → updated_at DESC → id DESC) ────────
+
+    @Query(value = """
+            SELECT * FROM playlists
+            WHERE  (CAST(:cursorCount AS bigint) IS NULL
+                    OR subscriber_count < CAST(:cursorCount AS bigint)
+                    OR (subscriber_count = CAST(:cursorCount AS bigint)
+                        AND updated_at < CAST(:cursorUpdatedAt AS timestamptz))
+                    OR (subscriber_count = CAST(:cursorCount AS bigint)
+                        AND updated_at = CAST(:cursorUpdatedAt AS timestamptz)
+                        AND id < CAST(:idAfter AS uuid)))
+            ORDER BY subscriber_count DESC, updated_at DESC, id DESC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<Playlist> findPopular(
+            @Param("cursorCount") Long cursorCount,
+            @Param("cursorUpdatedAt") Instant cursorUpdatedAt,
+            @Param("idAfter") String idAfter,
+            @Param("limit") int limit
+    );
+
     // ── 카운트 ─────────────────────────────────────────────────────────────
 
     @Query(value = """
