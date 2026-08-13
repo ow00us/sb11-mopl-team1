@@ -12,6 +12,7 @@ import com.mopl.content.entity.ContentType;
 import com.mopl.content.repository.ContentRepository;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.security.JwtProvider;
+import com.mopl.support.websocket.StompTestCleanup;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
@@ -33,7 +34,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
@@ -125,22 +125,13 @@ class WatchingSessionSubscribeInfraFailureIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        if (session != null && session.isConnected()) {
-            try {
-                session.disconnect();
-            } catch (MessageDeliveryException ignored) {
-                // ERROR 처리 후 서버가 먼저 닫을 수 있음
-            }
+        try {
+            StompTestCleanup.closeAll(stompClient, taskScheduler, session);
+        } finally {
+            snapshotRepository.deleteAll();
+            contentRepository.deleteAll();
+            userRepository.deleteAll();
         }
-        if (stompClient != null) {
-            stompClient.stop();
-        }
-        if (taskScheduler != null) {
-            taskScheduler.shutdown();
-        }
-        snapshotRepository.deleteAll();
-        contentRepository.deleteAll();
-        userRepository.deleteAll();
     }
 
     @Test

@@ -11,6 +11,7 @@ import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentType;
 import com.mopl.content.repository.ContentRepository;
 import com.mopl.global.security.JwtProvider;
+import com.mopl.support.websocket.StompTestCleanup;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
@@ -125,22 +126,13 @@ class WatchingSessionHeartbeatE2ETest {
 
     @AfterEach
     void tearDown() {
-        if (session != null && session.isConnected()) {
-            try {
-                session.disconnect();
-            } catch (Exception ignored) {
-                // ERROR 프레임 처리 직후 서버가 먼저 연결을 닫을 수 있습니다.
-            }
+        try {
+            StompTestCleanup.closeAll(stompClient, taskScheduler, session);
+        } finally {
+            snapshotRepository.deleteAll();
+            contentRepository.deleteAll();
+            userRepository.deleteAll();
         }
-        if (stompClient != null) {
-            stompClient.stop();
-        }
-        if (taskScheduler != null) {
-            taskScheduler.shutdown();
-        }
-        snapshotRepository.deleteAll();
-        contentRepository.deleteAll();
-        userRepository.deleteAll();
     }
 
     private WebSocketStompClient createNativeStompClient() {
