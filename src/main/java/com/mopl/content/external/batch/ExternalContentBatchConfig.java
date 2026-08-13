@@ -48,7 +48,7 @@ public class ExternalContentBatchConfig {
     private final SportsDbProperties sportsDbProperties;
     private final MeterRegistry meterRegistry;
 
-    @Bean
+    @Bean(name = "externalContentJobLauncher")
     public JobLauncher jobLauncher() throws Exception {
         TaskExecutorJobLauncher jobLauncher = new TaskExecutorJobLauncher();
         jobLauncher.setJobRepository(jobRepository);
