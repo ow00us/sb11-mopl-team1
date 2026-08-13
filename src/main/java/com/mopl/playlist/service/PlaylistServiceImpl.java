@@ -30,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -109,7 +110,7 @@ public class PlaylistServiceImpl implements PlaylistService {
 
         Map<UUID, List<ContentSummary>> contentsByPlaylistId = loadContentsBatch(pageIds);
 
-        List<UUID> ownerIds = page.stream().map(Playlist::getOwnerId).distinct().toList();
+        Set<UUID> ownerIds = page.stream().map(Playlist::getOwnerId).collect(Collectors.toSet());
         Map<UUID, UserSummary> ownersById = toUserSummaryMap(ownerIds);
 
         List<PlaylistDto> data = page.stream()
@@ -175,7 +176,7 @@ public class PlaylistServiceImpl implements PlaylistService {
 
         Map<UUID, List<ContentSummary>> contentsByPlaylistId = loadContentsBatch(pageIds);
 
-        List<UUID> ownerIds = page.stream().map(Playlist::getOwnerId).distinct().toList();
+        Set<UUID> ownerIds = page.stream().map(Playlist::getOwnerId).collect(Collectors.toSet());
         Map<UUID, UserSummary> ownersById = toUserSummaryMap(ownerIds);
 
         List<PlaylistDto> data = page.stream()
@@ -382,10 +383,10 @@ public class PlaylistServiceImpl implements PlaylistService {
                 .orElseGet(() -> unknownUserSummary(ownerId));
     }
 
-    // 페이지 owner 배치 조회. findAllById 1회로 N+1을 방지한다.
-    private Map<UUID, UserSummary> toUserSummaryMap(List<UUID> ownerIds) {
-        if (ownerIds.isEmpty()) return Map.of();
-        return userRepository.findAllById(ownerIds).stream()
+    // 페이지 owner/subscriber 배치 조회. findAllById 1회로 N+1을 방지한다.
+    private Map<UUID, UserSummary> toUserSummaryMap(Collection<UUID> userIds) {
+        if (userIds.isEmpty()) return Map.of();
+        return userRepository.findAllById(userIds).stream()
                 .collect(Collectors.toMap(User::getId, this::toUserSummary));
     }
 
@@ -474,7 +475,7 @@ public class PlaylistServiceImpl implements PlaylistService {
             nextIdAfter = last.getId();
         }
 
-        List<UUID> subscriberIds = page.stream().map(PlaylistSubscription::getSubscriberId).distinct().toList();
+        Set<UUID> subscriberIds = page.stream().map(PlaylistSubscription::getSubscriberId).collect(Collectors.toSet());
         Map<UUID, UserSummary> usersById = toUserSummaryMap(subscriberIds);
 
         List<SubscriberItemDto> data = page.stream()
