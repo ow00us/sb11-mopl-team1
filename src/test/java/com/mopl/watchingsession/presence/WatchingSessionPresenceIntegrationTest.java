@@ -7,6 +7,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,6 +50,11 @@ public class WatchingSessionPresenceIntegrationTest {
 
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
+
+    @BeforeEach
+    void clearPresenceKeys() {
+        redisTemplate.delete(KEY);
+    }
 
     @Test
     @DisplayName("write()는 실제 Redis에 WatchingPresence 값을 그대로 저장한다")
