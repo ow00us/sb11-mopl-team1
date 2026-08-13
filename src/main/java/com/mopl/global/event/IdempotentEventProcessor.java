@@ -1,5 +1,6 @@
 package com.mopl.global.event;
 
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -39,39 +40,35 @@ public class IdempotentEventProcessor {
     /**
      * 처리 이력이 없으면 handler 를 실행하고 처리 기록을 남깁니다.
      *
-     * <p>전파를 {@code REQUIRED} 로 명시합니다. 이 저장소는 서비스 대부분이 클래스 레벨
-     * {@code @Transactional(readOnly = true)} 를 두는데, 그 트랜잭션에 참여하면 FlushMode 가
-     * MANUAL 이라 처리 기록 INSERT 가 예외 없이 사라집니다. 그러면 중복 차단이 동작하지
-     * 않으면서 아무 오류도 나지 않습니다. 호출부가 readOnly 컨텍스트를 만들지 않도록
-     * 리스너에서 직접 호출하는 것을 전제로 합니다.
+     * <p>전파를 {@code REQUIRES_NEW} 로 명시해 이 처리기가 쓰기 트랜잭션을 직접 소유합니다.
+     * 호출부에 읽기 전용 트랜잭션이 있어도 이를 잠시 중단하므로, 처리 기록과 handler 의
+     * 도메인 쓰기가 읽기 전용 속성을 상속하지 않습니다.
      *
      * <p>handler 의 도메인 변경과 처리 기록은 같은 트랜잭션에서 커밋됩니다. handler 가
      * 예외를 던지면 둘 다 롤백되어 Kafka 재시도가 같은 상태에서 다시 시작합니다.
      *
-     * <p>동시에 같은 이벤트가 들어오면 사전 조회를 둘 다 통과할 수 있습니다. 이때는 커밋
-     * 시점에 유니크 제약이 한쪽을 거부하고, 거부된 쪽은 handler 작업까지 롤백됩니다.
-     * 이어지는 Kafka 재시도는 승자가 남긴 기록을 보고 건너뜁니다. 결과적으로 부수 효과는
-     * 한 번만 남습니다. 사전 조회는 정상 흐름에서 예외를 피하기 위한 최적화이고, 정확성은
-     * 유니크 제약이 보장합니다.
+     * <p>처리 기록을 handler 보다 먼저 원자적으로 INSERT 합니다. 동시에 같은 이벤트가
+     * 들어오면 한 트랜잭션만 선점하고 handler 를 실행합니다. 선점한 handler 가 실패하면
+     * 처리 기록도 함께 롤백되므로 대기 중인 다른 트랜잭션이나 Kafka 재시도가 이어서 처리할
+     * 수 있습니다.
+     *
+     * <p>handler 는 이 트랜잭션에 참여하는 데이터베이스 변경만 수행해야 합니다. 외부 API
+     * 호출이나 메시지 발행처럼 트랜잭션으로 롤백할 수 없는 작업은 Outbox 로 분리합니다.
      *
      * @return handler 를 실행했으면 {@code true}, 이미 처리한 이벤트여서 건너뛰었으면 {@code false}
      */
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean process(String consumerName, EventEnvelope envelope, Runnable handler) {
-        if (processedEventRepository.existsByConsumerNameAndEventId(consumerName, envelope.eventId())) {
+        int inserted = processedEventRepository.insertIfAbsent(
+            UUID.randomUUID(), consumerName, envelope.eventId(), envelope.type());
+
+        if (inserted == 0) {
             log.debug("이미 처리한 이벤트를 건너뜁니다. consumer={}, eventId={}, type={}",
                 consumerName, envelope.eventId(), envelope.type());
             return false;
         }
 
         handler.run();
-
-        // flush 를 미루지 않습니다. 유니크 제약 위반이 커밋 시점이 아니라 이 지점에서
-        // 드러나 스택 트레이스가 원인을 가리킵니다. 어차피 롤백되므로 영속성 컨텍스트가
-        // 무효화되는 것은 문제가 되지 않습니다.
-        processedEventRepository.saveAndFlush(
-            new ProcessedEvent(consumerName, envelope.eventId(), envelope.type()));
-
         return true;
     }
 }

@@ -7,6 +7,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -14,7 +19,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -32,6 +40,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SpringBootTest
 @ActiveProfiles("test")
 @Testcontainers
+@Import(IdempotentEventProcessorIntegrationTest.ReadOnlyCaller.class)
 class IdempotentEventProcessorIntegrationTest {
 
     @Container
@@ -49,6 +58,12 @@ class IdempotentEventProcessorIntegrationTest {
 
     @Autowired
     ObjectMapper objectMapper;
+
+    @Autowired
+    JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    ReadOnlyCaller readOnlyCaller;
 
     @BeforeEach
     void clearRecords() {
@@ -146,7 +161,7 @@ class IdempotentEventProcessorIntegrationTest {
         // handler 가 다른 consumerName 으로 행을 하나 더 넣습니다. 도메인 테이블을 끌어오지
         // 않고 handler 쪽 쓰기가 같은 트랜잭션에 묶이는지 확인하기 위한 대역입니다.
         assertThatThrownBy(() -> processor.process(CONSUMER, event, () -> {
-            processedEventRepository.save(
+            processedEventRepository.saveAndFlush(
                 new ProcessedEvent("handler-write", event.eventId(), event.type()));
             throw new IllegalStateException("handler 실패");
         })).isInstanceOf(IllegalStateException.class);
@@ -156,7 +171,7 @@ class IdempotentEventProcessorIntegrationTest {
 
         // 성공 경로에서는 둘 다 남습니다.
         boolean processed = processor.process(CONSUMER, event, () ->
-            processedEventRepository.save(
+            processedEventRepository.saveAndFlush(
                 new ProcessedEvent("handler-write", event.eventId(), event.type())));
 
         assertThat(processed).isTrue();
@@ -164,18 +179,111 @@ class IdempotentEventProcessorIntegrationTest {
     }
 
     @Test
-    @DisplayName("사전 조회를 통과해도 유니크 제약이 중복 기록을 거부한다")
+    @DisplayName("스키마 유니크 제약이 중복 처리 기록을 거부한다")
     void uniqueConstraint_rejectsDuplicateRecord() {
         EventEnvelope event = envelope();
         processor.process(CONSUMER, event, () -> {
         });
 
-        // 사전 조회를 우회해 같은 (consumerName, eventId) 를 직접 저장하면 거부됩니다.
-        // 동시 처리에서 두 스레드가 모두 사전 조회를 통과한 상황과 같습니다.
+        // 처리기를 우회해 같은 (consumerName, eventId) 를 직접 저장해도 스키마가 거부합니다.
         assertThatThrownBy(() -> processedEventRepository.saveAndFlush(
             new ProcessedEvent(CONSUMER, event.eventId(), event.type())))
             .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
 
         assertThat(processedEventRepository.count()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("읽기 전용 호출부가 있어도 독립된 쓰기 트랜잭션에서 처리한다")
+    void readOnlyCaller_doesNotLeakReadOnlyTransaction() {
+        EventEnvelope event = envelope();
+        AtomicInteger runs = new AtomicInteger();
+
+        boolean processed = readOnlyCaller.process(event, runs::incrementAndGet);
+
+        assertThat(processed).isTrue();
+        assertThat(runs.get()).isEqualTo(1);
+        assertThat(processedEventRepository.existsByConsumerNameAndEventId(CONSUMER, event.eventId()))
+            .isTrue();
+    }
+
+    @Test
+    @DisplayName("동일 이벤트를 동시에 받아도 한 handler만 실행한다")
+    void concurrentDuplicate_executesOnlyOneHandler() throws Exception {
+        EventEnvelope event = envelope();
+        AtomicInteger runs = new AtomicInteger();
+        CountDownLatch firstHandlerEntered = new CountDownLatch(1);
+        CountDownLatch releaseFirstHandler = new CountDownLatch(1);
+        CountDownLatch secondStarted = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try {
+            Future<Boolean> first = executor.submit(() -> processor.process(CONSUMER, event, () -> {
+                runs.incrementAndGet();
+                firstHandlerEntered.countDown();
+                awaitLatch(releaseFirstHandler);
+            }));
+
+            assertThat(firstHandlerEntered.await(5, TimeUnit.SECONDS)).isTrue();
+
+            Future<Boolean> second = executor.submit(() -> {
+                secondStarted.countDown();
+                return processor.process(CONSUMER, event, runs::incrementAndGet);
+            });
+
+            assertThat(secondStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            awaitSecondClaimBlocked();
+            releaseFirstHandler.countDown();
+
+            assertThat(first.get(10, TimeUnit.SECONDS)).isTrue();
+            assertThat(second.get(10, TimeUnit.SECONDS)).isFalse();
+            assertThat(runs.get()).isEqualTo(1);
+            assertThat(processedEventRepository.count()).isEqualTo(1);
+        } finally {
+            releaseFirstHandler.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    private void awaitSecondClaimBlocked() throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            Integer blockedClaims = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM pg_stat_activity
+                WHERE wait_event_type = 'Lock'
+                  AND LOWER(query) LIKE '%insert into processed_events%'
+                """, Integer.class);
+            if (blockedClaims != null && blockedClaims > 0) {
+                return;
+            }
+            Thread.sleep(20);
+        }
+        throw new AssertionError("두 번째 처리 요청이 유니크 키 선점 대기 상태에 도달하지 않았습니다.");
+    }
+
+    private static void awaitLatch(CountDownLatch latch) {
+        try {
+            if (!latch.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("테스트 동기화 대기 시간이 초과됐습니다.");
+            }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    public static class ReadOnlyCaller {
+
+        private final IdempotentEventProcessor processor;
+
+        public ReadOnlyCaller(IdempotentEventProcessor processor) {
+            this.processor = processor;
+        }
+
+        @Transactional(readOnly = true)
+        public boolean process(EventEnvelope event, Runnable handler) {
+            return processor.process(CONSUMER, event, handler);
+        }
     }
 }
