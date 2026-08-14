@@ -17,6 +17,9 @@ public final class MoplTopics {
     /** 플레이리스트·구독 생산 영역. playlist.subscription.created */
     public static final String PLAYLIST_EVENTS = "mopl.playlist.events";
 
+    /** DM 생산 영역. direct-message.created */
+    public static final String DIRECT_MESSAGE_EVENTS = "mopl.direct-message.events";
+
     /**
      * 프리미어 생산 영역. premiere.upcoming, premiere.started
      *
@@ -34,7 +37,7 @@ public final class MoplTopics {
 
     /** 선언적으로 생성·검증할 도메인 이벤트 토픽 목록입니다. */
     public static List<String> eventTopics() {
-        return List.of(FOLLOW_EVENTS, PLAYLIST_EVENTS, PREMIERE_EVENTS);
+        return List.of(FOLLOW_EVENTS, PLAYLIST_EVENTS, DIRECT_MESSAGE_EVENTS, PREMIERE_EVENTS);
     }
 
     /** 원본 토픽에 대응하는 DLT 이름을 만듭니다. */
