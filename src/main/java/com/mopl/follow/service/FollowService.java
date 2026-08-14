@@ -1,8 +1,10 @@
 package com.mopl.follow.service;
 
 import com.mopl.follow.dto.FollowDto;
+import com.mopl.follow.dto.FollowRecommendationItemDto;
 import com.mopl.follow.dto.FollowUserItemDto;
 import com.mopl.follow.entity.Follow;
+import com.mopl.follow.repository.FollowRecommendationRow;
 import com.mopl.follow.repository.FollowRepository;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.common.UserSummary;
@@ -116,6 +118,12 @@ public class FollowService {
                         limit + 1),
                 Follow::getFolloweeId,
                 () -> followRepository.countByFollowerId(followerId));
+    }
+
+    public CursorResponse<FollowRecommendationItemDto> getRecommendations(
+            UUID requesterId, String cursor, UUID idAfter,
+            int limit, String sortBy, String sortDirection) {
+        throw new UnsupportedOperationException("F3 Green 에서 구현 예정");
     }
 
     /**
