@@ -104,6 +104,10 @@ mopl:
     listener:
       # 로컬에 Kafka 를 띄우지 않고 개발할 때 false 로 두면 연결 경고가 반복되지 않습니다.
       auto-startup: ${KAFKA_LISTENER_AUTO_STARTUP:true}
+  outbox:
+    # 선점 유효 기간입니다. 짧으면 발행이 끝나기 전에 다른 인스턴스가 회수해 중복 발행이
+    # 늘고, 길면 relay 가 죽었을 때 회수가 그만큼 지연됩니다.
+    lease-duration: ${OUTBOX_LEASE_DURATION:30s}
 
 app:
   cors:
