@@ -37,4 +37,18 @@ public record FamilyRefreshToken(
             );
         }
     }
+
+    /**
+     * 로그나 디버깅 과정에서 Refresh Token 원문이 노출되지 않도록
+     * rawToken 값을 마스킹하여 문자열로 반환
+     *
+     * @return Refresh Token 원문이 제거된 문자열
+     */
+    @Override
+    public String toString() {
+        return "FamilyRefreshToken["
+            + "familyId="
+            + familyId
+            + ", rawToken=<redacted>]";
+    }
 }

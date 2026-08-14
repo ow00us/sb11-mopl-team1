@@ -16,7 +16,8 @@ import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.config.RefreshTokenProperties;
 import com.mopl.user.repository.UserRepository;
-import com.mopl.user.security.RefreshTokenGenerator;
+import com.mopl.user.security.FamilyRefreshToken;
+import com.mopl.user.security.RefreshTokenFamilyCodec;
 import com.mopl.user.security.RefreshTokenHasher;
 import com.mopl.user.storage.RefreshTokenStore;
 import java.time.Duration;
@@ -62,7 +63,7 @@ class RefreshTokenServiceTest {
     RefreshTokenStore refreshTokenStore;
 
     @Mock
-    RefreshTokenGenerator refreshTokenGenerator;
+    RefreshTokenFamilyCodec refreshTokenFamilyCodec;
 
     @Mock
     RefreshTokenHasher refreshTokenHasher;
@@ -74,82 +75,111 @@ class RefreshTokenServiceTest {
     RefreshTokenService refreshTokenService;
 
     @Test
-    @DisplayName("Refresh Token 원문을 발급하고 해시와 만료 시각을 저장한다")
+    @DisplayName("새 Family Refresh Token을 발급하고 해시와 만료 시각을 저장한다")
     void issue_success() {
         // given
-        UUID userId = UUID.randomUUID();
-        String rawToken = "generated-refresh-token";
-        String tokenHash = "a".repeat(64);
-        Duration expiration = Duration.ofDays(7);
+        UUID userId =
+            UUID.randomUUID();
+
+        UUID familyId =
+            UUID.randomUUID();
+
+        String rawToken =
+            familyId
+                + "."
+                + "A".repeat(43);
+
+        String tokenHash =
+            "a".repeat(64);
+
+        Duration expiration =
+            Duration.ofDays(7);
+
+        FamilyRefreshToken familyRefreshToken =
+            new FamilyRefreshToken(
+                familyId,
+                rawToken
+            );
 
         when(userRepository.existsById(userId))
             .thenReturn(true);
 
-        when(refreshTokenGenerator.generate())
-            .thenReturn(rawToken);
+        /*
+         * 로그인 시 새로운 Family ID와 Refresh Token 원문이
+         * 생성되는 상황을 구성
+         */
+        when(
+            refreshTokenFamilyCodec
+                .generateNewFamily()
+        ).thenReturn(
+            familyRefreshToken
+        );
 
         when(refreshTokenHasher.hash(rawToken))
             .thenReturn(tokenHash);
 
-        when(refreshTokenProperties.getExpiration())
-            .thenReturn(expiration);
+        when(
+            refreshTokenProperties.getExpiration()
+        ).thenReturn(expiration);
 
         /*
-         * Instant.now()는 Service 내부에서 호출되므로 정확히 같은 시각을
-         * 테스트에서 미리 알 수 없다.
-         *
-         * Service 호출 직전과 직후의 허용 범위를 기록하여
-         * expiresAt이 그 사이에서 계산됐는지 검증
+         * Service 내부에서 Instant.now()를 호출하므로
+         * 호출 직전과 직후의 만료 시각 범위를 기록
          */
         Instant earliestExpiration =
-            Instant.now().plus(expiration);
+            Instant.now()
+                .plus(expiration);
 
         // when
         IssuedRefreshToken result =
             refreshTokenService.issue(userId);
 
         Instant latestExpiration =
-            Instant.now().plus(expiration);
+            Instant.now()
+                .plus(expiration);
 
         // then
         /*
-         * Service가 Refresh Token 원문이 아니라 SHA-256 해시값을
-         * 사용자 UUID와 설정된 유효기간과 함께 저장소에 전달하는지 검증한다.
+         * 원문이 아닌 해시와 함께 사용자 UUID, Family ID와 TTL이
+         * 저장소에 전달되는지 확인
          */
         verify(refreshTokenStore).save(
             userId,
+            familyId,
             tokenHash,
             expiration
         );
 
-        /*
-         * 검증한 해시 저장 외에 Refresh Token 원문 등을 이용한
-         * 추가 저장 호출이 없었는지 확인
-         */
-        verifyNoMoreInteractions(refreshTokenStore);
+        verifyNoMoreInteractions(
+            refreshTokenStore
+        );
 
         /*
-         * 클라이언트에게 전달할 결과에는 생성된 Refresh Token 원문이 포함되어야 한다.
-         * 원문은 Redis 저장소에는 전달되지 않고 반환값을 통해서만 외부로 전달
+         * 클라이언트에 전달할 결과에는 Family ID가 포함된
+         * Refresh Token 원문이 들어 있어야 한다.
          */
         assertThat(result.rawToken())
             .isEqualTo(rawToken);
 
-        /*
-         * Service 내부에서 Instant.now()를 호출하므로 테스트에서 정확히 같은
-         * Instant 값을 미리 만들 수 없다.
-         *
-         * 따라서 Service 호출 직전과 직후에 계산한 만료 시각 범위 안에
-         * 실제 반환 만료 시각이 포함되는지 검증
-         */
         assertThat(result.expiresAt())
-            .isAfterOrEqualTo(earliestExpiration)
-            .isBeforeOrEqualTo(latestExpiration);
+            .isAfterOrEqualTo(
+                earliestExpiration
+            )
+            .isBeforeOrEqualTo(
+                latestExpiration
+            );
 
-        verify(userRepository).existsById(userId);
-        verify(refreshTokenGenerator).generate();
-        verify(refreshTokenHasher).hash(rawToken);
-        verify(refreshTokenProperties).getExpiration();
+        verify(userRepository)
+            .existsById(userId);
+
+        verify(refreshTokenFamilyCodec)
+            .generateNewFamily();
+
+        verify(refreshTokenHasher)
+            .hash(rawToken);
+
+        verify(refreshTokenProperties)
+            .getExpiration();
     }
 
     @Test
@@ -176,7 +206,7 @@ class RefreshTokenServiceTest {
          * Redis 저장이 모두 수행되지 않아야 한다.
          */
         verifyNoInteractions(
-            refreshTokenGenerator,
+            refreshTokenFamilyCodec,
             refreshTokenHasher,
             refreshTokenProperties,
             refreshTokenStore
@@ -199,7 +229,7 @@ class RefreshTokenServiceTest {
          */
         verifyNoInteractions(
             userRepository,
-            refreshTokenGenerator,
+            refreshTokenFamilyCodec,
             refreshTokenHasher,
             refreshTokenProperties,
             refreshTokenStore
@@ -229,74 +259,101 @@ class RefreshTokenServiceTest {
     }
 
     @Test
-    @DisplayName("유효한 Refresh Token을 새 토큰으로 교체하고 Access Token을 발급한다")
+    @DisplayName(
+        "유효한 Refresh Token을 같은 Family의 새 토큰으로 교체한다"
+    )
     void refresh_success() {
         // given
-        UUID userId = UUID.randomUUID();
+        UUID userId =
+            UUID.randomUUID();
 
-        String oldRawToken = "old-refresh-token";
-        String oldTokenHash = "a".repeat(64);
+        UUID familyId =
+            UUID.randomUUID();
 
-        String newRawToken = "new-refresh-token";
-        String newTokenHash = "b".repeat(64);
+        String oldRawToken =
+            familyId
+                + "."
+                + "A".repeat(43);
 
-        String accessToken = "new-access-token";
-        Duration expiration = Duration.ofDays(7);
+        String oldTokenHash =
+            "a".repeat(64);
 
-        User user = createUser(
-            userId,
-            UserRole.ADMIN,
-            false
-        );
+        String newRawToken =
+            familyId
+                + "."
+                + "B".repeat(43);
+
+        String newTokenHash =
+            "b".repeat(64);
+
+        String accessToken =
+            "new-access-token";
+
+        Duration expiration =
+            Duration.ofDays(7);
+
+        User user =
+            createUser(
+                userId,
+                UserRole.ADMIN,
+                false
+            );
 
         /*
-         * Cookie로 받은 기존 Refresh Token 원문을 해시
-         */
-        when(refreshTokenHasher.hash(oldRawToken))
-            .thenReturn(oldTokenHash);
-
-        /*
-         * Redis에 기존 세션이 존재하며 해당 세션의 소유자는
-         * userId라고 가정
+         * Cookie의 Refresh Token에서 Family ID가 정상적으로
+         * 파싱되는 상황을 구성
          */
         when(
-            refreshTokenStore.findUserIdByTokenHash(oldTokenHash)
-        ).thenReturn(Optional.of(userId));
+            refreshTokenFamilyCodec
+                .parseFamilyId(oldRawToken)
+        ).thenReturn(
+            Optional.of(familyId)
+        );
+
+        when(
+            refreshTokenHasher.hash(oldRawToken)
+        ).thenReturn(oldTokenHash);
 
         /*
-         * Redis에서 확인한 사용자 UUID로 현재 사용자 정보를 조회
+         * Family ID와 현재 활성 tokenHash가 모두 일치하는
+         * Redis 세션이 존재한다고 가정
          */
+        when(
+            refreshTokenStore
+                .findUserIdByFamilyAndTokenHash(
+                    familyId,
+                    oldTokenHash
+                )
+        ).thenReturn(
+            Optional.of(userId)
+        );
+
         when(userRepository.findById(userId))
             .thenReturn(Optional.of(user));
 
-        /*
-         * Rotation에 사용할 새로운 Refresh Token을 생성하고 해시
-         */
-        when(refreshTokenGenerator.generate())
-            .thenReturn(newRawToken);
-
-        when(refreshTokenHasher.hash(newRawToken))
-            .thenReturn(newTokenHash);
-
-        when(refreshTokenProperties.getExpiration())
-            .thenReturn(expiration);
+        FamilyRefreshToken rotatedToken =
+            new FamilyRefreshToken(
+                familyId,
+                newRawToken
+            );
 
         /*
-         * 기존 세션과 새로운 세션의 원자적 교체가 성공한다고 가정
+         * Rotation 이후에도 기존 Family ID를 유지하면서
+         * 새로운 Secret을 가진 Token이 생성
          */
         when(
-            refreshTokenStore.rotate(
-                userId,
-                oldTokenHash,
-                newTokenHash,
-                expiration
-            )
-        ).thenReturn(true);
+            refreshTokenFamilyCodec
+                .generateForFamily(familyId)
+        ).thenReturn(rotatedToken);
 
-        /*
-         * 사용자의 현재 역할이 ADMIN이므로 새 Access Token에도
-         * ADMIN 역할이 반영
-         */
+        when(
+            refreshTokenHasher.hash(newRawToken)
+        ).thenReturn(newTokenHash);
+
+        when(
+            refreshTokenProperties.getExpiration()
+        ).thenReturn(expiration);
+
         when(
             jwtProvider.createAccessToken(
                 userId,
@@ -304,65 +361,129 @@ class RefreshTokenServiceTest {
             )
         ).thenReturn(accessToken);
 
+        when(
+            refreshTokenStore.rotate(
+                userId,
+                familyId,
+                oldTokenHash,
+                newTokenHash,
+                expiration
+            )
+        ).thenReturn(true);
+
         Instant earliestExpiration =
-            Instant.now().plus(expiration);
+            Instant.now()
+                .plus(expiration);
 
         // when
         RefreshResult result =
-            refreshTokenService.refresh(oldRawToken);
+            refreshTokenService.refresh(
+                oldRawToken
+            );
 
         Instant latestExpiration =
-            Instant.now().plus(expiration);
+            Instant.now()
+                .plus(expiration);
 
         // then
-        assertThat(result.jwtDto().accessToken())
-            .isEqualTo(accessToken);
+        assertThat(
+            result.jwtDto().accessToken()
+        ).isEqualTo(accessToken);
 
-        assertThat(result.jwtDto().userDto())
-            .isEqualTo(UserDto.from(user));
+        assertThat(
+            result.jwtDto().userDto()
+        ).isEqualTo(
+            UserDto.from(user)
+        );
 
-        assertThat(result.issuedRefreshToken().rawToken())
-            .isEqualTo(newRawToken);
+        assertThat(
+            result.issuedRefreshToken()
+                .rawToken()
+        ).isEqualTo(newRawToken);
 
-        assertThat(result.issuedRefreshToken().expiresAt())
-            .isAfterOrEqualTo(earliestExpiration)
-            .isBeforeOrEqualTo(latestExpiration);
+        assertThat(
+            result.issuedRefreshToken()
+                .expiresAt()
+        )
+            .isAfterOrEqualTo(
+                earliestExpiration
+            )
+            .isBeforeOrEqualTo(
+                latestExpiration
+            );
 
-        verify(refreshTokenHasher).hash(oldRawToken);
+        verify(refreshTokenFamilyCodec)
+            .parseFamilyId(oldRawToken);
+
+        verify(refreshTokenHasher)
+            .hash(oldRawToken);
 
         verify(refreshTokenStore)
-            .findUserIdByTokenHash(oldTokenHash);
+            .findUserIdByFamilyAndTokenHash(
+                familyId,
+                oldTokenHash
+            );
 
-        verify(userRepository).findById(userId);
-        verify(refreshTokenGenerator).generate();
-        verify(refreshTokenHasher).hash(newRawToken);
-        verify(refreshTokenProperties).getExpiration();
+        verify(userRepository)
+            .findById(userId);
 
-        verify(refreshTokenStore).rotate(
-            userId,
-            oldTokenHash,
-            newTokenHash,
-            expiration
-        );
+        verify(refreshTokenFamilyCodec)
+            .generateForFamily(familyId);
 
-        verify(jwtProvider).createAccessToken(
-            userId,
-            UserRole.ADMIN.name()
-        );
+        verify(refreshTokenHasher)
+            .hash(newRawToken);
+
+        verify(refreshTokenProperties)
+            .getExpiration();
+
+        verify(jwtProvider)
+            .createAccessToken(
+                userId,
+                UserRole.ADMIN.name()
+            );
+
+        verify(refreshTokenStore)
+            .rotate(
+                userId,
+                familyId,
+                oldTokenHash,
+                newTokenHash,
+                expiration
+            );
     }
 
     @Test
-    @DisplayName("Redis에 존재하지 않는 Refresh Token은 재발급에 실패한다")
+    @DisplayName("Redis에 존재하지 않는 Family Refresh Token은 재발급에 실패한다")
     void refresh_failWhenTokenDoesNotExist() {
         // given
-        String rawToken = "unknown-refresh-token";
-        String tokenHash = "a".repeat(64);
+        UUID familyId =
+            UUID.randomUUID();
 
-        when(refreshTokenHasher.hash(rawToken))
-            .thenReturn(tokenHash);
+        String rawToken =
+            familyId
+                + "."
+                + "A".repeat(43);
+
+        String tokenHash =
+            "a".repeat(64);
 
         when(
-            refreshTokenStore.findUserIdByTokenHash(tokenHash)
+            refreshTokenFamilyCodec
+                .parseFamilyId(rawToken)
+        ).thenReturn(
+            Optional.of(familyId)
+        );
+
+        when(
+            refreshTokenHasher.hash(rawToken)
+        ).thenReturn(tokenHash);
+
+        when(
+            refreshTokenStore
+                .findUserIdByFamilyAndTokenHash(
+                    familyId,
+                    tokenHash
+                )
         ).thenReturn(Optional.empty());
 
         // when & then
@@ -373,26 +494,40 @@ class RefreshTokenServiceTest {
             .extracting("errorCode")
             .isEqualTo(ErrorCode.UNAUTHORIZED);
 
-        verify(refreshTokenHasher).hash(rawToken);
+        verify(refreshTokenFamilyCodec)
+            .parseFamilyId(rawToken);
+
+        verify(refreshTokenHasher)
+            .hash(rawToken);
 
         verify(refreshTokenStore)
-            .findUserIdByTokenHash(tokenHash);
+            .findUserIdByFamilyAndTokenHash(
+                familyId,
+                tokenHash
+            );
 
         /*
-         * 기존 Refresh Token 세션을 찾지 못했으므로 사용자 조회,
-         * 신규 토큰 생성, Rotation 및 Access Token 발급은 실행되면 안 된다.
+         * Redis 세션을 찾지 못하면 사용자 조회와 새로운 토큰 발급,
+         * JWT 발급 및 Rotation을 수행하면 안된다.
          */
         verifyNoInteractions(
             userRepository,
-            refreshTokenGenerator,
             refreshTokenProperties,
             jwtProvider
+        );
+
+        verify(
+            refreshTokenFamilyCodec,
+            never()
+        ).generateForFamily(
+            org.mockito.ArgumentMatchers.any()
         );
 
         verify(
             refreshTokenStore,
             never()
         ).rotate(
+            org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString(),
@@ -404,16 +539,40 @@ class RefreshTokenServiceTest {
     @DisplayName("Refresh Token의 사용자가 존재하지 않으면 재발급에 실패한다")
     void refresh_failWhenUserDoesNotExist() {
         // given
-        UUID userId = UUID.randomUUID();
-        String rawToken = "deleted-user-refresh-token";
-        String tokenHash = "a".repeat(64);
+        UUID userId =
+            UUID.randomUUID();
 
-        when(refreshTokenHasher.hash(rawToken))
-            .thenReturn(tokenHash);
+        UUID familyId =
+            UUID.randomUUID();
+
+        String rawToken =
+            familyId
+                + "."
+                + "A".repeat(43);
+
+        String tokenHash =
+            "a".repeat(64);
 
         when(
-            refreshTokenStore.findUserIdByTokenHash(tokenHash)
-        ).thenReturn(Optional.of(userId));
+            refreshTokenFamilyCodec
+                .parseFamilyId(rawToken)
+        ).thenReturn(
+            Optional.of(familyId)
+        );
+
+        when(
+            refreshTokenHasher.hash(rawToken)
+        ).thenReturn(tokenHash);
+
+        when(
+            refreshTokenStore
+                .findUserIdByFamilyAndTokenHash(
+                    familyId,
+                    tokenHash
+                )
+        ).thenReturn(
+            Optional.of(userId)
+        );
 
         when(userRepository.findById(userId))
             .thenReturn(Optional.empty());
@@ -426,18 +585,29 @@ class RefreshTokenServiceTest {
             .extracting("errorCode")
             .isEqualTo(ErrorCode.UNAUTHORIZED);
 
-        verify(refreshTokenHasher).hash(rawToken);
+        verify(refreshTokenFamilyCodec)
+            .parseFamilyId(rawToken);
+
+        verify(refreshTokenHasher)
+            .hash(rawToken);
 
         verify(refreshTokenStore)
-            .findUserIdByTokenHash(tokenHash);
+            .findUserIdByFamilyAndTokenHash(
+                familyId,
+                tokenHash
+            );
 
-        verify(userRepository).findById(userId);
+        verify(userRepository)
+            .findById(userId);
 
-        /*
-         * 사용자가 삭제된 상태이므로 새로운 토큰은 생성하거나 저장하면 안 된다.
-         */
+        verify(
+            refreshTokenFamilyCodec,
+            never()
+        ).generateForFamily(
+            org.mockito.ArgumentMatchers.any()
+        );
+
         verifyNoInteractions(
-            refreshTokenGenerator,
             refreshTokenProperties,
             jwtProvider
         );
@@ -446,6 +616,7 @@ class RefreshTokenServiceTest {
             refreshTokenStore,
             never()
         ).rotate(
+            org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString(),
@@ -457,25 +628,52 @@ class RefreshTokenServiceTest {
     @DisplayName("잠긴 계정은 Refresh Token으로 토큰을 재발급할 수 없다")
     void refresh_failWhenUserIsLocked() {
         // given
-        UUID userId = UUID.randomUUID();
-        String rawToken = "locked-user-refresh-token";
-        String tokenHash = "a".repeat(64);
+        UUID userId =
+            UUID.randomUUID();
 
-        User lockedUser = createUser(
-            userId,
-            UserRole.USER,
-            true
-        );
+        UUID familyId =
+            UUID.randomUUID();
 
-        when(refreshTokenHasher.hash(rawToken))
-            .thenReturn(tokenHash);
+        String rawToken =
+            familyId
+                + "."
+                + "A".repeat(43);
+
+        String tokenHash =
+            "a".repeat(64);
+
+        User lockedUser =
+            createUser(
+                userId,
+                UserRole.USER,
+                true
+            );
 
         when(
-            refreshTokenStore.findUserIdByTokenHash(tokenHash)
-        ).thenReturn(Optional.of(userId));
+            refreshTokenFamilyCodec
+                .parseFamilyId(rawToken)
+        ).thenReturn(
+            Optional.of(familyId)
+        );
+
+        when(
+            refreshTokenHasher.hash(rawToken)
+        ).thenReturn(tokenHash);
+
+        when(
+            refreshTokenStore
+                .findUserIdByFamilyAndTokenHash(
+                    familyId,
+                    tokenHash
+                )
+        ).thenReturn(
+            Optional.of(userId)
+        );
 
         when(userRepository.findById(userId))
-            .thenReturn(Optional.of(lockedUser));
+            .thenReturn(
+                Optional.of(lockedUser)
+            );
 
         // when & then
         assertThatThrownBy(() ->
@@ -485,18 +683,29 @@ class RefreshTokenServiceTest {
             .extracting("errorCode")
             .isEqualTo(ErrorCode.UNAUTHORIZED);
 
-        verify(refreshTokenHasher).hash(rawToken);
+        verify(refreshTokenFamilyCodec)
+            .parseFamilyId(rawToken);
+
+        verify(refreshTokenHasher)
+            .hash(rawToken);
 
         verify(refreshTokenStore)
-            .findUserIdByTokenHash(tokenHash);
+            .findUserIdByFamilyAndTokenHash(
+                familyId,
+                tokenHash
+            );
 
-        verify(userRepository).findById(userId);
+        verify(userRepository)
+            .findById(userId);
 
-        /*
-         * 계정 잠금이 확인된 이후에는 새로운 Refresh Token 생성과 Access Token 발급이 진행되면 안 된다.
-         */
+        verify(
+            refreshTokenFamilyCodec,
+            never()
+        ).generateForFamily(
+            org.mockito.ArgumentMatchers.any()
+        );
+
         verifyNoInteractions(
-            refreshTokenGenerator,
             refreshTokenProperties,
             jwtProvider
         );
@@ -506,6 +715,7 @@ class RefreshTokenServiceTest {
             never()
         ).rotate(
             org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.any()
@@ -513,47 +723,83 @@ class RefreshTokenServiceTest {
     }
 
     @Test
-    @DisplayName("Access Token 발급에 실패하면 기존 Refresh Token을 소비하지 않는다")
+    @DisplayName("Access Token 발급에 실패하면 Family Token을 Rotation하지 않는다")
     void refresh_doesNotRotateWhenAccessTokenIssuanceFails() {
         // given
-        UUID userId = UUID.randomUUID();
+        UUID userId =
+            UUID.randomUUID();
 
-        String oldRawToken = "old-refresh-token";
-        String oldTokenHash = "a".repeat(64);
+        UUID familyId =
+            UUID.randomUUID();
 
-        String newRawToken = "new-refresh-token";
-        String newTokenHash = "b".repeat(64);
+        String oldRawToken =
+            familyId
+                + "."
+                + "A".repeat(43);
 
-        Duration expiration = Duration.ofDays(7);
+        String oldTokenHash =
+            "a".repeat(64);
 
-        User user = createUser(
-            userId,
-            UserRole.USER,
-            false
-        );
+        String newRawToken =
+            familyId
+                + "."
+                + "B".repeat(43);
 
-        when(refreshTokenHasher.hash(oldRawToken))
-            .thenReturn(oldTokenHash);
+        String newTokenHash =
+            "b".repeat(64);
+
+        Duration expiration =
+            Duration.ofDays(7);
+
+        User user =
+            createUser(
+                userId,
+                UserRole.USER,
+                false
+            );
 
         when(
-            refreshTokenStore.findUserIdByTokenHash(oldTokenHash)
-        ).thenReturn(Optional.of(userId));
+            refreshTokenFamilyCodec
+                .parseFamilyId(oldRawToken)
+        ).thenReturn(
+            Optional.of(familyId)
+        );
+
+        when(
+            refreshTokenHasher.hash(oldRawToken)
+        ).thenReturn(oldTokenHash);
+
+        when(
+            refreshTokenStore
+                .findUserIdByFamilyAndTokenHash(
+                    familyId,
+                    oldTokenHash
+                )
+        ).thenReturn(
+            Optional.of(userId)
+        );
 
         when(userRepository.findById(userId))
             .thenReturn(Optional.of(user));
 
-        when(refreshTokenGenerator.generate())
-            .thenReturn(newRawToken);
+        when(
+            refreshTokenFamilyCodec
+                .generateForFamily(familyId)
+        ).thenReturn(
+            new FamilyRefreshToken(
+                familyId,
+                newRawToken
+            )
+        );
 
-        when(refreshTokenHasher.hash(newRawToken))
-            .thenReturn(newTokenHash);
+        when(
+            refreshTokenHasher.hash(newRawToken)
+        ).thenReturn(newTokenHash);
 
-        when(refreshTokenProperties.getExpiration())
-            .thenReturn(expiration);
+        when(
+            refreshTokenProperties.getExpiration()
+        ).thenReturn(expiration);
 
-        /*
-         * JWT 발급 과정에서 예외가 발생하는 상황을 만든다.
-         */
         when(
             jwtProvider.createAccessToken(
                 userId,
@@ -567,28 +813,31 @@ class RefreshTokenServiceTest {
 
         // when & then
         assertThatThrownBy(() ->
-            refreshTokenService.refresh(oldRawToken)
+            refreshTokenService.refresh(
+                oldRawToken
+            )
         )
             .isInstanceOf(IllegalStateException.class)
-            .hasMessage("Access Token 발급 실패");
+            .hasMessage(
+                "Access Token 발급 실패"
+            );
 
-        verify(jwtProvider).createAccessToken(
-            userId,
-            UserRole.USER.name()
-        );
+        verify(jwtProvider)
+            .createAccessToken(
+                userId,
+                UserRole.USER.name()
+            );
 
         /*
-         * Access Token 발급에 실패했으므로 기존 Refresh Token을
-         * 폐기하는 Redis Rotation은 절대로 실행되면 안 된다.
-         *
-         * 이를 통해 사용자는 일시적인 JWT 발급 오류가 해결된 뒤
-         * 기존 Refresh Token으로 재발급을 다시 시도할 수 있다.
+         * JWT 생성에 실패하면 기존 Refresh Token Family 상태는
+         * 그대로 유지돼야 재발급을 다시 시도할 수 있다.
          */
         verify(
             refreshTokenStore,
             never()
         ).rotate(
             userId,
+            familyId,
             oldTokenHash,
             newTokenHash,
             expiration
@@ -599,58 +848,97 @@ class RefreshTokenServiceTest {
     @DisplayName("기존 Refresh Token이 먼저 소비되면 재발급에 실패한다")
     void refresh_failWhenRotationLosesRace() {
         // given
-        UUID userId = UUID.randomUUID();
+        UUID userId =
+            UUID.randomUUID();
 
-        String oldRawToken = "old-refresh-token";
-        String oldTokenHash = "a".repeat(64);
+        UUID familyId =
+            UUID.randomUUID();
 
-        String newRawToken = "new-refresh-token";
-        String newTokenHash = "b".repeat(64);
+        String oldRawToken =
+            familyId
+                + "."
+                + "A".repeat(43);
 
-        Duration expiration = Duration.ofDays(7);
+        String oldTokenHash =
+            "a".repeat(64);
 
-        User user = createUser(
-            userId,
-            UserRole.USER,
-            false
-        );
+        String newRawToken =
+            familyId
+                + "."
+                + "B".repeat(43);
 
-        when(refreshTokenHasher.hash(oldRawToken))
-            .thenReturn(oldTokenHash);
+        String newTokenHash =
+            "b".repeat(64);
+
+        Duration expiration =
+            Duration.ofDays(7);
+
+        User user =
+            createUser(
+                userId,
+                UserRole.USER,
+                false
+            );
 
         when(
-            refreshTokenStore.findUserIdByTokenHash(oldTokenHash)
-        ).thenReturn(Optional.of(userId));
+            refreshTokenFamilyCodec
+                .parseFamilyId(oldRawToken)
+        ).thenReturn(
+            Optional.of(familyId)
+        );
+
+        when(
+            refreshTokenHasher.hash(oldRawToken)
+        ).thenReturn(oldTokenHash);
+
+        when(
+            refreshTokenStore
+                .findUserIdByFamilyAndTokenHash(
+                    familyId,
+                    oldTokenHash
+                )
+        ).thenReturn(
+            Optional.of(userId)
+        );
 
         when(userRepository.findById(userId))
             .thenReturn(Optional.of(user));
 
-        when(refreshTokenGenerator.generate())
-            .thenReturn(newRawToken);
+        when(
+            refreshTokenFamilyCodec
+                .generateForFamily(familyId)
+        ).thenReturn(
+            new FamilyRefreshToken(
+                familyId,
+                newRawToken
+            )
+        );
 
-        when(refreshTokenHasher.hash(newRawToken))
-            .thenReturn(newTokenHash);
+        when(
+            refreshTokenHasher.hash(newRawToken)
+        ).thenReturn(newTokenHash);
 
-        when(refreshTokenProperties.getExpiration())
-            .thenReturn(expiration);
+        when(
+            refreshTokenProperties.getExpiration()
+        ).thenReturn(expiration);
 
-        /*
-         * 외부 상태를 변경하기 전에 Access Token 생성까지는
-         * 정상적으로 완료된 상황을 가정
-         */
         when(
             jwtProvider.createAccessToken(
                 userId,
                 UserRole.USER.name()
             )
-        ).thenReturn("unused-access-token");
+        ).thenReturn(
+            "unused-access-token"
+        );
 
         /*
-         * 조회 직후 다른 요청이 먼저 기존 Refresh Token을 소비한 상황을 표현
+         * 다른 재발급 또는 로그아웃 요청이 먼저 Family 세션을
+         * 변경하거나 폐기한 상황을 표현
          */
         when(
             refreshTokenStore.rotate(
                 userId,
+                familyId,
                 oldTokenHash,
                 newTokenHash,
                 expiration
@@ -659,27 +947,65 @@ class RefreshTokenServiceTest {
 
         // when & then
         assertThatThrownBy(() ->
-            refreshTokenService.refresh(oldRawToken)
+            refreshTokenService.refresh(
+                oldRawToken
+            )
         )
             .isInstanceOf(BusinessException.class)
             .extracting("errorCode")
             .isEqualTo(ErrorCode.UNAUTHORIZED);
 
-        verify(refreshTokenStore).rotate(
-            userId,
-            oldTokenHash,
-            newTokenHash,
-            expiration
-        );
+        verify(refreshTokenStore)
+            .rotate(
+                userId,
+                familyId,
+                oldTokenHash,
+                newTokenHash,
+                expiration
+            );
+
+        verify(jwtProvider)
+            .createAccessToken(
+                userId,
+                UserRole.USER.name()
+            );
+    }
+
+    @Test
+    @DisplayName("형식이 잘못된 Refresh Token은 Redis 조회 전에 거부한다")
+    void refresh_failWhenTokenFormatIsInvalid() {
+        // given
+        String invalidRawToken =
+            "invalid-refresh-token";
+
+        when(
+            refreshTokenFamilyCodec
+                .parseFamilyId(invalidRawToken)
+        ).thenReturn(Optional.empty());
+
+        // when & then
+        assertThatThrownBy(() ->
+            refreshTokenService.refresh(
+                invalidRawToken
+            )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.UNAUTHORIZED);
+
+        verify(refreshTokenFamilyCodec)
+            .parseFamilyId(invalidRawToken);
 
         /*
-         * Access Token은 Redis 상태를 변경하기 전에 생성되지만,
-         * Rotation이 실패하면 RefreshResult가 반환되지 않으므로
-         * 클라이언트에는 전달되지 않는다.
+         * Family ID조차 확인할 수 없는 입력은 해시하거나
+         * Redis에 전달하지 않는다.
          */
-        verify(jwtProvider).createAccessToken(
-            userId,
-            UserRole.USER.name()
+        verifyNoInteractions(
+            userRepository,
+            refreshTokenHasher,
+            refreshTokenProperties,
+            refreshTokenStore,
+            jwtProvider
         );
     }
 
@@ -695,7 +1021,7 @@ class RefreshTokenServiceTest {
 
         verifyNoInteractions(
             userRepository,
-            refreshTokenGenerator,
+            refreshTokenFamilyCodec,
             refreshTokenHasher,
             refreshTokenProperties,
             refreshTokenStore,
@@ -715,7 +1041,7 @@ class RefreshTokenServiceTest {
 
         verifyNoInteractions(
             userRepository,
-            refreshTokenGenerator,
+            refreshTokenFamilyCodec,
             refreshTokenHasher,
             refreshTokenProperties,
             refreshTokenStore,
@@ -724,21 +1050,35 @@ class RefreshTokenServiceTest {
     }
 
     @Test
-    @DisplayName("로그아웃 시 현재 사용자의 Refresh Token 세션을 폐기한다")
-    void signOut_revokesCurrentRefreshTokenSession() {
+    @DisplayName("로그아웃 시 Refresh Token Family 세션을 폐기한다")
+    void signOut_revokesCurrentRefreshTokenFamily() {
         // given
         UUID authenticatedUserId = UUID.randomUUID();
-        String rawRefreshToken = "current-refresh-token";
-        String tokenHash = "a".repeat(64);
+        UUID familyId = UUID.randomUUID();
+
+        /*
+         * Refresh Token 원문은
+         * {familyId}.{무작위 Secret} 형식으로 구성된다.
+         *
+         * 로그아웃에서는 Secret의 해시를 이용하지 않고,
+         * Rotation 전후에도 유지되는 familyId를 이용해 현재 활성 세션을 폐기
+         */
+        String rawRefreshToken =
+            familyId
+                + "."
+                + "A".repeat(43);
 
         when(
-            refreshTokenHasher.hash(rawRefreshToken)
-        ).thenReturn(tokenHash);
+            refreshTokenFamilyCodec
+                .parseFamilyId(rawRefreshToken)
+        ).thenReturn(
+            Optional.of(familyId)
+        );
 
         when(
             refreshTokenStore.revoke(
                 authenticatedUserId,
-                tokenHash
+                familyId
             )
         ).thenReturn(true);
 
@@ -749,46 +1089,60 @@ class RefreshTokenServiceTest {
         );
 
         // then
-        verify(refreshTokenHasher)
-            .hash(rawRefreshToken);
+        verify(refreshTokenFamilyCodec)
+            .parseFamilyId(rawRefreshToken);
 
         verify(refreshTokenStore)
             .revoke(
                 authenticatedUserId,
-                tokenHash
+                familyId
             );
 
         /*
-         * 로그아웃은 Access Token 인증 결과와 Redis 세션만 사용하므로
-         * 사용자 DB 조회, 새 토큰 생성과 JWT 발급은 수행하지 않는다.
+         * 로그아웃은 Access Token에서 확인한 사용자 UUID와
+         * Refresh Token에서 추출한 Family ID만 사용
+         *
+         * 따라서 사용자 DB 조회, Refresh Token 해싱,
+         * 만료 시간 조회 및 JWT 발급은 실행하지 않는다.
          */
         verifyNoInteractions(
             userRepository,
-            refreshTokenGenerator,
+            refreshTokenHasher,
             refreshTokenProperties,
             jwtProvider
         );
     }
 
     @Test
-    @DisplayName("이미 폐기된 Refresh Token으로 로그아웃해도 정상 종료한다")
-    void signOut_succeedsWhenSessionIsAlreadyRevoked() {
+    @DisplayName("이미 폐기된 Refresh Token Family로 로그아웃해도 정상 종료한다")
+    void signOut_succeedsWhenFamilyIsAlreadyRevoked() {
         // given
         UUID authenticatedUserId = UUID.randomUUID();
-        String rawRefreshToken = "already-revoked-token";
-        String tokenHash = "b".repeat(64);
+        UUID familyId = UUID.randomUUID();
+
+        String rawRefreshToken =
+            familyId
+                + "."
+                + "B".repeat(43);
 
         when(
-            refreshTokenHasher.hash(rawRefreshToken)
-        ).thenReturn(tokenHash);
+            refreshTokenFamilyCodec
+                .parseFamilyId(rawRefreshToken)
+        ).thenReturn(
+            Optional.of(familyId)
+        );
 
         /*
-         * 세션이 이미 만료되거나 폐기되어 실제 삭제할 값이 없는 상황
+         * Redis에 해당 Family가 없거나 이미 폐기된 경우
+         * revoke()는 false를 반환
+         *
+         * 로그아웃은 여러 번 요청해도 같은 결과를 내는 멱등 작업이므로
+         * 이 경우에도 예외를 발생시키지 않는다.
          */
         when(
             refreshTokenStore.revoke(
                 authenticatedUserId,
-                tokenHash
+                familyId
             )
         ).thenReturn(false);
 
@@ -799,18 +1153,21 @@ class RefreshTokenServiceTest {
         );
 
         // then
-        /*
-         * revoke()가 false여도 예외 없이 종료되어
-         * 반복 로그아웃의 멱등성이 유지되어야 한다.
-         */
-        verify(refreshTokenHasher)
-            .hash(rawRefreshToken);
+        verify(refreshTokenFamilyCodec)
+            .parseFamilyId(rawRefreshToken);
 
         verify(refreshTokenStore)
             .revoke(
                 authenticatedUserId,
-                tokenHash
+                familyId
             );
+
+        verifyNoInteractions(
+            userRepository,
+            refreshTokenHasher,
+            refreshTokenProperties,
+            jwtProvider
+        );
     }
 
     @Test
@@ -826,9 +1183,13 @@ class RefreshTokenServiceTest {
         );
 
         // then
+        /*
+         * Cookie가 없는 경우 Redis에서 폐기할 Family를 식별할 수 없다.
+         * 이미 로그아웃된 상태와 동일하게 취급하고 정상 종료
+         */
         verifyNoInteractions(
             userRepository,
-            refreshTokenGenerator,
+            refreshTokenFamilyCodec,
             refreshTokenHasher,
             refreshTokenProperties,
             refreshTokenStore,
@@ -851,7 +1212,47 @@ class RefreshTokenServiceTest {
         // then
         verifyNoInteractions(
             userRepository,
-            refreshTokenGenerator,
+            refreshTokenFamilyCodec,
+            refreshTokenHasher,
+            refreshTokenProperties,
+            refreshTokenStore,
+            jwtProvider
+        );
+    }
+
+    @Test
+    @DisplayName("Refresh Token 형식이 잘못되어도 Cookie 삭제를 위해 로그아웃을 정상 종료한다")
+    void signOut_succeedsWhenRefreshTokenFormatIsInvalid() {
+        // given
+        UUID authenticatedUserId = UUID.randomUUID();
+        String invalidRefreshToken = "invalid-refresh-token";
+
+        /*
+         * 토큰 형식이 잘못되어 Family ID를 추출하지 못하는 상황
+         */
+        when(
+            refreshTokenFamilyCodec
+                .parseFamilyId(invalidRefreshToken)
+        ).thenReturn(Optional.empty());
+
+        // when
+        refreshTokenService.signOut(
+            authenticatedUserId,
+            invalidRefreshToken
+        );
+
+        // then
+        verify(refreshTokenFamilyCodec)
+            .parseFamilyId(invalidRefreshToken);
+
+        /*
+         * Family ID를 식별할 수 없으므로 Redis 세션은 건드리지 않는다.
+         *
+         * 서비스는 예외를 발생시키지 않고 정상 종료하고,
+         * Controller가 만료된 Refresh Token Cookie를 응답에 담아 삭제
+         */
+        verifyNoInteractions(
+            userRepository,
             refreshTokenHasher,
             refreshTokenProperties,
             refreshTokenStore,
@@ -866,7 +1267,9 @@ class RefreshTokenServiceTest {
         assertThatThrownBy(() ->
             refreshTokenService.signOut(
                 null,
-                "refresh-token"
+                UUID.randomUUID()
+                    + "."
+                    + "A".repeat(43)
             )
         )
             .isInstanceOf(BusinessException.class)
@@ -874,12 +1277,14 @@ class RefreshTokenServiceTest {
             .isEqualTo(ErrorCode.UNAUTHORIZED);
 
         /*
-         * 인증 사용자 확인이 가장 먼저 수행되어야 하므로
-         * 토큰 해시와 Redis 접근을 포함한 어떤 작업도 실행하지 않는다.
+         * 인증 사용자 확인이 가장 먼저 수행되어야 함.
+         *
+         * 인증되지 않은 요청에서는 Refresh Token 파싱이나
+         * Redis 세션 폐기를 포함한 후속 작업을 실행하지 않는다.
          */
         verifyNoInteractions(
             userRepository,
-            refreshTokenGenerator,
+            refreshTokenFamilyCodec,
             refreshTokenHasher,
             refreshTokenProperties,
             refreshTokenStore,

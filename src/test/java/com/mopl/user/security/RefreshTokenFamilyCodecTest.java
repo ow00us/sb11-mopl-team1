@@ -269,6 +269,35 @@ class RefreshTokenFamilyCodecTest {
             );
     }
 
+    @Test
+    @DisplayName("FamilyRefreshToken 문자열에는 Refresh Token 원문을 노출하지 않는다")
+    void familyRefreshToken_doesNotExposeRawTokenInToString() {
+        // given
+        UUID familyId = UUID.randomUUID();
+
+        String rawToken =
+            familyId
+                + "."
+                + TEST_SECRET;
+
+        FamilyRefreshToken familyRefreshToken =
+            new FamilyRefreshToken(
+                familyId,
+                rawToken
+            );
+
+        // when
+        String result =
+            familyRefreshToken.toString();
+
+        // then
+        assertThat(result)
+            .contains(familyId.toString())
+            .contains("rawToken=<redacted>")
+            .doesNotContain(rawToken)
+            .doesNotContain(TEST_SECRET);
+    }
+
     /**
      * FamilyRefreshToken 생성에 실패해야 하는 빈 원문을 제공
      *
