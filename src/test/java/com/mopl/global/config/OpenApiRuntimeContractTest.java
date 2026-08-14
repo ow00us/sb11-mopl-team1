@@ -121,6 +121,7 @@ class OpenApiRuntimeContractTest {
         "GET /api/follows/followed-by-me",
         "GET /api/follows/followers",
         "GET /api/follows/followings",
+        "GET /api/follows/recommendations",
         "GET /api/notifications",
         "GET /api/sse",
         "GET /api/playlists",

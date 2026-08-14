@@ -74,4 +74,56 @@ class NotificationTest {
             NotificationLevel.INFO
         );
     }
+
+    @Test
+    @DisplayName("알림 생성 시 유형과 대상 정보를 저장")
+    void create_withTargetInformation_success() {
+        // given
+        UUID receiverId = UUID.fromString(
+            "11111111-1111-1111-1111-111111111111"
+        );
+
+        UUID sourceEventId = UUID.fromString(
+            "22222222-2222-2222-2222-222222222222"
+        );
+
+        UUID resourceId = UUID.fromString(
+            "33333333-3333-3333-3333-333333333333"
+        );
+
+        UUID sourceEntityId = UUID.fromString(
+            "44444444-4444-4444-4444-444444444444"
+        );
+
+        // when
+        Notification notification = Notification.create(
+            receiverId,
+            sourceEventId,
+            NotificationType.DIRECT_MESSAGE,
+            resourceId,
+            sourceEntityId,
+            "새로운 DM",
+            "메시지가 도착했습니다.",
+            NotificationLevel.INFO
+        );
+
+        // then
+        assertThat(notification.getReceiverId())
+            .isEqualTo(receiverId);
+
+        assertThat(notification.getSourceEventId())
+            .isEqualTo(sourceEventId);
+
+        assertThat(notification.getType())
+            .isEqualTo(NotificationType.DIRECT_MESSAGE);
+
+        assertThat(notification.getResourceId())
+            .isEqualTo(resourceId);
+
+        assertThat(notification.getSourceEntityId())
+            .isEqualTo(sourceEntityId);
+
+        assertThat(notification.getReadAt())
+            .isNull();
+    }
 }

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.mopl.global.config.JpaConfig;
 import com.mopl.notification.entity.Notification;
 import com.mopl.notification.entity.NotificationLevel;
+import com.mopl.notification.entity.NotificationType;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
@@ -132,6 +133,56 @@ class NotificationRepositoryTest {
     }
 
     @Test
+    @DisplayName("알림 유형과 대상 정보를 저장하고 조회")
+    void saveAndFindByTargetInformation_success() {
+        // given
+        UUID sourceEventId = UUID.fromString(
+            "33333333-3333-3333-3333-333333333333"
+        );
+
+        UUID resourceId = UUID.fromString(
+            "44444444-4444-4444-4444-444444444444"
+        );
+
+        UUID sourceEntityId = UUID.fromString(
+            "55555555-5555-5555-5555-555555555555"
+        );
+
+        Notification notification = Notification.create(
+            RECEIVER_ID,
+            sourceEventId,
+            NotificationType.DIRECT_MESSAGE,
+            resourceId,
+            sourceEntityId,
+            "새로운 DM",
+            "메시지가 도착했습니다.",
+            NotificationLevel.INFO
+        );
+
+        Notification saved = notificationRepository.saveAndFlush(notification);
+
+        UUID notificationId = saved.getId();
+        entityManager.clear();
+
+        // when
+        Notification result = notificationRepository.findById(notificationId)
+            .orElseThrow();
+
+        // then
+        assertThat(result.getSourceEventId())
+            .isEqualTo(sourceEventId);
+
+        assertThat(result.getType())
+            .isEqualTo(NotificationType.DIRECT_MESSAGE);
+
+        assertThat(result.getResourceId())
+            .isEqualTo(resourceId);
+
+        assertThat(result.getSourceEntityId())
+            .isEqualTo(sourceEntityId);
+    }
+
+    @Test
     @DisplayName("알림 ID와 수신자 ID가 모두 일치하는 경우에만 조회")
     void findByIdAndReceiverId_matchesOwner() {
         // given
@@ -163,6 +214,63 @@ class NotificationRepositoryTest {
         // then
         assertThat(ownerResult).isPresent();
         assertThat(otherResult).isEmpty();
+    }
+
+    @Test
+    @DisplayName("알림 읽음 처리를 반복하면 최초 readAt을 유지")
+    void markAsReadIfUnread_repeated_preservesFirstReadAt() {
+        // given
+        Notification saved =
+            notificationRepository.saveAndFlush(
+                Notification.create(
+                    RECEIVER_ID,
+                    null,
+                    "알림 제목",
+                    "알림 내용",
+                    NotificationLevel.INFO
+                )
+            );
+
+        Instant firstReadAt =
+            Instant.parse("2026-08-13T01:00:00Z");
+
+        Instant secondReadAt =
+            Instant.parse("2026-08-13T02:00:00Z");
+
+        // when
+        int firstUpdatedCount =
+            notificationRepository.markAsReadIfUnread(
+                saved.getId(),
+                RECEIVER_ID,
+                firstReadAt
+            );
+
+        int secondUpdatedCount =
+            notificationRepository.markAsReadIfUnread(
+                saved.getId(),
+                RECEIVER_ID,
+                secondReadAt
+            );
+
+        entityManager.clear();
+
+        Notification result =
+            notificationRepository.findById(
+                saved.getId()
+            ).orElseThrow();
+
+        // then
+        assertThat(firstUpdatedCount)
+            .isEqualTo(1);
+
+        assertThat(secondUpdatedCount)
+            .isZero();
+
+        assertThat(result.getReadAt())
+            .isEqualTo(firstReadAt);
+
+        assertThat(result.getUpdatedAt())
+            .isEqualTo(firstReadAt);
     }
 
     @Test

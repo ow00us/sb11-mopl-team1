@@ -1,13 +1,16 @@
 package com.mopl.follow.service;
 
 import com.mopl.follow.dto.FollowDto;
+import com.mopl.follow.dto.FollowRecommendationItemDto;
 import com.mopl.follow.dto.FollowUserItemDto;
 import com.mopl.follow.entity.Follow;
+import com.mopl.follow.repository.FollowRecommendationRow;
 import com.mopl.follow.repository.FollowRepository;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.util.CursorUtils;
+import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,6 +28,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -283,6 +287,56 @@ class FollowServiceTest {
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
     }
 
+    @Test
+    @DisplayName("getFollowers 는 페이지 follower ID 를 배치 조회해 user.name/profileImageUrl 을 채운다")
+    void getFollowers_populatesUserNameAndProfileImageUrl() {
+        UUID follower1 = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID follower2 = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        Follow f1 = savedFollowWithCreatedAt(UUID.randomUUID(), follower1, FOLLOWEE_ID,
+                Instant.parse("2026-08-01T11:00:00Z"));
+        Follow f2 = savedFollowWithCreatedAt(UUID.randomUUID(), follower2, FOLLOWEE_ID,
+                Instant.parse("2026-08-01T10:00:00Z"));
+        User u1 = savedUser(follower1, "userA", "https://cdn/a.png");
+        User u2 = savedUser(follower2, "userB", "https://cdn/b.png");
+
+        when(followRepository.findFollowersByFolloweeIdDesc(eq(FOLLOWEE_ID.toString()), any(), any(), eq(11)))
+                .thenReturn(List.of(f1, f2));
+        when(followRepository.countByFolloweeId(FOLLOWEE_ID)).thenReturn(2L);
+        when(userRepository.findAllById(any())).thenReturn(List.of(u1, u2));
+
+        CursorResponse<FollowUserItemDto> result = followService.getFollowers(
+                FOLLOWEE_ID, null, null, 10, "followedAt", "DESCENDING");
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.data().get(0).user().name()).isEqualTo("userA");
+        assertThat(result.data().get(0).user().profileImageUrl()).isEqualTo("https://cdn/a.png");
+        assertThat(result.data().get(1).user().name()).isEqualTo("userB");
+        assertThat(result.data().get(1).user().profileImageUrl()).isEqualTo("https://cdn/b.png");
+        // N+1 방지 검증: follower 수와 무관하게 findAllById 1회 호출
+        verify(userRepository).findAllById(any());
+    }
+
+    @Test
+    @DisplayName("getFollowers 는 user 조회 결과에 없는 follower 에 대해 UNKNOWN fallback 을 반환한다")
+    void getFollowers_fallbackToUnknownWhenUserMissing() {
+        UUID follower1 = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        Follow f1 = savedFollowWithCreatedAt(UUID.randomUUID(), follower1, FOLLOWEE_ID,
+                Instant.parse("2026-08-01T11:00:00Z"));
+
+        when(followRepository.findFollowersByFolloweeIdDesc(eq(FOLLOWEE_ID.toString()), any(), any(), eq(11)))
+                .thenReturn(List.of(f1));
+        when(followRepository.countByFolloweeId(FOLLOWEE_ID)).thenReturn(1L);
+        when(userRepository.findAllById(any())).thenReturn(List.of());
+
+        CursorResponse<FollowUserItemDto> result = followService.getFollowers(
+                FOLLOWEE_ID, null, null, 10, "followedAt", "DESCENDING");
+
+        assertThat(result.data()).hasSize(1);
+        assertThat(result.data().get(0).user().userId()).isEqualTo(follower1);
+        assertThat(result.data().get(0).user().name()).isEqualTo("알 수 없는 사용자");
+        assertThat(result.data().get(0).user().profileImageUrl()).isNull();
+    }
+
     // ── getFollowings ─────────────────────────────────────────────────────────
 
     @Test
@@ -306,6 +360,34 @@ class FollowServiceTest {
         assertThat(result.data().get(0).followedAt()).isEqualTo(t1);
         assertThat(result.hasNext()).isFalse();
         assertThat(result.totalCount()).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("getFollowings 는 페이지 followee ID 를 배치 조회해 user.name/profileImageUrl 을 채운다")
+    void getFollowings_populatesUserNameAndProfileImageUrl() {
+        UUID followee1 = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID followee2 = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        Follow f1 = savedFollowWithCreatedAt(UUID.randomUUID(), FOLLOWER_ID, followee1,
+                Instant.parse("2026-08-01T11:00:00Z"));
+        Follow f2 = savedFollowWithCreatedAt(UUID.randomUUID(), FOLLOWER_ID, followee2,
+                Instant.parse("2026-08-01T10:00:00Z"));
+        User u1 = savedUser(followee1, "userA", "https://cdn/a.png");
+        User u2 = savedUser(followee2, "userB", "https://cdn/b.png");
+
+        when(followRepository.findFollowingsByFollowerIdDesc(eq(FOLLOWER_ID.toString()), any(), any(), eq(11)))
+                .thenReturn(List.of(f1, f2));
+        when(followRepository.countByFollowerId(FOLLOWER_ID)).thenReturn(2L);
+        when(userRepository.findAllById(any())).thenReturn(List.of(u1, u2));
+
+        CursorResponse<FollowUserItemDto> result = followService.getFollowings(
+                FOLLOWER_ID, null, null, 10, "followedAt", "DESCENDING");
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.data().get(0).user().name()).isEqualTo("userA");
+        assertThat(result.data().get(0).user().profileImageUrl()).isEqualTo("https://cdn/a.png");
+        assertThat(result.data().get(1).user().name()).isEqualTo("userB");
+        assertThat(result.data().get(1).user().profileImageUrl()).isEqualTo("https://cdn/b.png");
+        verify(userRepository).findAllById(any());
     }
 
     // ── Phase E: 남은 조건 분기 커버 ─────────────────────────────────────
@@ -382,6 +464,113 @@ class FollowServiceTest {
 
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────
 
+    // ── getRecommendations ────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("팔로우 추천은 페이지 결과에 UserSummary 를 배치 조회로 채워 반환한다")
+    void getRecommendations_success_returnsPageWithUserSummary() {
+        UUID candidate1 = UUID.randomUUID();
+        UUID candidate2 = UUID.randomUUID();
+
+        when(followRepository.findRecommendations(
+                eq(FOLLOWER_ID.toString()), eq(null), eq(null), eq(11)))
+                .thenReturn(List.of(
+                        recommendationRow(candidate1, 3L),
+                        recommendationRow(candidate2, 1L)));
+        when(userRepository.findAllById(any())).thenReturn(List.of(
+                savedUser(candidate1, "이름A", "https://cdn/a.png"),
+                savedUser(candidate2, "이름B", "https://cdn/b.png")));
+
+        CursorResponse<FollowRecommendationItemDto> result = followService.getRecommendations(
+                FOLLOWER_ID, null, null, 10, "commonFollowingCount", "DESCENDING");
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.data().get(0).user().userId()).isEqualTo(candidate1);
+        assertThat(result.data().get(0).user().name()).isEqualTo("이름A");
+        assertThat(result.data().get(0).commonFollowingCount()).isEqualTo(3L);
+        assertThat(result.data().get(1).commonFollowingCount()).isEqualTo(1L);
+        assertThat(result.hasNext()).isFalse();
+    }
+
+    @Test
+    @DisplayName("추천 조회에서 cursor 와 idAfter 중 하나만 있으면 INVALID_INPUT 예외가 발생한다")
+    void getRecommendations_orphanCursorPair_throws400() {
+        assertThatThrownBy(() -> followService.getRecommendations(
+                FOLLOWER_ID, CursorUtils.encodeLong(3L), null, 10, "commonFollowingCount", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+
+        assertThatThrownBy(() -> followService.getRecommendations(
+                FOLLOWER_ID, null, UUID.randomUUID(), 10, "commonFollowingCount", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+
+        verifyNoInteractions(followRepository);
+    }
+
+    @Test
+    @DisplayName("추천 조회에서 잘못된 cursor 형식은 INVALID_INPUT 예외가 발생한다")
+    void getRecommendations_invalidCursorFormat_throws400() {
+        assertThatThrownBy(() -> followService.getRecommendations(
+                FOLLOWER_ID, "not-a-valid-base64-long", UUID.randomUUID(),
+                10, "commonFollowingCount", "DESCENDING"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
+
+        verifyNoInteractions(followRepository);
+    }
+
+    @Test
+    @DisplayName("추천 결과의 사용자가 조회되지 않으면 UNKNOWN fallback 을 채워 반환한다")
+    void getRecommendations_fallbackToUnknownWhenUserMissing() {
+        UUID candidate = UUID.randomUUID();
+        when(followRepository.findRecommendations(any(), any(), any(), eq(11)))
+                .thenReturn(List.of(recommendationRow(candidate, 2L)));
+        when(userRepository.findAllById(any())).thenReturn(List.of());
+
+        CursorResponse<FollowRecommendationItemDto> result = followService.getRecommendations(
+                FOLLOWER_ID, null, null, 10, "commonFollowingCount", "DESCENDING");
+
+        assertThat(result.data()).hasSize(1);
+        assertThat(result.data().get(0).user().userId()).isEqualTo(candidate);
+        assertThat(result.data().get(0).user().name()).isEqualTo("알 수 없는 사용자");
+        assertThat(result.data().get(0).user().profileImageUrl()).isNull();
+    }
+
+    @Test
+    @DisplayName("추천 조회에서 fetchSize 를 넘어서면 hasNext=true 와 다음 커서를 반환한다")
+    void getRecommendations_hasNext_setsNextCursor() {
+        UUID c1 = UUID.randomUUID();
+        UUID c2 = UUID.randomUUID();
+        UUID c3 = UUID.randomUUID();
+
+        // limit=2 → fetchSize=3. Repository 가 3건 반환 → hasNext=true, page 는 앞 2건.
+        when(followRepository.findRecommendations(
+                eq(FOLLOWER_ID.toString()), eq(null), eq(null), eq(3)))
+                .thenReturn(List.of(
+                        recommendationRow(c1, 5L),
+                        recommendationRow(c2, 3L),
+                        recommendationRow(c3, 1L)));
+        when(userRepository.findAllById(any())).thenReturn(List.of(
+                savedUser(c1, "A", null),
+                savedUser(c2, "B", null)));
+
+        CursorResponse<FollowRecommendationItemDto> result = followService.getRecommendations(
+                FOLLOWER_ID, null, null, 2, "commonFollowingCount", "DESCENDING");
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.hasNext()).isTrue();
+        assertThat(result.nextCursor()).isEqualTo(CursorUtils.encodeLong(3L));
+        assertThat(result.nextIdAfter()).isEqualTo(c2);
+    }
+
+    private FollowRecommendationRow recommendationRow(UUID userId, long commonCount) {
+        return new FollowRecommendationRow() {
+            @Override public UUID getUserId() { return userId; }
+            @Override public long getCommonCount() { return commonCount; }
+        };
+    }
+
     private Follow savedFollow(UUID id, UUID followerId, UUID followeeId) {
         Follow f = Follow.builder().followerId(followerId).followeeId(followeeId).build();
         ReflectionTestUtils.setField(f, "id", id);
@@ -392,5 +581,16 @@ class FollowServiceTest {
         Follow f = savedFollow(id, followerId, followeeId);
         ReflectionTestUtils.setField(f, "createdAt", createdAt);
         return f;
+    }
+
+    private User savedUser(UUID id, String name, String profileImageUrl) {
+        User u = User.builder()
+                .email(id + "@example.com")
+                .passwordHash("hash")
+                .name(name)
+                .profileImageUrl(profileImageUrl)
+                .build();
+        ReflectionTestUtils.setField(u, "id", id);
+        return u;
     }
 }
