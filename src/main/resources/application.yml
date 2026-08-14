@@ -6,6 +6,10 @@ spring:
   batch:
     job:
       enabled: false
+  task:
+    scheduling:
+      pool:
+        size: 2
   data:
     redis:
       timeout: 2s
