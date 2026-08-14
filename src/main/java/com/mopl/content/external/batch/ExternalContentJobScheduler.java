@@ -1,7 +1,6 @@
 package com.mopl.content.external.batch;
 
 import java.time.LocalDateTime;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.JobExecution;
@@ -20,13 +19,20 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class ExternalContentJobScheduler {
 
-    @Qualifier("externalContentJobLauncher")
     private final JobLauncher jobLauncher;
     private final Job externalContentCollectionJob;
     private final JobExplorer jobExplorer;
+
+    public ExternalContentJobScheduler(
+            @Qualifier("externalContentJobLauncher") JobLauncher jobLauncher,
+            Job externalContentCollectionJob,
+            JobExplorer jobExplorer) {
+        this.jobLauncher = jobLauncher;
+        this.externalContentCollectionJob = externalContentCollectionJob;
+        this.jobExplorer = jobExplorer;
+    }
 
     @Scheduled(cron = "${external-content-batch.cron}", zone = "${external-content-batch.zone}")
     public void runExternalContentCollectionJob() throws Exception {
