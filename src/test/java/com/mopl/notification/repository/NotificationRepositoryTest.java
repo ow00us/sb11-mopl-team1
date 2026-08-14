@@ -268,6 +268,9 @@ class NotificationRepositoryTest {
 
         assertThat(result.getReadAt())
             .isEqualTo(firstReadAt);
+
+        assertThat(result.getUpdatedAt())
+            .isEqualTo(firstReadAt);
     }
 
     @Test

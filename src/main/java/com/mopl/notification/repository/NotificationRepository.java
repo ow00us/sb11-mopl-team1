@@ -11,18 +11,17 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-public interface NotificationRepository
-    extends JpaRepository<Notification, UUID> {
-
+public interface NotificationRepository extends JpaRepository<Notification, UUID> {
     Optional<Notification> findByIdAndReceiverId(
         UUID notificationId,
         UUID receiverId
     );
 
-    @Modifying
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
         UPDATE Notification notification
-        SET notification.readAt = :readAt
+        SET notification.readAt = :readAt,
+            notification.updatedAt = :readAt
         WHERE notification.id = :notificationId
             AND notification.receiverId = :receiverId
             AND notification.readAt IS NULL

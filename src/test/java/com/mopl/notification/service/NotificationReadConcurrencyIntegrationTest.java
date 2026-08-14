@@ -189,12 +189,13 @@ class NotificationReadConcurrencyIntegrationTest {
                     : secondReadAt;
 
             // then
-            assertThat(
-                firstUpdatedCount
-                    + secondUpdatedCount
-            ).isEqualTo(1);
+            assertThat(firstUpdatedCount + secondUpdatedCount)
+                .isEqualTo(1);
 
             assertThat(result.getReadAt())
+                .isEqualTo(successfulReadAt);
+
+            assertThat(result.getUpdatedAt())
                 .isEqualTo(successfulReadAt);
         } finally {
             executor.shutdownNow();
