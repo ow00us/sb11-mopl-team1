@@ -1,5 +1,6 @@
 package com.mopl.global.outbox;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.mopl.global.event.EventContractViolationException;
 import com.mopl.global.event.EventEnvelope;
 import java.time.Instant;
@@ -75,7 +76,7 @@ public class OutboxRecorderImpl implements OutboxRecorder {
         requirePresent(envelope.eventId(), "eventId");
         requirePresent(envelope.aggregateId(), "aggregateId");
         requirePresent(envelope.occurredAt(), "occurredAt");
-        requirePresent(envelope.payload(), "payload");
+        requirePayload(envelope.payload());
         requireText(envelope.type(), "type");
         requireText(partitionKey, "partitionKey");
         requireText(orderingScope, "orderingScope");
@@ -84,6 +85,27 @@ public class OutboxRecorderImpl implements OutboxRecorder {
             throw new EventContractViolationException(
                 "지원하지 않는 envelope version 입니다. 최소 " + MINIMUM_SUPPORTED_VERSION
                     + ", 실제 " + envelope.version());
+        }
+    }
+
+    /**
+     * payload 는 Java {@code null} 만으로 판단할 수 없습니다.
+     *
+     * <p>{@code JsonNode} 는 값이 없어도 참조가 null 이 아닙니다. {@code NullNode} 와
+     * {@code MissingNode} 가 그대로 통과하면 뒤에서 조용히 잘못된 값이 저장됩니다.
+     *
+     * <ul>
+     *   <li>{@code NullNode.toString()} 은 {@code "null"} 이라 jsonb 에 JSON null 이
+     *       저장됩니다. 컬럼이 NOT NULL 이어도 SQL NULL 이 아니므로 막히지 않습니다.</li>
+     *   <li>{@code MissingNode.toString()} 은 빈 문자열이라 jsonb 파싱에 실패합니다.
+     *       예외가 저장 시점에 나서 원인이 흐려집니다.</li>
+     * </ul>
+     *
+     * <p>빈 객체 {@code {}} 는 허용합니다. 담을 도메인 사실이 없는 이벤트도 있습니다.
+     */
+    private void requirePayload(JsonNode payload) {
+        if (payload == null || payload.isNull() || payload.isMissingNode()) {
+            throw new EventContractViolationException("payload 이(가) 없습니다.");
         }
     }
 

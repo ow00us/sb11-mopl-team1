@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.MissingNode;
 import com.mopl.global.event.EventContractViolationException;
 import com.mopl.global.event.EventEnvelope;
 import com.mopl.global.event.ProcessedEvent;
@@ -169,6 +170,53 @@ class OutboxRecorderIntegrationTest {
             .isInstanceOf(EventContractViolationException.class);
 
         assertThat(outboxEventRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("payload가 JSON null이면 거부한다")
+    void nullNodePayload_isRejected() {
+        // JsonNode 는 값이 없어도 참조가 null 이 아닙니다. NullNode 를 통과시키면
+        // toString() 이 "null" 이라 jsonb 에 JSON null 이 저장됩니다. 컬럼이 NOT NULL 이어도
+        // SQL NULL 이 아니므로 스키마가 막지 못합니다.
+        EventEnvelope nullPayload = new EventEnvelope(
+            UUID.randomUUID(), "follow.created", 1, Instant.parse("2026-08-14T03:00:00Z"),
+            UUID.randomUUID(), objectMapper.nullNode());
+
+        assertThatThrownBy(() -> domainCaller.changeDomainAndRecord(nullPayload, false))
+            .isInstanceOf(EventContractViolationException.class);
+
+        assertThat(outboxEventRepository.count()).isZero();
+        assertThat(processedEventRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("payload가 MissingNode면 거부한다")
+    void missingNodePayload_isRejected() {
+        // MissingNode 는 toString() 이 빈 문자열이라 jsonb 파싱에 실패합니다. 저장 시점에야
+        // 예외가 나서 원인이 흐려지므로 기록 전에 막습니다.
+        EventEnvelope missingPayload = new EventEnvelope(
+            UUID.randomUUID(), "follow.created", 1, Instant.parse("2026-08-14T03:00:00Z"),
+            UUID.randomUUID(), MissingNode.getInstance());
+
+        assertThatThrownBy(() -> domainCaller.changeDomainAndRecord(missingPayload, false))
+            .isInstanceOf(EventContractViolationException.class);
+
+        assertThat(outboxEventRepository.count()).isZero();
+        assertThat(processedEventRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("빈 객체 payload는 허용한다")
+    void emptyObjectPayload_isAllowed() {
+        // 담을 도메인 사실이 없는 이벤트도 있습니다. 값이 없는 것과 빈 객체는 다릅니다.
+        EventEnvelope emptyPayload = new EventEnvelope(
+            UUID.randomUUID(), "follow.created", 1, Instant.parse("2026-08-14T03:00:00Z"),
+            UUID.randomUUID(), objectMapper.createObjectNode());
+
+        domainCaller.changeDomainAndRecord(emptyPayload, false);
+
+        assertThat(outboxEventRepository.findByEventId(emptyPayload.eventId()).orElseThrow()
+            .getPayload()).isEqualTo("{}");
     }
 
     @Test
