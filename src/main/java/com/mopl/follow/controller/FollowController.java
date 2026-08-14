@@ -1,6 +1,7 @@
 package com.mopl.follow.controller;
 
 import com.mopl.follow.dto.FollowDto;
+import com.mopl.follow.dto.FollowRecommendationItemDto;
 import com.mopl.follow.dto.FollowUserItemDto;
 import com.mopl.follow.dto.FollowerCountDto;
 import com.mopl.follow.dto.FollowRequest;
@@ -73,6 +74,16 @@ public class FollowController {
             @RequestParam(defaultValue = "followedAt") @Pattern(regexp = "followedAt") String sortBy,
             @RequestParam(defaultValue = "DESCENDING") @Pattern(regexp = "DESCENDING") String sortDirection) {
         return followService.getFollowers(followeeId, cursor, idAfter, limit, sortBy, sortDirection);
+    }
+
+    @GetMapping("/recommendations")
+    public CursorResponse<FollowRecommendationItemDto> getRecommendations(
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false) UUID idAfter,
+            @RequestParam @Min(1) @Max(100) int limit,
+            @RequestParam(defaultValue = "commonFollowingCount") @Pattern(regexp = "commonFollowingCount") String sortBy,
+            @RequestParam(defaultValue = "DESCENDING") @Pattern(regexp = "DESCENDING") String sortDirection) {
+        throw new UnsupportedOperationException("F3 Controller Green 에서 구현 예정");
     }
 
     @GetMapping("/followings")
