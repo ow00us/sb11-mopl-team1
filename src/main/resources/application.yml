@@ -1,6 +1,29 @@
 spring:
   application:
     name: mopl
+  mail:
+    # 로컬에서는 MailHog 또는 Mailpit SMTP 포트인 1025를 기본값으로 사용
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:1025}
+
+    # 인증이 필요한 운영 SMTP에서는 환경변수로 주입
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+
+    properties:
+      mail:
+        smtp:
+          # 로컬 SMTP 서버는 인증 없이 사용할 수 있도록 false를 기본값으로 설정
+          auth: ${MAIL_SMTP_AUTH:false}
+
+          starttls:
+            # 운영 SMTP 정책에 따라 환경변수로 활성화
+            enable: ${MAIL_STARTTLS_ENABLE:false}
+
+          # SMTP 서버 장애가 요청 스레드를 장시간 점유하지 않도록 제한
+          connectiontimeout: ${MAIL_CONNECTION_TIMEOUT:5000}
+          timeout: ${MAIL_READ_TIMEOUT:5000}
+          writetimeout: ${MAIL_WRITE_TIMEOUT:5000}
   profiles:
     active: dev
   batch:
@@ -69,6 +92,14 @@ refresh-token:
 
     # 로컬 HTTP 개발 환경에서는 false
     secure: ${REFRESH_TOKEN_COOKIE_SECURE:false}
+
+password-reset:
+  mail:
+    # 임시 비밀번호 안내 메일에 표시할 발신 주소
+    from-address: ${PASSWORD_RESET_MAIL_FROM:no-reply@mopl.local}
+
+    # 메일 제목은 환경별로 변경할 수 있지만 줄바꿈 문자는 허용하지 않음
+    subject: ${PASSWORD_RESET_MAIL_SUBJECT:[모두의 플리] 임시 비밀번호 안내}
 
 watching-session:
   presence-ttl: ${WATCHING_SESSION_PRESENCE_TTL:60s}
