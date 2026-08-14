@@ -25,15 +25,22 @@ import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.batch.core.BatchStatus;
+import org.springframework.batch.core.Job;
 import org.springframework.batch.core.JobExecution;
 import org.springframework.batch.core.JobParameters;
 import org.springframework.batch.core.JobParametersBuilder;
 import org.springframework.batch.core.StepExecution;
+import org.springframework.batch.core.launch.JobLauncher;
+import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.test.JobLauncherTestUtils;
 import org.springframework.batch.test.context.SpringBatchTest;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
@@ -46,6 +53,29 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @ActiveProfiles("test")
 @Testcontainers
 class ExternalContentCollectionJobIntegrationTest {
+
+    // ExternalContentBatchConfig가 등록하는 비동기 externalContentJobLauncher와 Spring Boot 자동 설정의
+    // 동기 jobLauncher가 컨텍스트에 공존하면서, SpringBatchTest가 자동 등록하는 JobLauncherTestUtils 빈이
+    // (BatchTestContextCustomizer가 registerBeanDefinition으로 직접 등록하는 "jobLauncherTestUtils")
+    // 어떤 JobLauncher를 쓸지 결정하지 못해(ObjectProvider.ifUnique()가 후보 2개 중 primary가 없으면
+    // 조용히 null을 반환) 깨지는 것을 막기 위해, 다른 이름의 빈을 별도로 만들고 @Primary로 필드 주입 시
+    // 우선 선택되도록 한다. 같은 이름("jobLauncherTestUtils")을 쓰면 BeanDefinitionOverrideException이 난다.
+    @TestConfiguration
+    static class SyncJobLauncherTestConfig {
+
+        @Bean
+        @Primary
+        public JobLauncherTestUtils syncJobLauncherTestUtils(
+                @Qualifier("jobLauncher") JobLauncher jobLauncher,
+                Job externalContentCollectionJob,
+                JobRepository jobRepository) {
+            JobLauncherTestUtils utils = new JobLauncherTestUtils();
+            utils.setJobLauncher(jobLauncher);
+            utils.setJob(externalContentCollectionJob);
+            utils.setJobRepository(jobRepository);
+            return utils;
+        }
+    }
 
     @Container
     @ServiceConnection

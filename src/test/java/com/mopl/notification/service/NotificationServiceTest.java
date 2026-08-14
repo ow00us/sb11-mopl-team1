@@ -406,8 +406,35 @@ class NotificationServiceTest {
     }
 
     @Test
-    @DisplayName("본인의 알림을 읽음 처리")
+    @DisplayName("읽지 않은 본인의 알림을 읽음 처리")
     void read_success() {
+        // given
+        when(
+            notificationRepository.markAsReadIfUnread(
+                eq(NOTIFICATION_ID),
+                eq(RECEIVER_ID),
+                any(Instant.class)
+            )
+        ).thenReturn(1);
+
+        // when
+        notificationService.read(
+            NOTIFICATION_ID,
+            RECEIVER_ID
+        );
+
+        // then
+        verify(notificationRepository)
+            .markAsReadIfUnread(
+                eq(NOTIFICATION_ID),
+                eq(RECEIVER_ID),
+                any(Instant.class)
+            );
+    }
+
+    @Test
+    @DisplayName("이미 읽은 본인 알림을 다시 읽음 처리하면 성공")
+    void read_alreadyRead_success() {
         // given
         Notification notification = Notification.create(
             RECEIVER_ID,
@@ -417,12 +444,27 @@ class NotificationServiceTest {
             NotificationLevel.INFO
         );
 
+        Instant firstReadAt =
+            Instant.parse("2026-08-13T01:00:00Z");
+
+        notification.markAsRead(firstReadAt);
+
+        when(
+            notificationRepository.markAsReadIfUnread(
+                eq(NOTIFICATION_ID),
+                eq(RECEIVER_ID),
+                any(Instant.class)
+            )
+        ).thenReturn(0);
+
         when(
             notificationRepository.findByIdAndReceiverId(
                 NOTIFICATION_ID,
                 RECEIVER_ID
             )
-        ).thenReturn(Optional.of(notification));
+        ).thenReturn(
+            Optional.of(notification)
+        );
 
         // when
         notificationService.read(
@@ -431,7 +473,8 @@ class NotificationServiceTest {
         );
 
         // then
-        assertThat(notification.getReadAt()).isNotNull();
+        assertThat(notification.getReadAt())
+            .isEqualTo(firstReadAt);
 
         verify(notificationRepository)
             .findByIdAndReceiverId(
@@ -444,6 +487,14 @@ class NotificationServiceTest {
     @DisplayName("본인이 소유한 알림이 없으면 읽음 처리에 실패")
     void read_notificationNotFound_throwsException() {
         // given
+        when(
+            notificationRepository.markAsReadIfUnread(
+                eq(NOTIFICATION_ID),
+                eq(RECEIVER_ID),
+                any(Instant.class)
+            )
+        ).thenReturn(0);
+
         when(
             notificationRepository.findByIdAndReceiverId(
                 NOTIFICATION_ID,

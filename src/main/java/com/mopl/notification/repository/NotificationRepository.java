@@ -7,15 +7,29 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-public interface NotificationRepository
-    extends JpaRepository<Notification, UUID> {
-
+public interface NotificationRepository extends JpaRepository<Notification, UUID> {
     Optional<Notification> findByIdAndReceiverId(
         UUID notificationId,
         UUID receiverId
+    );
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+        UPDATE Notification notification
+        SET notification.readAt = :readAt,
+            notification.updatedAt = :readAt
+        WHERE notification.id = :notificationId
+            AND notification.receiverId = :receiverId
+            AND notification.readAt IS NULL
+        """)
+    int markAsReadIfUnread(
+        @Param("notificationId") UUID notificationId,
+        @Param("receiverId") UUID receiverId,
+        @Param("readAt") Instant readAt
     );
 
     long countByReceiverIdAndReadAtIsNull(UUID receiverId);

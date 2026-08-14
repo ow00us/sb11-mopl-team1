@@ -190,19 +190,27 @@ public class NotificationService {
         UUID notificationId,
         UUID receiverId
     ) {
-        Notification notification =
-            notificationRepository
-                .findByIdAndReceiverId(
+        int updatedCount =
+            notificationRepository.markAsReadIfUnread(
+                notificationId,
+                receiverId,
+                Instant.now()
+            );
+
+        if (updatedCount == 0) {
+            boolean isOwner =
+                notificationRepository.findByIdAndReceiverId(
                     notificationId,
                     receiverId
                 )
-                .orElseThrow(() ->
-                    new BusinessException(
-                        ErrorCode.RESOURCE_NOT_FOUND
-                    )
-                );
+                    .isPresent();
 
-        notification.markAsRead(Instant.now());
+            if (!isOwner) {
+                throw new BusinessException(
+                    ErrorCode.RESOURCE_NOT_FOUND
+                );
+            }
+        }
     }
 
     private void validateRequest(

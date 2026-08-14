@@ -217,6 +217,63 @@ class NotificationRepositoryTest {
     }
 
     @Test
+    @DisplayName("알림 읽음 처리를 반복하면 최초 readAt을 유지")
+    void markAsReadIfUnread_repeated_preservesFirstReadAt() {
+        // given
+        Notification saved =
+            notificationRepository.saveAndFlush(
+                Notification.create(
+                    RECEIVER_ID,
+                    null,
+                    "알림 제목",
+                    "알림 내용",
+                    NotificationLevel.INFO
+                )
+            );
+
+        Instant firstReadAt =
+            Instant.parse("2026-08-13T01:00:00Z");
+
+        Instant secondReadAt =
+            Instant.parse("2026-08-13T02:00:00Z");
+
+        // when
+        int firstUpdatedCount =
+            notificationRepository.markAsReadIfUnread(
+                saved.getId(),
+                RECEIVER_ID,
+                firstReadAt
+            );
+
+        int secondUpdatedCount =
+            notificationRepository.markAsReadIfUnread(
+                saved.getId(),
+                RECEIVER_ID,
+                secondReadAt
+            );
+
+        entityManager.clear();
+
+        Notification result =
+            notificationRepository.findById(
+                saved.getId()
+            ).orElseThrow();
+
+        // then
+        assertThat(firstUpdatedCount)
+            .isEqualTo(1);
+
+        assertThat(secondUpdatedCount)
+            .isZero();
+
+        assertThat(result.getReadAt())
+            .isEqualTo(firstReadAt);
+
+        assertThat(result.getUpdatedAt())
+            .isEqualTo(firstReadAt);
+    }
+
+    @Test
     @DisplayName("수신자의 읽지 않은 알림만 최신순으로 조회")
     void findUnread_firstPage_descending() {
         // given
