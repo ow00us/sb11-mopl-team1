@@ -41,6 +41,8 @@ class FollowRepositoryTest {
     private static final UUID USER_B = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
     private static final UUID USER_C = UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc");
     private static final UUID USER_D = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
+    private static final UUID USER_E = UUID.fromString("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
+    private static final UUID USER_F = UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff");
 
     @BeforeEach
     void insertTestUsers() {
@@ -50,13 +52,17 @@ class FollowRepositoryTest {
                   (:a, NOW(), NOW(), 'a@test.com', 'A', 'hash', 'USER', false),
                   (:b, NOW(), NOW(), 'b@test.com', 'B', 'hash', 'USER', false),
                   (:c, NOW(), NOW(), 'c@test.com', 'C', 'hash', 'USER', false),
-                  (:d, NOW(), NOW(), 'd@test.com', 'D', 'hash', 'USER', false)
+                  (:d, NOW(), NOW(), 'd@test.com', 'D', 'hash', 'USER', false),
+                  (:e, NOW(), NOW(), 'e@test.com', 'E', 'hash', 'USER', false),
+                  (:f, NOW(), NOW(), 'f@test.com', 'F', 'hash', 'USER', false)
                 ON CONFLICT DO NOTHING
                 """)
                 .setParameter("a", USER_A)
                 .setParameter("b", USER_B)
                 .setParameter("c", USER_C)
                 .setParameter("d", USER_D)
+                .setParameter("e", USER_E)
+                .setParameter("f", USER_F)
                 .executeUpdate();
         em.flush();
     }
@@ -153,6 +159,97 @@ class FollowRepositoryTest {
                 USER_A.toString(), null, null, 100);
 
         assertThat(result).hasSize(2);
+    }
+
+    // ── findRecommendations (친구의 친구 기반 팔로우 추천) ────────────────────
+
+    @Test
+    @DisplayName("findRecommendations 는 요청자가 팔로우한 사용자들이 팔로우하는 대상을 후보로 반환한다")
+    void findRecommendations_returnsFriendOfFriend() {
+        Instant now = Instant.now();
+        persistFollow(USER_A, USER_B, now);   // A → B
+        persistFollow(USER_B, USER_C, now);   // B → C  ⇒ C 는 A 의 FoF
+        persistFollow(USER_B, USER_D, now);   // B → D  ⇒ D 는 A 의 FoF
+
+        List<FollowRecommendationRow> result = followRepository.findRecommendations(
+                USER_A.toString(), null, null, 10);
+
+        assertThat(result).extracting(FollowRecommendationRow::getUserId)
+                .containsExactlyInAnyOrder(USER_C, USER_D);
+        assertThat(result).allSatisfy(row ->
+                assertThat(row.getCommonCount()).isEqualTo(1L));
+    }
+
+    @Test
+    @DisplayName("findRecommendations 는 요청자 본인을 후보에서 제외한다")
+    void findRecommendations_excludesSelf() {
+        Instant now = Instant.now();
+        persistFollow(USER_A, USER_B, now);   // A → B
+        persistFollow(USER_B, USER_A, now);   // B → A  ⇒ A 는 자기 자신이라 제외
+
+        List<FollowRecommendationRow> result = followRepository.findRecommendations(
+                USER_A.toString(), null, null, 10);
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("findRecommendations 는 요청자가 이미 팔로우한 사용자를 후보에서 제외한다")
+    void findRecommendations_excludesAlreadyFollowed() {
+        Instant now = Instant.now();
+        persistFollow(USER_A, USER_B, now);   // A → B
+        persistFollow(USER_A, USER_C, now);   // A → C  ⇒ 이미 팔로우 중
+        persistFollow(USER_B, USER_C, now);   // B → C  ⇒ C 는 이미 팔로우해 제외
+        persistFollow(USER_B, USER_D, now);   // B → D  ⇒ D 만 후보
+
+        List<FollowRecommendationRow> result = followRepository.findRecommendations(
+                USER_A.toString(), null, null, 10);
+
+        assertThat(result).extracting(FollowRecommendationRow::getUserId)
+                .containsExactly(USER_D);
+    }
+
+    @Test
+    @DisplayName("findRecommendations 는 공통 팔로잉 수 DESC, userId DESC 로 정렬한다")
+    void findRecommendations_sortsByCommonCountDesc() {
+        Instant now = Instant.now();
+        persistFollow(USER_A, USER_B, now);   // A → B
+        persistFollow(USER_A, USER_C, now);   // A → C
+        persistFollow(USER_B, USER_D, now);   // B → D  (D count=2)
+        persistFollow(USER_C, USER_D, now);   // C → D  (D count=2)
+        persistFollow(USER_B, USER_E, now);   // B → E  (E count=1)
+
+        List<FollowRecommendationRow> result = followRepository.findRecommendations(
+                USER_A.toString(), null, null, 10);
+
+        assertThat(result).extracting(FollowRecommendationRow::getUserId)
+                .containsExactly(USER_D, USER_E);
+        assertThat(result.get(0).getCommonCount()).isEqualTo(2L);
+        assertThat(result.get(1).getCommonCount()).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("findRecommendations 는 cursor+idAfter 로 다음 페이지를 안정적으로 반환한다")
+    void findRecommendations_cursorPagination() {
+        Instant now = Instant.now();
+        persistFollow(USER_A, USER_B, now);   // A → B
+        persistFollow(USER_A, USER_C, now);   // A → C
+        persistFollow(USER_B, USER_D, now);   // B → D
+        persistFollow(USER_C, USER_D, now);   // C → D  (D count=2)
+        persistFollow(USER_B, USER_E, now);   // B → E  (E count=1)
+        persistFollow(USER_C, USER_F, now);   // C → F  (F count=1)
+
+        // 1페이지: 정렬 최상단 D (count=2)
+        List<FollowRecommendationRow> page1 = followRepository.findRecommendations(
+                USER_A.toString(), null, null, 1);
+        assertThat(page1).extracting(FollowRecommendationRow::getUserId).containsExactly(USER_D);
+        assertThat(page1.get(0).getCommonCount()).isEqualTo(2L);
+
+        // 2페이지: 커서 (count=2, id=D) → 이후는 count=1 인 E, F 를 id DESC 로
+        List<FollowRecommendationRow> page2 = followRepository.findRecommendations(
+                USER_A.toString(), 2L, USER_D.toString(), 10);
+        assertThat(page2).extracting(FollowRecommendationRow::getUserId)
+                .containsExactly(USER_F, USER_E);  // id DESC (f > e)
     }
 
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────

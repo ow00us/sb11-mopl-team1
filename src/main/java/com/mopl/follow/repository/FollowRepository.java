@@ -75,4 +75,16 @@ public interface FollowRepository extends JpaRepository<Follow, UUID> {
             @Param("idAfter") String idAfter,
             @Param("limit") int limit
     );
+
+    // 친구의 친구(FoF) 기반 팔로우 추천. 미구현 스텁 — 항상 빈 결과.
+    @Query(value = """
+            SELECT CAST(NULL AS uuid) AS userId, CAST(0 AS bigint) AS commonCount
+            WHERE 1 = 0
+            """, nativeQuery = true)
+    List<FollowRecommendationRow> findRecommendations(
+            @Param("requesterId") String requesterId,
+            @Param("cursorCount") Long cursorCount,
+            @Param("idAfter") String idAfter,
+            @Param("limit") int limit
+    );
 }
