@@ -9,21 +9,28 @@ import com.mopl.global.common.UserSummary;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.util.CursorUtils;
+import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class FollowService {
+
+    private static final String UNKNOWN_USER_NAME = "알 수 없는 사용자";
 
     private final FollowRepository followRepository;
     private final UserRepository userRepository;
@@ -146,14 +153,33 @@ public class FollowService {
             nextIdAfter = last.getId();
         }
 
+        // 페이지 내 user ID 중복 제거는 Set 로 확보한다 (page 순서는 하단에서 별도 유지).
+        Set<UUID> userIds = page.stream().map(userIdExtractor).collect(Collectors.toSet());
+        Map<UUID, UserSummary> usersById = toUserSummaryMap(userIds);
+
         List<FollowUserItemDto> data = page.stream()
-                .map(f -> new FollowUserItemDto(
-                        f.getId(),
-                        new UserSummary(userIdExtractor.apply(f), null, null),
-                        f.getCreatedAt()))
+                .map(f -> {
+                    UUID userId = userIdExtractor.apply(f);
+                    return new FollowUserItemDto(
+                            f.getId(),
+                            usersById.getOrDefault(userId, unknownUserSummary(userId)),
+                            f.getCreatedAt());
+                })
                 .toList();
 
         return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext,
                 totalCounter.getAsLong(), sortBy, sortDirection);
+    }
+
+    // 페이지 user ID 배치 조회로 N+1 을 방지한다. userRepository.findAllById 1회.
+    private Map<UUID, UserSummary> toUserSummaryMap(Collection<UUID> userIds) {
+        if (userIds.isEmpty()) return Map.of();
+        return userRepository.findAllById(userIds).stream()
+                .collect(Collectors.toMap(User::getId,
+                        u -> new UserSummary(u.getId(), u.getName(), u.getProfileImageUrl())));
+    }
+
+    private UserSummary unknownUserSummary(UUID userId) {
+        return new UserSummary(userId, UNKNOWN_USER_NAME, null);
     }
 }

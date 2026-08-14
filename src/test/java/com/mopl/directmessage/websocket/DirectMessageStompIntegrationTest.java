@@ -21,6 +21,7 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.security.JwtProvider;
 import com.mopl.global.exception.ErrorResponse;
 import com.mopl.global.common.CursorResponse;
+import com.mopl.support.websocket.StompTestCleanup;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
@@ -187,17 +188,7 @@ class DirectMessageStompIntegrationTest {
             new ArrayList<>();
 
         sessions.forEach(session ->
-            cleanupTasks.add(() -> {
-                if (session.isConnected()) {
-                    try {
-                        session.disconnect();
-                    } catch (
-                        MessageDeliveryException ignored
-                    ) {
-                        // 서버가 먼저 연결을 닫은 경우는 무시한다.
-                    }
-                }
-            })
+            cleanupTasks.add(() -> StompTestCleanup.disconnectQuietly(session))
         );
 
         cleanupTasks.add(() -> {
