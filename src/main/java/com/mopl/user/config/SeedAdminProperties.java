@@ -68,6 +68,27 @@ public class SeedAdminProperties {
     private String email;
 
     /**
+     * 환경변수로 전달된 관리자 이메일의 앞뒤 공백을 제거
+     *
+     * <p>ConfigurationProperties는 설정값을 Setter를 통해 바인딩하므로,
+     * 이 시점에 공백을 제거하면 @Email 검증보다 먼저 회원가입과
+     * 동일한 이메일 전처리 정책을 적용할 수 있습니다.</p>
+     *
+     * <p>null은 그대로 유지하여 필수 값 누락 여부를
+     * @NotBlank 검증이 처리하도록 합니다.</p>
+     *
+     * @param email 환경변수로 전달된 관리자 이메일
+     */
+    public void setEmail(
+        String email
+    ) {
+        this.email =
+            email == null
+                ? null
+                : email.strip();
+    }
+
+    /**
      * 초기 관리자 로그인 비밀번호 원문
      *
      * <p>실제 값은 SEED_ADMIN_PASSWORD 환경변수로 주입하며

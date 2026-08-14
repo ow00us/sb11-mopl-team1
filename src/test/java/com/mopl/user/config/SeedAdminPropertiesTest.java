@@ -106,6 +106,31 @@ class SeedAdminPropertiesTest {
     }
 
     @Test
+    @DisplayName("Seed 관리자 이메일 설정 시 앞뒤 공백을 제거한다")
+    void setEmail_stripsLeadingAndTrailingWhitespace() {
+        // given
+        SeedAdminProperties properties =
+            new SeedAdminProperties();
+
+        // when
+        /*
+         * 환경변수를 복사하거나 입력하는 과정에서
+         * 앞뒤 공백이 포함된 상황을 재현
+         */
+        properties.setEmail(
+            "  ADMIN@EXAMPLE.COM  "
+        );
+
+        // then
+        /*
+         * 대소문자 정규화는 Service의 책임이므로
+         * 여기서는 앞뒤 공백만 제거됐는지 확인
+         */
+        assertThat(properties.getEmail())
+            .isEqualTo("ADMIN@EXAMPLE.COM");
+    }
+
+    @Test
     @DisplayName("Seed 관리자 이름이 null이면 검증에 실패한다")
     void validate_fail_whenNameIsNull() {
         // given
