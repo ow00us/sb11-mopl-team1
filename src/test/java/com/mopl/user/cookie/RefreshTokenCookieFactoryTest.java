@@ -135,4 +135,79 @@ class RefreshTokenCookieFactoryTest {
                 "Refresh Token 원문은 비어 있을 수 없습니다."
             );
     }
+
+    @Test
+    @DisplayName("Refresh Token 삭제 Cookie에 빈 값과 Max-Age 0을 적용한다")
+    void createDeletionCookie_success() {
+        // given
+        /*
+         * 운영 환경에서도 삭제 Cookie가 기존 발급 Cookie와
+         * 동일한 Secure 정책을 사용하는지 확인
+         */
+        cookieProperties.setSecure(true);
+
+        ResponseCookie issuedCookie =
+            cookieFactory.create(
+                "generated-refresh-token"
+            );
+
+        // when
+        ResponseCookie deletionCookie =
+            cookieFactory.createDeletionCookie();
+
+        // then
+        assertThat(deletionCookie.getName())
+            .isEqualTo(issuedCookie.getName())
+            .isEqualTo("REFRESH_TOKEN");
+
+        assertThat(deletionCookie.getValue())
+            .isEmpty();
+
+        /*
+         * Max-Age가 0이면 브라우저는 Set-Cookie 응답을 받은 즉시
+         * 기존 Cookie를 만료 처리
+         */
+        assertThat(deletionCookie.getMaxAge())
+            .isEqualTo(Duration.ZERO);
+
+        /*
+         * 기존 Cookie와 동일한 경로를 사용해야 같은 이름의
+         * Refresh Token Cookie가 정상적으로 삭제
+         */
+        assertThat(deletionCookie.getPath())
+            .isEqualTo(issuedCookie.getPath())
+            .isEqualTo("/api/auth");
+
+        assertThat(deletionCookie.getSameSite())
+            .isEqualTo(issuedCookie.getSameSite())
+            .isEqualTo("Lax");
+
+        assertThat(deletionCookie.isSecure())
+            .isEqualTo(issuedCookie.isSecure())
+            .isTrue();
+
+        assertThat(deletionCookie.isHttpOnly())
+            .isEqualTo(issuedCookie.isHttpOnly())
+            .isTrue();
+    }
+
+    @Test
+    @DisplayName("Refresh Token 삭제 Cookie는 Set-Cookie에 즉시 만료 속성을 포함한다")
+    void createDeletionCookie_containsImmediateExpirationHeader() {
+        // when
+        ResponseCookie deletionCookie =
+            cookieFactory.createDeletionCookie();
+
+        // then
+        /*
+         * 객체의 Max-Age 값뿐 아니라 실제 HTTP Set-Cookie 헤더로
+         * 직렬화했을 때도 Max-Age=0이 포함되는지 확인
+         */
+        assertThat(deletionCookie.toString())
+            .contains("REFRESH_TOKEN=")
+            .contains("Max-Age=0")
+            .contains("Path=/api/auth")
+            .contains("HttpOnly")
+            .contains("SameSite=Lax");
+    }
 }

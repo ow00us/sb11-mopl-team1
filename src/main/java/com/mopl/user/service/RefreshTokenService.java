@@ -8,11 +8,13 @@ import com.mopl.user.dto.JwtDto;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
-import com.mopl.user.security.RefreshTokenGenerator;
+import com.mopl.user.security.FamilyRefreshToken;
+import com.mopl.user.security.RefreshTokenFamilyCodec;
 import com.mopl.user.security.RefreshTokenHasher;
 import com.mopl.user.storage.RefreshTokenStore;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -36,7 +38,8 @@ public class RefreshTokenService {
     private final UserRepository userRepository;
     // 사용자 UUID와 역할을 기반으로 새 Access Token 발급
     private final JwtProvider jwtProvider;
-    private final RefreshTokenGenerator refreshTokenGenerator;
+    // Family ID가 포함된 Refresh Token을 생성하고 Cookie의 Token에서 Family ID를 추출하는 Codec
+    private final RefreshTokenFamilyCodec refreshTokenFamilyCodec;
     private final RefreshTokenHasher refreshTokenHasher;
     private final RefreshTokenProperties refreshTokenProperties;
 
@@ -87,9 +90,21 @@ public class RefreshTokenService {
         }
 
         /*
-         * 외부에 전달할 Refresh Token 원문을 암호학적으로 안전한 난수로 생성
+         * 로그인할 때마다 새로운 Family ID와 무작위 Secret으로
+         * 첫 번째 Refresh Token을 생성
+         *
+         * Family ID는 해당 로그인 세션 동안 유지되고,
+         * Secret과 tokenHash만 Rotation마다 변경
          */
-        String rawToken = refreshTokenGenerator.generate();
+        FamilyRefreshToken familyRefreshToken =
+            refreshTokenFamilyCodec
+                .generateNewFamily();
+
+        UUID familyId =
+            familyRefreshToken.familyId();
+
+        String rawToken =
+            familyRefreshToken.rawToken();
 
         /*
          * 원문은 Redis에 저장하지 않고 SHA-256 해시값만 저장
@@ -119,6 +134,7 @@ public class RefreshTokenService {
          */
         refreshTokenStore.save(
             userId,
+            familyId,
             tokenHash,
             expiration
         );
@@ -144,13 +160,14 @@ public class RefreshTokenService {
      *
      * <ol>
      *     <li>Cookie로 전달된 기존 Refresh Token 원문을 확인합니다.</li>
-     *     <li>기존 토큰 원문을 SHA-256으로 해시합니다.</li>
-     *     <li>Redis에서 해당 세션의 사용자 UUID를 조회합니다.</li>
+     *     <li>Token 원문에서 로그인 세션 Family ID를 추출합니다.</li>
+     *     <li>기존 Token 원문 전체를 SHA-256으로 해시합니다.</li>
+     *     <li>Family ID와 현재 해시가 일치하는 Redis 세션의 사용자 UUID를 조회합니다.</li>
      *     <li>데이터베이스에서 사용자를 조회하고 계정 상태를 확인합니다.</li>
-     *     <li>새 Refresh Token 원문과 해시를 생성합니다.</li>
-     *     <li>Redis Lua 스크립트로 기존 세션과 새 세션을 원자적으로 교체합니다.</li>
-     *     <li>사용자 UUID와 역할을 이용해 새로운 Access Token을 발급합니다.</li>
-     *     <li>JSON 응답 데이터와 새 Cookie 발급 정보를 반환합니다.</li>
+     *     <li>같은 Family ID와 새로운 Secret으로 Refresh Token을 생성합니다.</li>
+     *     <li>Access Token과 응답 객체를 생성합니다.</li>
+     *     <li>Redis Lua Script로 현재 활성 해시를 새로운 해시로 교체합니다.</li>
+     *     <li>새 Access Token과 Refresh Token 발급 결과를 반환합니다.</li>
      * </ol>
      *
      * @param rawRefreshToken Cookie로 전달된 기존 Refresh Token 원문
@@ -178,6 +195,22 @@ public class RefreshTokenService {
         }
 
         /*
+         * Refresh Token 원문에서 로그인 세션 Family ID를 추출
+         *
+         * UUID, 구분자 또는 Secret 형식이 올바르지 않으면
+         * Redis를 조회하지 않고 유효하지 않은 인증 정보로 처리
+         */
+        UUID familyId =
+            refreshTokenFamilyCodec
+                .parseFamilyId(rawRefreshToken)
+                .orElseThrow(() ->
+                    new BusinessException(
+                        ErrorCode.UNAUTHORIZED,
+                        "유효하지 않은 Refresh Token입니다."
+                    )
+                );
+
+        /*
          * Redis에는 Refresh Token 원문을 저장하지 않고 SHA-256 해시만
          * 저장하므로, Cookie로 받은 원문을 동일한 방식으로 해시
          */
@@ -198,7 +231,10 @@ public class RefreshTokenService {
          */
         UUID userId =
             refreshTokenStore
-                .findUserIdByTokenHash(oldTokenHash)
+                .findUserIdByFamilyAndTokenHash(
+                    familyId,
+                    oldTokenHash
+                )
                 .orElseThrow(() ->
                     new BusinessException(
                         ErrorCode.UNAUTHORIZED,
@@ -234,15 +270,22 @@ public class RefreshTokenService {
         }
 
         /*
-         * Rotation에 사용할 새로운 Refresh Token 원문을
-         * 암호학적으로 안전한 난수로 생성
+         * 기존 로그인 세션의 Family ID를 유지하면서
+         * 새로운 무작위 Secret을 가진 Refresh Token을 생성
+         *
+         * Rotation 전후 Token은 원문과 해시는 달라지지만
+         * 같은 Family ID를 공유
          */
+        FamilyRefreshToken rotatedRefreshToken =
+            refreshTokenFamilyCodec
+                .generateForFamily(familyId);
+
         String newRawToken =
-            refreshTokenGenerator.generate();
+            rotatedRefreshToken.rawToken();
 
         /*
-         * 새 Refresh Token 역시 원문 대신 SHA-256 해시만
-         * Redis에 저장
+         * 새 Refresh Token도 원문을 저장하지 않고
+         * 전체 원문의 SHA-256 해시만 Redis에 저장
          */
         String newTokenHash =
             refreshTokenHasher.hash(newRawToken);
@@ -303,6 +346,7 @@ public class RefreshTokenService {
         boolean rotated =
             refreshTokenStore.rotate(
                 userId,
+                familyId,
                 oldTokenHash,
                 newTokenHash,
                 expiration
@@ -325,6 +369,96 @@ public class RefreshTokenService {
         return new RefreshResult(
             jwtDto,
             issuedRefreshToken
+        );
+    }
+
+    /**
+     * 인증된 사용자의 현재 Refresh Token Family 세션을 폐기
+     *
+     * <p>로그아웃 요청에 Refresh Token Cookie가 포함되어 있다면
+     * Token 원문에서 로그인 세션의 Family ID를 추출한 뒤,
+     * 인증된 사용자 UUID와 함께 RefreshTokenStore에 전달합니다.</p>
+     *
+     * <p>로그아웃은 요청 Cookie의 tokenHash를 기준으로 세션을 삭제하지
+     * 않습니다. Rotation 전후에도 동일하게 유지되는 Family ID를 사용하므로,
+     * 재발급이 먼저 완료된 경우에도 해당 Family의 현재 활성 Refresh Token
+     * 세션을 폐기할 수 있습니다.</p>
+     *
+     * <p>Cookie가 없거나 비어 있거나 형식이 잘못된 경우와
+     * 이미 만료·폐기된 Family는 이미 로그아웃된 상태와 동일하게 취급하여
+     * 예외를 발생시키지 않습니다. 이를 통해 로그아웃의 멱등성을
+     * 유지합니다.</p>
+     *
+     * <p>저장소는 Family에 저장된 사용자 UUID와 인증된 사용자 UUID가
+     * 일치하는 경우에만 세션을 폐기합니다. 따라서 다른 사용자가 소유한
+     * Refresh Token Family는 삭제할 수 없습니다.</p>
+     *
+     * @param authenticatedUserId Access Token 인증 사용자 UUID
+     * @param rawRefreshToken REFRESH_TOKEN Cookie 원문, 없으면 null
+     * @throws BusinessException 인증 사용자 UUID가 없는 경우
+     */
+    public void signOut(
+        UUID authenticatedUserId,
+        String rawRefreshToken
+    ) {
+        /*
+         * 로그아웃 API는 기존 OpenAPI 계약에 따라 유효한 Access Token이
+         * 필요한 보호 API
+         *
+         * 실제 HTTP 요청에서는 SecurityFilterChain이 인증되지 않은 요청을
+         * 먼저 차단하지만, Service를 직접 호출하거나 인증 정보 전달에
+         * 문제가 생기는 경우를 대비해 Service에서도 확인
+         */
+        if (authenticatedUserId == null) {
+            throw new BusinessException(
+                ErrorCode.UNAUTHORIZED
+            );
+        }
+
+        /*
+         * Refresh Token Cookie가 없거나 공백이면 Redis에서 폐기할
+         * 현재 기기 세션이 없는 상태
+         *
+         * 이미 로그아웃된 사용자에게 다시 로그아웃을 요청해도
+         * 동일하게 성공하도록 아무 작업 없이 종료
+         */
+        if (
+            rawRefreshToken == null
+                || rawRefreshToken.isBlank()
+        ) {
+            return;
+        }
+
+        /*
+         * 로그아웃 Cookie에서 Family ID를 추출
+         *
+         * 잘못된 형식의 Cookie라면 Redis에서 식별할 수 있는 세션이 없으므로
+         * 별도 예외 없이 종료
+         *
+         * Controller는 Service 결과와 관계없이 삭제 Cookie를 반환하므로
+         * 클라이언트의 잘못된 Cookie도 제거
+         */
+        Optional<UUID> familyId =
+            refreshTokenFamilyCodec
+                .parseFamilyId(rawRefreshToken);
+
+        if (familyId.isEmpty()) {
+            return;
+        }
+
+        /*
+         * tokenHash가 아닌 안정적인 Family ID를 기준으로
+         * 해당 로그인 세션의 현재 활성 Refresh Token을 폐기
+         *
+         * 재발급 요청이 먼저 Rotation을 완료했더라도 Family ID는
+         * 변경되지 않으므로 새 tokenHash가 저장된 Family Key를 삭제
+         *
+         * 반환값이 false인 경우는 이미 폐기됐거나 다른 사용자의
+         * Family이지만 로그아웃 멱등성을 위해 예외를 발생시키지 않음
+         */
+        refreshTokenStore.revoke(
+            authenticatedUserId,
+            familyId.get()
         );
     }
 }

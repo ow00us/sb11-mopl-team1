@@ -142,6 +142,7 @@ class OpenApiRuntimeContractTest {
         "PATCH /api/users/{userId}/role",
         "POST /api/auth/sign-in",
         "POST /api/auth/refresh",
+        "POST /api/auth/sign-out",
         "POST /api/contents",
         "POST /api/conversations",
         "POST /api/conversations/{conversationId}/direct-messages/{directMessageId}/read",
@@ -270,6 +271,57 @@ class OpenApiRuntimeContractTest {
                 jsonPath(
                     "$.paths['/api/auth/refresh']"
                         + ".post.responses['200']"
+                        + ".headers['Set-Cookie']"
+                        + ".schema.type"
+                ).value("string")
+            );
+    }
+
+    /**
+     * 로그아웃 요청에서 현재 Refresh Token을 선택적으로 Cookie로 전달하고,
+     * 성공 응답에서 해당 Cookie를 삭제하는 Set-Cookie 헤더가
+     * 런타임 OpenAPI 문서에 포함되는지 검증
+     */
+    @Test
+    void documentsRefreshTokenCookieContractOnSignOut()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/v3/api-docs")
+            )
+            .andExpect(status().isOk())
+
+            /*
+             * 로그아웃할 현재 브라우저의 Refresh Token을
+             * Cookie에서 전달받는 계약인지 확인
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/sign-out']"
+                        + ".post.parameters[0].name"
+                ).value("REFRESH_TOKEN")
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/sign-out']"
+                        + ".post.parameters[0].in"
+                ).value("cookie")
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/sign-out']"
+                        + ".post.parameters[0].schema.type"
+                ).value("string")
+            )
+
+            /*
+             * 로그아웃 성공 시 브라우저의 Refresh Token Cookie를
+             * 제거하는 Set-Cookie 헤더가 문서화됐는지 확인
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/sign-out']"
+                        + ".post.responses['204']"
                         + ".headers['Set-Cookie']"
                         + ".schema.type"
                 ).value("string")
