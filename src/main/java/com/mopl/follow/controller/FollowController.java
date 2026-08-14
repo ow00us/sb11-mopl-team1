@@ -83,7 +83,8 @@ public class FollowController {
             @RequestParam @Min(1) @Max(100) int limit,
             @RequestParam(defaultValue = "commonFollowingCount") @Pattern(regexp = "commonFollowingCount") String sortBy,
             @RequestParam(defaultValue = "DESCENDING") @Pattern(regexp = "DESCENDING") String sortDirection) {
-        throw new UnsupportedOperationException("F3 Controller Green 에서 구현 예정");
+        UUID requesterId = resolveUserId();
+        return followService.getRecommendations(requesterId, cursor, idAfter, limit, sortBy, sortDirection);
     }
 
     @GetMapping("/followings")
