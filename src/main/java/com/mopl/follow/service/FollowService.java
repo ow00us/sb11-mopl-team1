@@ -120,10 +120,57 @@ public class FollowService {
                 () -> followRepository.countByFollowerId(followerId));
     }
 
+    /**
+     * 친구의 친구(FoF) 기반 팔로우 추천.
+     * <p>Repository 결과의 사용자 ID 를 배치 조회로 UserSummary 채우고 무한 스크롤 방식으로 반환한다.
+     * totalCount 는 정확 집계 비용이 크고 UI 요구가 무한 스크롤이라 현재 페이지 크기로 대체한다.
+     */
     public CursorResponse<FollowRecommendationItemDto> getRecommendations(
             UUID requesterId, String cursor, UUID idAfter,
             int limit, String sortBy, String sortDirection) {
-        throw new UnsupportedOperationException("F3 Green 에서 구현 예정");
+
+        if ((cursor != null) != (idAfter != null)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        Long cursorCount;
+        try {
+            cursorCount = (cursor != null) ? CursorUtils.decodeAsLong(cursor) : null;
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        int fetchSize = limit + 1;
+        List<FollowRecommendationRow> rows = followRepository.findRecommendations(
+                requesterId.toString(),
+                cursorCount,
+                idAfter != null ? idAfter.toString() : null,
+                fetchSize);
+
+        boolean hasNext = rows.size() == fetchSize;
+        List<FollowRecommendationRow> page = hasNext ? rows.subList(0, limit) : rows;
+
+        String nextCursor = null;
+        UUID   nextIdAfter = null;
+        if (hasNext && !page.isEmpty()) {
+            FollowRecommendationRow last = page.get(page.size() - 1);
+            nextCursor  = CursorUtils.encodeLong(last.getCommonCount());
+            nextIdAfter = last.getUserId();
+        }
+
+        Set<UUID> userIds = page.stream()
+                .map(FollowRecommendationRow::getUserId)
+                .collect(Collectors.toSet());
+        Map<UUID, UserSummary> usersById = toUserSummaryMap(userIds);
+
+        List<FollowRecommendationItemDto> data = page.stream()
+                .map(r -> new FollowRecommendationItemDto(
+                        usersById.getOrDefault(r.getUserId(), unknownUserSummary(r.getUserId())),
+                        r.getCommonCount()))
+                .toList();
+
+        return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext,
+                data.size(), sortBy, sortDirection);
     }
 
     /**
