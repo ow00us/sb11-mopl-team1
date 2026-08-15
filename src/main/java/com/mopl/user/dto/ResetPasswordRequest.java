@@ -1,5 +1,6 @@
 package com.mopl.user.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -29,6 +30,12 @@ public record ResetPasswordRequest(
      * <p>{@link Size}는 users.email 컬럼과 회원가입 요청의 정책에 맞춰
      * 최대 길이를 100자로 제한합니다.</p>
      */
+    @Schema(
+        description = "임시 비밀번호를 발급받을 이메일",
+        format = "email",
+        maxLength = 100,
+        example = "user@example.com"
+    )
     @NotBlank(
         message = "이메일을 입력해주세요."
     )
