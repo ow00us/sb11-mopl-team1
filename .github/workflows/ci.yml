@@ -78,6 +78,13 @@ jobs:
           --health-timeout 3s
           --health-retries 10
 
+    # Spring Mail이 활성화되면 Actuator가 SMTP 연결 상태도
+    # 애플리케이션 health에 포함하므로 CI용 SMTP 서버를 함께 실행합니다.
+    mailpit:
+      image: axllent/mailpit:v1.30.0
+      ports:
+        - 1025:1025
+
     steps:
       - uses: actions/checkout@v4
 
@@ -101,6 +108,10 @@ jobs:
             --env SPRING_DATASOURCE_PASSWORD=mopl \
             --env SPRING_DATA_REDIS_HOST=127.0.0.1 \
             --env SPRING_DATA_REDIS_PORT=6379 \
+            --env MAIL_HOST=127.0.0.1 \
+            --env MAIL_PORT=1025 \
+            --env MAIL_SMTP_AUTH=false \
+            --env MAIL_STARTTLS_ENABLE=false \
             --env JWT_SECRET=bW9wbC1jaS1zbW9rZS1qd3Qtc2VjcmV0LWtleS0zMi1ieXRlcy1sb25nISE= \
             --env CORS_ALLOWED_ORIGINS=http://localhost:5173 \
             --env WS_ALLOWED_ORIGINS=http://localhost:5173 \
