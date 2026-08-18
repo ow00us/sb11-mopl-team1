@@ -109,6 +109,13 @@ mopl:
     # 늘고, 길면 relay 가 죽었을 때 회수가 그만큼 지연됩니다.
     lease-duration: ${OUTBOX_LEASE_DURATION:30s}
 
+  realtime:
+    relay:
+      # Redis 없이 다른 기능을 개발할 때 false 로 두면 구독 재연결이 반복되지 않습니다.
+      enabled: ${REALTIME_RELAY_ENABLED:true}
+      # 기동 시점에 Redis 가 준비되지 않았을 때 구독을 다시 시도하는 간격입니다.
+      subscribe-retry-interval: ${REALTIME_RELAY_SUBSCRIBE_RETRY_INTERVAL:30000}
+
 app:
   cors:
     # 콤마로 구분한 브라우저 REST API 허용 origin 목록
