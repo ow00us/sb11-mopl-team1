@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,8 +30,16 @@ public class WatcherCountRefreshService {
     private final ContentSearchRepository contentSearchRepository;
     private final ElasticsearchOperations elasticsearchOperations;
 
+    // 이전 refresh()가 아직 끝나지 않았는데 다음 스케줄이 또 실행되는 걸 막는다.
+    // 단일 인스턴스 기준 가드라서, 나중에 여러 인스턴스로 늘어나면 분산 락으로 바꿔야 한다.
+    private final AtomicBoolean isRefreshing = new AtomicBoolean(false);
+
     @Async("contentSearchSyncExecutor")
     public void refresh() {
+        if (!isRefreshing.compareAndSet(false, true)) {
+            log.info("watcherCount 리프레시가 이미 진행 중이라 이번 실행은 건너뜁니다.");
+            return;
+        }
         try {
             Map<UUID, Long> liveCounts = watchingSessionSnapshotRepository
                     .countActiveWatchersGroupedByContent(Instant.now()).stream()
@@ -54,6 +63,8 @@ public class WatcherCountRefreshService {
             log.info("watcherCount 리프레시 완료: 갱신 {}건", updateQueries.size());
         } catch (Exception e) {
             log.warn("watcherCount 리프레시 실패", e);
+        } finally {
+            isRefreshing.set(false);
         }
     }
 }
