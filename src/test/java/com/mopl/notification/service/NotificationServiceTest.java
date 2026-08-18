@@ -15,6 +15,7 @@ import com.mopl.notification.dto.NotificationDto;
 import com.mopl.notification.event.NotificationCreatedEvent;
 import com.mopl.notification.entity.Notification;
 import com.mopl.notification.entity.NotificationLevel;
+import com.mopl.notification.entity.NotificationType;
 import com.mopl.notification.repository.NotificationRepository;
 import java.time.Instant;
 import java.util.List;
@@ -121,6 +122,120 @@ class NotificationServiceTest {
 
         assertThat(publishedNotification.receiverId())
             .isEqualTo(RECEIVER_ID);
+    }
+
+    @Test
+    @DisplayName("대상 정보를 포함한 알림을 생성하고 이벤트를 발행")
+    void create_withTargetInformation_success() {
+        // given
+        UUID sourceEventId = UUID.fromString(
+            "33333333-3333-3333-3333-333333333333"
+        );
+
+        UUID resourceId = UUID.fromString(
+            "44444444-4444-4444-4444-444444444444"
+        );
+
+        UUID sourceEntityId = UUID.fromString(
+            "55555555-5555-5555-5555-555555555555"
+        );
+
+        Instant createdAt =
+            Instant.parse("2026-08-13T01:00:00Z");
+
+        when(
+            notificationRepository.save(
+                any(Notification.class)
+            )
+        ).thenAnswer(invocation -> {
+            Notification notification =
+                invocation.getArgument(0);
+
+            ReflectionTestUtils.setField(
+                notification,
+                "id",
+                NOTIFICATION_ID
+            );
+
+            ReflectionTestUtils.setField(
+                notification,
+                "createdAt",
+                createdAt
+            );
+
+            return notification;
+        });
+
+        // when
+        NotificationDto result =
+            notificationService.create(
+                RECEIVER_ID,
+                sourceEventId,
+                NotificationType.DIRECT_MESSAGE,
+                resourceId,
+                sourceEntityId,
+                "새로운 DM",
+                "메시지가 도착했습니다.",
+                NotificationLevel.INFO
+            );
+
+        // then
+        assertThat(result.id())
+            .isEqualTo(NOTIFICATION_ID);
+
+        assertThat(result.type())
+            .isEqualTo(
+                NotificationType.DIRECT_MESSAGE
+            );
+
+        assertThat(result.resourceId())
+            .isEqualTo(resourceId);
+
+        ArgumentCaptor<Notification> notificationCaptor =
+            ArgumentCaptor.forClass(
+                Notification.class
+            );
+
+        verify(notificationRepository).save(
+            notificationCaptor.capture()
+        );
+
+        Notification saved =
+            notificationCaptor.getValue();
+
+        assertThat(saved.getSourceEventId())
+            .isEqualTo(sourceEventId);
+
+        assertThat(saved.getType())
+            .isEqualTo(
+                NotificationType.DIRECT_MESSAGE
+            );
+
+        assertThat(saved.getResourceId())
+            .isEqualTo(resourceId);
+
+        assertThat(saved.getSourceEntityId())
+            .isEqualTo(sourceEntityId);
+
+        ArgumentCaptor<NotificationCreatedEvent> eventCaptor =
+            ArgumentCaptor.forClass(
+                NotificationCreatedEvent.class
+            );
+
+        verify(eventPublisher).publishEvent(
+            eventCaptor.capture()
+        );
+
+        NotificationDto published =
+            eventCaptor.getValue().notification();
+
+        assertThat(published.type())
+            .isEqualTo(
+                NotificationType.DIRECT_MESSAGE
+            );
+
+        assertThat(published.resourceId())
+            .isEqualTo(resourceId);
     }
 
     @Test
@@ -291,8 +406,35 @@ class NotificationServiceTest {
     }
 
     @Test
-    @DisplayName("본인의 알림을 읽음 처리")
+    @DisplayName("읽지 않은 본인의 알림을 읽음 처리")
     void read_success() {
+        // given
+        when(
+            notificationRepository.markAsReadIfUnread(
+                eq(NOTIFICATION_ID),
+                eq(RECEIVER_ID),
+                any(Instant.class)
+            )
+        ).thenReturn(1);
+
+        // when
+        notificationService.read(
+            NOTIFICATION_ID,
+            RECEIVER_ID
+        );
+
+        // then
+        verify(notificationRepository)
+            .markAsReadIfUnread(
+                eq(NOTIFICATION_ID),
+                eq(RECEIVER_ID),
+                any(Instant.class)
+            );
+    }
+
+    @Test
+    @DisplayName("이미 읽은 본인 알림을 다시 읽음 처리하면 성공")
+    void read_alreadyRead_success() {
         // given
         Notification notification = Notification.create(
             RECEIVER_ID,
@@ -302,12 +444,27 @@ class NotificationServiceTest {
             NotificationLevel.INFO
         );
 
+        Instant firstReadAt =
+            Instant.parse("2026-08-13T01:00:00Z");
+
+        notification.markAsRead(firstReadAt);
+
+        when(
+            notificationRepository.markAsReadIfUnread(
+                eq(NOTIFICATION_ID),
+                eq(RECEIVER_ID),
+                any(Instant.class)
+            )
+        ).thenReturn(0);
+
         when(
             notificationRepository.findByIdAndReceiverId(
                 NOTIFICATION_ID,
                 RECEIVER_ID
             )
-        ).thenReturn(Optional.of(notification));
+        ).thenReturn(
+            Optional.of(notification)
+        );
 
         // when
         notificationService.read(
@@ -316,7 +473,8 @@ class NotificationServiceTest {
         );
 
         // then
-        assertThat(notification.getReadAt()).isNotNull();
+        assertThat(notification.getReadAt())
+            .isEqualTo(firstReadAt);
 
         verify(notificationRepository)
             .findByIdAndReceiverId(
@@ -329,6 +487,14 @@ class NotificationServiceTest {
     @DisplayName("본인이 소유한 알림이 없으면 읽음 처리에 실패")
     void read_notificationNotFound_throwsException() {
         // given
+        when(
+            notificationRepository.markAsReadIfUnread(
+                eq(NOTIFICATION_ID),
+                eq(RECEIVER_ID),
+                any(Instant.class)
+            )
+        ).thenReturn(0);
+
         when(
             notificationRepository.findByIdAndReceiverId(
                 NOTIFICATION_ID,

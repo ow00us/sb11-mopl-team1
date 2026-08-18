@@ -181,7 +181,7 @@ class PlaylistServiceTest {
         // 항목별 조회 및 태그 lazy 로딩 유발 경로 미사용 검증
         verify(playlistContentRepository, never())
                 .findAllByPlaylistIdOrderByCreatedAtAsc(any(UUID.class));
-        verify(contentRepository, never()).findAllById(anyList());
+        verify(contentRepository, never()).findAllById(any());
 
         // 순서·매핑 검증: p1 → [content1, content2], p2 → [content3], p3 → []
         assertThat(result.data()).hasSize(3);
@@ -626,6 +626,62 @@ class PlaylistServiceTest {
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
     }
 
+    @Test
+    @DisplayName("getSubscribers 는 페이지 subscriber ID 를 배치 조회해 user.name/profileImageUrl 을 채운다")
+    void getSubscribers_populatesUserNameAndProfileImageUrl() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", java.time.Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(java.util.Optional.of(playlist));
+
+        UUID sub1 = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID sub2 = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        PlaylistSubscription s1 = savedSubscriptionWithCreatedAt(
+                UUID.randomUUID(), PLAYLIST_ID, sub1, java.time.Instant.parse("2026-08-01T11:00:00Z"));
+        PlaylistSubscription s2 = savedSubscriptionWithCreatedAt(
+                UUID.randomUUID(), PLAYLIST_ID, sub2, java.time.Instant.parse("2026-08-01T10:00:00Z"));
+        User user1 = savedUser(sub1, "userA", "https://cdn/a.png");
+        User user2 = savedUser(sub2, "userB", "https://cdn/b.png");
+
+        when(subscriptionRepository.findByPlaylistIdDesc(anyString(), any(), any(), org.mockito.ArgumentMatchers.eq(11)))
+                .thenReturn(List.of(s1, s2));
+        when(subscriptionRepository.countByPlaylistId(PLAYLIST_ID)).thenReturn(2L);
+        when(userRepository.findAllById(any())).thenReturn(List.of(user1, user2));
+
+        com.mopl.global.common.CursorResponse<com.mopl.playlist.dto.SubscriberItemDto> result =
+                playlistService.getSubscribers(PLAYLIST_ID, null, null, 10, "subscribedAt", "DESCENDING");
+
+        assertThat(result.data()).hasSize(2);
+        assertThat(result.data().get(0).user().name()).isEqualTo("userA");
+        assertThat(result.data().get(0).user().profileImageUrl()).isEqualTo("https://cdn/a.png");
+        assertThat(result.data().get(1).user().name()).isEqualTo("userB");
+        assertThat(result.data().get(1).user().profileImageUrl()).isEqualTo("https://cdn/b.png");
+        // N+1 방지 검증: subscriber 수와 무관하게 findAllById 1회 호출
+        verify(userRepository).findAllById(any());
+    }
+
+    @Test
+    @DisplayName("getSubscribers 는 user 조회 결과에 없는 subscriber 에 대해 UNKNOWN fallback 을 반환한다")
+    void getSubscribers_fallbackToUnknownWhenUserMissing() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", java.time.Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(java.util.Optional.of(playlist));
+
+        UUID sub1 = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        PlaylistSubscription s1 = savedSubscriptionWithCreatedAt(
+                UUID.randomUUID(), PLAYLIST_ID, sub1, java.time.Instant.parse("2026-08-01T11:00:00Z"));
+
+        when(subscriptionRepository.findByPlaylistIdDesc(anyString(), any(), any(), org.mockito.ArgumentMatchers.eq(11)))
+                .thenReturn(List.of(s1));
+        when(subscriptionRepository.countByPlaylistId(PLAYLIST_ID)).thenReturn(1L);
+        when(userRepository.findAllById(any())).thenReturn(List.of());
+
+        com.mopl.global.common.CursorResponse<com.mopl.playlist.dto.SubscriberItemDto> result =
+                playlistService.getSubscribers(PLAYLIST_ID, null, null, 10, "subscribedAt", "DESCENDING");
+
+        assertThat(result.data()).hasSize(1);
+        assertThat(result.data().get(0).user().userId()).isEqualTo(sub1);
+        assertThat(result.data().get(0).user().name()).isEqualTo("알 수 없는 사용자");
+        assertThat(result.data().get(0).user().profileImageUrl()).isNull();
+    }
+
     // ── Phase D: 남은 조건 분기 커버 ─────────────────────────────────────────
 
     @Test
@@ -795,7 +851,7 @@ class PlaylistServiceTest {
         );
         when(playlistRepository.findByUpdatedAtAsc(null, null, null, null, null, 3)).thenReturn(rows);
         when(playlistRepository.countByFilter(null, null, null)).thenReturn(2L);
-        when(userRepository.findAllById(anyList())).thenReturn(List.of(
+        when(userRepository.findAllById(any())).thenReturn(List.of(
                 savedUser(ownerA, "사용자A", "https://a.png"),
                 savedUser(ownerB, "사용자B", null)
         ));
@@ -825,7 +881,7 @@ class PlaylistServiceTest {
         );
         when(playlistRepository.findByUpdatedAtAsc(null, null, null, null, null, 4)).thenReturn(rows);
         when(playlistRepository.countByFilter(null, null, null)).thenReturn(3L);
-        when(userRepository.findAllById(anyList())).thenReturn(List.of(
+        when(userRepository.findAllById(any())).thenReturn(List.of(
                 savedUser(ownerA, "사용자A", null),
                 savedUser(ownerB, "사용자B", null)
         ));
@@ -877,13 +933,14 @@ class PlaylistServiceTest {
         when(playlistRepository.findPopular(any(), any(), any(), anyInt()))
                 .thenReturn(List.of(p1, p2, p3));
         when(playlistRepository.countByFilter(any(), any(), any())).thenReturn(3L);
-        when(userRepository.findAllById(anyList())).thenReturn(List.of(
+        when(userRepository.findAllById(any())).thenReturn(List.of(
                 savedUser(ownerA, "UserA", null),
                 savedUser(ownerB, "UserB", null)));
 
         playlistService.getPopular(null, null, 10, null);
 
-        ArgumentCaptor<List<UUID>> captor = ArgumentCaptor.forClass(List.class);
+        // findAllById(Iterable) 에는 List·Set 등 어떤 Collection 도 전달 가능하므로 Iterable 로 캡처한다.
+        ArgumentCaptor<Iterable<UUID>> captor = ArgumentCaptor.forClass(Iterable.class);
         verify(userRepository, times(1)).findAllById(captor.capture());
         // ownerIds 는 distinct 로 전달되어야 함
         assertThat(captor.getValue()).containsExactlyInAnyOrder(ownerA, ownerB);
@@ -897,7 +954,7 @@ class PlaylistServiceTest {
 
         when(playlistRepository.findPopular(any(), any(), any(), anyInt())).thenReturn(List.of(p));
         when(playlistRepository.countByFilter(any(), any(), any())).thenReturn(1L);
-        when(userRepository.findAllById(anyList())).thenReturn(List.of(savedUser(owner, "U", null)));
+        when(userRepository.findAllById(any())).thenReturn(List.of(savedUser(owner, "U", null)));
 
         CursorResponse<PlaylistDto> result = playlistService.getPopular(null, null, 10, null);
 

@@ -28,7 +28,9 @@ import jakarta.servlet.http.Cookie;
 import java.time.Instant;
 import java.time.Duration;
 import java.util.UUID;
+import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,6 +40,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 /**
  * 이메일 로그인 HTTP API의 요청·응답 형식과 입력값 검증을 확인
@@ -67,6 +71,15 @@ class AuthControllerTest {
 
     @MockitoBean
     RefreshTokenCookieFactory refreshTokenCookieFactory;
+
+    /**
+     * 각 테스트가 SecurityContext에 설정한 인증 정보가
+     * 다음 테스트에 남지 않도록 정리
+     */
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
+    }
 
     @Test
     @DisplayName("로그인 성공 시 200, Access Token과 Refresh Token Cookie를 반환한다")
@@ -572,5 +585,195 @@ class AuthControllerTest {
             refreshTokenService,
             refreshTokenCookieFactory
         );
+    }
+
+    @Test
+    @DisplayName("로그아웃 성공 시 Refresh Token 삭제 Cookie와 204를 반환한다")
+    void signOut_success() throws Exception {
+        // given
+        UUID authenticatedUserId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(authenticatedUserId);
+
+        Cookie refreshTokenCookie =
+            new Cookie(
+                "REFRESH_TOKEN",
+                "current-refresh-token"
+            );
+
+        /*
+         * Cookie Factory가 기존 Refresh Token Cookie와 같은 속성을 사용하되,
+         * 빈 값과 Max-Age=0을 가진 삭제 Cookie를 반환한다고 가정
+         */
+        ResponseCookie deletionCookie =
+            ResponseCookie.from(
+                    "REFRESH_TOKEN",
+                    ""
+                )
+                .httpOnly(true)
+                .secure(false)
+                .sameSite("Lax")
+                .path("/api/auth")
+                .maxAge(Duration.ZERO)
+                .build();
+
+        when(
+            refreshTokenCookieFactory
+                .createDeletionCookie()
+        ).thenReturn(deletionCookie);
+
+        // when & then
+        mockMvc.perform(
+                post("/api/auth/sign-out")
+                    .cookie(refreshTokenCookie)
+            )
+            .andExpect(status().isNoContent())
+            /*
+             * 204 응답에는 JSON이나 문자열 본문이 없어야 한다.
+             */
+            .andExpect(content().string(""))
+            /*
+             * 브라우저의 기존 Refresh Token을 삭제할 Cookie를 반환
+             */
+            .andExpect(
+                cookie().value(
+                    "REFRESH_TOKEN",
+                    ""
+                )
+            )
+            .andExpect(
+                cookie().maxAge(
+                    "REFRESH_TOKEN",
+                    0
+                )
+            )
+            .andExpect(
+                cookie().httpOnly(
+                    "REFRESH_TOKEN",
+                    true
+                )
+            )
+            .andExpect(
+                cookie().secure(
+                    "REFRESH_TOKEN",
+                    false
+                )
+            )
+            .andExpect(
+                cookie().path(
+                    "REFRESH_TOKEN",
+                    "/api/auth"
+                )
+            )
+            .andExpect(
+                header().string(
+                    HttpHeaders.SET_COOKIE,
+                    org.hamcrest.Matchers.containsString(
+                        "SameSite=Lax"
+                    )
+                )
+            );
+
+        verify(refreshTokenService)
+            .signOut(
+                authenticatedUserId,
+                "current-refresh-token"
+            );
+
+        verify(refreshTokenCookieFactory)
+            .createDeletionCookie();
+    }
+
+    @Test
+    @DisplayName("Refresh Token Cookie가 없어도 멱등하게 로그아웃하고 삭제 Cookie를 반환한다")
+    void signOut_succeedsWithoutRefreshTokenCookie()
+        throws Exception {
+
+        // given
+        UUID authenticatedUserId =
+            UUID.fromString(
+                "22222222-2222-2222-2222-222222222222"
+            );
+
+        setAuthenticatedUser(authenticatedUserId);
+
+        ResponseCookie deletionCookie =
+            ResponseCookie.from(
+                    "REFRESH_TOKEN",
+                    ""
+                )
+                .httpOnly(true)
+                .secure(false)
+                .sameSite("Lax")
+                .path("/api/auth")
+                .maxAge(Duration.ZERO)
+                .build();
+
+        when(
+            refreshTokenCookieFactory
+                .createDeletionCookie()
+        ).thenReturn(deletionCookie);
+
+        // when & then
+        mockMvc.perform(
+                post("/api/auth/sign-out")
+            )
+            .andExpect(status().isNoContent())
+            .andExpect(content().string(""))
+            .andExpect(
+                cookie().value(
+                    "REFRESH_TOKEN",
+                    ""
+                )
+            )
+            .andExpect(
+                cookie().maxAge(
+                    "REFRESH_TOKEN",
+                    0
+                )
+            );
+
+        /*
+         * Cookie가 없으면 null을 그대로 Service에 전달한다.
+         * Service는 이를 이미 로그아웃된 상태로 보고 성공 처리
+         */
+        verify(refreshTokenService)
+            .signOut(
+                authenticatedUserId,
+                null
+            );
+
+        /*
+         * 브라우저에 오래된 Cookie가 남는 상황을 막기 위해
+         * Cookie가 없는 요청에서도 삭제 Cookie는 생성
+         */
+        verify(refreshTokenCookieFactory)
+            .createDeletionCookie();
+    }
+
+    /**
+     * Controller의 @AuthenticationPrincipal 인자에 전달할
+     * UUID 인증 사용자를 SecurityContext에 설정
+     *
+     * <p>실제 요청에서는 JwtAuthenticationFilter가 Access Token을 검증한 뒤
+     * 동일한 형태의 UUID principal을 가진 Authentication을 저장합니다.</p>
+     *
+     * @param userId 테스트에서 사용할 인증 사용자 UUID
+     */
+    private void setAuthenticatedUser(UUID userId) {
+        var authentication =
+            UsernamePasswordAuthenticationToken
+                .authenticated(
+                    userId,
+                    null,
+                    List.of()
+                );
+
+        SecurityContextHolder
+            .getContext()
+            .setAuthentication(authentication);
     }
 }

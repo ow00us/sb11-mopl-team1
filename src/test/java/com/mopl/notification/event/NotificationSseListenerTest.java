@@ -1,6 +1,7 @@
 package com.mopl.notification.event;
 
 import com.mopl.notification.dto.NotificationDto;
+import com.mopl.notification.entity.NotificationType;
 import com.mopl.notification.entity.NotificationLevel;
 import com.mopl.sse.service.SseEmitterManager;
 import org.junit.jupiter.api.DisplayName;
@@ -24,6 +25,9 @@ public class NotificationSseListenerTest {
     private static final UUID RECEIVER_ID =
         UUID.fromString("22222222-2222-2222-2222-222222222222");
 
+    private static final UUID RESOURCE_ID =
+        UUID.fromString("33333333-3333-3333-3333-333333333333");
+
     @Mock
     SseEmitterManager sseEmitterManager;
 
@@ -43,7 +47,9 @@ public class NotificationSseListenerTest {
                 RECEIVER_ID,
                 "새로운 알림",
                 "알림 내용",
-                NotificationLevel.INFO
+                NotificationLevel.INFO,
+                NotificationType.DIRECT_MESSAGE,
+                RESOURCE_ID
             );
 
         NotificationCreatedEvent event =

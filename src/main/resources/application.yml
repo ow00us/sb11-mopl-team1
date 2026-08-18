@@ -6,6 +6,10 @@ spring:
   batch:
     job:
       enabled: false
+  task:
+    scheduling:
+      pool:
+        size: 2
   data:
     redis:
       timeout: 2s
@@ -100,6 +104,10 @@ mopl:
     listener:
       # 로컬에 Kafka 를 띄우지 않고 개발할 때 false 로 두면 연결 경고가 반복되지 않습니다.
       auto-startup: ${KAFKA_LISTENER_AUTO_STARTUP:true}
+  outbox:
+    # 선점 유효 기간입니다. 짧으면 발행이 끝나기 전에 다른 인스턴스가 회수해 중복 발행이
+    # 늘고, 길면 relay 가 죽었을 때 회수가 그만큼 지연됩니다.
+    lease-duration: ${OUTBOX_LEASE_DURATION:30s}
 
 app:
   cors:
@@ -178,3 +186,18 @@ refresh-token:
   cookie:
     # 운영 환경에서는 별도 설정이 없어도 HTTPS 전용 Cookie를 기본으로 사용
     secure: ${REFRESH_TOKEN_COOKIE_SECURE:true}
+
+
+---
+spring:
+  config:
+    activate:
+      # 시연·QA용 초기 데이터가 필요한 경우에만 추가로 활성화
+      on-profile: seed
+
+seed:
+  admin:
+    # 실제 관리자 정보는 Git에 기록하지 않고 실행 환경에서 주입
+    name: ${SEED_ADMIN_NAME}
+    email: ${SEED_ADMIN_EMAIL}
+    password: ${SEED_ADMIN_PASSWORD}
