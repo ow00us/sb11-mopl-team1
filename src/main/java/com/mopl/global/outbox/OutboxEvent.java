@@ -20,8 +20,8 @@ import org.hibernate.type.SqlTypes;
  * <p>도메인 상태 변경과 같은 트랜잭션에서 기록해, 상태는 바뀌었는데 이벤트만 유실되는
  * 경우를 없앱니다. 커밋된 행을 relay 가 읽어 Kafka 에 발행합니다.
  *
- * <p>이 클래스는 저장 모델입니다. 기록 포트, claim·lease, 발행은 후속 이슈에서 붙습니다.
- * 상태 전이 메서드도 그때 함께 정의합니다.
+ * <p>상태 전이는 이 클래스가 소유합니다. 발행 완료와 시도 실패만 두고, 재시도 backoff 와
+ * 중단 상태 전환은 재시도 정책 이슈에서 붙입니다.
  */
 @Getter
 @Entity
@@ -101,6 +101,35 @@ public class OutboxEvent extends BaseEntity {
      */
     @Column(name = "last_error", columnDefinition = "text")
     private String lastError;
+
+    /**
+     * broker 발행 확인을 받은 뒤 완료로 표시합니다.
+     *
+     * <p>선점 정보를 비웁니다. 남겨두면 만료된 lease 를 회수하는 조회가 이미 끝난 레코드를
+     * 계속 훑습니다.
+     */
+    public void markPublished(Instant publishedAt) {
+        this.status = OutboxStatus.PUBLISHED;
+        this.publishedAt = publishedAt;
+        this.claimOwner = null;
+        this.claimExpiresAt = null;
+        this.lastError = null;
+    }
+
+    /**
+     * 발행 시도가 실패했음을 기록합니다.
+     *
+     * <p>상태를 발행 대기로 되돌리고 선점을 풉니다. 다음 시도 시각을 미루는 backoff 와 반복
+     * 실패를 중단 상태로 옮기는 판단은 #232 에서 붙습니다. 여기서는 시도 횟수와 마지막
+     * 오류만 남깁니다.
+     */
+    public void markAttemptFailed(String lastError) {
+        this.status = OutboxStatus.PENDING;
+        this.attempts = this.attempts + 1;
+        this.claimOwner = null;
+        this.claimExpiresAt = null;
+        this.lastError = lastError;
+    }
 
     public OutboxEvent(
         UUID eventId,

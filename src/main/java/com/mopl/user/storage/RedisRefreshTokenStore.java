@@ -1,125 +1,116 @@
 package com.mopl.user.storage;
 
 import java.time.Duration;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 
 /**
- * Refresh Token 세션을 Redis에 저장하는 구현체
+ * Refresh Token Family 세션을 Redis에 저장하는 구현체
  *
- * Refresh Token 원문은 저장하지 않고 SHA-256 해시를 Redis Key와
- * 사용자별 세션 인덱스의 값으로 사용
+ * <p>Redis에는 Refresh Token 원문을 저장하지 않고 다음 정보만
+ * 저장합니다.</p>
  *
- * 세션 Key에는 사용자 UUID를 저장하고 Refresh Token 만료 시간만큼 TTL을 적용
- * TTL이 지나면 Redis가 세션 Key를 자동으로 제거
+ * <ul>
+ *     <li>로그인 세션을 식별하는 Family ID</li>
+ *     <li>세션 소유 사용자 UUID</li>
+ *     <li>현재 활성 Refresh Token의 SHA-256 해시</li>
+ * </ul>
+ *
+ * <p>Rotation에서는 Family ID는 유지하고 현재 활성 tokenHash만
+ * 새로운 해시로 교체합니다. 로그아웃은 tokenHash가 아닌 Family ID를
+ * 기준으로 현재 활성 세션을 폐기합니다.</p>
  */
 @Component
 @RequiredArgsConstructor
-public class RedisRefreshTokenStore implements RefreshTokenStore {
+public class RedisRefreshTokenStore
+    implements RefreshTokenStore {
 
     /**
-     * Refresh Token 해시로 세션을 찾기 위한 Key 접두어
+     * Family 세션 Redis Key 접두어
      *
-     * 최종 Key 예시:
-     * auth:refresh-token:session:{tokenHash}
+     * <p>최종 Key 예시:</p>
+     *
+     * <pre>
+     * auth:refresh-token:family:{familyId}
+     * </pre>
+     *
+     * <p>해당 Key는 Redis Hash이며 userId와 현재 활성 tokenHash를
+     * 필드로 저장합니다.</p>
      */
-    private static final String SESSION_KEY_PREFIX =
-        "auth:refresh-token:session:";
+    private static final String FAMILY_KEY_PREFIX =
+        "auth:refresh-token:family:";
 
     /**
-     * 사용자 UUID로 해당 사용자의 Refresh Token 해시 목록을 찾기 위한
-     * Redis Set Key 접두어
+     * 사용자별 Refresh Token Family 인덱스 Key 접두어
      *
-     * 최종 Key 예시:
+     * <p>최종 Key 예시:</p>
+     *
+     * <pre>
      * auth:refresh-token:user:{userId}
+     * </pre>
+     *
+     * <p>Redis Set의 Member로 사용자의 Family ID를 저장합니다.</p>
      */
-    private static final String USER_SESSIONS_KEY_PREFIX =
+    private static final String USER_FAMILIES_KEY_PREFIX =
         "auth:refresh-token:user:";
 
     /**
-     * Refresh Token 세션 Key와 사용자별 세션 인덱스를
-     * 하나의 원자적인 Redis 작업으로 저장하는 Lua Script
+     * Refresh Token SHA-256 해시 형식
      *
-     * KEYS[1]: Refresh Token 세션 Key
-     * KEYS[2]: 사용자별 Refresh Token Set Key
-     *
-     * ARGV[1]: 사용자 UUID 문자열
-     * ARGV[2]: Refresh Token 해시
-     * ARGV[3]: 새 세션의 TTL 밀리초
-     *
-     * Redis는 Lua Script 전체를 하나의 명령처럼 실행하므로
-     * 세션 Key만 저장되고 사용자별 인덱스 저장이 실패하는
-     * 부분 저장 상태를 방지할 수 있다.
-     *
-     * 사용자별 세션 인덱스의 TTL은 기존 TTL과 새 세션 TTL 중
-     * 더 긴 값을 유지한다. 따라서 짧은 세션이 나중에 발급되더라도
-     * 기존의 긴 세션보다 인덱스가 먼저 만료되지 않는다.
+     * <p>SHA-256 결과는 32바이트이고, 소문자 16진수로 표현하면
+     * 항상 64자가 됩니다.</p>
      */
-    private static final DefaultRedisScript<Long> SAVE_SESSION_SCRIPT =
-        new DefaultRedisScript<>(
-            """
-            redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[3])
-            redis.call('SADD', KEYS[2], ARGV[2])
-
-            local newExpirationMillis = tonumber(ARGV[3])
-            local currentIndexTtl = redis.call('PTTL', KEYS[2])
-
-            if currentIndexTtl < newExpirationMillis then
-                redis.call('PEXPIRE', KEYS[2], newExpirationMillis)
-            end
-
-            return 1
-            """,
-            Long.class
-        );
+    private static final Pattern TOKEN_HASH_PATTERN =
+        Pattern.compile("^[0-9a-f]{64}$");
 
     /**
-     * 기존 Refresh Token 세션을 새 세션으로 교체하는 Lua Script
+     * 새로운 Family 세션과 사용자별 Family 인덱스를 원자적으로
+     * 저장하는 Lua Script
      *
-     * <p>기존 세션 확인과 삭제, 새 세션 저장을 하나의 Redis 명령으로
-     * 실행합니다. 동일한 기존 토큰으로 요청이 동시에 들어오면 첫 번째
-     * 요청이 기존 세션을 삭제한 뒤 나머지 요청은 실패합니다.</p>
+     * <p>Family ID 충돌로 기존 Family Key가 이미 존재하면 기존 세션을
+     * 덮어쓰지 않고 0을 반환합니다.</p>
      *
-     * <p>기존 세션에 저장된 사용자 UUID가 요청 사용자 UUID와 다르면
-     * 다른 사용자의 세션을 변경하지 않고 실패합니다.</p>
+     * <p>KEYS:</p>
+     * <ul>
+     *     <li>KEYS[1]: Family 세션 Hash Key</li>
+     *     <li>KEYS[2]: 사용자별 Family Set Key</li>
+     * </ul>
      *
-     * KEYS[1]: 기존 Refresh Token 세션 Key
-     * KEYS[2]: 사용자별 Refresh Token Set Key
-     * KEYS[3]: 새로운 Refresh Token 세션 Key
-     *
-     * ARGV[1]: 사용자 UUID 문자열
-     * ARGV[2]: 기존 Refresh Token 해시
-     * ARGV[3]: 새로운 Refresh Token 해시
-     * ARGV[4]: 새로운 세션 TTL 밀리초
-     *
-     * 반환값:
-     * 1 - 교체 성공
-     * 0 - 기존 세션이 없거나 사용자 불일치 또는 새 세션 Key 충돌
+     * <p>ARGV:</p>
+     * <ul>
+     *     <li>ARGV[1]: 사용자 UUID</li>
+     *     <li>ARGV[2]: Family UUID</li>
+     *     <li>ARGV[3]: 현재 Refresh Token 해시</li>
+     *     <li>ARGV[4]: TTL 밀리초</li>
+     * </ul>
      */
-    private static final DefaultRedisScript<Long> ROTATE_SESSION_SCRIPT =
+    private static final DefaultRedisScript<Long>
+        SAVE_FAMILY_SCRIPT =
         new DefaultRedisScript<>(
             """
-            local storedUserId = redis.call('GET', KEYS[1])
-
-            if not storedUserId or storedUserId ~= ARGV[1] then
+            if redis.call('EXISTS', KEYS[1]) == 1 then
                 return 0
             end
 
-            if redis.call('EXISTS', KEYS[3]) == 1 then
-                return 0
-            end
+            redis.call(
+                'HSET',
+                KEYS[1],
+                'userId',
+                ARGV[1],
+                'tokenHash',
+                ARGV[3]
+            )
+            redis.call('PEXPIRE', KEYS[1], ARGV[4])
 
-            redis.call('DEL', KEYS[1])
-            redis.call('SREM', KEYS[2], ARGV[2])
-
-            redis.call('SET', KEYS[3], ARGV[1], 'PX', ARGV[4])
-            redis.call('SADD', KEYS[2], ARGV[3])
+            redis.call('SADD', KEYS[2], ARGV[2])
 
             local newExpirationMillis = tonumber(ARGV[4])
             local currentIndexTtl = redis.call('PTTL', KEYS[2])
@@ -138,119 +129,321 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
         );
 
     /**
-     * 사용자별 세션 인덱스에서 현재 활성 상태인 Refresh Token 해시만 조회하고,
-     * 이미 만료된 세션 해시는 인덱스에서 제거하는 Lua Script
+     * Family ID와 현재 활성 tokenHash가 모두 일치할 때만
+     * 세션 소유 사용자 UUID를 반환하는 Lua Script
      *
-     * <p>Redis Set의 Member에는 개별 TTL을 지정할 수 없습니다.
-     * 따라서 개별 세션 Key가 만료되더라도 사용자 Set에는 해당 토큰 해시가
-     * 남을 수 있습니다.</p>
+     * <p>Family Key 조회와 tokenHash 비교를 하나의 Redis 명령으로
+     * 처리하여 조회 중간에 Rotation이 끼어드는 것을 방지합니다.</p>
      *
-     * <p>사용자별 Set의 모든 토큰 해시를 확인하면서 대응하는 세션 Key가
-     * 존재하면 활성 목록에 포함하고, 존재하지 않으면 SREM으로 제거합니다.</p>
-     *
-     * <p>조회와 정리를 하나의 Lua Script 안에서 수행하므로 다른 Redis 명령이
-     * 중간에 끼어들지 않는 원자적인 정리 작업이 됩니다.</p>
-     *
-     * KEYS[1]: 사용자별 Refresh Token Set Key
-     * ARGV[1]: Refresh Token 세션 Key 접두어
+     * <p>KEYS[1]: Family 세션 Hash Key</p>
+     * <p>ARGV[1]: 요청 Refresh Token 해시</p>
      */
-    @SuppressWarnings("rawtypes")
-    private static final DefaultRedisScript<List>
-        FIND_ACTIVE_SESSIONS_SCRIPT =
+    private static final DefaultRedisScript<String>
+        FIND_USER_SCRIPT =
         new DefaultRedisScript<>(
             """
-            local tokenHashes = redis.call('SMEMBERS', KEYS[1])
-            local activeTokenHashes = {}
+            local storedTokenHash =
+                redis.call('HGET', KEYS[1], 'tokenHash')
 
-            for _, tokenHash in ipairs(tokenHashes) do
-                local sessionKey = ARGV[1] .. tokenHash
+            if not storedTokenHash
+                or storedTokenHash ~= ARGV[1] then
+                return false
+            end
 
-                if redis.call('EXISTS', sessionKey) == 1 then
-                    table.insert(activeTokenHashes, tokenHash)
-                else
-                    redis.call('SREM', KEYS[1], tokenHash)
+            return redis.call(
+                'HGET',
+                KEYS[1],
+                'userId'
+            )
+            """,
+            String.class
+        );
+
+    /**
+     * 같은 Family의 현재 활성 tokenHash를 새로운 해시로
+     * 원자적으로 교체하는 Lua Script
+     *
+     * <p>사용자 UUID와 기존 tokenHash가 모두 일치할 때만
+     * Rotation을 수행합니다.</p>
+     *
+     * <p>로그아웃과 Rotation이 동시에 실행되더라도 Redis는 Lua Script를
+     * 순서대로 실행합니다.</p>
+     *
+     * <ul>
+     *     <li>Rotation이 먼저 실행되면 로그아웃이 같은 Family Key 삭제</li>
+     *     <li>로그아웃이 먼저 실행되면 Rotation은 Family Key가 없어 실패</li>
+     * </ul>
+     *
+     * <p>KEYS:</p>
+     * <ul>
+     *     <li>KEYS[1]: Family 세션 Hash Key</li>
+     *     <li>KEYS[2]: 사용자별 Family Set Key</li>
+     * </ul>
+     *
+     * <p>ARGV:</p>
+     * <ul>
+     *     <li>ARGV[1]: 사용자 UUID</li>
+     *     <li>ARGV[2]: Family UUID</li>
+     *     <li>ARGV[3]: 기존 tokenHash</li>
+     *     <li>ARGV[4]: 새로운 tokenHash</li>
+     *     <li>ARGV[5]: 새로운 TTL 밀리초</li>
+     * </ul>
+     */
+    private static final DefaultRedisScript<Long>
+        ROTATE_FAMILY_SCRIPT =
+        new DefaultRedisScript<>(
+            """
+            local storedUserId =
+                redis.call('HGET', KEYS[1], 'userId')
+            local storedTokenHash =
+                redis.call('HGET', KEYS[1], 'tokenHash')
+
+            if not storedUserId
+                or storedUserId ~= ARGV[1]
+                or not storedTokenHash
+                or storedTokenHash ~= ARGV[3] then
+                return 0
+            end
+
+            redis.call(
+                'HSET',
+                KEYS[1],
+                'tokenHash',
+                ARGV[4]
+            )
+            redis.call('PEXPIRE', KEYS[1], ARGV[5])
+
+            redis.call('SADD', KEYS[2], ARGV[2])
+
+            local newExpirationMillis = tonumber(ARGV[5])
+            local currentIndexTtl = redis.call('PTTL', KEYS[2])
+
+            if currentIndexTtl < newExpirationMillis then
+                redis.call(
+                    'PEXPIRE',
+                    KEYS[2],
+                    newExpirationMillis
+                )
+            end
+
+            return 1
+            """,
+            Long.class
+        );
+
+    /**
+     * Family의 현재 활성 Refresh Token 세션을 폐기하는 Lua Script
+     *
+     * <p>요청 Cookie의 tokenHash는 사용하지 않습니다. Family Key에 저장된
+     * 사용자 UUID가 인증된 사용자와 일치하면 Rotation으로 갱신된 현재
+     * 활성 세션까지 함께 폐기합니다.</p>
+     *
+     * <p>KEYS:</p>
+     * <ul>
+     *     <li>KEYS[1]: Family 세션 Hash Key</li>
+     *     <li>KEYS[2]: 사용자별 Family Set Key</li>
+     * </ul>
+     *
+     * <p>ARGV:</p>
+     * <ul>
+     *     <li>ARGV[1]: 인증된 사용자 UUID</li>
+     *     <li>ARGV[2]: Family UUID</li>
+     * </ul>
+     */
+    private static final DefaultRedisScript<Long>
+        REVOKE_FAMILY_SCRIPT =
+        new DefaultRedisScript<>(
+            """
+            local storedUserId =
+                redis.call('HGET', KEYS[1], 'userId')
+
+            if not storedUserId
+                or storedUserId ~= ARGV[1] then
+                return 0
+            end
+
+            redis.call('DEL', KEYS[1])
+            redis.call('SREM', KEYS[2], ARGV[2])
+
+            if redis.call('SCARD', KEYS[2]) == 0 then
+                redis.call('DEL', KEYS[2])
+            end
+
+            return 1
+            """,
+            Long.class
+        );
+
+    /**
+     * 특정 사용자가 보유한 모든 Refresh Token Family 세션을
+     * 원자적으로 폐기하는 Lua Script
+     *
+     * <p>사용자별 Family 인덱스에서 모든 Family ID를 조회한 뒤,
+     * 실제 Family Hash에 저장된 사용자 UUID가 요청 사용자 UUID와
+     * 일치하는 세션만 삭제합니다.</p>
+     *
+     * <p>마지막에는 사용자별 Family 인덱스도 함께 제거합니다.
+     * Redis는 Lua Script 실행 중 다른 명령을 끼워 넣지 않으므로
+     * 일부 Family만 삭제된 중간 상태가 외부에 노출되지 않습니다.</p>
+     *
+     * <p>KEYS:</p>
+     * <ul>
+     *     <li>KEYS[1]: 사용자별 Family Set Key</li>
+     * </ul>
+     *
+     * <p>ARGV:</p>
+     * <ul>
+     *     <li>ARGV[1]: Family 세션 Key 접두어</li>
+     *     <li>ARGV[2]: 세션을 폐기할 사용자 UUID</li>
+     * </ul>
+     */
+    private static final DefaultRedisScript<Long>
+        REVOKE_ALL_FAMILIES_SCRIPT =
+        new DefaultRedisScript<>(
+            """
+            local familyIds =
+                redis.call('SMEMBERS', KEYS[1])
+            local revokedCount = 0
+
+            for _, familyId in ipairs(familyIds) do
+                local familyKey =
+                    ARGV[1] .. familyId
+                local storedUserId =
+                    redis.call(
+                        'HGET',
+                        familyKey,
+                        'userId'
+                    )
+
+                if storedUserId
+                    and storedUserId == ARGV[2] then
+                    revokedCount =
+                        revokedCount
+                        + redis.call(
+                            'DEL',
+                            familyKey
+                        )
                 end
             end
 
-            return activeTokenHashes
+            redis.call('DEL', KEYS[1])
+
+            return revokedCount
+            """,
+            Long.class
+        );
+
+    /**
+     * 사용자별 인덱스에서 실제 Family Key가 존재하는 Family ID만
+     * 반환하고 만료된 ID는 Set에서 제거하는 Lua Script
+     *
+     * <p>Redis Set의 각 Member에는 개별 TTL을 설정할 수 없으므로
+     * Family Key가 만료된 뒤 Set에 남은 ID를 조회 시점에 정리합니다.</p>
+     *
+     * <p>KEYS[1]: 사용자별 Family Set Key</p>
+     * <p>ARGV[1]: Family Key 접두어</p>
+     */
+    @SuppressWarnings("rawtypes")
+    private static final DefaultRedisScript<List>
+        FIND_ACTIVE_FAMILIES_SCRIPT =
+        new DefaultRedisScript<>(
+            """
+            local familyIds =
+                redis.call('SMEMBERS', KEYS[1])
+            local activeFamilyIds = {}
+
+            for _, familyId in ipairs(familyIds) do
+                local familyKey =
+                    ARGV[1] .. familyId
+
+                if redis.call('EXISTS', familyKey) == 1 then
+                    table.insert(
+                        activeFamilyIds,
+                        familyId
+                    )
+                else
+                    redis.call(
+                        'SREM',
+                        KEYS[1],
+                        familyId
+                    )
+                end
+            end
+
+            return activeFamilyIds
             """,
             List.class
         );
 
+    /**
+     * Redis 문자열 및 Lua Script 실행에 사용하는 Template
+     */
     private final StringRedisTemplate redisTemplate;
 
     /**
-     * Refresh Token 세션과 사용자별 세션 인덱스를 Redis에 저장
-     *
-     * 세션 Key:
-     * auth:refresh-token:session:{tokenHash}
-     *
-     * 세션 Value:
-     * 사용자 UUID
-     *
-     * 사용자별 세션 Set:
-     * auth:refresh-token:user:{userId}
-     *
-     * Set Member:
-     * Refresh Token 해시
-     *
-     * @param userId Refresh Token 소유 사용자 UUID
-     * @param tokenHash Refresh Token SHA-256 해시
-     * @param expiration Redis Key에 적용할 TTL
+     * 새로운 Refresh Token Family 세션을 저장
      */
     @Override
     public void save(
         UUID userId,
+        UUID familyId,
         String tokenHash,
         Duration expiration
     ) {
         validateSaveArguments(
             userId,
+            familyId,
             tokenHash,
             expiration
         );
 
-        String sessionKey =
-            sessionKey(tokenHash);
+        Long result =
+            redisTemplate.execute(
+                SAVE_FAMILY_SCRIPT,
+                List.of(
+                    familyKey(familyId),
+                    userFamiliesKey(userId)
+                ),
+                userId.toString(),
+                familyId.toString(),
+                tokenHash,
+                Long.toString(
+                    expiration.toMillis()
+                )
+            );
 
-        String userSessionsKey =
-            userSessionsKey(userId);
-
-        long expirationMillis =
-            expiration.toMillis();
-
-        redisTemplate.execute(
-            SAVE_SESSION_SCRIPT,
-            List.of(
-                sessionKey,
-                userSessionsKey
-            ),
-            userId.toString(),
-            tokenHash,
-            Long.toString(expirationMillis)
-        );
+        /*
+         * UUID 충돌 또는 기존 Family Key가 존재하는 상황에서
+         * 기존 인증 세션을 덮어쓰지 않습니다.
+         */
+        if (!Long.valueOf(1L).equals(result)) {
+            throw new IllegalStateException(
+                "Refresh Token Family 세션을 저장하지 못했습니다."
+            );
+        }
     }
 
     /**
-     * Refresh Token 해시로 세션 소유 사용자 UUID를 조회
-     *
-     * Redis Key가 TTL 만료 또는 로그아웃으로 삭제됐다면
-     * Redis 조회 결과가 null이므로 빈 Optional을 반환
-     *
-     * @param tokenHash Refresh Token SHA-256 해시
-     * @return 세션 사용자 UUID
+     * Family ID와 tokenHash가 모두 일치하는 세션의 사용자 UUID를 조회
      */
     @Override
-    public Optional<UUID> findUserIdByTokenHash(
+    public Optional<UUID> findUserIdByFamilyAndTokenHash(
+        UUID familyId,
         String tokenHash
     ) {
-        if (tokenHash == null || tokenHash.isBlank()) {
+        if (familyId == null
+            || !isValidTokenHash(tokenHash)) {
             return Optional.empty();
         }
 
         String storedUserId =
-            redisTemplate.opsForValue()
-                .get(sessionKey(tokenHash));
+            redisTemplate.execute(
+                FIND_USER_SCRIPT,
+                List.of(
+                    familyKey(familyId)
+                ),
+                tokenHash
+            );
 
         if (storedUserId == null) {
             return Optional.empty();
@@ -262,38 +455,30 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
             );
         } catch (IllegalArgumentException exception) {
             /*
-             * Refresh Token 세션 Value에는 UUID만 저장되어야 한다.
-             * 다른 형식의 값이 존재한다면 단순한 미등록 토큰이 아니라
-             * 저장 데이터가 손상된 상태이므로 서버 상태 예외로 처리
+             * 서버가 저장한 userId가 UUID가 아니라면 인증 실패가 아닌
+             * Redis 저장 데이터 손상 상태이므로 서버 예외로 처리
              */
             throw new IllegalStateException(
-                "Redis Refresh Token 세션의 사용자 UUID 형식이 올바르지 않습니다.",
+                "Redis Refresh Token Family의 사용자 UUID 형식이 올바르지 않습니다.",
                 exception
             );
         }
     }
 
     /**
-     * 기존 Refresh Token 세션을 새로운 Refresh Token 세션으로 교체
-     *
-     * <p>Lua Script가 기존 세션 확인부터 새 세션 저장까지 원자적으로
-     * 수행하므로 동일 토큰을 이용한 중복 재발급을 차단합니다.</p>
-     *
-     * @param userId Refresh Token 소유 사용자 UUID
-     * @param oldTokenHash 기존 Refresh Token SHA-256 해시
-     * @param newTokenHash 새로운 Refresh Token SHA-256 해시
-     * @param expiration 새로운 Refresh Token 세션 TTL
-     * @return 교체에 성공하면 true, 기존 세션이 유효하지 않으면 false
+     * 같은 Family의 현재 활성 Refresh Token 해시를 교체
      */
     @Override
     public boolean rotate(
         UUID userId,
+        UUID familyId,
         String oldTokenHash,
         String newTokenHash,
         Duration expiration
     ) {
         validateRotateArguments(
             userId,
+            familyId,
             oldTokenHash,
             newTokenHash,
             expiration
@@ -301,78 +486,138 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
 
         Long result =
             redisTemplate.execute(
-                ROTATE_SESSION_SCRIPT,
+                ROTATE_FAMILY_SCRIPT,
                 List.of(
-                    sessionKey(oldTokenHash),
-                    userSessionsKey(userId),
-                    sessionKey(newTokenHash)
+                    familyKey(familyId),
+                    userFamiliesKey(userId)
                 ),
                 userId.toString(),
+                familyId.toString(),
                 oldTokenHash,
                 newTokenHash,
-                Long.toString(expiration.toMillis())
+                Long.toString(
+                    expiration.toMillis()
+                )
             );
 
-        /*
-         * Redis Script 실행 결과가 1인 경우에만 교체 성공
-         *
-         * null은 Redis 연결 또는 응답 문제로 정상 성공을 확인할 수 없는
-         * 상태이므로 false로 처리하여 재발급 성공으로 오인하지 않는다.
-         */
         return Long.valueOf(1L).equals(result);
     }
 
     /**
-     * 사용자별 Redis Set에서 현재 활성 상태인 Refresh Token 해시만 조회
-     *
-     * <p>Redis Set의 Member에는 개별 TTL을 적용할 수 없으므로
-     * 개별 세션 Key가 만료된 이후에도 사용자별 Set에는 만료된 토큰 해시가
-     * 남아 있을 수 있습니다.</p>
-     *
-     * <p>Lua Script에서 각 토큰 해시에 대응하는 세션 Key의 존재 여부를
-     * 확인하고, 세션 Key가 없는 만료 해시는 사용자 Set에서 제거합니다.
-     * 따라서 반환되는 값에는 현재 세션 Key가 존재하는 토큰 해시만 포함됩니다.</p>
-     *
-     * @param userId 조회할 사용자 UUID
-     * @return 현재 활성 상태인 Refresh Token 해시 집합
+     * 인증된 사용자가 소유한 Refresh Token Family를 폐기
+     */
+    @Override
+    public boolean revoke(
+        UUID userId,
+        UUID familyId
+    ) {
+        validateRevokeArguments(
+            userId,
+            familyId
+        );
+
+        Long result =
+            redisTemplate.execute(
+                REVOKE_FAMILY_SCRIPT,
+                List.of(
+                    familyKey(familyId),
+                    userFamiliesKey(userId)
+                ),
+                userId.toString(),
+                familyId.toString()
+            );
+
+        return Long.valueOf(1L).equals(result);
+    }
+
+    /**
+     * 특정 사용자가 보유한 모든 Refresh Token Family 세션을 폐기
+     */
+    @Override
+    public long revokeAllByUserId(
+        UUID userId
+    ) {
+        if (userId == null) {
+            throw new IllegalArgumentException(
+                "Refresh Token 사용자 UUID는 null일 수 없습니다."
+            );
+        }
+
+        Long revokedCount =
+            redisTemplate.execute(
+                REVOKE_ALL_FAMILIES_SCRIPT,
+                List.of(
+                    userFamiliesKey(userId)
+                ),
+                FAMILY_KEY_PREFIX,
+                userId.toString()
+            );
+
+        if (revokedCount == null) {
+            throw new IllegalStateException(
+                "Refresh Token 전체 세션 폐기 결과를 확인할 수 없습니다."
+            );
+        }
+
+        return revokedCount;
+    }
+
+    /**
+     * 사용자가 보유한 현재 활성 Family ID를 조회
      */
     @Override
     @SuppressWarnings("unchecked")
-    public Set<String> findTokenHashesByUserId(
+    public Set<UUID> findFamilyIdsByUserId(
         UUID userId
     ) {
         if (userId == null) {
             return Set.of();
         }
 
-        /*
-         * Lua Script의 반환값은 Redis의 다중 Bulk 응답이며,
-         * StringRedisTemplate이 각 값을 String으로 역직렬화
-         */
-        List<String> activeTokenHashes =
+        List<String> activeFamilyIdValues =
             redisTemplate.execute(
-                FIND_ACTIVE_SESSIONS_SCRIPT,
-                List.of(userSessionsKey(userId)),
-                SESSION_KEY_PREFIX
+                FIND_ACTIVE_FAMILIES_SCRIPT,
+                List.of(
+                    userFamiliesKey(userId)
+                ),
+                FAMILY_KEY_PREFIX
             );
 
-        if (activeTokenHashes == null
-            || activeTokenHashes.isEmpty()) {
+        if (activeFamilyIdValues == null
+            || activeFamilyIdValues.isEmpty()) {
             return Set.of();
         }
 
-        /*
-         * 외부 호출자가 저장소 내부 결과를 변경하지 못하도록
-         * 수정할 수 없는 Set으로 변환해 반환
-         */
-        return Set.copyOf(activeTokenHashes);
+        Set<UUID> familyIds =
+            new HashSet<>();
+
+        for (String familyIdValue
+            : activeFamilyIdValues) {
+            try {
+                familyIds.add(
+                    UUID.fromString(familyIdValue)
+                );
+            } catch (IllegalArgumentException exception) {
+                /*
+                 * 사용자별 인덱스에는 UUID 형식의 Family ID만
+                 * 저장돼야 하므로 다른 값은 데이터 손상으로 처리
+                 */
+                throw new IllegalStateException(
+                    "Redis Refresh Token Family ID 형식이 올바르지 않습니다.",
+                    exception
+                );
+            }
+        }
+
+        return Set.copyOf(familyIds);
     }
 
     /**
-     * 저장 인자가 Redis Key와 TTL로 사용 가능한지 검증
+     * Family 저장 인자를 검증
      */
     private void validateSaveArguments(
         UUID userId,
+        UUID familyId,
         String tokenHash,
         Duration expiration
     ) {
@@ -382,51 +627,47 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
             );
         }
 
-        if (tokenHash == null || tokenHash.isBlank()) {
+        if (familyId == null) {
             throw new IllegalArgumentException(
-                "Refresh Token 해시는 비어 있을 수 없습니다."
+                "Refresh Token Family ID는 null일 수 없습니다."
             );
         }
 
+        validateTokenHash(tokenHash);
+
+        /*
+         * 양수 Duration이더라도 밀리초 미만이면 Redis PX 값은 0이 된다.
+         * 따라서 실제 Redis TTL로 사용할 수 있는 최소 1ms 이상인지 함께 확인
+         */
         if (expiration == null
             || expiration.isZero()
-            || expiration.isNegative()) {
+            || expiration.isNegative()
+            || expiration.toMillis() <= 0) {
             throw new IllegalArgumentException(
-                "Refresh Token 만료 시간은 0보다 커야 합니다."
+                "Refresh Token 만료 시간은 1밀리초 이상이어야 합니다."
             );
         }
     }
 
     /**
-     * Refresh Token Rotation에 필요한 인자가 올바른지 검증
+     * Rotation 인자를 검증합니다.
      */
     private void validateRotateArguments(
         UUID userId,
+        UUID familyId,
         String oldTokenHash,
         String newTokenHash,
         Duration expiration
     ) {
-        /*
-         * 사용자 UUID, 새로운 해시와 만료 시간은 save()와
-         * 동일한 저장 조건을 만족해야 한다.
-         */
         validateSaveArguments(
             userId,
+            familyId,
             newTokenHash,
             expiration
         );
 
-        if (oldTokenHash == null
-            || oldTokenHash.isBlank()) {
-            throw new IllegalArgumentException(
-                "기존 Refresh Token 해시는 비어 있을 수 없습니다."
-            );
-        }
+        validateTokenHash(oldTokenHash);
 
-        /*
-         * 기존 해시와 새 해시가 같으면 기존 토큰을 폐기하지 않고
-         * 수명만 연장하는 결과가 되므로 Rotation으로 허용하지 않는다.
-         */
         if (oldTokenHash.equals(newTokenHash)) {
             throw new IllegalArgumentException(
                 "기존 Refresh Token 해시와 새로운 해시는 달라야 합니다."
@@ -435,16 +676,67 @@ public class RedisRefreshTokenStore implements RefreshTokenStore {
     }
 
     /**
-     * Refresh Token 해시 조회용 Redis Key를 생성
+     * Family 폐기 인자를 검증
      */
-    private String sessionKey(String tokenHash) {
-        return SESSION_KEY_PREFIX + tokenHash;
+    private void validateRevokeArguments(
+        UUID userId,
+        UUID familyId
+    ) {
+        if (userId == null) {
+            throw new IllegalArgumentException(
+                "Refresh Token 사용자 UUID는 null일 수 없습니다."
+            );
+        }
+
+        if (familyId == null) {
+            throw new IllegalArgumentException(
+                "Refresh Token Family ID는 null일 수 없습니다."
+            );
+        }
     }
 
     /**
-     * 사용자별 Refresh Token 목록을 저장하는 Redis Set Key를 생성
+     * tokenHash가 SHA-256 소문자 16진수 형식인지 검증
      */
-    private String userSessionsKey(UUID userId) {
-        return USER_SESSIONS_KEY_PREFIX + userId;
+    private void validateTokenHash(
+        String tokenHash
+    ) {
+        if (!isValidTokenHash(tokenHash)) {
+            throw new IllegalArgumentException(
+                "Refresh Token 해시 형식이 올바르지 않습니다."
+            );
+        }
+    }
+
+    /**
+     * tokenHash 형식 검증 결과를 반환
+     */
+    private boolean isValidTokenHash(
+        String tokenHash
+    ) {
+        return tokenHash != null
+            && TOKEN_HASH_PATTERN
+            .matcher(tokenHash)
+            .matches();
+    }
+
+    /**
+     * Family 세션 Redis Key를 생성
+     */
+    private String familyKey(
+        UUID familyId
+    ) {
+        return FAMILY_KEY_PREFIX
+            + familyId;
+    }
+
+    /**
+     * 사용자별 Family 인덱스 Redis Key를 생성
+     */
+    private String userFamiliesKey(
+        UUID userId
+    ) {
+        return USER_FAMILIES_KEY_PREFIX
+            + userId;
     }
 }

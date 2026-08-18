@@ -17,7 +17,7 @@ import org.springframework.validation.annotation.Validated;
  *
  * 예:
  * watching-session:
- *   presence-ttl: 60s
+ *   presence-ttl: 90s
  *   session-ttl: 30m
  *   heartbeat-interval: 20s
  */

@@ -3,11 +3,13 @@ package com.mopl.user.controller;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.dto.JwtDto;
+import com.mopl.user.dto.ResetPasswordRequest;
 import com.mopl.user.dto.SignInRequest;
 import com.mopl.user.cookie.RefreshTokenCookieFactory;
 import com.mopl.user.config.RefreshTokenCookieProperties;
 import com.mopl.user.service.SignInResult;
 import com.mopl.user.service.AuthService;
+import com.mopl.user.service.PasswordResetService;
 import com.mopl.user.service.RefreshResult;
 import com.mopl.user.service.RefreshTokenService;
 import io.swagger.v3.oas.annotations.headers.Header;
@@ -17,6 +19,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
 import jakarta.validation.Valid;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpHeaders;
@@ -26,6 +29,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.CookieValue;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
 /**
  * 이메일 로그인 HTTP API를 처리하는 Controller
@@ -40,6 +44,12 @@ import org.springframework.web.bind.annotation.CookieValue;
 public class AuthController {
 
     private final AuthService authService;
+
+    /**
+     * 이메일을 이용한 임시 비밀번호 생성, 비밀번호 해시 변경과
+     * 이메일 발송 흐름을 처리하는 Service
+     */
+    private final PasswordResetService passwordResetService;
 
     /**
      * 기존 Refresh Token을 검증하고 Rotation 방식으로
@@ -104,6 +114,52 @@ public class AuthController {
                 refreshTokenCookie.toString()
             )
             .body(result.jwtDto());
+    }
+
+    /**
+     * 사용자 이메일을 기준으로 비밀번호를 임시 비밀번호로 초기화
+     *
+     * <p>JSON 요청 본문의 이메일은 {@link ResetPasswordRequest}의
+     * Bean Validation으로 검증합니다. 이메일이 비어 있거나 올바른 형식이
+     * 아니면 Service 호출 전에 400 Bad Request를 반환합니다.</p>
+     *
+     * <p>실제 사용자 조회, 임시 비밀번호 생성, BCrypt 해시 변경과
+     * 이메일 발송은 {@link PasswordResetService}에 위임합니다.</p>
+     *
+     * <p>성공 응답은 기존 OpenAPI 계약에 따라 JSON 본문이 없는
+     * 204 No Content를 반환합니다. 임시 비밀번호 원문을 API 응답으로
+     * 반환하지 않습니다.</p>
+     *
+     * @param request 비밀번호를 초기화할 사용자 이메일
+     * @return 응답 본문이 없는 204 No Content
+     */
+    @PostMapping("/reset-password")
+    @ApiResponse(
+        responseCode = "204",
+        description = "비밀번호 초기화 및 임시 비밀번호 이메일 발송 성공"
+    )
+    public ResponseEntity<Void> resetPassword(
+        @Valid @RequestBody
+        ResetPasswordRequest request
+    ) {
+        /*
+         * Controller는 HTTP 요청 바인딩과 응답 상태 결정만 담당
+         *
+         * 사용자 조회와 비밀번호 변경, 이메일 발송 규칙은
+         * PasswordResetService에 위임
+         */
+        passwordResetService.resetPassword(
+            request
+        );
+
+        /*
+         * 임시 비밀번호는 이메일로만 전달
+         * API 응답에는 민감한 비밀번호 원문이나 사용자 정보를
+         * 포함하지 않는다.
+         */
+        return ResponseEntity
+            .noContent()
+            .build();
     }
 
     /**
@@ -195,5 +251,89 @@ public class AuthController {
                 refreshTokenCookie.toString()
             )
             .body(result.jwtDto());
+    }
+
+    /**
+     * 현재 브라우저의 Refresh Token 세션을 폐기하고 로그아웃
+     *
+     * <p>기존 OpenAPI 계약에 따라 유효한 Access Token으로 인증된
+     * 사용자만 접근할 수 있으며, 상태 변경 POST 요청이므로
+     * CSRF 토큰도 필요합니다.</p>
+     *
+     * <p>Refresh Token Cookie가 존재하면 해당 원문을 Service에 전달해
+     * Redis 세션을 폐기합니다. Cookie가 없거나 세션이 이미 폐기됐어도
+     * 로그아웃은 멱등하게 성공 처리합니다.</p>
+     *
+     * <p>로그아웃 결과와 관계없이 삭제 Cookie를 Set-Cookie 헤더로
+     * 전달하여 브라우저에 남아 있을 수 있는 Refresh Token을 제거합니다.</p>
+     *
+     * @param authenticatedUserId Access Token 인증 사용자 UUID
+     * @param rawRefreshToken 현재 브라우저의 Refresh Token Cookie, 없으면 null
+     * @return Refresh Token 삭제 Cookie가 포함된 204 No Content 응답
+     */
+    @PostMapping("/sign-out")
+    @ApiResponse(
+        responseCode = "204",
+        description = "로그아웃 성공",
+        headers = @Header(
+            name = HttpHeaders.SET_COOKIE,
+            description = "Refresh Token 삭제 Cookie",
+            schema = @Schema(implementation = String.class)
+        )
+    )
+    public ResponseEntity<Void> signOut(
+        /*
+         * authenticatedUserId는 클라이언트가 직접 전달하는 요청 파라미터가 아니라
+         * JWT 인증이 끝난 뒤 Spring Security가 주입하는 내부 인증 정보
+         *
+         * 따라서 런타임 OpenAPI 문서에는 요청 파라미터로 노출되지 않도록 숨긴다.
+         */
+        @Parameter(hidden = true)
+        @AuthenticationPrincipal
+        UUID authenticatedUserId,
+
+        @Parameter(
+            name = RefreshTokenCookieProperties.REQUIRED_COOKIE_NAME,
+            description = "폐기할 현재 브라우저의 Refresh Token",
+            required = false,
+            in = ParameterIn.COOKIE
+        )
+        @CookieValue(
+            name = RefreshTokenCookieProperties.REQUIRED_COOKIE_NAME,
+            required = false
+        )
+        String rawRefreshToken
+    ) {
+        /*
+         * 인증 사용자 UUID와 현재 브라우저의 Refresh Token을 Service에 전달
+         *
+         * Cookie가 없거나 이미 폐기된 경우에도 Service는 예외 없이
+         * 종료하여 반복 로그아웃의 멱등성을 유지
+         */
+        refreshTokenService.signOut(
+            authenticatedUserId,
+            rawRefreshToken
+        );
+
+        /*
+         * Redis 세션 폐기 여부와 관계없이 브라우저 Cookie를 삭제
+         *
+         * 세션이 이미 만료됐더라도 브라우저에 Cookie가 남아 있을 수 있으므로
+         * 로그아웃 응답에는 항상 삭제 Cookie를 포함
+         */
+        ResponseCookie deletionCookie =
+            refreshTokenCookieFactory
+                .createDeletionCookie();
+
+        /*
+         * 로그아웃 성공 응답에는 JSON 본문을 포함하지 않고,
+         * Max-Age=0인 Refresh Token Cookie만 Set-Cookie 헤더로 전달
+         */
+        return ResponseEntity.noContent()
+            .header(
+                HttpHeaders.SET_COOKIE,
+                deletionCookie.toString()
+            )
+            .build();
     }
 }

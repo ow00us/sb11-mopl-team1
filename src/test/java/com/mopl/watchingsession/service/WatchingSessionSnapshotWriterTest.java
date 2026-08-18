@@ -3,8 +3,8 @@ package com.mopl.watchingsession.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.mopl.global.config.JpaConfig;
-import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
+import com.mopl.watchingsession.service.WatchingSessionSnapshotWriter.UpsertResult;
 import jakarta.persistence.EntityManager;
 import java.time.Instant;
 import java.util.UUID;
@@ -85,108 +85,123 @@ public class WatchingSessionSnapshotWriterTest {
     }
 
     @Test
-    @DisplayName("같은 콘텐츠로 재구독하면 기존 행을 유지한 채 갱신하고 createdAt이 보존됨")
-    void upsert_sameContent_refreshesExistingRow() {
-        // given
+    @DisplayName("같은 콘텐츠로 재구독하면 기존 행을 유지한 채 갱신하고, isNewIdentity=false를 반환")
+    void upsert_sameContent_refreshesExistingRow_andReportsNotNewIdentity() {
         UUID watcherId = insertUser();
         UUID contentId = insertContent();
 
-        WatchingSessionSnapshot first = writer.upsert(watcherId, contentId, Instant.now().plusSeconds(60));
-        // first는 삽입 직후 재조회 없이 반환된 값이라 DB 정밀도(마이크로초)로 절삭되지 않았을 수 있다.
-        // result와 동일 조건으로 비교하기 위해 DB에 실제 저장된 값을 다시 읽어온다.
-        Instant firstCreatedAtInDb = repository.findById(first.getId()).orElseThrow().getCreatedAt();
+        UpsertResult first = writer.upsert(watcherId, contentId, Instant.now().plusSeconds(60));
+        Instant firstCreatedAtInDb = repository.findById(first.snapshot().getId()).orElseThrow().getCreatedAt();
 
-        // when
         Instant extendedExpiresAt = Instant.now().plusSeconds(120);
-        WatchingSessionSnapshot result = writer.upsert(watcherId, contentId, extendedExpiresAt);
+        UpsertResult result = writer.upsert(watcherId, contentId, extendedExpiresAt);
 
-        // then
         assertThat(repository.count()).isEqualTo(1);
-        assertThat(result.getId()).isEqualTo(first.getId());
-        assertThat(result.getExpiresAt()).isEqualTo(extendedExpiresAt);
-        assertThat(result.getCreatedAt()).isEqualTo(firstCreatedAtInDb);
+        assertThat(result.isNewIdentity()).isFalse();
+        assertThat(result.snapshot().getId()).isEqualTo(first.snapshot().getId());
+        assertThat(result.snapshot().getExpiresAt()).isEqualTo(extendedExpiresAt);
+        assertThat(result.snapshot().getCreatedAt()).isEqualTo(firstCreatedAtInDb);
     }
 
     @Test
-    @DisplayName("다른 콘텐츠로 전환하면 기존 행을 지우고 새로 삽입해 createdAt이 전환 시각을 반영")
-    void upsert_differentContent_replacesRowAndResetsCreatedAt() {
-        // given
+    @DisplayName("다른 콘텐츠로 전환하면 기존 행을 지우고 새로 삽입하며, isNewIdentity=true를 반환")
+    void upsert_differentContent_replacesRow_andReportsNewIdentity() {
         UUID watcherId = insertUser();
         UUID previousContentId = insertContent();
         UUID newContentId = insertContent();
 
-        WatchingSessionSnapshot first = writer.upsert(watcherId, previousContentId, Instant.now().plusSeconds(60));
+        UpsertResult first = writer.upsert(watcherId, previousContentId, Instant.now().plusSeconds(60));
+        UpsertResult result = writer.upsert(watcherId, newContentId, Instant.now().plusSeconds(120));
 
-        // when
-        WatchingSessionSnapshot result = writer.upsert(watcherId, newContentId, Instant.now().plusSeconds(120));
-
-        // then
         assertThat(repository.count()).isEqualTo(1);
-        assertThat(result.getId()).isNotEqualTo(first.getId());
-        assertThat(result.getContentId()).isEqualTo(newContentId);
-        assertThat(result.getCreatedAt()).isAfterOrEqualTo(first.getCreatedAt());
+        assertThat(result.isNewIdentity()).isTrue();
+        assertThat(result.snapshot().getId()).isNotEqualTo(first.snapshot().getId());
+        assertThat(result.snapshot().getContentId()).isEqualTo(newContentId);
+        assertThat(result.snapshot().getCreatedAt()).isAfterOrEqualTo(first.snapshot().getCreatedAt());
     }
 
     @Test
-    @DisplayName("기존 행이 없으면 새로 삽입한다")
-    void upsert_insertsNewRow() {
+    @DisplayName("기존 행이 없으면 새로 삽입하고, isNewIdentity=true를 반환")
+    void upsert_insertsNewRow_andReportsNewIdentity() {
         UUID watcherId = insertUser();
         UUID contentId = insertContent();
 
-        WatchingSessionSnapshot result = writer.upsert(watcherId, contentId, Instant.now().plusSeconds(60));
+        UpsertResult result = writer.upsert(watcherId, contentId, Instant.now().plusSeconds(60));
 
         assertThat(repository.count()).isEqualTo(1);
-        assertThat(result.getWatcherId()).isEqualTo(watcherId);
-        assertThat(result.getContentId()).isEqualTo(contentId);
+        assertThat(result.isNewIdentity()).isTrue();
+        assertThat(result.snapshot().getWatcherId()).isEqualTo(watcherId);
+        assertThat(result.snapshot().getContentId()).isEqualTo(contentId);
+    }
+
+
+    @Test
+    @DisplayName("deleteById()는 snapshotId가 일치할 때만 DB에서 제거하고 flush까지 반영")
+    void deleteById_removesExistingRow_whenSnapshotIdMatches() {
+        // given
+        UUID watcherId = insertUser();
+        UUID contentId = insertContent();
+        UpsertResult result = writer.upsert(watcherId, contentId, Instant.now().plusSeconds(60));
+        assertThat(repository.count()).isEqualTo(1);
+
+        // when
+        int deletedRows = writer.deleteById(watcherId, result.snapshot().getId());
+
+        // then
+        assertThat(deletedRows).isEqualTo(1);
+        assertThat(repository.count()).isZero();
+        assertThat(repository.findByWatcherId(watcherId)).isEmpty();
     }
 
     @Test
-    @DisplayName("delete()는 해당 watcher의 스냅샷을 실제로 DB에서 제거하고 flush까지 반영")
-    void delete_removesExistingRow() {
+    @DisplayName("deleteById()는 snapshotId가 일치하지 않으면(이미 다른 세대로 교체됨) 삭제하지 않는다")
+    void deleteById_doesNothing_whenSnapshotIdDoesNotMatch() {
         // given
         UUID watcherId = insertUser();
         UUID contentId = insertContent();
         writer.upsert(watcherId, contentId, Instant.now().plusSeconds(60));
         assertThat(repository.count()).isEqualTo(1);
 
-        // when
-        writer.delete(watcherId);
+        // when: 존재하지 않는(다른) snapshotId로 삭제 시도
+        int deletedRows = writer.deleteById(watcherId, UUID.randomUUID());
 
-        // then:
-        assertThat(repository.count()).isZero();
-        assertThat(repository.findByWatcherId(watcherId)).isEmpty();
+        // then: 아무것도 지워지지 않음 - 이 조건부 삭제가 막으려는 정확한 시나리오
+        assertThat(deletedRows).isZero();
+        assertThat(repository.count()).isEqualTo(1);
+        assertThat(repository.findByWatcherId(watcherId)).isPresent();
     }
 
     @Test
-    @DisplayName("해당 watcher의 스냅샷이 없으면 delete()는 예외 없이 아무 일도 하지 않음")
-    void delete_doesNothing_whenNoRowExists() {
+    @DisplayName("deleteById()는 해당 watcher의 스냅샷이 없으면 예외 없이 0을 반환한다")
+    void deleteById_doesNothing_whenNoRowExists() {
         // given
         UUID watcherId = UUID.randomUUID(); // 스냅샷을 만든 적 없는 임의의 watcherId
 
-        // when & then: 존재하지 않는 행에 대한 삭제는 예외를 던지지 않아야 함
-        writer.delete(watcherId);
+        // when & then
+        int deletedRows = writer.deleteById(watcherId, UUID.randomUUID());
 
+        assertThat(deletedRows).isZero();
         assertThat(repository.count()).isZero();
     }
 
     @Test
-    @DisplayName("다른 watcher의 스냅샷은 delete()의 영향을 받지 않음")
-    void delete_onlyRemovesTargetWatchersRow() {
+    @DisplayName("다른 watcher의 스냅샷은 deleteById()의 영향을 받지 않는다")
+    void deleteById_onlyRemovesTargetWatchersRow() {
         // given
         UUID watcherId1 = insertUser();
         UUID watcherId2 = insertUser();
         UUID contentId = insertContent();
-        writer.upsert(watcherId1, contentId, Instant.now().plusSeconds(60));
+        UpsertResult result1 = writer.upsert(watcherId1, contentId, Instant.now().plusSeconds(60));
         writer.upsert(watcherId2, contentId, Instant.now().plusSeconds(60));
         assertThat(repository.count()).isEqualTo(2);
 
         // when
-        writer.delete(watcherId1);
+        int deletedRows = writer.deleteById(watcherId1, result1.snapshot().getId());
 
         // then
+        assertThat(deletedRows).isEqualTo(1);
         assertThat(repository.count()).isEqualTo(1);
         assertThat(repository.findByWatcherId(watcherId1)).isEmpty();
         assertThat(repository.findByWatcherId(watcherId2)).isPresent();
     }
-
 }

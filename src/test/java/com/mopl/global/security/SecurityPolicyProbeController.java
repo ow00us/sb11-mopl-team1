@@ -29,6 +29,7 @@ class SecurityPolicyProbeController {
     @PostMapping({
         "/api/users",
         "/api/auth/sign-in",
+        "/api/auth/reset-password",
         "/api/auth/refresh",
         "/api/auth/sign-out"
     })

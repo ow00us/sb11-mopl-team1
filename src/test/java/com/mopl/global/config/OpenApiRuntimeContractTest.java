@@ -31,6 +31,7 @@ import com.mopl.user.cookie.RefreshTokenCookieFactory;
 import com.mopl.user.controller.AuthController;
 import com.mopl.user.controller.UserController;
 import com.mopl.user.service.AuthService;
+import com.mopl.user.service.PasswordResetService;
 import com.mopl.user.service.UserService;
 import com.mopl.user.service.RefreshTokenService;
 import com.mopl.watchingsession.controller.WatchingSessionController;
@@ -121,6 +122,7 @@ class OpenApiRuntimeContractTest {
         "GET /api/follows/followed-by-me",
         "GET /api/follows/followers",
         "GET /api/follows/followings",
+        "GET /api/follows/recommendations",
         "GET /api/notifications",
         "GET /api/sse",
         "GET /api/playlists",
@@ -140,7 +142,9 @@ class OpenApiRuntimeContractTest {
         "PATCH /api/users/{userId}/password",
         "PATCH /api/users/{userId}/role",
         "POST /api/auth/sign-in",
+        "POST /api/auth/reset-password",
         "POST /api/auth/refresh",
+        "POST /api/auth/sign-out",
         "POST /api/contents",
         "POST /api/conversations",
         "POST /api/conversations/{conversationId}/direct-messages/{directMessageId}/read",
@@ -182,6 +186,9 @@ class OpenApiRuntimeContractTest {
 
     @MockitoBean
     AuthService authService;
+
+    @MockitoBean
+    PasswordResetService passwordResetService;
 
     @MockitoBean
     RefreshTokenService refreshTokenService;
@@ -272,6 +279,171 @@ class OpenApiRuntimeContractTest {
                         + ".headers['Set-Cookie']"
                         + ".schema.type"
                 ).value("string")
+            );
+    }
+
+    /**
+     * 로그아웃 요청에서 현재 Refresh Token을 선택적으로 Cookie로 전달하고,
+     * 성공 응답에서 해당 Cookie를 삭제하는 Set-Cookie 헤더가
+     * 런타임 OpenAPI 문서에 포함되는지 검증
+     */
+    @Test
+    void documentsRefreshTokenCookieContractOnSignOut()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/v3/api-docs")
+            )
+            .andExpect(status().isOk())
+
+            /*
+             * 로그아웃할 현재 브라우저의 Refresh Token을
+             * Cookie에서 전달받는 계약인지 확인
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/sign-out']"
+                        + ".post.parameters[0].name"
+                ).value("REFRESH_TOKEN")
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/sign-out']"
+                        + ".post.parameters[0].in"
+                ).value("cookie")
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/sign-out']"
+                        + ".post.parameters[0].schema.type"
+                ).value("string")
+            )
+
+            /*
+             * 로그아웃 성공 시 브라우저의 Refresh Token Cookie를
+             * 제거하는 Set-Cookie 헤더가 문서화됐는지 확인
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/sign-out']"
+                        + ".post.responses['204']"
+                        + ".headers['Set-Cookie']"
+                        + ".schema.type"
+                ).value("string")
+            );
+    }
+
+    /**
+     * 비밀번호 초기화 API의 요청 DTO, 성공 응답과 보안 요구가
+     * 런타임 OpenAPI 문서에 올바르게 노출되는지 검증
+     *
+     * <p>비밀번호 초기화는 로그인하지 않은 사용자도 호출할 수 있어야 하므로
+     * BearerAuth는 요구하지 않고, 비밀번호 상태를 변경하는 POST 요청이므로
+     * CsrfToken만 요구합니다.</p>
+     */
+    @Test
+    void documentsPasswordResetContract()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/v3/api-docs")
+            )
+            .andExpect(
+                status().isOk()
+            )
+
+            /*
+             * 비밀번호 초기화 요청 본문은 JSON이고,
+             * ResetPasswordRequest 스키마를 사용해야 한다.
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/reset-password']"
+                        + ".post.requestBody"
+                        + ".content['application/json']"
+                        + ".schema['$ref']"
+                ).value(
+                    "#/components/schemas/ResetPasswordRequest"
+                )
+            )
+
+            /*
+             * 기존 OpenAPI 계약대로 성공 상태는
+             * 204 No Content
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/reset-password']"
+                        + ".post.responses['204']"
+                ).exists()
+            )
+
+            /*
+             * 204 응답에 content가 생성되면 응답 본문이 있는 것으로
+             * 오해할 수 있으므로 content 속성이 없어야 한다.
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/reset-password']"
+                        + ".post.responses['204'].content"
+                ).doesNotExist()
+            )
+
+            /*
+             * 공개 API이므로 JWT Bearer 인증은 요구하지 않는다.
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/reset-password']"
+                        + ".post.security[0].BearerAuth"
+                ).doesNotExist()
+            )
+
+            /*
+             * 비밀번호를 변경하는 POST 요청이므로
+             * CSRF 토큰은 필수 보안 요구로 문서화
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/reset-password']"
+                        + ".post.security[0].CsrfToken"
+                ).isArray()
+            )
+
+            /*
+             * DTO의 @Email 제약이 런타임 스키마의
+             * format=email로 반영되는지 확인
+             */
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.ResetPasswordRequest"
+                        + ".properties.email.format"
+                ).value("email")
+            )
+
+            /*
+             * DTO의 @Size(max = 100) 제약이 런타임 스키마의
+             * maxLength=100으로 반영되는지 확인
+             */
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.ResetPasswordRequest"
+                        + ".properties.email.maxLength"
+                ).value(100)
+            )
+
+            /*
+             * email 필드는 선택값이 아니라 필수 요청 필드여야 한다.
+             */
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.ResetPasswordRequest"
+                        + ".required"
+                ).value(
+                    org.hamcrest.Matchers.hasItem(
+                        "email"
+                    )
+                )
             );
     }
 

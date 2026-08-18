@@ -1222,17 +1222,40 @@ paths:
       tags:
         - "인증 관리"
       summary: "로그아웃"
-      description: "SecurityFilterChain에서 처리합니다."
+      description: "현재 브라우저의 Refresh Token 세션을 폐기하고 Refresh Token Cookie를 삭제합니다."
       operationId: "signOut"
       security:
-        -
-          BearerAuth: []
-          CsrfToken: []
+        - BearerAuth: [ ]
+          CsrfToken: [ ]
+      parameters:
+        - name: "REFRESH_TOKEN"
+          in: "cookie"
+          description: "폐기할 현재 브라우저의 Refresh Token"
+          required: false
+          schema:
+            type: "string"
       responses:
         "204":
-          description: "성공"
+          description: "로그아웃 성공"
+          headers:
+            Set-Cookie:
+              description: "Refresh Token 삭제 Cookie"
+              schema:
+                type: "string"
         "400":
           description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "Access Token이 없거나 유효하지 않음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "CSRF 검증 실패"
           content:
             "*/*":
               schema:
@@ -2508,6 +2531,84 @@ paths:
             "*/*":
               schema:
                 "$ref": "#/components/schemas/ErrorResponse"
+  "/api/follows/recommendations":
+    get:
+      tags:
+        - "팔로우 관리"
+      summary: "팔로우 추천 목록 조회 (친구의 친구 기반)"
+      description: "요청자가 팔로우 중인 사용자들이 팔로우하는 대상을 후보로, 공통 팔로잉 수(commonFollowingCount) DESC → userId DESC 정렬로 반환합니다. 자기 자신과 이미 팔로우한 사용자는 제외합니다."
+      operationId: "getFollowRecommendations"
+      security:
+        -
+          BearerAuth: []
+      parameters:
+        -
+          name: "cursor"
+          in: "query"
+          description: "다음 페이지 커서 (마지막 commonFollowingCount 를 Base64 로 인코딩). idAfter 와 함께 제공해야 합니다."
+          required: false
+          schema:
+            type: "string"
+        -
+          name: "idAfter"
+          in: "query"
+          description: "같은 commonFollowingCount 값 내 userId 타이브레이커. cursor 와 함께 제공해야 합니다."
+          required: false
+          schema:
+            type: "string"
+            format: "uuid"
+        -
+          name: "limit"
+          in: "query"
+          required: true
+          schema:
+            type: "integer"
+            format: "int32"
+            minimum: 1
+            maximum: 100
+        -
+          name: "sortBy"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            default: "commonFollowingCount"
+            enum:
+              - "commonFollowingCount"
+        -
+          name: "sortDirection"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            default: "DESCENDING"
+            enum:
+              - "DESCENDING"
+      responses:
+        "200":
+          description: "성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/CursorResponseFollowRecommendationItemDto"
+        "400":
+          description: "잘못된 요청 (파라미터 검증 실패, 잘못된 커서, cursor/idAfter 부정합)"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
   "/api/conversations/{conversationId}":
     get:
       tags:
@@ -3212,6 +3313,20 @@ components:
         - "followId"
         - "user"
         - "followedAt"
+    FollowRecommendationItemDto:
+      type: "object"
+      description: "팔로우 추천 목록의 아이템. user 는 요청자에게 추천되는 사용자, commonFollowingCount 는 요청자와 겹치는 매개자 수."
+      properties:
+        user:
+          "$ref": "#/components/schemas/UserSummary"
+          description: "추천 대상 사용자 요약. 대응하는 사용자가 없으면 UNKNOWN fallback."
+        commonFollowingCount:
+          type: "integer"
+          format: "int64"
+          description: "요청자와 이 후보가 공통으로 팔로우하는 사용자 수. 클수록 취향 겹칠 가능성 높음."
+      required:
+        - "user"
+        - "commonFollowingCount"
     ConversationCreateRequest:
       type: "object"
       properties:
@@ -3380,6 +3495,8 @@ components:
       properties:
         email:
           type: "string"
+          format: "email"
+          maxLength: 100
           description: "임시 비밀번호를 발급받을 이메일"
       required:
         - "email"
@@ -3643,6 +3760,46 @@ components:
           description: "정렬 방향"
           enum:
             - "ASCENDING"
+            - "DESCENDING"
+      required:
+        - "data"
+        - "hasNext"
+        - "sortBy"
+        - "sortDirection"
+        - "totalCount"
+    CursorResponseFollowRecommendationItemDto:
+      type: "object"
+      properties:
+        data:
+          type: "array"
+          description: "팔로우 추천 목록"
+          items:
+            "$ref": "#/components/schemas/FollowRecommendationItemDto"
+        nextCursor:
+          type:
+            - "string"
+            - "null"
+          description: "다음 커서 (마지막 commonFollowingCount 를 Base64 로 인코딩)"
+        nextIdAfter:
+          type:
+            - "string"
+            - "null"
+          format: "uuid"
+          description: "다음 요청의 userId 타이브레이커"
+        hasNext:
+          type: "boolean"
+          description: "다음 데이터가 있는지 여부"
+        totalCount:
+          type: "integer"
+          format: "int64"
+          description: "현재 페이지 데이터 개수. 추천은 무한 스크롤 UI 라 정확 집계 대신 페이지 크기로 대체."
+        sortBy:
+          type: "string"
+          description: "정렬 기준"
+        sortDirection:
+          type: "string"
+          description: "정렬 방향"
+          enum:
             - "DESCENDING"
       required:
         - "data"

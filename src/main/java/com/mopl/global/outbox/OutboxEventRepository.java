@@ -6,6 +6,9 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 /**
  * Outbox 저장·조회입니다.
@@ -40,10 +43,62 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
      * <p>재시도 대기 중인 건이 뒤로 밀리는 것도 이 정렬이 의도하는 동작입니다. 최초 기록은
      * {@code nextAttemptAt} 이 발생 시각과 같으므로 신규 건 사이의 순서는 발생 순과 같습니다.
      *
-     * <p>같은 partition key 의 발행 순서는 이 조회가 보장하지 않습니다. 앞선 이벤트가 끝나기
-     * 전에 뒤 이벤트를 발행하지 않는 규칙은 #230·#231 의 순서 검사가 담당하며,
-     * {@code idx_outbox_events_partition_order} 를 씁니다.
+     * <p>같은 partition key 안에서 앞선 이벤트가 끝나기 전에 뒤 이벤트를 발행하지 않는 규칙은
+     * 아직 어디에도 없습니다. relay 는 이 정렬대로 발행하므로, 앞선 이벤트가 실패해 재시도
+     * 대기로 밀리면 뒤 이벤트가 먼저 나갑니다. {@code orderingScope} 가 {@code AGGREGATE} 인
+     * 이벤트에는 이 순서가 계약이므로, 선점 조건에 같은 키의 앞선 대기 건이 없어야 한다는
+     * 조건을 더해야 합니다. {@code idx_outbox_events_partition_order} 가 그 검사를 위한
+     * 인덱스입니다.
      */
     List<OutboxEvent> findByStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscIdAsc(
         OutboxStatus status, Instant now, Limit limit);
+
+    /**
+     * 지금 선점할 수 있는 레코드의 id 를 batch 크기만큼 잠그고 가져옵니다.
+     *
+     * <p>{@code FOR UPDATE SKIP LOCKED} 를 씁니다. 다른 트랜잭션이 이미 잠근 행은 기다리지
+     * 않고 건너뛰므로, 여러 relay 인스턴스가 동시에 실행해도 서로 다른 행을 가져갑니다.
+     * 잠금 없이 조회하면 두 인스턴스가 같은 행을 읽고 둘 다 발행합니다.
+     *
+     * <p>선점 대상은 발행 대기 상태이고, 다음 시도 시각이 지났고, 소유자가 없거나 lease 가
+     * 만료된 레코드입니다. lease 가 만료된 레코드를 포함하는 것이 relay 비정상 종료 회수
+     * 경로입니다.
+     *
+     * <p>이 조회로 잠근 행은 호출 트랜잭션이 끝날 때까지 유지되므로, 이어지는
+     * {@link #claimByIds(String, Instant, Instant, List)} 사이에 다른 인스턴스가 끼어들 수
+     * 없습니다.
+     */
+    @Query(value = """
+        SELECT id FROM outbox_events
+        WHERE status = 'PENDING'
+          AND next_attempt_at <= :now
+          AND (claim_owner IS NULL OR claim_expires_at <= :now)
+        ORDER BY next_attempt_at, id
+        LIMIT :batchSize
+        FOR UPDATE SKIP LOCKED
+        """, nativeQuery = true)
+    List<UUID> findClaimableIds(@Param("now") Instant now, @Param("batchSize") int batchSize);
+
+    /**
+     * 선점 소유자와 lease 만료 시각을 기록합니다.
+     *
+     * <p>{@code updated_at} 을 직접 씁니다. 벌크 native UPDATE 는 JPA Auditing 을 거치지
+     * 않아 그대로 두면 수정 시각이 낡은 값으로 남습니다.
+     */
+    @Modifying
+    @Query(value = """
+        UPDATE outbox_events
+        SET claim_owner = :owner,
+            claim_expires_at = :leaseExpiresAt,
+            updated_at = :now
+        WHERE id IN (:ids)
+        """, nativeQuery = true)
+    int claimByIds(
+        @Param("owner") String owner,
+        @Param("leaseExpiresAt") Instant leaseExpiresAt,
+        @Param("now") Instant now,
+        @Param("ids") List<UUID> ids
+    );
+
+    List<OutboxEvent> findByIdInOrderByNextAttemptAtAscIdAsc(List<UUID> ids);
 }

@@ -2,6 +2,7 @@ package com.mopl.follow.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.follow.dto.FollowDto;
+import com.mopl.follow.dto.FollowRecommendationItemDto;
 import com.mopl.follow.dto.FollowRequest;
 import com.mopl.follow.dto.FollowUserItemDto;
 import com.mopl.follow.service.FollowResult;
@@ -375,6 +376,60 @@ class FollowControllerTest {
 
         mockMvc.perform(delete("/api/follows/{followId}", FOLLOW_ID))
                 .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(followService);
+    }
+
+    // ── GET /api/follows/recommendations ──────────────────────────────────────
+
+    @Test
+    @DisplayName("팔로우 추천 조회 성공 시 200 과 CursorResponse 를 반환한다")
+    void getRecommendations_success() throws Exception {
+        setAuth(FOLLOWER_ID);
+        UUID candidate = UUID.fromString("12345678-1234-1234-1234-123456789abc");
+        FollowRecommendationItemDto item = new FollowRecommendationItemDto(
+                new UserSummary(candidate, "추천사용자", "https://cdn/x.png"),
+                5L);
+        CursorResponse<FollowRecommendationItemDto> response = CursorResponse.of(
+                List.of(item), null, null, false, 1L,
+                "commonFollowingCount", "DESCENDING");
+
+        when(followService.getRecommendations(
+                eq(FOLLOWER_ID), eq(null), eq(null), eq(10),
+                eq("commonFollowingCount"), eq("DESCENDING")))
+                .thenReturn(response);
+
+        mockMvc.perform(get("/api/follows/recommendations")
+                        .param("limit", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].user.userId").value(candidate.toString()))
+                .andExpect(jsonPath("$.data[0].user.name").value("추천사용자"))
+                .andExpect(jsonPath("$.data[0].commonFollowingCount").value(5))
+                .andExpect(jsonPath("$.hasNext").value(false));
+    }
+
+    @Test
+    @DisplayName("팔로우 추천 조회 시 인증 정보가 없으면 401 을 반환한다")
+    void getRecommendations_unauthorized() throws Exception {
+        mockMvc.perform(get("/api/follows/recommendations")
+                        .param("limit", "10"))
+                .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(followService);
+    }
+
+    @Test
+    @DisplayName("팔로우 추천 조회 시 limit 이 범위를 벗어나면 400 을 반환한다")
+    void getRecommendations_invalidLimit() throws Exception {
+        setAuth(FOLLOWER_ID);
+
+        mockMvc.perform(get("/api/follows/recommendations")
+                        .param("limit", "0"))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(get("/api/follows/recommendations")
+                        .param("limit", "101"))
+                .andExpect(status().isBadRequest());
 
         verifyNoInteractions(followService);
     }

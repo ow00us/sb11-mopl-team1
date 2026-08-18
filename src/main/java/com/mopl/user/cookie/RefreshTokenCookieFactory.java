@@ -2,6 +2,7 @@ package com.mopl.user.cookie;
 
 import com.mopl.user.config.RefreshTokenCookieProperties;
 import com.mopl.user.config.RefreshTokenProperties;
+import java.time.Duration;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseCookie;
 import org.springframework.stereotype.Component;
@@ -63,15 +64,50 @@ public class RefreshTokenCookieFactory {
          * Secure와 SameSite는 로컬 및 운영 배포 환경이 다를 수 있으므로
          * RefreshTokenCookieProperties의 값을 사용
          */
+        return cookieBuilder(rawToken)
+            .maxAge(
+                refreshTokenProperties.getExpiration()
+            )
+            .build();
+    }
+
+    /**
+     * 브라우저에 저장된 Refresh Token Cookie를 삭제하기 위한 Cookie를 생성
+     *
+     * <p>Cookie 값은 빈 문자열로 설정하고 Max-Age를 0으로 지정하여
+     * 브라우저가 기존 Cookie를 즉시 만료시키도록 합니다.</p>
+     *
+     * <p>브라우저가 기존 Cookie와 같은 Cookie로 인식하려면 발급할 때와
+     * 동일한 이름과 경로를 사용해야 합니다. Secure, SameSite와 HttpOnly도
+     * 공통 Builder를 통해 기존 발급 정책과 동일하게 적용합니다.</p>
+     *
+     * @return 로그아웃 응답의 Set-Cookie 헤더에 사용할 삭제 Cookie
+     */
+    public ResponseCookie createDeletionCookie() {
+        return cookieBuilder("")
+            .maxAge(Duration.ZERO)
+            .build();
+    }
+
+    /**
+     * Refresh Token Cookie의 공통 보안 속성을 적용하는 Builder를 생성
+     *
+     * <p>발급 Cookie와 삭제 Cookie가 서로 다른 이름·경로·보안 속성을
+     * 사용하는 실수를 막기 위해 공통 속성을 한 곳에서 구성합니다.</p>
+     *
+     * @param value Refresh Token Cookie에 저장할 값
+     * @return 공통 Cookie 속성이 적용된 Builder
+     */
+    private ResponseCookie.ResponseCookieBuilder cookieBuilder(
+        String value
+    ) {
         return ResponseCookie.from(
                 cookieProperties.getName(),
-                rawToken
+                value
             )
             .httpOnly(true)
             .secure(cookieProperties.isSecure())
             .sameSite(cookieProperties.getSameSite())
-            .path(cookieProperties.getPath())
-            .maxAge(refreshTokenProperties.getExpiration())
-            .build();
+            .path(cookieProperties.getPath());
     }
 }
