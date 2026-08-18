@@ -32,9 +32,10 @@ Dockerfile은 빌드 단계와 실행 단계를 분리합니다. 실행 이미�
 `KAFKA_TOPIC_VERIFY`는 선택 값이며 기본값은 `false`입니다. `true`로 두면 기동 시 필요한 토픽과 DLT가 있는지 확인하고 없으면 기동을 실패시킵니다. 애플리케이션 기동이 Kafka 가용성에 묶이므로, 브로커가 보장되는 환경에서만 켭니다. 운영 토픽은 애플리케이션이 만들지 않으므로(`KAFKA_TOPIC_AUTO_CREATE` 기본 동작과 무관하게 prod는 생성하지 않습니다) 배포 전에 다음 토픽을 준비합니다.
 
 ```text
-mopl.follow.events        mopl.follow.events.DLT
-mopl.playlist.events      mopl.playlist.events.DLT
-mopl.premiere.events      mopl.premiere.events.DLT
+mopl.follow.events          mopl.follow.events.DLT
+mopl.playlist.events        mopl.playlist.events.DLT
+mopl.premiere.events        mopl.premiere.events.DLT
+mopl.direct-message.events  mopl.direct-message.events.DLT
 ```
 
 ## 실행 예시
