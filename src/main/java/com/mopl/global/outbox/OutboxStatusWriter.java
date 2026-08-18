@@ -20,19 +20,24 @@ public class OutboxStatusWriter {
 
     private final OutboxEventRepository outboxEventRepository;
     private final OutboxRetryPolicy outboxRetryPolicy;
+    private final OutboxMetrics outboxMetrics;
 
     public OutboxStatusWriter(
         OutboxEventRepository outboxEventRepository,
-        OutboxRetryPolicy outboxRetryPolicy
+        OutboxRetryPolicy outboxRetryPolicy,
+        OutboxMetrics outboxMetrics
     ) {
         this.outboxEventRepository = outboxEventRepository;
         this.outboxRetryPolicy = outboxRetryPolicy;
+        this.outboxMetrics = outboxMetrics;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markPublished(UUID id, Instant publishedAt) {
-        outboxEventRepository.findById(id)
-            .ifPresent(event -> event.markPublished(publishedAt));
+        outboxEventRepository.findById(id).ifPresent(event -> {
+            event.markPublished(publishedAt);
+            outboxMetrics.recordPublished();
+        });
     }
 
     /**
@@ -54,11 +59,13 @@ public class OutboxStatusWriter {
             int attempts = event.getAttempts() + 1;
             if (outboxRetryPolicy.isExhausted(attempts)) {
                 event.markFailed(lastError);
+                outboxMetrics.recordExhausted();
                 log.error("Outbox 발행을 {}회 실패해 최종 실패로 남깁니다. eventId={}, type={}, lastError={}",
                     attempts, event.getEventId(), event.getType(), lastError);
                 return;
             }
             event.markAttemptFailed(lastError, outboxRetryPolicy.nextAttemptAt(attempts, now));
+            outboxMetrics.recordRetried();
         });
     }
 }
