@@ -102,7 +102,7 @@ password-reset:
     subject: ${PASSWORD_RESET_MAIL_SUBJECT:[모두의 플리] 임시 비밀번호 안내}
 
 watching-session:
-  presence-ttl: ${WATCHING_SESSION_PRESENCE_TTL:60s}
+  presence-ttl: ${WATCHING_SESSION_PRESENCE_TTL:90s}
   # TODO: FE heartbeat 배포 이후에 session-ttl 시간 단축
   session-ttl: ${WATCHING_SESSION_SESSION_TTL:30m}
   heartbeat-interval: ${WATCHING_SESSION_HEARTBEAT_INTERVAL:20s}
