@@ -1,15 +1,14 @@
 package com.mopl.follow.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.follow.dto.FollowDto;
 import com.mopl.follow.dto.FollowRecommendationItemDto;
 import com.mopl.follow.dto.FollowUserItemDto;
 import com.mopl.follow.entity.Follow;
+import com.mopl.follow.event.FollowEventFactory;
 import com.mopl.follow.repository.FollowRecommendationRow;
 import com.mopl.follow.repository.FollowRepository;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.common.UserSummary;
-import com.mopl.global.event.EventEnvelope;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.outbox.OutboxRecorder;
@@ -40,7 +39,7 @@ public class FollowService {
     private final FollowRepository followRepository;
     private final UserRepository userRepository;
     private final OutboxRecorder outboxRecorder;
-    private final ObjectMapper objectMapper;
+    private final FollowEventFactory followEventFactory;
 
     @Transactional
     public FollowResult follow(UUID followerId, UUID followeeId) {
@@ -85,24 +84,16 @@ public class FollowService {
     }
 
     // 계약 docs/07-kafka-outbox-contract.md §8.1
-    // - aggregate·partitionKey: followId
-    // - orderingScope: NONE
-    // - payload: followerId, followeeId
+    // - envelope 조립은 FollowEventFactory 가 담당
+    // - partitionKey: followId, orderingScope: NONE
     // - deduplicationKey: follow.created:<followId>
-    // - occurredAt: 팔로우 행 생성 시각
     private void recordFollowCreatedEvent(Follow follow) {
         UUID followId = follow.getId();
-        EventEnvelope envelope = new EventEnvelope(
-                UUID.randomUUID(),
-                "follow.created",
-                1,
-                follow.getCreatedAt(),
-                followId,
-                objectMapper.valueToTree(Map.of(
-                        "followerId", follow.getFollowerId().toString(),
-                        "followeeId", follow.getFolloweeId().toString())));
         outboxRecorder.record(
-                envelope, followId.toString(), "NONE", "follow.created:" + followId);
+                followEventFactory.createFollowCreatedEnvelope(follow),
+                followId.toString(),
+                "NONE",
+                "follow.created:" + followId);
     }
 
     @Transactional

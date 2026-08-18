@@ -5,6 +5,7 @@ import com.mopl.follow.dto.FollowDto;
 import com.mopl.follow.dto.FollowRecommendationItemDto;
 import com.mopl.follow.dto.FollowUserItemDto;
 import com.mopl.follow.entity.Follow;
+import com.mopl.follow.event.FollowEventFactory;
 import com.mopl.follow.repository.FollowRecommendationRow;
 import com.mopl.follow.repository.FollowRepository;
 import com.mopl.global.common.CursorResponse;
@@ -43,7 +44,7 @@ class FollowServiceTest {
     @Mock FollowRepository followRepository;
     @Mock UserRepository userRepository;
     @Mock OutboxRecorder outboxRecorder;
-    @Spy  ObjectMapper objectMapper = new ObjectMapper();
+    @Spy  FollowEventFactory followEventFactory = new FollowEventFactory(new ObjectMapper());
     @InjectMocks FollowService followService;
 
     private static final UUID FOLLOWER_ID = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
