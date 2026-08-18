@@ -35,9 +35,19 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
 
-  # Elasticsearch — 심화 검색 착수 시 담당자가 주석을 풀어 활성화합니다.
-  # elasticsearch:
-  #   image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+  elasticsearch:
+    build:
+      context: ./docker/elasticsearch
+    container_name: mopl-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
 
 volumes:
   postgres-data:
+  elasticsearch-data:
