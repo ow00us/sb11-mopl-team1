@@ -158,7 +158,7 @@ public class OutboxRelay {
             return false;
         } catch (Exception e) {
             log.warn("Outbox 발행 실패. eventId={}, type={}", event.getEventId(), event.getType(), e);
-            outboxStatusWriter.markAttemptFailed(event.getId(), describe(e));
+            outboxStatusWriter.markAttemptFailed(event.getId(), describe(e), clock.instant());
             return false;
         }
     }
