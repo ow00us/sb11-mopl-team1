@@ -78,6 +78,20 @@ jobs:
           --health-timeout 3s
           --health-retries 10
 
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl --fail --silent http://localhost:9200/_cluster/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -101,6 +115,7 @@ jobs:
             --env SPRING_DATASOURCE_PASSWORD=mopl \
             --env SPRING_DATA_REDIS_HOST=127.0.0.1 \
             --env SPRING_DATA_REDIS_PORT=6379 \
+            --env ELASTICSEARCH_URIS=http://127.0.0.1:9200 \
             --env JWT_SECRET=bW9wbC1jaS1zbW9rZS1qd3Qtc2VjcmV0LWtleS0zMi1ieXRlcy1sb25nISE= \
             --env CORS_ALLOWED_ORIGINS=http://localhost:5173 \
             --env WS_ALLOWED_ORIGINS=http://localhost:5173 \
