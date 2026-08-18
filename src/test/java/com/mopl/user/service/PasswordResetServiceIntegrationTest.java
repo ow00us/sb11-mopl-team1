@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mopl.global.config.JpaConfig;
@@ -13,6 +14,8 @@ import com.mopl.user.entity.UserRole;
 import com.mopl.user.mail.TemporaryPasswordEmailSender;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.user.security.TemporaryPasswordGenerator;
+import com.mopl.user.storage.RefreshTokenStore;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -106,6 +109,15 @@ class PasswordResetServiceIntegrationTest {
     PasswordEncoder passwordEncoder;
 
     /**
+     * 실제 Redis 대신 세션 폐기 성공과 실패를 제어
+     *
+     * <p>RedisRefreshTokenStore 자체의 Redis 명령과 원자성은
+     * RedisRefreshTokenStoreTest에서 별도로 검증한다.</p>
+     */
+    @MockitoBean
+    RefreshTokenStore refreshTokenStore;
+
+    /**
      * 각 테스트 시작 전 users 테이블을 초기화
      */
     @BeforeEach
@@ -133,6 +145,12 @@ class PasswordResetServiceIntegrationTest {
             email,
             oldPasswordHash
         );
+
+        UUID userId =
+            userRepository
+                .findByEmail(email)
+                .orElseThrow()
+                .getId();
 
         when(
             temporaryPasswordGenerator.generate()
@@ -181,6 +199,13 @@ class PasswordResetServiceIntegrationTest {
             email,
             temporaryPassword
         );
+
+        /*
+         * 비밀번호 초기화 성공 전에 기존 Refresh Token
+         * 세션 전체 폐기가 요청됐는지 확인
+         */
+        verify(refreshTokenStore)
+            .revokeAllByUserId(userId);
     }
 
     @Test
@@ -203,6 +228,12 @@ class PasswordResetServiceIntegrationTest {
             email,
             oldPasswordHash
         );
+
+        UUID userId =
+            userRepository
+                .findByEmail(email)
+                .orElseThrow()
+                .getId();
 
         when(
             temporaryPasswordGenerator.generate()
@@ -270,6 +301,111 @@ class PasswordResetServiceIntegrationTest {
             unchangedUser.getPasswordHash()
         ).isNotEqualTo(
             newPasswordHash
+        );
+
+        /*
+         * 이메일 발송 전에 보안을 위해 기존 세션은 폐기
+         *
+         * 메일 발송 실패로 DB 비밀번호 변경은 롤백되지만,
+         * 외부 저장소인 Redis 세션 폐기는 되돌리지 않는다.
+         */
+        verify(refreshTokenStore)
+            .revokeAllByUserId(userId);
+    }
+
+    @Test
+    @DisplayName("Refresh Token 전체 세션 폐기에 실패하면 비밀번호를 변경하거나 메일을 발송하지 않는다")
+    void resetPassword_doesNotChangePassword_whenRevocationFails() {
+        // given
+        String email =
+            "user@example.com";
+
+        String oldPasswordHash =
+            "old-encoded-password";
+
+        String temporaryPassword =
+            "Abcd2345!TestPwd";
+
+        String newPasswordHash =
+            "new-encoded-password";
+
+        saveUser(
+            email,
+            oldPasswordHash
+        );
+
+        UUID userId =
+            userRepository
+                .findByEmail(email)
+                .orElseThrow()
+                .getId();
+
+        when(
+            temporaryPasswordGenerator.generate()
+        ).thenReturn(
+            temporaryPassword
+        );
+
+        when(
+            passwordEncoder.encode(
+                temporaryPassword
+            )
+        ).thenReturn(
+            newPasswordHash
+        );
+
+        IllegalStateException redisException =
+            new IllegalStateException(
+                "Redis 세션 폐기 실패"
+            );
+
+        when(
+            refreshTokenStore
+                .revokeAllByUserId(userId)
+        ).thenThrow(redisException);
+
+        // when & then
+        assertThatThrownBy(
+            () ->
+                passwordResetService
+                    .resetPassword(
+                        new ResetPasswordRequest(
+                            email
+                        )
+                    )
+        ).isSameAs(redisException);
+
+        /*
+         * 서비스 호출이 실패한 뒤 PostgreSQL에서 다시 조회
+         * Redis 폐기 실패가 발생했으므로 새 비밀번호 해시가
+         * 저장되면 안된다.
+         */
+        User unchangedUser =
+            userRepository
+                .findByEmail(email)
+                .orElseThrow();
+
+        assertThat(
+            unchangedUser.getPasswordHash()
+        ).isEqualTo(
+            oldPasswordHash
+        );
+
+        assertThat(
+            unchangedUser.getPasswordHash()
+        ).isNotEqualTo(
+            newPasswordHash
+        );
+
+        verify(refreshTokenStore)
+            .revokeAllByUserId(userId);
+
+        /*
+         * 세션 폐기를 보장하지 못했으므로 새로운 임시 비밀번호를
+         * 사용자에게 발송해서는 안된다.
+         */
+        verifyNoInteractions(
+            temporaryPasswordEmailSender
         );
     }
 
