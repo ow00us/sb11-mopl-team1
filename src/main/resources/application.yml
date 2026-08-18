@@ -89,6 +89,9 @@ sportsdb:
   api-key: ${SPORTSDB_API_KEY}
   league-ids: 4569,4328,4335,4331,4332,4334
 
+content-search:
+  watcher-count-refresh-interval-millis: 60000
+
 external-content-batch:
   tmdb-max-pages: 5
   sportsdb-past-days: 3
