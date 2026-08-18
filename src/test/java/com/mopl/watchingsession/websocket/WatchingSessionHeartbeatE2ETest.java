@@ -1,6 +1,5 @@
 package com.mopl.watchingsession.websocket;
 
-import static java.lang.System.currentTimeMillis;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.Mockito.when;
@@ -15,12 +14,12 @@ import com.mopl.support.websocket.StompTestCleanup;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
-import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -33,7 +32,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
@@ -58,7 +57,7 @@ import org.testcontainers.utility.DockerImageName;
  * heartbeat와 TTL 만료의 실제 동작을 실제 Redis/DB로 검증하는 E2E.
  *
  * application-test.yml의 짧은 TTL 오버라이드(presence 2s / session 3s / heartbeat 500ms)에 의존한다.
- * 운영 값(60s/30m)을 그대로 쓰면 테스트가 분 단위로 늘어나 이 프로젝트의 다른 E2E와
+ * 운영 값(90s/30m)을 그대로 쓰면 테스트가 분 단위로 늘어나 이 프로젝트의 다른 E2E와
  * 시간 스케일이 맞지 않는다.
  */
 @Testcontainers
@@ -93,7 +92,7 @@ class WatchingSessionHeartbeatE2ETest {
     private WatchingSessionSnapshotRepository snapshotRepository;
 
     @Autowired
-    private RedisTemplate<String, Object> redisTemplate;
+    private StringRedisTemplate stringRedisTemplate;
 
     private WebSocketStompClient stompClient;
     private ThreadPoolTaskScheduler taskScheduler;
@@ -217,7 +216,7 @@ class WatchingSessionHeartbeatE2ETest {
         await().atMost(5, TimeUnit.SECONDS)
             .pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() ->
-                assertThat(redisTemplate.opsForValue().get(presenceKey(watcherId))).isNotNull());
+                assertThat(stringRedisTemplate.hasKey(presenceKey(watcherId))).isTrue());
 
         // when: heartbeat를 한 번도 보내지 않고 TTL(2s)이 지나기를 기다린다.
 
@@ -225,7 +224,7 @@ class WatchingSessionHeartbeatE2ETest {
         await().atMost(5, TimeUnit.SECONDS)
             .pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() ->
-                assertThat(redisTemplate.opsForValue().get(presenceKey(watcherId))).isNull());
+                assertThat(stringRedisTemplate.hasKey(presenceKey(watcherId))).isFalse());
     }
 
     @Test
@@ -259,8 +258,8 @@ class WatchingSessionHeartbeatE2ETest {
         }
 
         // then: presence-ttl(2s)을 넘긴 시점인데도 presence가 살아있다.
-        WatchingPresence presence = (WatchingPresence) redisTemplate.opsForValue().get(presenceKey(watcherId));
-        assertThat(presence).isNotNull();
+        Map<Object, Object> presence = stringRedisTemplate.opsForHash().entries(presenceKey(watcherId));
+        assertThat(presence).isNotEmpty();
 
         // then: DB expiresAt도 최초 값보다 뒤로 연장되어 있다 (heartbeat가 DB를 실제로 갱신했다는 증거).
         Instant renewedExpiresAt = snapshotRepository.findByWatcherId(watcherId).orElseThrow().getExpiresAt();
@@ -286,11 +285,11 @@ class WatchingSessionHeartbeatE2ETest {
         await().atMost(5, TimeUnit.SECONDS)
             .pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() ->
-                assertThat(redisTemplate.opsForValue().get(presenceKey(watcherId))).isNotNull());
+                assertThat(stringRedisTemplate.hasKey(presenceKey(watcherId))).isTrue());
 
         session.send("/pub/contents/" + contentId + "/watch/heartbeat", null);
         Thread.sleep(300);
-        assertThat(redisTemplate.opsForValue().get(presenceKey(watcherId))).isNotNull();
+        assertThat(stringRedisTemplate.hasKey(presenceKey(watcherId))).isTrue();
 
         // when: 이후로는 heartbeat를 전혀 보내지 않는다.
 
@@ -298,6 +297,6 @@ class WatchingSessionHeartbeatE2ETest {
         await().atMost(5, TimeUnit.SECONDS)
             .pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() ->
-                assertThat(redisTemplate.opsForValue().get(presenceKey(watcherId))).isNull());
+                assertThat(stringRedisTemplate.hasKey(presenceKey(watcherId))).isFalse());
     }
 }
