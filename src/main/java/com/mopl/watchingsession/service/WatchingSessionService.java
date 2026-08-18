@@ -11,6 +11,7 @@ import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.config.WatchingSessionProperties;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
+import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.time.Instant;
@@ -35,14 +36,6 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class WatchingSessionService {
-
-    /**
-     * 시청 세션의 소유권을 표현하는 (WebSocket 연결, 구독) 쌍. subscriptionId가 null인 경우(예: 아직 STOMP 구독 이전 경로로 호출되는 경우
-     * 등)도 방어적으로 다루기 위해 Objects.equals 기반 equals/hashCode를 record가 자동 생성해준다.
-     */
-    private record SubscriptionOwner(String sessionId, String subscriptionId) {
-
-    }
 
     public record ReplacedSession(WatchingSessionDto session, WatchingSessionDto previous) {
 
@@ -77,16 +70,6 @@ public class WatchingSessionService {
     private final UserRepository userRepository;
     private final WatchingSessionSnapshotWriter watchingSessionSnapshotWriter;
     private final WatchingSessionPresenceWriter watchingSessionPresenceWriter;
-
-    /**
-     * watcherId 기준 "지금 이 세션을 소유한 WebSocket 연결(sessionId)"을 추적한다. 다중 탭/새로고침 시 오래된 연결의 DISCONNECT가 새
-     * 연결의 세션을 잘못 지우는 것을 막기 위함.
-     * <p>
-     * 주의: 이 맵은 단일 서버 인스턴스 전제의 인메모리 구조다. 서버 재시작 시 유실되고 다중 인스턴스 환경에서는 인스턴스마다 별도로 존재해 소유권 판정이 어긋난다.
-     * TODO(심화필수): Redis presence(사용자당 활성 세션 1개, 원본)로 이전하면서
-     * 이 소유권 판정 자체를 Redis 쪽 구조로 대체할 예정. 그 전까지는 단일 인스턴스 운영을 전제로 한다.
-     */
-    private final ConcurrentHashMap<UUID, SubscriptionOwner> activeSessions = new ConcurrentHashMap<>();
 
     // Watcher 단위로 독립적인 원자성을 보장하기 위한 락 맵.
     // 값이 참조 카운트를 함께 들고 있어, 아무도 사용하지 않는 순간(refCount == 0) 엔트리가 제거된다.
@@ -130,40 +113,49 @@ public class WatchingSessionService {
     public ReplacedSession start(UUID watcherId, UUID contentId, String sessionId,
         String subscriptionId) {
 
+        // watcher 소유권과 무관한 검증이라 임계 구역 밖에서 먼저 수행
+        validateContentExists(contentId);
+
         WatchingSessionSnapshot snapshot;
-        WatchingSessionDto previous;
+        Optional<WatchingPresence> previousPresence;
 
         WatcherLock watcherLock = acquireWatcherLock(watcherId);
         // ★ 임계 구역 시작: 검증, DB 반영, 소유권 갱신을 묶어 원자적으로 처리
         try {
             synchronized (watcherLock) {
-                // 검증 먼저 진행 (실패 시 소유권 변경이나 DB 터치 없음)
-                validateContentExists(contentId);
-
-                previous = get(watcherId).orElse(null);
-
                 Instant now = Instant.now();
                 Instant expiresAt = now.plus(watchingSessionProperties.getSessionTtl());
 
                 // DB 스냅샷 갱신
+                WatchingSessionSnapshotWriter.UpsertResult upsertResult;
                 try {
-                    snapshot = watchingSessionSnapshotWriter.upsert(watcherId, contentId,
+                    upsertResult = watchingSessionSnapshotWriter.upsert(watcherId, contentId,
                         expiresAt);
                 } catch (DataIntegrityViolationException e) {
-                    snapshot = watchingSessionSnapshotWriter.upsert(watcherId, contentId,
+                    upsertResult = watchingSessionSnapshotWriter.upsert(watcherId, contentId,
                         expiresAt);
                 }
+                snapshot = upsertResult.snapshot();
 
-                // DB 반영까지 안전하게 성공했을 때 비로소 소유권을 갱신
-                activeSessions.put(watcherId, new SubscriptionOwner(sessionId, subscriptionId));
-
-                // Redis presence 기록 (실패해도 로그만 남기고 흐름은 계속됨)
-                watchingSessionPresenceWriter.write(watcherId, contentId, sessionId, subscriptionId, now, watchingSessionProperties.getPresenceTtl());
+                try {
+                    // presence가 소유권의 원본이므로 실패를 삼키지 않고 그대로 전파
+                    previousPresence = watchingSessionPresenceWriter.swap(
+                        watcherId, snapshot.getId(), contentId, sessionId, subscriptionId, snapshot.getCreatedAt(), watchingSessionProperties.getPresenceTtl());
+                } catch (RuntimeException presenceFailure) {
+                    if (upsertResult.isNewIdentity()) {
+                        // 이번 호출이 만든 새 행 -> 지워도 이전에 유효했던 세션은 없음
+                        watchingSessionSnapshotWriter.delete(watcherId);
+                    }
+                    // 동일 콘텐츠 재구독(refresh)이면 DB 행은 직전까지 유효했던 세션이므로 지우지 않고 둔다
+                    // 이미 커밋된 트랜잭션이라 expiresAt 연장 자체를 되돌릴 수는 없어 start()재시도가 성공하거나 남은 presence가 자연 만료되어야 정리됨
+                    throw presenceFailure;
+                }
             }
         } finally {
-            // validateContentExists()가 CONTENT_NOT_FOUND를 던지는 경로에서도 락 엔트리가 남지 않아야 함
             releaseWatcherLock(watcherId);
         }
+
+        WatchingSessionDto previous = previousPresence.map(this::enrichPresence).orElse(null);
 
         try {
             return new ReplacedSession(enrich(snapshot), previous);
@@ -188,21 +180,16 @@ public class WatchingSessionService {
         WatcherLock watcherLock = acquireWatcherLock(watcherId);
         try {
             synchronized (watcherLock) {
-                SubscriptionOwner requester = new SubscriptionOwner(currentSessionId,
-                    currentSubscriptionId);
-                // 확인만 먼저 수행 (메모리에서 지우지는 않음)
-                if (!requester.equals(activeSessions.get(watcherId))) {
+                // 소유권 확인과 삭제가 한번의 원자 연산
+                boolean deleted = watchingSessionPresenceWriter.deleteIfOwner(
+                    watcherId, currentSessionId, currentSubscriptionId);
+                if (!deleted) {
                     return false;
                 }
 
-                // DB 삭제 (여기서 예외가 터지면 소유권은 그대로 유지됨)
+                // presence 삭제가 확인된 뒤에만 DB 스냅샷 삭제
+                // 여기서 예외가 나면 DB 행이 남지만 유령은 session-ttl 경과 후 조회에서 자연히 제외됨
                 watchingSessionSnapshotWriter.delete(watcherId);
-
-                // DB 삭제까지 완벽히 성공한 후 메모리 소유권 정리
-                activeSessions.remove(watcherId);
-
-                // 실제로 이 연결이 소유권을 가지고 있어 삭제까지 완료된 경우에만 presence 삭제
-                watchingSessionPresenceWriter.delete(watcherId);
                 return true;
             }
         } finally {
@@ -231,6 +218,15 @@ public class WatchingSessionService {
         Content content = contentRepository.findById(snapshot.getContentId())
             .orElseThrow(() -> new BusinessException(ErrorCode.CONTENT_NOT_FOUND));
         return WatchingSessionDto.from(snapshot, watcher, content);
+    }
+
+    // swap이 반환한 이전 presence를 dto로 변환. DB 재조회 없이 presence에 저장된 정보만 사용
+    private WatchingSessionDto enrichPresence(WatchingPresence presence) {
+        User watcher = userRepository.findById(presence.watcherId())
+            .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
+        Content content = contentRepository.findById(presence.contentId())
+            .orElseThrow(() -> new BusinessException(ErrorCode.CONTENT_NOT_FOUND));
+        return WatchingSessionDto.from(presence, watcher, content);
     }
 
     // 커서 페이지네이션 조회
@@ -340,39 +336,31 @@ public class WatchingSessionService {
      // 시청 중 신호를 받아 presence TTL과 DB 스냅샷 만료 시각을 함께 연장
     // 소유권 확인만 임계구역 안에서 수행하고 DB UPDATE와 Redis expire는 밖에서 처리 (두 갱신이 모두 조건부라 락 밖으로 빼도 안전)
     public void heartbeat(UUID watcherId, UUID contentId, String sessionId, String subscriptionId) {
-        SubscriptionOwner requester = new SubscriptionOwner(sessionId, subscriptionId);
 
-        WatcherLock watcherLock = acquireWatcherLock(watcherId);
-        try {
-            synchronized (watcherLock) {
-                if (!requester.equals(activeSessions.get(watcherId))) {
-                    // 낡은 탭이거나 재구독 전환 중이라 다음 heartbeat에서 정상화됨 -> 무동작
-                    log.debug("소유권이 없는 heartbeat 무시: watcherId={}, contentId={}", watcherId, contentId);
-                    return;
-                }
-            }
-        } finally {
-            releaseWatcherLock(watcherId);
+        // 소유권 확인과 presence TTL 연장이 Redis 스크립트 하나로 처리됨 -> watcherLock을 거치지 않는다
+        boolean renewed = watchingSessionPresenceWriter.renewIfOwner(
+            watcherId, sessionId, subscriptionId, watchingSessionProperties.getPresenceTtl());
+
+        if (!renewed) {
+            log.debug("연장할 활성 세션이 없어 heartbeat 종료: watcherId={}, contentId={}",
+                watcherId, contentId);
+            return;
         }
 
         Instant now = Instant.now();
+        int renewedRows;
         try {
-            int renewed = watchingSessionSnapshotWriter.renewExpiresAt(
+            renewedRows = watchingSessionSnapshotWriter.renewExpiresAt(
                 watcherId, contentId, now, now.plus(watchingSessionProperties.getSessionTtl()));
-
-                if (renewed == 0) {
-                    log.debug("연장할 활성 세션이 없어 heartbeat 종료: watcherId={}, contentId={}", watcherId,
-                        contentId);
-                    return;
-                }
         } catch (RuntimeException e) {
             log.error("세션 만료 시각 갱신 실패: watcherId={}, contentId={}", watcherId, contentId, e);
             return;
         }
 
-        if (!watchingSessionPresenceWriter.renew(watcherId, watchingSessionProperties.getPresenceTtl())) {
-            log.warn("presence 키가 없어 TTL을 갱신하지 못함: watcherId={}", watcherId);
+        if (renewedRows == 0) {
+            // Redis는 소유권을 확인했는데 DB 행이 없는 상태
+            log.warn("presence는 존재하나 DB 행이 없어 만료 시각을 갱신하지 못함: watcherId={}, contentId={}",
+                watcherId, contentId);
         }
     }
-
 }

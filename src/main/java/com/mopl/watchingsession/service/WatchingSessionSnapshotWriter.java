@@ -14,25 +14,28 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class WatchingSessionSnapshotWriter {
 
+    // upsert가 새 행을 만들었는지(신규 삽입/콘텐츠 전환) 여부를 함께 반환. 실패 보상시 지워도 되는 행인지 판단용
+    public record UpsertResult(WatchingSessionSnapshot snapshot, boolean isNewIdentity) {}
+
     private final WatchingSessionSnapshotRepository watchingSessionSnapshotRepository;
 
     // 동일 콘텐츠 재구독은 세션 연속 -> createdAt 유지
     // 다른 콘텐츠로 전환할 때만 createdAt 갱신되도록 delete+insert로 처리
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public WatchingSessionSnapshot upsert(UUID watcherId, UUID contentId, Instant expiresAt) {
+    public UpsertResult upsert(UUID watcherId, UUID contentId, Instant expiresAt) {
         return watchingSessionSnapshotRepository.findByWatcherId(watcherId)
             .map(existing -> replaceOrRefresh(existing, contentId, expiresAt))
-            .orElseGet(() -> insertNew(watcherId, contentId, expiresAt));
+            .orElseGet(() -> new UpsertResult(insertNew(watcherId, contentId, expiresAt), true));
     }
 
-    private WatchingSessionSnapshot replaceOrRefresh(WatchingSessionSnapshot existing, UUID contentId, Instant expiresAt) {
+    private UpsertResult replaceOrRefresh(WatchingSessionSnapshot existing, UUID contentId, Instant expiresAt) {
         if (existing.getContentId().equals(contentId)) {
             existing.refresh(contentId, expiresAt);
-            return watchingSessionSnapshotRepository.saveAndFlush(existing);
+            return new UpsertResult(watchingSessionSnapshotRepository.saveAndFlush(existing), false);
         }
         watchingSessionSnapshotRepository.delete(existing);
         watchingSessionSnapshotRepository.flush();
-        return insertNew(existing.getWatcherId(), contentId, expiresAt);
+        return new UpsertResult(insertNew(existing.getWatcherId(), contentId, expiresAt), true);
     }
 
     private WatchingSessionSnapshot insertNew(UUID watcherId, UUID contentId, Instant expiresAt) {
