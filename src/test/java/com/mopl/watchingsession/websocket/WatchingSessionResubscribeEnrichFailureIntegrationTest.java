@@ -18,12 +18,12 @@ import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.ChangeType;
 import com.mopl.watchingsession.dto.WatchingSessionChange;
-import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import jakarta.annotation.Nullable;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -37,7 +37,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
@@ -92,7 +92,7 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
     private WatchingSessionSnapshotRepository snapshotRepository;
 
     @Autowired
-    private RedisTemplate<String, Object> redisTemplate;
+    private StringRedisTemplate stringRedisTemplate;
 
     private WebSocketStompClient stompClient;
     private ThreadPoolTaskScheduler taskScheduler;
@@ -252,10 +252,9 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
         await().atMost(5, TimeUnit.SECONDS)
             .pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() -> {
-                WatchingPresence presenceOnA =
-                    (WatchingPresence) redisTemplate.opsForValue().get(presenceKey(watcherId));
-                assertThat(presenceOnA).isNotNull();
-                assertThat(presenceOnA.contentId()).isEqualTo(contentAId);
+                Map<Object, Object> presenceOnA = stringRedisTemplate.opsForHash().entries(presenceKey(watcherId));
+                assertThat(presenceOnA).isNotEmpty();
+                assertThat(presenceOnA.get("contentId")).isEqualTo(contentAId.toString());
             });
 
         // when: 콘텐츠 B로 재구독. enrich(userRepository.findById)만 실패하도록 유도
@@ -282,11 +281,11 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
         await().atMost(5, TimeUnit.SECONDS).pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty());
 
-        // 보상삭제로 presence도 함께 삭제는지 확인
+        // 보상삭제로 presence도 함께 삭제됐는지 확인
         await().atMost(5, TimeUnit.SECONDS)
             .pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() ->
-                assertThat(redisTemplate.opsForValue().get(presenceKey(watcherId))).isNull());
+                assertThat(stringRedisTemplate.hasKey(presenceKey(watcherId))).isFalse());
 
         WatchingSessionChange leaveChange = leaveOnA.get(5, TimeUnit.SECONDS);
         assertThat(leaveChange.watchingSessionDto().watcher().userId()).isEqualTo(watcherId);

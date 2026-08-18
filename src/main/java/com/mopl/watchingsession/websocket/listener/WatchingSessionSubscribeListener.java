@@ -29,7 +29,7 @@ import org.springframework.web.socket.messaging.SessionSubscribeEvent;
  * 여기서(SUBSCRIBE 시점) 세션 attribute에 subscriptionId -> contentId 매핑을 저장해두고
  * WatchingSessionUnsubscribeListener에서 그 매핑을 꺼내 쓴다.
  *
- * 소유권(활성 구독 판정) 자체는 WatchingSessionService.activeSessions가
+ * 소유권(활성 구독 판정) 자체는 Redis presence가
  * (sessionId, subscriptionId) 쌍으로 전담한다. 이 리스너는 그 판정에 필요한
  * subscriptionId를 accessor에서 그대로 꺼내 start()에 넘기기만 하면 된다.
  */

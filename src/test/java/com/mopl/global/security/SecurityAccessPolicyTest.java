@@ -53,14 +53,30 @@ class SecurityAccessPolicyTest {
     @ValueSource(strings = {
         "/api/users",
         "/api/auth/sign-in",
+        "/api/auth/reset-password",
         "/api/auth/refresh"
     })
     @DisplayName("공개 POST API는 CSRF 토큰이 있으면 JWT 없이 접근할 수 있다")
     void publicPost_withCsrf_doesNotRequireJwt(String path) throws Exception {
-        mockMvc.perform(post(path).with(csrf()))
-            .andExpect(status().isNoContent());
+        mockMvc.perform(
+                post(path)
+                    .with(csrf())
+            )
+            .andExpect(
+                status().isNoContent()
+            );
 
-        verify(jwtProvider, never()).validate(org.mockito.ArgumentMatchers.anyString());
+        /*
+         * 공개 API이므로 Authorization 헤더가 없는 요청에 대해
+         * JWT 검증을 시도하지 않아야 합니다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers
+                .anyString()
+        );
     }
 
     @Test
@@ -69,6 +85,46 @@ class SecurityAccessPolicyTest {
         mockMvc.perform(post("/api/users"))
             .andExpect(status().isForbidden())
             .andExpect(jsonPath("$.errorCode").value("COMMON_403_1"));
+    }
+
+    @Test
+    @DisplayName("비밀번호 초기화 API는 CSRF 토큰이 없으면 403을 반환한다")
+    void resetPassword_withoutCsrf_returnsForbidden()
+        throws Exception {
+
+        /*
+         * 비밀번호 초기화는 Access Token 없이 접근 가능한 공개 API이지만,
+         * 사용자의 비밀번호 상태를 변경하는 POST 요청
+         *
+         * 따라서 공격 사이트에서 사용자의 브라우저를 통해 임의로
+         * 비밀번호 초기화를 요청하지 못하도록 CSRF 검증을 적용
+         */
+        mockMvc.perform(
+                post(
+                    "/api/auth/reset-password"
+                )
+            )
+            .andExpect(
+                status().isForbidden()
+            )
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_403_1")
+            );
+
+        /*
+         * 403은 JWT 인증 실패가 아니라 CSRF 검증 실패로 발생해야 한다.
+         *
+         * reset-password는 공개 경로이므로 JwtProvider가 Access Token을
+         * 검증하려고 호출되어서는 안된다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers
+                .anyString()
+        );
     }
 
     @Test

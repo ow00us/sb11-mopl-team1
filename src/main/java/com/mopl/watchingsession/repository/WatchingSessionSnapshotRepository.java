@@ -21,6 +21,11 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
     @Transactional
     void deleteByWatcherId(UUID watcherId);
 
+    // 조건부 삭제 (다중 인스턴스 세대 레이스 방지용) - 다른 인스턴스가 만든 새 세대는 건드리지 않음
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("DELETE FROM WatchingSessionSnapshot s WHERE s.watcherId = :watcherId AND s.id = :snapshotId")
+    int deleteByWatcherIdAndId(@Param("watcherId") UUID watcherId, @Param("snapshotId") UUID snapshotId);
+
     // 콘텐츠 기준 시청 세션 목록 - 첫 페이지, 최신순(내림차순)
     @Query("""
       SELECT s FROM WatchingSessionSnapshot s

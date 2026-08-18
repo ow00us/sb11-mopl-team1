@@ -3,11 +3,13 @@ package com.mopl.user.controller;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.dto.JwtDto;
+import com.mopl.user.dto.ResetPasswordRequest;
 import com.mopl.user.dto.SignInRequest;
 import com.mopl.user.cookie.RefreshTokenCookieFactory;
 import com.mopl.user.config.RefreshTokenCookieProperties;
 import com.mopl.user.service.SignInResult;
 import com.mopl.user.service.AuthService;
+import com.mopl.user.service.PasswordResetService;
 import com.mopl.user.service.RefreshResult;
 import com.mopl.user.service.RefreshTokenService;
 import io.swagger.v3.oas.annotations.headers.Header;
@@ -42,6 +44,12 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 public class AuthController {
 
     private final AuthService authService;
+
+    /**
+     * 이메일을 이용한 임시 비밀번호 생성, 비밀번호 해시 변경과
+     * 이메일 발송 흐름을 처리하는 Service
+     */
+    private final PasswordResetService passwordResetService;
 
     /**
      * 기존 Refresh Token을 검증하고 Rotation 방식으로
@@ -106,6 +114,52 @@ public class AuthController {
                 refreshTokenCookie.toString()
             )
             .body(result.jwtDto());
+    }
+
+    /**
+     * 사용자 이메일을 기준으로 비밀번호를 임시 비밀번호로 초기화
+     *
+     * <p>JSON 요청 본문의 이메일은 {@link ResetPasswordRequest}의
+     * Bean Validation으로 검증합니다. 이메일이 비어 있거나 올바른 형식이
+     * 아니면 Service 호출 전에 400 Bad Request를 반환합니다.</p>
+     *
+     * <p>실제 사용자 조회, 임시 비밀번호 생성, BCrypt 해시 변경과
+     * 이메일 발송은 {@link PasswordResetService}에 위임합니다.</p>
+     *
+     * <p>성공 응답은 기존 OpenAPI 계약에 따라 JSON 본문이 없는
+     * 204 No Content를 반환합니다. 임시 비밀번호 원문을 API 응답으로
+     * 반환하지 않습니다.</p>
+     *
+     * @param request 비밀번호를 초기화할 사용자 이메일
+     * @return 응답 본문이 없는 204 No Content
+     */
+    @PostMapping("/reset-password")
+    @ApiResponse(
+        responseCode = "204",
+        description = "비밀번호 초기화 및 임시 비밀번호 이메일 발송 성공"
+    )
+    public ResponseEntity<Void> resetPassword(
+        @Valid @RequestBody
+        ResetPasswordRequest request
+    ) {
+        /*
+         * Controller는 HTTP 요청 바인딩과 응답 상태 결정만 담당
+         *
+         * 사용자 조회와 비밀번호 변경, 이메일 발송 규칙은
+         * PasswordResetService에 위임
+         */
+        passwordResetService.resetPassword(
+            request
+        );
+
+        /*
+         * 임시 비밀번호는 이메일로만 전달
+         * API 응답에는 민감한 비밀번호 원문이나 사용자 정보를
+         * 포함하지 않는다.
+         */
+        return ResponseEntity
+            .noContent()
+            .build();
     }
 
     /**
