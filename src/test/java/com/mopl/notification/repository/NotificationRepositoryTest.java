@@ -594,6 +594,71 @@ class NotificationRepositoryTest {
             .isEqualTo(1);
     }
 
+    @Test
+    @DisplayName("수신자가 없으면 알림을 저장하지 않음")
+    void insertIfAbsent_receiverMissing_skips() {
+        // given
+        UUID missingReceiverId = UUID.fromString(
+            "99999999-9999-9999-9999-999999999999"
+        );
+
+        UUID sourceEventId = UUID.fromString(
+            "33333333-3333-3333-3333-333333333333"
+        );
+
+        UUID resourceId = UUID.fromString(
+            "44444444-4444-4444-4444-444444444444"
+        );
+
+        UUID sourceEntityId = UUID.fromString(
+            "55555555-5555-5555-5555-555555555555"
+        );
+
+        Instant createdAt =
+            Instant.parse("2026-08-14T01:00:00Z");
+
+        // when
+        int insertedCount =
+            notificationRepository.insertIfAbsent(
+                NOTIFICATION_ID_1,
+                createdAt,
+                missingReceiverId,
+                sourceEventId,
+                "DIRECT_MESSAGE",
+                resourceId,
+                sourceEntityId,
+                "[DM] 발신자",
+                "안녕하세요",
+                "INFO"
+            );
+
+        // then
+        assertThat(insertedCount)
+            .isZero();
+
+        assertThat(
+            notificationRepository.findById(
+                NOTIFICATION_ID_1
+            )
+        ).isEmpty();
+
+        Integer savedCount =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM notifications
+                WHERE source_event_id = ?
+                    AND receiver_id = ?
+                """,
+                Integer.class,
+                sourceEventId,
+                missingReceiverId
+            );
+
+        assertThat(savedCount)
+            .isZero();
+    }
+
     private PageRequest firstPage(Sort.Direction direction) {
         Sort sort = Sort.by(direction, "createdAt")
             .and(Sort.by(direction, "id"));

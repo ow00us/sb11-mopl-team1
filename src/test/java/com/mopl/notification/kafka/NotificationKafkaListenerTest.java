@@ -10,6 +10,7 @@ import com.mopl.notification.entity.NotificationLevel;
 import com.mopl.notification.entity.NotificationType;
 import com.mopl.notification.service.NotificationService;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -78,15 +79,7 @@ class NotificationKafkaListenerTest {
 
         when(
             notificationEventMapper.map(envelope)
-        ).thenReturn(command);
-
-        when(
-            notificationService.createIfAbsent(command)
-        ).thenReturn(true);
-
-        when(
-            notificationEventMapper.map(envelope)
-        ).thenReturn(command);
+        ).thenReturn(Optional.of(command));
 
         when(
             notificationService.createIfAbsent(command)

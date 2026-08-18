@@ -11,6 +11,7 @@ import com.mopl.notification.entity.NotificationLevel;
 import com.mopl.notification.entity.NotificationType;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -64,8 +65,12 @@ class NotificationEventMapperTest {
         );
 
         when(
-            notificationUserReader.getName(followerId)
-        ).thenReturn("팔로워");
+            notificationUserReader.exists(followeeId)
+        ).thenReturn(true);
+
+        when(
+            notificationUserReader.findName(followerId)
+        ).thenReturn(Optional.of("팔로워"));
 
         EventEnvelope envelope = envelope(
             "follow.created",
@@ -80,7 +85,8 @@ class NotificationEventMapperTest {
 
         // when
         NotificationCreateCommand result =
-            notificationEventMapper.map(envelope);
+            notificationEventMapper.map(envelope)
+                .orElseThrow();
 
         // then
         assertThat(result.receiverId())
@@ -127,8 +133,12 @@ class NotificationEventMapperTest {
         );
 
         when(
-            notificationUserReader.getName(subscriberId)
-        ).thenReturn("구독자");
+            notificationUserReader.exists(playlistOwnerId)
+        ).thenReturn(true);
+
+        when(
+            notificationUserReader.findName(subscriberId)
+        ).thenReturn(Optional.of("구독자"));
 
         EventEnvelope envelope = envelope(
             "playlist.subscription.created",
@@ -145,7 +155,8 @@ class NotificationEventMapperTest {
 
         // when
         NotificationCreateCommand result =
-            notificationEventMapper.map(envelope);
+            notificationEventMapper.map(envelope)
+                .orElseThrow();
 
         // then
         assertThat(result.receiverId())
@@ -190,8 +201,12 @@ class NotificationEventMapperTest {
         );
 
         when(
-            notificationUserReader.getName(senderId)
-        ).thenReturn("발신자");
+            notificationUserReader.exists(receiverId)
+        ).thenReturn(true);
+
+        when(
+            notificationUserReader.findName(senderId)
+        ).thenReturn(Optional.of("발신자"));
 
         EventEnvelope envelope = envelope(
             "direct-message.created",
@@ -212,7 +227,8 @@ class NotificationEventMapperTest {
 
         // when
         NotificationCreateCommand result =
-            notificationEventMapper.map(envelope);
+            notificationEventMapper.map(envelope)
+                .orElseThrow();
 
         // then
         assertThat(result.receiverId())
@@ -309,6 +325,150 @@ class NotificationEventMapperTest {
         ).isInstanceOf(
             EventContractViolationException.class
         );
+    }
+
+    @Test
+    @DisplayName("팔로우 행위자가 없으면 알림 생성을 생략")
+    void map_followActorMissing_skips() {
+        // given
+        UUID followerId = UUID.fromString(
+            "33333333-3333-3333-3333-333333333333"
+        );
+
+        UUID followeeId = UUID.fromString(
+            "44444444-4444-4444-4444-444444444444"
+        );
+
+        when(
+            notificationUserReader.exists(followeeId)
+        ).thenReturn(true);
+
+        when(
+            notificationUserReader.findName(followerId)
+        ).thenReturn(Optional.empty());
+
+        EventEnvelope envelope = envelope(
+            "follow.created",
+            AGGREGATE_ID,
+            Map.of(
+                "followerId",
+                followerId,
+                "followeeId",
+                followeeId
+            )
+        );
+
+        // when
+        Optional<NotificationCreateCommand> result =
+            notificationEventMapper.map(envelope);
+
+        // then
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("DM 수신자가 없으면 알림 생성을 생략")
+    void map_directMessageReceiverMissing_skips() {
+        // given
+        UUID conversationId = UUID.fromString(
+            "33333333-3333-3333-3333-333333333333"
+        );
+
+        UUID senderId = UUID.fromString(
+            "44444444-4444-4444-4444-444444444444"
+        );
+
+        UUID receiverId = UUID.fromString(
+            "55555555-5555-5555-5555-555555555555"
+        );
+
+        when(
+            notificationUserReader.exists(receiverId)
+        ).thenReturn(false);
+
+        EventEnvelope envelope = envelope(
+            "direct-message.created",
+            AGGREGATE_ID,
+            Map.of(
+                "directMessageId",
+                AGGREGATE_ID,
+                "conversationId",
+                conversationId,
+                "senderId",
+                senderId,
+                "receiverId",
+                receiverId,
+                "contentPreview",
+                "안녕하세요"
+            )
+        );
+
+        // when
+        Optional<NotificationCreateCommand> result =
+            notificationEventMapper.map(envelope);
+
+        // then
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("DM 미리보기가 100자를 초과하면 축약")
+    void map_contentPreviewTooLong_truncates() {
+        // given
+        UUID conversationId = UUID.fromString(
+            "33333333-3333-3333-3333-333333333333"
+        );
+
+        UUID senderId = UUID.fromString(
+            "44444444-4444-4444-4444-444444444444"
+        );
+
+        UUID receiverId = UUID.fromString(
+            "55555555-5555-5555-5555-555555555555"
+        );
+
+        String contentPreview = "가".repeat(101);
+
+        when(
+            notificationUserReader.exists(receiverId)
+        ).thenReturn(true);
+
+        when(
+            notificationUserReader.findName(senderId)
+        ).thenReturn(Optional.of("발신자"));
+
+        EventEnvelope envelope = envelope(
+            "direct-message.created",
+            AGGREGATE_ID,
+            Map.of(
+                "directMessageId",
+                AGGREGATE_ID,
+                "conversationId",
+                conversationId,
+                "senderId",
+                senderId,
+                "receiverId",
+                receiverId,
+                "contentPreview",
+                contentPreview
+            )
+        );
+
+        // when
+        NotificationCreateCommand result =
+            notificationEventMapper.map(envelope)
+                .orElseThrow();
+
+        // then
+        assertThat(
+            result.content().codePointCount(
+                0,
+                result.content().length()
+            )
+        ).isEqualTo(100);
+
+        assertThat(result.content())
+            .isEqualTo("가".repeat(100));
     }
 
     private EventEnvelope envelope(
