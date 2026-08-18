@@ -74,7 +74,8 @@ public class PasswordResetService {
      *     <li>정규화된 이메일로 사용자를 한 번 조회합니다.</li>
      *     <li>임시 비밀번호 원문을 생성합니다.</li>
      *     <li>임시 비밀번호를 BCrypt 해시로 변환합니다.</li>
-     *     <li>User 엔티티에 해시만 반영합니다.</li>
+     *     <li>기존 Refresh Token Family를 모두 폐기합니다.</li>
+     *     <li>User 엔티티에 새 비밀번호 해시를 반영합니다.</li>
      *     <li>임시 비밀번호 원문을 사용자 이메일로 발송합니다.</li>
      * </ol>
      *

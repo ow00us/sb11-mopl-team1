@@ -471,8 +471,9 @@ public class UserService {
     /**
      * 관리자의 요청에 따라 사용자 계정의 잠금 상태를 변경
      *
-     * 관리자 권한 검증은 HTTP 인증 정보를 사용할 수 있는 Controller에서
-     * 먼저 수행하고, Service는 대상 사용자 조회와 상태 변경을 담당
+     * 관리자 권한 검증은 SecurityFilterChain에서
+     * Controller 진입 전에 수행하고,
+     * Service는 대상 사용자 조회와 상태 변경을 담당
      *
      * 대상 사용자가 존재하지 않으면 RESOURCE_NOT_FOUND를 발생시킴
      * 조회된 User는 영속 상태이므로 updateLocked() 호출 후 별도의

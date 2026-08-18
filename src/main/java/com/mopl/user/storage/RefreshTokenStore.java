@@ -130,8 +130,10 @@ public interface RefreshTokenStore {
     /**
      * 특정 사용자가 보유한 현재 활성 Refresh Token Family ID를 조회
      *
-     * <p>비밀번호 변경, 계정 잠금과 전체 로그아웃 기능에서
-     * 해당 사용자의 모든 로그인 세션을 폐기할 때 사용할 수 있습니다.</p>
+     * <p>사용자별 활성 로그인 세션 조회나 저장소 상태 검증이 필요한 경우
+     * 사용할 수 있습니다.
+     * 모든 세션을 폐기할 때는 개별 Family를 반복해서
+     * 삭제하지 않고 {@link #revokeAllByUserId(UUID)}를 사용합니다.</p>
      *
      * <p>구현체는 이미 TTL이 만료된 Family를 인덱스에서 정리한 뒤
      * 실제 Family 세션 Key가 존재하는 ID만 반환해야 합니다.</p>
