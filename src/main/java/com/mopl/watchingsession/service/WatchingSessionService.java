@@ -174,44 +174,60 @@ public class WatchingSessionService {
         }
     }
 
-    // delete 성격의 메서드
+    // delete 성격의 메서드 (원래 구현으로 복원 - DB 조회 없이 boolean만 반환)
     public boolean end(UUID watcherId, String currentSessionId, String currentSubscriptionId) {
-        return endInternal(watcherId,
-            () -> watchingSessionPresenceWriter.deleteIfOwner(watcherId, currentSessionId, currentSubscriptionId));
-    }
-
-    /**
-     * WebSocket 연결 자체가 끊긴 경우(DISCONNECT) 전용 종료 메서드.
-     * subscriptionId는 비교하지 않고 sessionId만으로 소유권을 판정한다.
-     *
-     * 연결이 끊기면 그 연결에 딸린 모든 구독이 함께 끊기므로 sessionId 일치만으로
-     * "이 연결이 지금도 소유자인가"를 완전히 판정할 수 있다. UNSUBSCRIBE나 start() 보상
-     * 삭제처럼 연결이 살아있는 상태에서는 이 메서드를 쓰면 안 된다
-     */
-    public boolean endByConnection(UUID watcherId, String sessionId) {
-        return endInternal(watcherId,
-            () -> watchingSessionPresenceWriter.deleteIfOwnerSession(watcherId, sessionId));
-    }
-
-    // end()/endByConnection() 공통 골격. presence 삭제 방식(쌍 비교 vs 세션 단독)만 다르고
-    // watcherLock 임계 구역, DB 삭제, 세대 교체 방어 로직은 동일
-    private boolean endInternal(UUID watcherId, Supplier<Optional<UUID>> presenceDeletion) {
         WatcherLock watcherLock = acquireWatcherLock(watcherId);
         try {
             synchronized (watcherLock) {
-                Optional<UUID> deletedSnapshotId = presenceDeletion.get();
+                Optional<UUID> deletedSnapshotId = watchingSessionPresenceWriter.deleteIfOwner(
+                    watcherId, currentSessionId, currentSubscriptionId);
                 if (deletedSnapshotId.isEmpty()) {
                     return false;
                 }
 
                 int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, deletedSnapshotId.get());
                 if (deletedRows == 0) {
-                    // presence 소유권은 확인됐지만 DB 행은 이미 다른 세대로 교체된 뒤
                     log.warn("presence 소유권 확인 후 DB 스냅샷이 이미 교체됨, 퇴장 처리 생략: "
                         + "watcherId={}, snapshotId={}", watcherId, deletedSnapshotId.get());
                     return false;
                 }
                 return true;
+            }
+        } finally {
+            releaseWatcherLock(watcherId);
+        }
+    }
+
+    /**
+     * WebSocket 연결 자체가 끊긴 경우(DISCONNECT) 전용 종료 메서드.
+     * subscriptionId는 비교하지 않고 sessionId만으로 소유권을 판정한다.
+     *
+     * end()와 달리 DB 삭제 직전에 스냅샷을 먼저 조회해 DTO로 반환한다. 호출자가 별도로
+     * get(watcherId)을 먼저 호출해 DTO를 떼어두면, 그 사이 같은 연결에서 재구독이 끼어들 경우
+     * 삭제된 콘텐츠와 브로드캐스트되는 콘텐츠가 어긋날 수 있어 이 메서드가 조회와 삭제를
+     * 같은 임계 구역 안에서 묶는다.
+     */
+    public Optional<WatchingSessionDto> endByConnection(UUID watcherId, String sessionId) {
+        WatcherLock watcherLock = acquireWatcherLock(watcherId);
+        try {
+            synchronized (watcherLock) {
+                Optional<UUID> deletedSnapshotId = watchingSessionPresenceWriter.deleteIfOwnerSession(
+                    watcherId, sessionId);
+                if (deletedSnapshotId.isEmpty()) {
+                    return Optional.empty();
+                }
+
+                UUID snapshotId = deletedSnapshotId.get();
+                WatchingSessionSnapshot snapshot = watchingSessionSnapshotRepository.findById(snapshotId)
+                    .orElse(null);
+
+                int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, snapshotId);
+                if (deletedRows == 0 || snapshot == null) {
+                    log.warn("presence 소유권 확인 후 DB 스냅샷이 이미 교체됨, 퇴장 처리 생략: "
+                        + "watcherId={}, snapshotId={}", watcherId, snapshotId);
+                    return Optional.empty();
+                }
+                return Optional.of(enrich(snapshot));
             }
         } finally {
             releaseWatcherLock(watcherId);

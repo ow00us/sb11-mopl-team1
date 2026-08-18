@@ -78,30 +78,28 @@ public class WatchingSessionDisconnectListenerTest {
     }
 
     @Test
-    @DisplayName("연결이 끊기면 sessionId만으로 종료 처리를 위임한다 (subscriptionId 비교 없음)")
-    void onDisconnect_success_delegatesToEndByConnectionWithSessionIdOnly() {
+    @DisplayName("연결이 끊기면 sessionId만으로 종료를 위임하고, 삭제된 스냅샷 기준 DTO로만 LEAVE를 브로드캐스트한다")
+    void onDisconnect_success_broadcastsLeave_usingReturnedDtoOnly() {
         // given
-        WatchingSessionDto dto = dtoFixture(CONTENT_ID);
-        when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.of(dto));
-        when(watchingSessionService.endByConnection(WATCHER_ID, SESSION_ID)).thenReturn(true);
+        WatchingSessionDto endedSession = dtoFixture(CONTENT_ID);
+        when(watchingSessionService.endByConnection(WATCHER_ID, SESSION_ID)).thenReturn(Optional.of(endedSession));
 
         SessionDisconnectEvent event = createDisconnectEvent(SESSION_ID, principalOf(WATCHER_ID), new HashMap<>());
 
         // when
         listener.onDisconnect(event);
 
-        // then: 활성 구독을 세션 attribute에서 조회하지 않고, sessionId만으로 종료를 시도한다
+        // then: 리스너가 별도로 get()을 호출하지 않고, endByConnection()의 반환값만으로 브로드캐스트한다
+        verify(watchingSessionService, never()).get(any());
         verify(watchingSessionService).endByConnection(WATCHER_ID, SESSION_ID);
-        verify(watchingSessionBroadcaster).broadcastLeave(dto, CONTENT_ID);
+        verify(watchingSessionBroadcaster).broadcastLeave(endedSession, CONTENT_ID);
     }
 
     @Test
-    @DisplayName("세션 소유권이 다르면(삭제 실패) 삭제 알림 브로드캐스트를 건너뜀")
-    void onDisconnect_skipsBroadcast_whenActuallyDeletedIsFalse() {
-        // given: 다른 연결로 이미 소유권이 넘어간 시나리오
-        WatchingSessionDto dto = dtoFixture(CONTENT_ID);
-        when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.of(dto));
-        when(watchingSessionService.endByConnection(WATCHER_ID, SESSION_ID)).thenReturn(false);
+    @DisplayName("소유권 확인에 실패하면(빈 Optional) 브로드캐스트를 건너뜀")
+    void onDisconnect_skipsBroadcast_whenEndByConnectionReturnsEmpty() {
+        // given
+        when(watchingSessionService.endByConnection(WATCHER_ID, SESSION_ID)).thenReturn(Optional.empty());
 
         SessionDisconnectEvent event = createDisconnectEvent(SESSION_ID, principalOf(WATCHER_ID), new HashMap<>());
 
@@ -110,55 +108,29 @@ public class WatchingSessionDisconnectListenerTest {
 
         // then
         verify(watchingSessionService).endByConnection(WATCHER_ID, SESSION_ID);
-        verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
-    }
-
-    @Test
-    @DisplayName("활성 시청 세션이 없으면(DB 조회 결과 없음) 종료 처리(endByConnection 호출 자체)를 생략")
-    void onDisconnect_success_skipsEndWhenNoActiveSession() {
-        // given
-        when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.empty());
-
-        SessionDisconnectEvent event = createDisconnectEvent(SESSION_ID, principalOf(WATCHER_ID), new HashMap<>());
-
-        // when
-        listener.onDisconnect(event);
-
-        // then
-        verify(watchingSessionService, never()).endByConnection(any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
     }
 
     @Test
     @DisplayName("Principal이 없으면 세션 종료 자체를 시도하지 않음")
     void onDisconnect_success_ignoresWhenPrincipalMissing() {
-        // given
         SessionDisconnectEvent event = createDisconnectEvent(SESSION_ID, null, new HashMap<>());
 
-        // when
         listener.onDisconnect(event);
 
-        // then
-        verify(watchingSessionService, never()).get(any());
         verify(watchingSessionService, never()).endByConnection(any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
-
     }
 
     @Test
     @DisplayName("Principal의 이름이 올바른 UUID 형식이 아니면 무시")
     void onDisconnect_success_ignoresWhenPrincipalNameIsInvalidUUID() {
-        // given
         Authentication invalidPrincipal = UsernamePasswordAuthenticationToken
             .authenticated("invalid-user-id", null, List.of());
-
         SessionDisconnectEvent event = createDisconnectEvent(SESSION_ID, invalidPrincipal, new HashMap<>());
 
-        // when
         listener.onDisconnect(event);
 
-        // then
-        verify(watchingSessionService, never()).get(any());
         verify(watchingSessionService, never()).endByConnection(any(), any());
         verify(watchingSessionBroadcaster, never()).broadcastLeave(any(), any());
     }
@@ -166,17 +138,14 @@ public class WatchingSessionDisconnectListenerTest {
     @Test
     @DisplayName("브로드캐스트가 실패해도 리스너는 예외 없이 종료된다")
     void onDisconnect_doesNotThrow_whenBroadcastFails() {
-        // given
-        WatchingSessionDto activeSession = dtoFixture(CONTENT_ID);
-        when(watchingSessionService.get(WATCHER_ID)).thenReturn(Optional.of(activeSession));
-        when(watchingSessionService.endByConnection(WATCHER_ID, SESSION_ID)).thenReturn(true);
+        WatchingSessionDto endedSession = dtoFixture(CONTENT_ID);
+        when(watchingSessionService.endByConnection(WATCHER_ID, SESSION_ID)).thenReturn(Optional.of(endedSession));
         doThrow(new RuntimeException("브로커 전송 실패"))
-            .when(watchingSessionBroadcaster).broadcastLeave(activeSession, CONTENT_ID);
+            .when(watchingSessionBroadcaster).broadcastLeave(endedSession, CONTENT_ID);
 
         SessionDisconnectEvent event = createDisconnectEvent(SESSION_ID, principalOf(WATCHER_ID), new HashMap<>());
 
-        // when & then
         assertThatNoException().isThrownBy(() -> listener.onDisconnect(event));
-        verify(watchingSessionBroadcaster).broadcastLeave(activeSession, CONTENT_ID);
+        verify(watchingSessionBroadcaster).broadcastLeave(endedSession, CONTENT_ID);
     }
 }

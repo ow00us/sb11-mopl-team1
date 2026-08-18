@@ -2,9 +2,9 @@ package com.mopl.watchingsession.websocket.listener;
 
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.service.WatchingSessionService;
-import com.mopl.watchingsession.websocket.stompsession.WatchSubscriptionAttributes;
 import com.mopl.watchingsession.websocket.broadcast.WatchingSessionBroadcaster;
 import java.security.Principal;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -56,28 +56,17 @@ public class WatchingSessionDisconnectListener {
             return;
         }
 
-        // end()가 DB에서 세션을 지우기 전에 브로드 캐스트에 필요한 세션 정보 확보
-        WatchingSessionDto session = watchingSessionService.get(watcherId).orElse(null);
+        // 삭제 대상과 브로드캐스트 대상이 반드시 같은 스냅샷이 되도록, 별도 get() 없이
+        // endByConnection()이 반환하는 DTO(삭제를 확정한 그 snapshotId 기준)만 사용한다.
+        Optional<WatchingSessionDto> ended = watchingSessionService.endByConnection(watcherId, sessionId);
 
-        // 이미 없는 걸 알고있으니 불필요한 DB 호출 없게 얼리 리턴으로 정리
-        if (session == null) {
-            return;
-        }
-
-        // 이 sessionId가 지금도 이 watcherId의 세션 소유자인 경우에만 실제로 삭제됨
-        // 이미 다른 연결로 소유권이 넘어갔다면 삭제/브로드캐스트 하지 않음
-        boolean actuallyDeleted = watchingSessionService.endByConnection(watcherId, sessionId);
-
-        if (actuallyDeleted) {
-            // WatchingSessionBroadcaster는 정상적으로는 실패를 내부에서 격리하지만 이 리스너 입장에서 그 보장을 전제할 수는 없으므로 두는 마지막 방어선
-            // @EventListener 경로라 여기서 예외가 새 나가면 로그 한 줄 없이 조용히 삼켜진다.
+        ended.ifPresent(session -> {
             try {
                 watchingSessionBroadcaster.broadcastLeave(session, session.content().id());
             } catch (RuntimeException broadcastFailure) {
-                log.error("DISCONNECT 처리 중 LEAVE 브로드캐스트 실패: watcherId={}",
-                    watcherId, broadcastFailure);
+                log.error("DISCONNECT 처리 중 LEAVE 브로드캐스트 실패: watcherId={}", watcherId, broadcastFailure);
             }
-        }
+        });
     }
 
     private UUID extractWatcherId(Principal principal) {

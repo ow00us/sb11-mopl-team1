@@ -3,6 +3,9 @@ package com.mopl.watchingsession.websocket;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -21,6 +24,7 @@ import com.mopl.watchingsession.dto.ContentChatDto;
 import com.mopl.watchingsession.dto.WatchingSessionChange;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
+import com.mopl.watchingsession.service.WatchingSessionService;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -28,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -39,10 +44,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
+import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
 import org.springframework.messaging.simp.stomp.StompHeaders;
@@ -54,8 +61,10 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
+import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -75,6 +84,24 @@ import org.testcontainers.utility.DockerImageName;
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
 class WatchingSessionE2ERegressionTest {
+
+    /**
+     *
+     * SessionDisconnectEvent는 StompSubProtocolHandler.afterSessionEnded()가 합성 DISCONNECT
+     * 메시지를 clientInboundChannel로 다시 보내는 방식으로 발행되므로, SUBSCRIBE/SEND와 같은
+     * 채널·스레드풀을 공유한다. 기본 풀 크기는 availableProcessors() 기준이라, CPU가 적은
+     * 테스트 환경에서는 그 테스트가 SUBSCRIBE 처리 스레드를 래치로 붙잡아 두는 동안
+     * DISCONNECT 처리가 함께 막혀 데드락처럼 보이는 타임아웃이 날 수 있다.
+     * 테스트에서만 여유 스레드를 확보해 이 경합을 없앤다.
+     */
+    @TestConfiguration
+    static class InboundChannelTestConfig implements WebSocketMessageBrokerConfigurer {
+
+        @Override
+        public void configureClientInboundChannel(ChannelRegistration registration) {
+            registration.taskExecutor().corePoolSize(4);
+        }
+    }
 
     private record SubscriptionResult<T>(Subscription subscription, CompletableFuture<T> future) {}
 
@@ -107,6 +134,9 @@ class WatchingSessionE2ERegressionTest {
 
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
+
+    @MockitoSpyBean
+    private WatchingSessionService watchingSessionService;
 
     private WebSocketStompClient stompClient;
     private ThreadPoolTaskScheduler taskScheduler;
@@ -552,69 +582,6 @@ class WatchingSessionE2ERegressionTest {
             session.disconnect();
 
             // then: DB에서 세션이 삭제되고, 관찰자에게 LEAVE가 브로드캐스트된다.
-            await().atMost(5, TimeUnit.SECONDS)
-                .pollInterval(100, TimeUnit.MILLISECONDS)
-                .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty());
-
-            await().atMost(5, TimeUnit.SECONDS)
-                .pollInterval(100, TimeUnit.MILLISECONDS)
-                .untilAsserted(() ->
-                    assertThat(stringRedisTemplate.hasKey(presenceKey(watcherId))).isFalse());
-
-            WatchingSessionChange leaveChange = leaveReceived.get(5, TimeUnit.SECONDS);
-            assertThat(leaveChange.watchingSessionDto().watcher().userId()).isEqualTo(watcherId);
-        } finally {
-            StompTestCleanup.disconnectQuietly(observerSession);
-        }
-    }
-
-    @Test
-    @DisplayName("[E2E 회귀] 구독(SUBSCRIBE) 직후 즉시 연결이 끊겨도 DB에서 세션이 삭제되고 관찰자에게 LEAVE가 브로드캐스트")
-    void disconnectImmediatelyAfterSubscribe_deletesSessionAndBroadcastsLeaveToObserver() throws Exception {
-        // given: 관찰자가 먼저 watch 토픽을 구독해 LEAVE 수신을 대기한다.
-        User observer = userRepository.save(User.builder()
-            .email("e2e-immediate-disconnect-observer-" + UUID.randomUUID() + "@test.com")
-            .passwordHash("hash")
-            .name("관찰자")
-            .role(UserRole.USER)
-            .locked(false)
-            .build());
-        StompSession observerSession = connectAs(observer.getId(), null);
-
-        String watchDestination = "/sub/contents/" + contentId + "/watch";
-        CompletableFuture<WatchingSessionChange> leaveReceived = new CompletableFuture<>();
-        observerSession.subscribe(watchDestination, new StompFrameHandler() {
-            @Override
-            public Type getPayloadType(StompHeaders headers) {
-                return WatchingSessionChange.class;
-            }
-
-            @Override
-            public void handleFrame(StompHeaders headers, @Nullable Object payload) {
-                WatchingSessionChange change = (WatchingSessionChange) payload;
-                if (change.type() == ChangeType.LEAVE) {
-                    leaveReceived.complete(change);
-                }
-            }
-        });
-        Thread.sleep(SETTLE_MILLIS);
-
-        try {
-            // when: 시청자가 구독(SUBSCRIBE)한 직후, activate() 도달 여부와 무관하게 곧바로 연결을 끊는다.
-            session = connectAs(watcherId, null);
-            session.subscribe(watchDestination, new StompFrameHandler() {
-                @Override
-                public Type getPayloadType(StompHeaders headers) {
-                    return WatchingSessionChange.class;
-                }
-
-                @Override
-                public void handleFrame(StompHeaders headers, @Nullable Object payload) {
-                }
-            });
-            session.disconnect();
-
-            // then: DB 스냅샷과 presence가 모두 삭제되고, 관찰자는 LEAVE를 수신한다.
             await().atMost(5, TimeUnit.SECONDS)
                 .pollInterval(100, TimeUnit.MILLISECONDS)
                 .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty());
