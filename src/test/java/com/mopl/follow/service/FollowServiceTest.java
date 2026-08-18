@@ -9,6 +9,7 @@ import com.mopl.follow.repository.FollowRepository;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.outbox.OutboxRecorder;
 import com.mopl.global.util.CursorUtils;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
@@ -37,6 +38,7 @@ class FollowServiceTest {
 
     @Mock FollowRepository followRepository;
     @Mock UserRepository userRepository;
+    @Mock OutboxRecorder outboxRecorder;
     @InjectMocks FollowService followService;
 
     private static final UUID FOLLOWER_ID = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
@@ -139,6 +141,57 @@ class FollowServiceTest {
         assertThatThrownBy(() -> followService.follow(FOLLOWER_ID, FOLLOWEE_ID))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INTERNAL_ERROR);
+    }
+
+    // 계약 docs/07-kafka-outbox-contract.md §8.1: follow.created 는 FollowService.follow() 가
+    // 최종적으로 신규 팔로우 생성으로 판정한 경우에만 Outbox 기록한다. 여기서는 호출 여부만
+    // 검증하고 envelope 필드 정확성은 후속 Envelope 커밋에서 다룬다.
+
+    @Test
+    @DisplayName("신규 팔로우 판정 시 OutboxRecorder.record 를 1회 호출한다")
+    void follow_success_new_recordsOutboxOnce() {
+        Follow saved = savedFollow(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID);
+        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(1);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.of(saved));
+
+        followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
+
+        verify(outboxRecorder, times(1)).record(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("중복 팔로우 판정 시 OutboxRecorder.record 를 호출하지 않는다")
+    void follow_duplicate_doesNotRecordOutbox() {
+        Follow existing = savedFollow(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID);
+        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(0);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.of(existing));
+
+        followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
+
+        verify(outboxRecorder, never()).record(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("동시 unfollow race 재시도로 신규 삽입 성공 시 OutboxRecorder.record 를 1회 호출한다")
+    void follow_raceRetryInserted_recordsOutboxOnce() {
+        Follow reinserted = savedFollow(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID);
+        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(0)
+                .thenReturn(1);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(reinserted));
+
+        followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
+
+        verify(outboxRecorder, times(1)).record(any(), any(), any(), any());
     }
 
     // ── unfollow ──────────────────────────────────────────────────────────────

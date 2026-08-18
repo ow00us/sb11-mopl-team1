@@ -10,6 +10,7 @@ import com.mopl.global.common.CursorResponse;
 import com.mopl.global.common.UserSummary;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.outbox.OutboxRecorder;
 import com.mopl.global.util.CursorUtils;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
@@ -36,6 +37,7 @@ public class FollowService {
 
     private final FollowRepository followRepository;
     private final UserRepository userRepository;
+    private final OutboxRecorder outboxRecorder;
 
     @Transactional
     public FollowResult follow(UUID followerId, UUID followeeId) {
