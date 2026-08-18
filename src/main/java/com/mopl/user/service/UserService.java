@@ -12,6 +12,7 @@ import com.mopl.user.dto.UserLockUpdateRequest;
 import com.mopl.user.dto.UserRoleUpdateRequest;
 import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.storage.ProfileImageStorage;
+import com.mopl.user.storage.RefreshTokenStore;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
@@ -51,6 +52,7 @@ public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final ProfileImageStorage profileImageStorage;
+    private final RefreshTokenStore refreshTokenStore;
 
     /**
      * 이메일·비밀번호 기반 회원가입을 처리
@@ -376,11 +378,20 @@ public class UserService {
         user.changePassword(encodedPassword);
 
         /*
-         * user는 현재 트랜잭션에서 조회한 영속 엔티티
+         * 비밀번호가 변경되면 기존 비밀번호로 생성됐던 모든 로그인 세션을
+         * 더 이상 신뢰할 수 없으므로 사용자의 Refresh Token Family를
+         * 전부 폐기
          *
-         * 트랜잭션이 정상적으로 종료되면 JPA 변경 감지가 password_hash의
-         * 변경을 확인해 UPDATE SQL을 실행하므로 save() 호출은 필요하지 않다.
+         * 폐기할 세션이 없는 경우에는 0을 반환하지만 비밀번호 변경은
+         * 정상적으로 계속 처리
+         *
+         * Redis 처리 중 예외가 발생하면 예외를 숨기지 않는다.
+         * 이 메서드는 @Transactional 범위에 있으므로 런타임 예외가
+         * 전파되면 데이터베이스의 비밀번호 변경도 롤백
          */
+        refreshTokenStore.revokeAllByUserId(
+            userId
+        );
     }
 
     /**

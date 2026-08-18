@@ -17,6 +17,7 @@ import com.mopl.user.dto.UserLockUpdateRequest;
 import com.mopl.user.dto.UserRoleUpdateRequest;
 import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.storage.ProfileImageStorage;
+import com.mopl.user.storage.RefreshTokenStore;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
@@ -56,6 +57,9 @@ class UserServiceTest {
      */
     @Mock
     ProfileImageStorage profileImageStorage;
+
+    @Mock
+    RefreshTokenStore refreshTokenStore;
 
     @Test
     @DisplayName("회원가입 시 이메일을 정규화하고 비밀번호 해시를 저장한다.")
@@ -497,10 +501,91 @@ class UserServiceTest {
 
         verify(userRepository).findById(userId);
         verify(passwordEncoder).encode("newPassword1!");
+        verify(refreshTokenStore).revokeAllByUserId(userId);
 
         /*
          * 조회한 영속 엔티티는 트랜잭션 종료 시 JPA 변경 감지로
          * UPDATE되므로 save()를 명시적으로 호출하지 않음.
+         */
+        verify(userRepository, never())
+            .save(any(User.class));
+    }
+
+    @Test
+    @DisplayName("Refresh Token 전체 세션 폐기에 실패하면 비밀번호 변경 요청도 실패한다")
+    void changePassword_fail_whenRefreshTokenRevocationFails() {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        User user =
+            createUserFixture(userId);
+
+        ChangePasswordRequest request =
+            new ChangePasswordRequest(
+                "newPassword1!"
+            );
+
+        String encodedPassword =
+            "$2a$10$new-encoded-password";
+
+        when(userRepository.findById(userId))
+            .thenReturn(
+                Optional.of(user)
+            );
+
+        when(
+            passwordEncoder.encode(
+                "newPassword1!"
+            )
+        ).thenReturn(encodedPassword);
+
+        /*
+         * Redis 장애 또는 명령 실행 실패 상황을 재현
+         * 실제 구현체도 비정상적인 Redis 결과를 정상 결과로
+         * 숨기지 않고 런타임 예외를 전달
+         */
+        when(
+            refreshTokenStore
+                .revokeAllByUserId(userId)
+        ).thenThrow(
+            new IllegalStateException(
+                "Redis 세션 폐기 실패"
+            )
+        );
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.changePassword(
+                userId,
+                userId,
+                request
+            )
+        )
+            .isInstanceOf(
+                IllegalStateException.class
+            )
+            .hasMessage(
+                "Redis 세션 폐기 실패"
+            );
+
+        verify(userRepository)
+            .findById(userId);
+
+        verify(passwordEncoder)
+            .encode("newPassword1!");
+
+        verify(refreshTokenStore)
+            .revokeAllByUserId(userId);
+
+        /*
+         * 영속 엔티티는 변경 감지로 저장하므로
+         * 명시적인 save() 호출은 없어야 한다.
+         *
+         * 실제 데이터베이스 롤백 여부는 단위 테스트가 아닌
+         * 트랜잭션 통합 테스트에서 별도로 검증
          */
         verify(userRepository, never())
             .save(any(User.class));
