@@ -7,6 +7,8 @@ import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentSource;
 import com.mopl.content.entity.ContentType;
 import com.mopl.content.repository.ContentRepository;
+import com.mopl.content.search.ContentSearchDeleteEvent;
+import com.mopl.content.search.ContentSearchSyncEvent;
 import com.mopl.content.storage.ThumbnailStorage;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
@@ -24,6 +26,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,6 +45,7 @@ public class ContentServiceImpl implements ContentService {
     private final ContentRepository contentRepository;
     private final ThumbnailStorage thumbnailStorage;
     private final WatchingSessionSnapshotRepository watchingSessionSnapshotRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Override
     @Transactional
@@ -56,7 +60,9 @@ public class ContentServiceImpl implements ContentService {
         if (thumbnail != null && !thumbnail.isEmpty()) {
             content.updateThumbnail(thumbnailStorage.upload(thumbnail));
         }
-        return ContentDto.from(contentRepository.save(content));
+        Content saved = contentRepository.save(content);
+        eventPublisher.publishEvent(new ContentSearchSyncEvent(saved.getId()));
+        return ContentDto.from(saved);
     }
 
     @Override
@@ -127,7 +133,9 @@ public class ContentServiceImpl implements ContentService {
         if (thumbnail != null && !thumbnail.isEmpty()) {
             content.updateThumbnail(thumbnailStorage.upload(thumbnail));
         }
-        return ContentDto.from(contentRepository.save(content));
+        Content saved = contentRepository.save(content);
+        eventPublisher.publishEvent(new ContentSearchSyncEvent(saved.getId()));
+        return ContentDto.from(saved);
     }
 
     @Override
@@ -135,6 +143,7 @@ public class ContentServiceImpl implements ContentService {
     public void delete(UUID contentId) {
         Content content = findOrThrow(contentId);
         contentRepository.delete(content);
+        eventPublisher.publishEvent(new ContentSearchDeleteEvent(contentId));
     }
 
     private Content findOrThrow(UUID contentId) {
