@@ -80,10 +80,10 @@ jobs:
 
     # Spring Mail이 활성화되면 Actuator가 SMTP 연결 상태도
     # 애플리케이션 health에 포함하므로 CI용 SMTP 서버를 함께 실행합니다.
-    mailpit:
-      image: axllent/mailpit:v1.30.0
-      ports:
-        - 1025:1025
+      mailpit:
+        image: axllent/mailpit:v1.30.0
+        ports:
+          - 1025:1025
 
     steps:
       - uses: actions/checkout@v4
