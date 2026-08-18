@@ -24,6 +24,9 @@ mopl:
       auto-create: false
     listener:
       auto-startup: false
+  outbox:
+    # lease 만료 회수를 기다리지 않고 검증하기 위해 짧게 둡니다.
+    lease-duration: 2s
 
 jwt:
   secret: MVB4n0vCRFADVbcto73tHp0Ghw2bWmriymBGLOuR2Q4=
