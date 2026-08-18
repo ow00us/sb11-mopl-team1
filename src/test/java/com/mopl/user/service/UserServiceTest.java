@@ -731,6 +731,13 @@ class UserServiceTest {
          */
         verify(userRepository, never())
             .save(any(User.class));
+
+        /*
+         * 변경 전 권한으로 생성된 Refresh Token 세션을
+         * 모두 폐기해야 한다.
+         */
+        verify(refreshTokenStore)
+            .revokeAllByUserId(userId);
     }
 
     @Test
@@ -775,6 +782,62 @@ class UserServiceTest {
 
         verify(userRepository, never())
             .save(any(User.class));
+
+        /*
+         * 변경 전 권한으로 생성된 Refresh Token 세션을 모두 폐기
+         */
+        verify(refreshTokenStore)
+            .revokeAllByUserId(userId);
+    }
+
+    @Test
+    @DisplayName("현재 권한과 요청 권한이 같으면 세션을 폐기하지 않는다")
+    void updateRole_doesNotRevokeSessionsWhenRoleDoesNotChange() {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        /*
+         * createUserFixture()는 USER 권한을 가진 사용자를 생성
+         */
+        User user =
+            createUserFixture(userId);
+
+        UserRoleUpdateRequest request =
+            new UserRoleUpdateRequest(
+                UserRole.USER
+            );
+
+        when(userRepository.findById(userId))
+            .thenReturn(
+                Optional.of(user)
+            );
+
+        // when
+        userService.updateRole(
+            userId,
+            request
+        );
+
+        // then
+        assertThat(user.getRole())
+            .isEqualTo(UserRole.USER);
+
+        verify(userRepository)
+            .findById(userId);
+
+        /*
+         * 실제 권한 변화가 없으므로 사용자를 모든 기기에서
+         * 불필요하게 로그아웃시키지 않는다.
+         */
+        verifyNoInteractions(
+            refreshTokenStore
+        );
+
+        verify(userRepository, never())
+            .save(any(User.class));
     }
 
     @Test
@@ -809,6 +872,10 @@ class UserServiceTest {
          */
         verify(userRepository, never())
             .save(any(User.class));
+
+        verifyNoInteractions(
+            refreshTokenStore
+        );
     }
 
     @Test
@@ -850,6 +917,13 @@ class UserServiceTest {
          */
         verify(userRepository, never())
             .save(any(User.class));
+
+        /*
+         * 계정이 잠기면 해당 사용자의 모든 Refresh Token
+         * Family를 폐기
+         */
+        verify(refreshTokenStore)
+            .revokeAllByUserId(userId);
     }
 
     @Test
@@ -893,6 +967,14 @@ class UserServiceTest {
 
         verify(userRepository, never())
             .save(any(User.class));
+
+        /*
+         * 잠금 시점에 기존 세션이 이미 폐기됐으며,
+         * 잠금 해제는 세션을 새로 생성하거나 복구하지 않는다.
+         */
+        verifyNoInteractions(
+            refreshTokenStore
+        );
     }
 
     @Test
@@ -927,6 +1009,10 @@ class UserServiceTest {
          */
         verify(userRepository, never())
             .save(any(User.class));
+
+        verifyNoInteractions(
+            refreshTokenStore
+        );
     }
 
     /**

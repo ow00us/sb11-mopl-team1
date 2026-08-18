@@ -429,12 +429,34 @@ public class UserService {
             );
 
         /*
-         * request.role()은 Controller의 @Valid와
-         * UserRoleUpdateRequest의 @NotNull 검증을 통과한 값
+         * 현재 권한과 요청 권한이 같다면 실제 보안 상태 변화가 없다.
          *
-         * UserRole enum 타입이므로 USER 또는 ADMIN 중 하나만 전달
+         * 동일한 권한을 다시 요청했다는 이유만으로 사용자의 모든 기기에서
+         * 로그아웃시키지 않도록 상태 변경과 세션 폐기를 생략한다.
+         */
+        if (user.getRole() == request.role()) {
+            return;
+        }
+
+        /*
+         * 사용자 권한을 변경
+         *
+         * 기존 Access Token에는 변경 전 role이 들어 있으며,
+         * 기존 Refresh Token으로도 이전 인증 상태를 이어갈 수 있으므로
+         * 권한 변경과 함께 모든 Refresh Token Family를 폐기
          */
         user.updateRole(request.role());
+
+        /*
+         * 변경 전 권한을 기준으로 만들어진 모든 로그인 세션을 폐기
+         *
+         * Redis 폐기 중 런타임 예외가 발생하면 예외를 숨기지 않는다.
+         * updateRole()은 @Transactional 메서드이므로 데이터베이스의
+         * 권한 변경도 커밋되지 않는다.
+         */
+        refreshTokenStore.revokeAllByUserId(
+            userId
+        );
 
         /*
          * user는 현재 트랜잭션에서 조회한 영속 엔티티
@@ -477,13 +499,25 @@ public class UserService {
             );
 
         /*
-         * DTO의 locked 값은 Controller의 @Valid와 @NotNull 검증을
-         * 통과한 값이므로 true 또는 false 중 하나
-         *
-         * Boolean 값은 updateLocked(boolean)에 전달될 때
-         * 자동으로 원시 타입 boolean으로 변환
+         * 요청된 잠금 상태를 사용자 엔티티에 반영
          */
         user.updateLocked(request.locked());
+
+        /*
+         * 계정을 잠그는 요청이라면 현재 사용 중인 모든 기기의
+         * Refresh Token Family를 폐기
+         *
+         * 이미 잠긴 계정에 다시 locked=true가 전달된 경우에도
+         * 혹시 남아 있는 세션을 제거할 수 있도록 폐기를 수행
+         *
+         * 잠금을 해제하는 locked=false 요청에서는 세션을 복원하거나
+         * 폐기하지 않는다. 잠금 해제 후 사용자가 다시 로그인
+         */
+        if (request.locked()) {
+            refreshTokenStore.revokeAllByUserId(
+                userId
+            );
+        }
 
         /*
          * user는 현재 트랜잭션 안에서 조회된 영속 엔티티
