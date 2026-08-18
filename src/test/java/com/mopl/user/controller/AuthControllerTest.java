@@ -1,6 +1,7 @@
 package com.mopl.user.controller;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -15,6 +16,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.dto.JwtDto;
+import com.mopl.user.dto.ResetPasswordRequest;
 import com.mopl.user.dto.SignInRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.entity.UserRole;
@@ -22,6 +24,7 @@ import com.mopl.user.cookie.RefreshTokenCookieFactory;
 import com.mopl.user.service.IssuedRefreshToken;
 import com.mopl.user.service.SignInResult;
 import com.mopl.user.service.AuthService;
+import com.mopl.user.service.PasswordResetService;
 import com.mopl.user.service.RefreshResult;
 import com.mopl.user.service.RefreshTokenService;
 import jakarta.servlet.http.Cookie;
@@ -61,6 +64,13 @@ class AuthControllerTest {
 
     @MockitoBean
     AuthService authService;
+
+    /**
+     * 비밀번호 초기화 비즈니스 로직은 서비스 단위 테스트에서 검증하므로
+     * Controller 테스트에서는 Mock으로 교체
+     */
+    @MockitoBean
+    PasswordResetService passwordResetService;
 
     /**
      * Refresh Token 재발급 비즈니스 로직은 Service 단위 테스트에서
@@ -279,6 +289,228 @@ class AuthControllerTest {
             authService,
             refreshTokenCookieFactory
         );
+    }
+
+    @Test
+    @DisplayName("비밀번호 초기화 성공 시 204와 빈 응답 본문을 반환한다")
+    void resetPassword_success() throws Exception {
+        // given
+        Map<String, String> request =
+            Map.of(
+                "email",
+                "USER@EXAMPLE.COM"
+            );
+
+        // when & then
+        mockMvc.perform(
+                post(
+                    "/api/auth/reset-password"
+                )
+                    .contentType(
+                        "application/json"
+                    )
+                    .content(
+                        objectMapper
+                            .writeValueAsString(
+                                request
+                            )
+                    )
+            )
+            .andExpect(
+                status().isNoContent()
+            )
+            /*
+             * 204 No Content 응답에는 JSON이나 문자열 본문이
+             * 포함되어서는 안된다.
+             */
+            .andExpect(
+                content().string("")
+            );
+
+        /*
+         * Controller는 입력받은 요청 DTO를 Service에 한 번 전달
+         *
+         * 이메일 소문자 정규화는 Service 책임이므로 Controller 단계에서는
+         * 입력된 대문자 이메일이 그대로 DTO에 담겨 전달
+         */
+        verify(passwordResetService)
+            .resetPassword(
+                new ResetPasswordRequest(
+                    "USER@EXAMPLE.COM"
+                )
+            );
+    }
+
+    @Test
+    @DisplayName("비밀번호 초기화 이메일이 공백이면 400을 반환한다")
+    void resetPassword_fail_whenEmailIsBlank()
+        throws Exception {
+
+        // given
+        Map<String, String> request =
+            Map.of(
+                "email",
+                "   "
+            );
+
+        // when & then
+        mockMvc.perform(
+                post(
+                    "/api/auth/reset-password"
+                )
+                    .contentType(
+                        "application/json"
+                    )
+                    .content(
+                        objectMapper
+                            .writeValueAsString(
+                                request
+                            )
+                    )
+            )
+            .andExpect(
+                status().isBadRequest()
+            )
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            )
+            .andExpect(
+                jsonPath("$.details.email")
+                    .exists()
+            );
+
+        /*
+         * @Valid 검증에서 요청이 차단되므로 사용자 조회,
+         * 비밀번호 변경 및 이메일 발송 Service를 호출하지 않는다.
+         */
+        verifyNoInteractions(
+            passwordResetService
+        );
+    }
+
+    @Test
+    @DisplayName("비밀번호 초기화 이메일 형식이 잘못되면 400을 반환한다")
+    void resetPassword_fail_whenEmailFormatIsInvalid()
+        throws Exception {
+
+        // given
+        Map<String, String> request =
+            Map.of(
+                "email",
+                "invalid-email"
+            );
+
+        // when & then
+        mockMvc.perform(
+                post(
+                    "/api/auth/reset-password"
+                )
+                    .contentType(
+                        "application/json"
+                    )
+                    .content(
+                        objectMapper
+                            .writeValueAsString(
+                                request
+                            )
+                    )
+            )
+            .andExpect(
+                status().isBadRequest()
+            )
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_400_1")
+            )
+            .andExpect(
+                jsonPath("$.details.email")
+                    .exists()
+            );
+
+        verifyNoInteractions(
+            passwordResetService
+        );
+    }
+
+    @Test
+    @DisplayName("비밀번호 초기화 대상 이메일이 존재하지 않으면 404를 반환한다")
+    void resetPassword_fail_whenUserDoesNotExist()
+        throws Exception {
+
+        // given
+        Map<String, String> request =
+            Map.of(
+                "email",
+                "missing@example.com"
+            );
+
+        /*
+         * 현재 OpenAPI 계약은 존재하지 않는 이메일을 404로 정의
+         * 실제 사용자 조회 규칙은 Service 테스트에서 별도로 검증
+         */
+        doThrow(
+            new BusinessException(
+                ErrorCode.RESOURCE_NOT_FOUND
+            )
+        )
+            .when(passwordResetService)
+            .resetPassword(
+                any(
+                    ResetPasswordRequest.class
+                )
+            );
+
+        // when & then
+        mockMvc.perform(
+                post(
+                    "/api/auth/reset-password"
+                )
+                    .contentType(
+                        "application/json"
+                    )
+                    .content(
+                        objectMapper
+                            .writeValueAsString(
+                                request
+                            )
+                    )
+            )
+            .andExpect(
+                status().isNotFound()
+            )
+            .andExpect(
+                content()
+                    .contentType(
+                        "application/json"
+                    )
+            )
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_404_1")
+            )
+            /*
+             * 존재하지 않는 이메일이 응답 본문에 그대로 노출되지
+             * 않는지 확인
+             */
+            .andExpect(
+                content().string(
+                    org.hamcrest.Matchers
+                        .not(
+                            org.hamcrest.Matchers
+                                .containsString(
+                                    "missing@example.com"
+                                )
+                        )
+                )
+            );
+
+        verify(passwordResetService)
+            .resetPassword(
+                new ResetPasswordRequest(
+                    "missing@example.com"
+                )
+            );
     }
 
     @Test

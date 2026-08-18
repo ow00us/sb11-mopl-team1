@@ -3495,6 +3495,8 @@ components:
       properties:
         email:
           type: "string"
+          format: "email"
+          maxLength: 100
           description: "임시 비밀번호를 발급받을 이메일"
       required:
         - "email"
