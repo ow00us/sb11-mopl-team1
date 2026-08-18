@@ -1,11 +1,10 @@
 package com.mopl.notification.kafka;
 
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.mopl.global.event.EventContractViolationException;
 import com.mopl.global.event.EventEnvelope;
 import com.mopl.notification.entity.NotificationLevel;
 import com.mopl.notification.entity.NotificationType;
@@ -72,6 +71,20 @@ class NotificationKafkaListenerTest {
             );
 
         when(
+            notificationEventMapper.supports(
+                envelope.type()
+            )
+        ).thenReturn(true);
+
+        when(
+            notificationEventMapper.map(envelope)
+        ).thenReturn(command);
+
+        when(
+            notificationService.createIfAbsent(command)
+        ).thenReturn(true);
+
+        when(
             notificationEventMapper.map(envelope)
         ).thenReturn(command);
 
@@ -91,13 +104,13 @@ class NotificationKafkaListenerTest {
     }
 
     @Test
-    @DisplayName("Kafka 이벤트 계약이 잘못되면 Service를 호출하지 않음")
-    void consume_contractViolation_fails() {
+    @DisplayName("알림 대상이 아닌 Kafka 이벤트는 정상적으로 건너뜀")
+    void consume_unsupportedType_skips() {
         // given
         EventEnvelope envelope =
             new EventEnvelope(
                 EVENT_ID,
-                "unsupported.created",
+                "playlist.created",
                 1,
                 Instant.parse(
                     "2026-08-14T01:00:00Z"
@@ -107,19 +120,20 @@ class NotificationKafkaListenerTest {
             );
 
         when(
-            notificationEventMapper.map(envelope)
-        ).thenThrow(
-            new EventContractViolationException(
-                "지원하지 않는 이벤트 타입입니다."
+            notificationEventMapper.supports(
+                envelope.type()
             )
-        );
+        ).thenReturn(false);
 
-        // when & then
-        assertThatThrownBy(() ->
-            notificationKafkaListener.consume(envelope)
-        ).isInstanceOf(
-            EventContractViolationException.class
-        );
+        // when
+        notificationKafkaListener.consume(envelope);
+
+        // then
+        verify(notificationEventMapper)
+            .supports(envelope.type());
+
+        verify(notificationEventMapper, never())
+            .map(envelope);
 
         verifyNoInteractions(notificationService);
     }

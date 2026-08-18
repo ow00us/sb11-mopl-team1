@@ -10,6 +10,7 @@ import com.mopl.notification.entity.NotificationType;
 import com.mopl.notification.kafka.payload.DirectMessageCreatedPayload;
 import com.mopl.notification.kafka.payload.FollowCreatedPayload;
 import com.mopl.notification.kafka.payload.PlaylistSubscriptionCreatedPayload;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -22,6 +23,11 @@ public class NotificationEventMapper {
     private static final String PLAYLIST_SUBSCRIPTION_CREATED = "playlist.subscription.created";
     private static final String DIRECT_MESSAGE_CREATED = "direct-message.created";
     private static final int MAX_CONTENT_PREVIEW_LENGTH = 100;
+    private static final Set<String> SUPPORTED_TYPES = Set.of(
+            FOLLOW_CREATED,
+            PLAYLIST_SUBSCRIPTION_CREATED,
+            DIRECT_MESSAGE_CREATED
+    );
 
     private final ObjectMapper objectMapper;
     private final NotificationUserReader notificationUserReader;
@@ -37,6 +43,12 @@ public class NotificationEventMapper {
                 "지원하지 않는 이벤트 타입입니다."
             );
         };
+    }
+
+    public boolean supports(
+        String type
+    ) {
+        return SUPPORTED_TYPES.contains(type);
     }
 
     private NotificationCreateCommand mapFollow(EventEnvelope envelope) {
