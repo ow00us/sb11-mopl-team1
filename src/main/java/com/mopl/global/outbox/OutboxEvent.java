@@ -70,6 +70,17 @@ public class OutboxEvent extends BaseEntity {
     @Column(name = "ordering_scope", updatable = false, nullable = false, length = 50)
     private String orderingScope;
 
+    /**
+     * 사건별 중복 기록 방지 키입니다.
+     *
+     * <p>예: {@code follow.created:<followId>}. UNIQUE 인덱스로 같은 사건의 두 번째 INSERT 를
+     * 데이터베이스가 거부합니다.
+     *
+     * <p>참조: docs/07-kafka-outbox-contract.md §9
+     */
+    @Column(name = "deduplication_key", updatable = false, nullable = false, length = 200)
+    private String deduplicationKey;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private OutboxStatus status;
@@ -111,6 +122,7 @@ public class OutboxEvent extends BaseEntity {
         String payload,
         String partitionKey,
         String orderingScope,
+        String deduplicationKey,
         Instant nextAttemptAt
     ) {
         this.eventId = eventId;
@@ -121,6 +133,7 @@ public class OutboxEvent extends BaseEntity {
         this.payload = payload;
         this.partitionKey = partitionKey;
         this.orderingScope = orderingScope;
+        this.deduplicationKey = deduplicationKey;
         this.status = OutboxStatus.PENDING;
         this.attempts = 0;
         this.nextAttemptAt = nextAttemptAt;

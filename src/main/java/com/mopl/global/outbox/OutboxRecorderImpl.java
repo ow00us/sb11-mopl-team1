@@ -39,13 +39,19 @@ public class OutboxRecorderImpl implements OutboxRecorder {
      */
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
-    public void record(EventEnvelope envelope, String partitionKey, String orderingScope) {
-        validate(envelope, partitionKey, orderingScope);
+    public void record(
+        EventEnvelope envelope,
+        String partitionKey,
+        String orderingScope,
+        String deduplicationKey
+    ) {
+        validate(envelope, partitionKey, orderingScope, deduplicationKey);
 
         Instant recordedAt = Instant.now();
 
-        // flush 를 미루지 않습니다. eventId 중복 같은 제약 위반이 커밋 시점이 아니라 이 지점에서
-        // 드러나 스택 트레이스가 원인을 가리킵니다. 어차피 트랜잭션 전체가 롤백됩니다.
+        // flush 를 미루지 않습니다. eventId·deduplicationKey 중복 같은 제약 위반이 커밋 시점이
+        // 아니라 이 지점에서 드러나 스택 트레이스가 원인을 가리킵니다. 어차피 트랜잭션 전체가
+        // 롤백됩니다.
         outboxEventRepository.saveAndFlush(new OutboxEvent(
             envelope.eventId(),
             envelope.type(),
@@ -55,11 +61,12 @@ public class OutboxRecorderImpl implements OutboxRecorder {
             envelope.payload().toString(),
             partitionKey,
             orderingScope,
+            deduplicationKey,
             // 기록 즉시 발행 대상이 되도록 둡니다. 재시도 지연은 relay 가 정합니다.
             recordedAt));
 
-        log.debug("Outbox 기록. eventId={}, type={}, partitionKey={}",
-            envelope.eventId(), envelope.type(), partitionKey);
+        log.debug("Outbox 기록. eventId={}, type={}, partitionKey={}, deduplicationKey={}",
+            envelope.eventId(), envelope.type(), partitionKey, deduplicationKey);
     }
 
     /**
@@ -69,7 +76,12 @@ public class OutboxRecorderImpl implements OutboxRecorder {
      * 그 시점에는 되돌릴 수 없고 DLT 에서 원인을 되짚어야 합니다. 기록 시점이 가장 싸게
      * 막을 수 있는 자리입니다.
      */
-    private void validate(EventEnvelope envelope, String partitionKey, String orderingScope) {
+    private void validate(
+        EventEnvelope envelope,
+        String partitionKey,
+        String orderingScope,
+        String deduplicationKey
+    ) {
         if (envelope == null) {
             throw new EventContractViolationException("envelope 이 null 입니다.");
         }
@@ -80,6 +92,7 @@ public class OutboxRecorderImpl implements OutboxRecorder {
         requireText(envelope.type(), "type");
         requireText(partitionKey, "partitionKey");
         requireText(orderingScope, "orderingScope");
+        requireText(deduplicationKey, "deduplicationKey");
 
         if (envelope.version() < MINIMUM_SUPPORTED_VERSION) {
             throw new EventContractViolationException(

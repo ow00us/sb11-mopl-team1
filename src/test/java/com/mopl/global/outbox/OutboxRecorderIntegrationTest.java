@@ -138,7 +138,8 @@ class OutboxRecorderIntegrationTest {
 
         // REQUIRED 였다면 기록만 혼자 커밋됩니다. 도메인 변경이 뒤이어 실패해도 이벤트는
         // 남아, 일어나지 않은 일의 알림이 발행됩니다. 그래서 조용히 성공시키지 않습니다.
-        assertThatThrownBy(() -> outboxRecorder.record(event, "key", "NONE"))
+        assertThatThrownBy(() -> outboxRecorder.record(
+            event, "key", "NONE", "test.no-tx:" + event.eventId()))
             .isInstanceOf(IllegalTransactionStateException.class);
 
         assertThat(outboxEventRepository.count()).isZero();
@@ -163,10 +164,11 @@ class OutboxRecorderIntegrationTest {
     @DisplayName("파티션 키나 순서 범위가 비면 거부한다")
     void missingRoutingInformation_isRejected() {
         EventEnvelope event = envelope();
+        String dedupKey = "test.routing:" + event.eventId();
 
-        assertThatThrownBy(() -> domainCaller.recordWithRouting(event, " ", "NONE"))
+        assertThatThrownBy(() -> domainCaller.recordWithRouting(event, " ", "NONE", dedupKey))
             .isInstanceOf(EventContractViolationException.class);
-        assertThatThrownBy(() -> domainCaller.recordWithRouting(event, "key", ""))
+        assertThatThrownBy(() -> domainCaller.recordWithRouting(event, "key", "", dedupKey))
             .isInstanceOf(EventContractViolationException.class);
 
         assertThat(outboxEventRepository.count()).isZero();
@@ -268,7 +270,8 @@ class OutboxRecorderIntegrationTest {
             processedEventRepository.save(
                 new ProcessedEvent("domain-change", UUID.randomUUID(), "domain"));
 
-            outboxRecorder.record(envelope, "partition-key", "NONE");
+            outboxRecorder.record(
+                envelope, "partition-key", "NONE", "test.event:" + envelope.eventId());
 
             if (failAfterRecord) {
                 throw new IllegalStateException("도메인 처리 실패");
@@ -277,8 +280,8 @@ class OutboxRecorderIntegrationTest {
 
         @Transactional
         public void recordWithRouting(EventEnvelope envelope, String partitionKey,
-            String orderingScope) {
-            outboxRecorder.record(envelope, partitionKey, orderingScope);
+            String orderingScope, String deduplicationKey) {
+            outboxRecorder.record(envelope, partitionKey, orderingScope, deduplicationKey);
         }
     }
 }

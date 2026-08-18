@@ -23,7 +23,8 @@ import com.mopl.global.event.EventEnvelope;
  * public FollowResult follow(UUID followerId, UUID followeeId) {
  *     FollowResult result = ...;
  *     if (result.created()) {                     // 실제로 새 관계가 생긴 경우에만
- *         outboxRecorder.record(envelope, followId.toString(), "NONE");
+ *         outboxRecorder.record(
+ *             envelope, followId.toString(), "NONE", "follow.created:" + followId);
  *     }
  *     return result;
  * }
@@ -34,17 +35,23 @@ import com.mopl.global.event.EventEnvelope;
  *
  * <p><b>eventId 는 호출자가 만들고 재시도해도 바꾸지 않습니다.</b> 이 값이 소비자 멱등
  * 판정의 기준이고, relay 가 재발행해도 유지됩니다.
+ *
+ * <p><b>deduplicationKey 는 사건별로 유일합니다.</b> 같은 도메인 사건으로 Outbox 가 두 번
+ * 생성되지 않도록 사건 식별자를 접두어와 함께 만듭니다(예: {@code follow.created:<followId>}).
+ * UNIQUE 인덱스가 두 번째 INSERT 를 데이터베이스에서 거부합니다.
  */
 public interface OutboxRecorder {
 
     /**
      * envelope 를 Outbox 에 기록합니다.
      *
-     * @param envelope       기록할 이벤트. 필수 필드와 버전을 검증합니다.
-     * @param partitionKey   이벤트 카탈로그가 정한 파티션 키
-     * @param orderingScope  그 키로 보장하는 순서 범위. {@code NONE}, {@code AGGREGATE} 또는 업무 키 이름
-     * @throws com.mopl.global.event.EventContractViolationException envelope 가 계약을 만족하지 않으면
+     * @param envelope         기록할 이벤트. 필수 필드와 버전을 검증합니다.
+     * @param partitionKey     이벤트 카탈로그가 정한 파티션 키
+     * @param orderingScope    그 키로 보장하는 순서 범위. {@code NONE}, {@code AGGREGATE} 또는 업무 키 이름
+     * @param deduplicationKey 사건별 중복 기록 방지 키. 예: {@code follow.created:<followId>}
+     * @throws com.mopl.global.event.EventContractViolationException envelope 또는 파라미터가 계약을 만족하지 않으면
      * @throws org.springframework.transaction.IllegalTransactionStateException 도메인 트랜잭션 없이 호출하면
      */
-    void record(EventEnvelope envelope, String partitionKey, String orderingScope);
+    void record(
+        EventEnvelope envelope, String partitionKey, String orderingScope, String deduplicationKey);
 }

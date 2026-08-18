@@ -62,6 +62,7 @@ class OutboxEventRepositoryIntegrationTest {
             payload,
             partitionKey,
             "NONE",
+            "test.pending:" + UUID.randomUUID(),
             occurredAt);
     }
 
@@ -80,7 +81,7 @@ class OutboxEventRepositoryIntegrationTest {
         OutboxEvent saved = outboxEventRepository.saveAndFlush(new OutboxEvent(
             eventId, "premiere.upcoming", 2, aggregateId, occurredAt,
             "{\"contentId\":\"c1\",\"startsAt\":\"2026-08-14T04:00:00Z\"}",
-            "content-1", "contentId", occurredAt));
+            "content-1", "contentId", "premiere.upcoming:" + eventId, occurredAt));
 
         OutboxEvent found = outboxEventRepository.findByEventId(eventId).orElseThrow();
 
@@ -91,6 +92,7 @@ class OutboxEventRepositoryIntegrationTest {
         assertThat(found.getOccurredAt()).isEqualTo(occurredAt);
         assertThat(found.getPartitionKey()).isEqualTo("content-1");
         assertThat(found.getOrderingScope()).isEqualTo("contentId");
+        assertThat(found.getDeduplicationKey()).isEqualTo("premiere.upcoming:" + eventId);
 
         assertThat(found.getStatus()).isEqualTo(OutboxStatus.PENDING);
         assertThat(found.getAttempts()).isZero();
@@ -117,7 +119,7 @@ class OutboxEventRepositoryIntegrationTest {
         outboxEventRepository.saveAndFlush(new OutboxEvent(
             eventId, "premiere.upcoming", 1, UUID.randomUUID(),
             Instant.parse("2026-08-14T03:00:00Z"), payload,
-            "content-1", "contentId",
+            "content-1", "contentId", "premiere.upcoming:" + eventId,
             Instant.parse("2026-08-14T03:00:00Z")));
 
         String stored = outboxEventRepository.findByEventId(eventId).orElseThrow().getPayload();
@@ -140,7 +142,7 @@ class OutboxEventRepositoryIntegrationTest {
         outboxEventRepository.saveAndFlush(new OutboxEvent(
             eventId, "premiere.upcoming", 1, UUID.randomUUID(), occurredAt,
             "{\"contentId\":\"c1\",\"nested\":{\"depth\":2}}",
-            "content-1", "contentId", occurredAt));
+            "content-1", "contentId", "premiere.upcoming:" + eventId, occurredAt));
 
         // jsonb 를 택한 이유가 운영 조회와 replay 도구의 내용 확인입니다. 값이 JSON 문자열로
         // 이중 인코딩되면 이 연산자가 동작하지 않으므로, 타입 매핑을 여기서 고정합니다.
@@ -163,11 +165,12 @@ class OutboxEventRepositoryIntegrationTest {
 
         outboxEventRepository.saveAndFlush(new OutboxEvent(
             eventId, "follow.created", 1, UUID.randomUUID(), occurredAt,
-            "{}", "k1", "NONE", occurredAt));
+            "{}", "k1", "NONE", "follow.created:" + UUID.randomUUID(), occurredAt));
 
+        // dedup key 를 다르게 두어 UNIQUE 위반이 event_id 로 인해 발생함을 명확히 합니다.
         assertThatThrownBy(() -> outboxEventRepository.saveAndFlush(new OutboxEvent(
             eventId, "follow.created", 1, UUID.randomUUID(), occurredAt,
-            "{}", "k2", "NONE", occurredAt)))
+            "{}", "k2", "NONE", "follow.created:" + UUID.randomUUID(), occurredAt)))
             .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -265,6 +268,7 @@ class OutboxEventRepositoryIntegrationTest {
             "idx_outbox_events_pending",
             "idx_outbox_events_claim_expires_at",
             "idx_outbox_events_partition_order",
-            "uk_outbox_events_event_id");
+            "uk_outbox_events_event_id",
+            "uk_outbox_events_deduplication_key");
     }
 }
