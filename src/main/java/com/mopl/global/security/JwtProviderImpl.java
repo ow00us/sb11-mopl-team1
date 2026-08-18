@@ -5,12 +5,12 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
-import io.jsonwebtoken.security.Keys;
 import java.time.Instant;
 import java.util.Date;
 import java.util.List;
 import java.util.UUID;
 import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -28,6 +28,14 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class JwtProviderImpl implements JwtProvider {
+
+    /**
+     * JWT 서명에 사용하는 고정 JCA 알고리즘 이름
+     *
+     * <p>Secret 길이에 따라 JJWT가 HS384 또는 HS512를 자동 선택하지
+     * 않도록 서비스의 JWT 계약인 HS256을 명시적으로 사용합니다.</p>
+     */
+    private static final String HMAC_SHA_256 = "HmacSHA256";
 
     private static final String ROLE_CLAIM = "role";
 
@@ -155,22 +163,49 @@ public class JwtProviderImpl implements JwtProvider {
     }
 
     /**
-     * JWT에서 검증을 마친 사용자 식별값과 역할만 보관하는 내부 값 객체
+     * JWT에서 검증을 마친 사용자 식별값과 역할을 보관하는 내부 값 객체
      *
-     * Claims 전체를 밖으로 넘기지 않아 Authentication 생성에 필요한 값만 사용
+     * <p>파싱된 Claims 전체를 외부로 전달하지 않고,
+     * Authentication 생성에 필요한 사용자 UUID와 역할만 전달합니다.</p>
+     *
+     * @param userId JWT subject에서 복원한 사용자 UUID
+     * @param role   JWT role 클레임에서 복원한 사용자 역할
      */
-    private record TokenClaims(UUID userId, UserRole role) {
+    private record TokenClaims(
+        UUID userId,
+        UserRole role
+    ) {
     }
 
     /**
-     * Base64 형식 비밀키를 HMAC 서명용 SecretKey로 변환합니다.
+     * Base64 형식의 비밀키를 HS256 서명용 SecretKey로 변환
      *
-     * 이 메서드는 생성자에서 한 번만 호출되고,
-     * 이후 토큰 발급과 검증은 캐시된 signingKey 필드를 재사용합니다.
+     * <p>{@code Keys.hmacShaKeyFor()}는 키 길이에 따라 HS256, HS384,
+     * HS512 중 하나를 자동으로 선택합니다. 그러면 배포 환경에 주입된
+     * Secret 길이에 따라 JWT 헤더의 alg 값이 달라질 수 있습니다.</p>
+     *
+     * <p>이 서비스의 JWT 계약은 HS256이므로 Secret 길이와 관계없이
+     * JCA 알고리즘을 HmacSHA256으로 명시합니다. Secret은
+     * {@link JwtProperties}에서 Base64 형식과 최소 32바이트 길이를
+     * 애플리케이션 시작 시점에 검증합니다.</p>
+     *
+     * @param secret Base64로 인코딩된 JWT Secret
+     * @return HS256 서명과 검증에 사용할 SecretKey
      */
     private static SecretKey createSigningKey(String secret) {
-        byte[] keyBytes = Decoders.BASE64.decode(secret);
+        byte[] keyBytes =
+            Decoders.BASE64.decode(secret);
 
-        return Keys.hmacShaKeyFor(keyBytes);
+        /*
+         * 키 길이에 따른 JJWT의 자동 알고리즘 선택을 사용하지 않고,
+         * 서비스 계약인 HmacSHA256을 명시적으로 지정
+         *
+         * 32바이트보다 긴 Secret도 전체 바이트를 키 재료로 사용하며
+         * 서명 알고리즘만 HS256으로 고정
+         */
+        return new SecretKeySpec(
+            keyBytes,
+            HMAC_SHA_256
+        );
     }
 }

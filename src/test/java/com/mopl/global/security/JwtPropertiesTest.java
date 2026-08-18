@@ -250,6 +250,30 @@ class JwtPropertiesTest {
     }
 
     @Test
+    @DisplayName("JWT Secret의 디코딩 결과가 32바이트보다 길어도 허용한다")
+    void validate_success_whenDecodedSecretIsLongerThan32Bytes() {
+        // given
+        JwtProperties properties =
+            createValidProperties();
+
+        /*
+         * 48바이트 Secret도 충분한 길이의 키이므로 허용
+         * JwtProviderImpl은 Secret 길이와 관계없이
+         * 서명 알고리즘을 HS256으로 고정
+         */
+        properties.setSecret(
+            encodeSecretWithLength(48)
+        );
+
+        // when
+        Set<ConstraintViolation<JwtProperties>> violations =
+            validator.validate(properties);
+
+        // then
+        assertThat(violations).isEmpty();
+    }
+
+    @Test
     @DisplayName("Access Token 만료 시간이 null이면 검증에 실패한다")
     void validate_fail_whenAccessTokenExpirationIsNull() {
         // given
