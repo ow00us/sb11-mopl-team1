@@ -2,22 +2,31 @@ package com.mopl.notification.kafka;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.verify;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.event.EventEnvelope;
 import com.mopl.global.event.MoplTopics;
+import com.mopl.notification.dto.NotificationDto;
 import com.mopl.notification.entity.Notification;
 import com.mopl.notification.entity.NotificationLevel;
 import com.mopl.notification.entity.NotificationType;
 import com.mopl.notification.repository.NotificationRepository;
+import com.mopl.sse.service.SseEmitterManager;
+import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
-import java.sql.Timestamp;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -25,6 +34,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.containers.KafkaContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -94,8 +104,13 @@ class NotificationKafkaIntegrationTest {
     @Autowired
     NotificationRepository notificationRepository;
 
+    @MockitoBean
+    SseEmitterManager sseEmitterManager;
+
     @BeforeEach
     void setUp() {
+        notificationRepository.deleteAll();
+
         insertUser(
             SENDER_ID,
             "sender@example.com",
@@ -116,29 +131,7 @@ class NotificationKafkaIntegrationTest {
 
         // given
         EventEnvelope envelope =
-            new EventEnvelope(
-                EVENT_ID,
-                "direct-message.created",
-                1,
-                Instant.parse(
-                    "2026-08-14T01:00:00Z"
-                ),
-                DIRECT_MESSAGE_ID,
-                objectMapper.valueToTree(
-                    Map.of(
-                        "directMessageId",
-                        DIRECT_MESSAGE_ID,
-                        "conversationId",
-                        CONVERSATION_ID,
-                        "senderId",
-                        SENDER_ID,
-                        "receiverId",
-                        RECEIVER_ID,
-                        "contentPreview",
-                        "안녕하세요"
-                    )
-                )
-            );
+            directMessageCreatedEnvelope();
 
         // when
         eventKafkaTemplate.send(
@@ -195,6 +188,120 @@ class NotificationKafkaIntegrationTest {
 
         assertThat(saved.getLevel())
             .isEqualTo(NotificationLevel.INFO);
+    }
+
+    @Test
+    @DisplayName(
+        "Kafka DM 이벤트로 저장된 알림을 "
+            + "커밋 이후 SSE로 전송"
+    )
+    void consume_directMessageCreated_sendsSseAfterCommit()
+        throws Exception {
+
+        // given
+        EventEnvelope envelope =
+            directMessageCreatedEnvelope();
+
+        AtomicBoolean committedBeforeSse =
+            new AtomicBoolean(false);
+
+        doAnswer(invocation -> {
+            UUID notificationId =
+                invocation.getArgument(1);
+
+            committedBeforeSse.set(
+                notificationRepository.existsById(
+                    notificationId
+                )
+            );
+
+            return null;
+        }).when(sseEmitterManager).send(
+            any(UUID.class),
+            any(UUID.class),
+            anyString(),
+            any()
+        );
+
+        // when
+        eventKafkaTemplate.send(
+            MoplTopics.DIRECT_MESSAGE_EVENTS,
+            DIRECT_MESSAGE_ID.toString(),
+            envelope
+        ).get();
+
+        // then
+        ArgumentCaptor<UUID> eventIdCaptor =
+            ArgumentCaptor.forClass(UUID.class);
+
+        ArgumentCaptor<NotificationDto>
+            notificationCaptor =
+                ArgumentCaptor.forClass(
+                    NotificationDto.class
+                );
+
+        await()
+            .atMost(TIMEOUT)
+            .untilAsserted(() ->
+                verify(sseEmitterManager).send(
+                    eq(RECEIVER_ID),
+                    eventIdCaptor.capture(),
+                    eq("notifications"),
+                    notificationCaptor.capture()
+                )
+            );
+
+        NotificationDto notification =
+            notificationCaptor.getValue();
+
+        assertThat(committedBeforeSse.get())
+            .isTrue();
+
+        assertThat(eventIdCaptor.getValue())
+            .isEqualTo(notification.id());
+
+        assertThat(notification.receiverId())
+            .isEqualTo(RECEIVER_ID);
+
+        assertThat(notification.type())
+            .isEqualTo(
+                NotificationType.DIRECT_MESSAGE
+            );
+
+        assertThat(notification.resourceId())
+            .isEqualTo(CONVERSATION_ID);
+
+        assertThat(notification.title())
+            .isEqualTo("[DM] 발신자");
+
+        assertThat(notification.content())
+            .isEqualTo("안녕하세요");
+    }
+
+    private EventEnvelope directMessageCreatedEnvelope() {
+        return new EventEnvelope(
+            EVENT_ID,
+            "direct-message.created",
+            1,
+            Instant.parse(
+                "2026-08-14T01:00:00Z"
+            ),
+            DIRECT_MESSAGE_ID,
+            objectMapper.valueToTree(
+                Map.of(
+                    "directMessageId",
+                    DIRECT_MESSAGE_ID,
+                    "conversationId",
+                    CONVERSATION_ID,
+                    "senderId",
+                    SENDER_ID,
+                    "receiverId",
+                    RECEIVER_ID,
+                    "contentPreview",
+                    "안녕하세요"
+                )
+            )
+        );
     }
 
     private Long countNotification(
