@@ -151,6 +151,13 @@ mopl:
       # broker 확인을 기다리는 한도입니다. 넘으면 실패로 보고 다음 주기에 다시 시도합니다.
       ack-timeout: ${OUTBOX_RELAY_ACK_TIMEOUT:10s}
 
+  realtime:
+    relay:
+      # Redis 없이 다른 기능을 개발할 때 false 로 두면 구독 재연결이 반복되지 않습니다.
+      enabled: ${REALTIME_RELAY_ENABLED:true}
+      # 기동 시점에 Redis 가 준비되지 않았을 때 구독을 다시 시도하는 간격입니다.
+      subscribe-retry-interval: ${REALTIME_RELAY_SUBSCRIBE_RETRY_INTERVAL:30000}
+
 app:
   cors:
     # 콤마로 구분한 브라우저 REST API 허용 origin 목록

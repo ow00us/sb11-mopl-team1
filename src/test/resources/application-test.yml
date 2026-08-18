@@ -32,6 +32,12 @@ mopl:
       # 테스트는 컴포넌트를 직접 만들어 호출합니다.
       enabled: false
 
+  realtime:
+    relay:
+      # Redis 를 띄우지 않는 대다수 테스트가 구독 재연결을 반복하지 않도록 끕니다.
+      # 중계 통합 테스트가 자기 클래스에서만 다시 켭니다.
+      enabled: false
+
 jwt:
   secret: MVB4n0vCRFADVbcto73tHp0Ghw2bWmriymBGLOuR2Q4=
 
