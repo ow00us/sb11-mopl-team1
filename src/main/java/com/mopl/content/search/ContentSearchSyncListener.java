@@ -2,8 +2,13 @@ package com.mopl.content.search;
 
 import com.mopl.content.entity.Content;
 import com.mopl.content.repository.ContentRepository;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
+import org.springframework.data.elasticsearch.core.document.Document;
+import org.springframework.data.elasticsearch.core.mapping.IndexCoordinates;
+import org.springframework.data.elasticsearch.core.query.UpdateQuery;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -18,9 +23,12 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @RequiredArgsConstructor
 public class ContentSearchSyncListener {
 
+    private static final IndexCoordinates CONTENTS_INDEX = IndexCoordinates.of("contents");
+
     private final ContentRepository contentRepository;
     private final ContentSearchRepository contentSearchRepository;
     private final ContentDocumentMapper contentDocumentMapper;
+    private final ElasticsearchOperations elasticsearchOperations;
 
     @Async("contentSearchSyncExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -32,11 +40,17 @@ public class ContentSearchSyncListener {
                 return;
             }
 
-            ContentDocument existing = contentSearchRepository.findById(content.getId().toString())
-                    .orElse(null);
+            String id = content.getId().toString();
+            if (!contentSearchRepository.existsById(id)) {
+                contentSearchRepository.save(contentDocumentMapper.toNewDocument(content));
+                return;
+            }
 
-            ContentDocument document = contentDocumentMapper.toDocument(content, existing);
-            contentSearchRepository.save(document);
+            Map<String, Object> updateFields = contentDocumentMapper.toUpdateFields(content);
+            UpdateQuery updateQuery = UpdateQuery.builder(id)
+                    .withDocument(Document.from(updateFields))
+                    .build();
+            elasticsearchOperations.update(updateQuery, CONTENTS_INDEX);
         } catch (Exception e) {
             log.warn("콘텐츠 검색 색인 동기화 실패. contentId={}", event.contentId(), e);
         }
