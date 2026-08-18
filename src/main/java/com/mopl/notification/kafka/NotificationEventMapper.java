@@ -10,10 +10,16 @@ import com.mopl.notification.entity.NotificationType;
 import com.mopl.notification.kafka.payload.DirectMessageCreatedPayload;
 import com.mopl.notification.kafka.payload.FollowCreatedPayload;
 import com.mopl.notification.kafka.payload.PlaylistSubscriptionCreatedPayload;
-import java.util.Set;
+
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
+
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class NotificationEventMapper {
@@ -32,7 +38,38 @@ public class NotificationEventMapper {
     private final ObjectMapper objectMapper;
     private final NotificationUserReader notificationUserReader;
 
-    public NotificationCreateCommand map(EventEnvelope envelope) {
+    private String normalizeContentPreview(
+        String contentPreview,
+        UUID eventId
+    ) {
+        int length = contentPreview.codePointCount(0, contentPreview.length());
+
+        if (length <= MAX_CONTENT_PREVIEW_LENGTH) {
+            return contentPreview;
+        }
+
+        log.warn(
+            "DM contentPreview 길이 초과: "
+                + "eventId={}, length={}",
+            eventId,
+            length
+        );
+
+        int endIndex =
+            contentPreview.offsetByCodePoints(
+                0,
+                MAX_CONTENT_PREVIEW_LENGTH
+            );
+
+        return contentPreview.substring(
+            0,
+            endIndex
+        );
+    }
+
+    public Optional<NotificationCreateCommand> map(
+        EventEnvelope envelope
+    ) {
         validateEnvelope(envelope);
 
         return switch (envelope.type()) {
@@ -51,7 +88,9 @@ public class NotificationEventMapper {
         return SUPPORTED_TYPES.contains(type);
     }
 
-    private NotificationCreateCommand mapFollow(EventEnvelope envelope) {
+    private Optional<NotificationCreateCommand> mapFollow(
+        EventEnvelope envelope
+    ) {
         FollowCreatedPayload payload =
             convertPayload(
                 envelope.payload(),
@@ -68,24 +107,54 @@ public class NotificationEventMapper {
             "followeeId"
         );
 
-        String followerName =
-            notificationUserReader.getName(
+        if (!notificationUserReader.exists(
+            payload.followeeId()
+        )) {
+            log.info(
+                "알림 수신자가 존재하지 않아 생략: "
+                    + "eventId={}, receiverId={}",
+                envelope.eventId(),
+                payload.followeeId()
+            );
+
+            return Optional.empty();
+        }
+
+        Optional<String> followerName =
+            notificationUserReader.findName(
                 payload.followerId()
             );
 
-        return new NotificationCreateCommand(
-            payload.followeeId(),
-            envelope.eventId(),
-            NotificationType.FOLLOW,
-            payload.followerId(),
-            envelope.aggregateId(),
-            "[팔로우] " + followerName,
-            followerName + "님이 회원님을 팔로우했습니다.",
-            NotificationLevel.INFO
+        if (followerName.isEmpty()) {
+            log.info(
+                "알림 행위자가 존재하지 않아 생략: "
+                    + "eventId={}, actorId={}",
+                envelope.eventId(),
+                payload.followerId()
             );
+
+            return Optional.empty();
+        }
+
+        return Optional.of(
+            new NotificationCreateCommand(
+                payload.followeeId(),
+                envelope.eventId(),
+                NotificationType.FOLLOW,
+                payload.followerId(),
+                envelope.aggregateId(),
+                "[팔로우] " + followerName.get(),
+                followerName.get()
+                    + "님이 회원님을 팔로우했습니다.",
+                NotificationLevel.INFO
+            )
+        );
     }
 
-    private NotificationCreateCommand mapPlaylistSubscription(EventEnvelope envelope) {
+    private Optional<NotificationCreateCommand>
+        mapPlaylistSubscription(
+            EventEnvelope envelope
+        ) {
 
         PlaylistSubscriptionCreatedPayload payload =
             convertPayload(
@@ -108,24 +177,54 @@ public class NotificationEventMapper {
             "subscriberId"
         );
 
-        String subscriberName =
-            notificationUserReader.getName(
+        if (!notificationUserReader.exists(
+            payload.playlistOwnerId()
+        )) {
+            log.info(
+                "알림 수신자가 존재하지 않아 생략: "
+                    + "eventId={}, receiverId={}",
+                envelope.eventId(),
+                payload.playlistOwnerId()
+            );
+
+            return Optional.empty();
+        }
+
+        Optional<String> subscriberName =
+            notificationUserReader.findName(
                 payload.subscriberId()
             );
 
-        return new NotificationCreateCommand(
-            payload.playlistOwnerId(),
-            envelope.eventId(),
-            NotificationType.PLAYLIST_SUBSCRIPTION,
-            payload.playlistId(),
-            envelope.aggregateId(),
-            "[플레이리스트 구독] " + subscriberName,
-            subscriberName + "님이 플레이리스트를 구독했습니다.",
-            NotificationLevel.INFO
+        if (subscriberName.isEmpty()) {
+            log.info(
+                "알림 행위자가 존재하지 않아 생략: "
+                    + "eventId={}, actorId={}",
+                envelope.eventId(),
+                payload.subscriberId()
+            );
+
+            return Optional.empty();
+        }
+
+        return Optional.of(
+            new NotificationCreateCommand(
+                payload.playlistOwnerId(),
+                envelope.eventId(),
+                NotificationType.PLAYLIST_SUBSCRIPTION,
+                payload.playlistId(),
+                envelope.aggregateId(),
+                "[플레이리스트 구독] "
+                    + subscriberName.get(),
+                subscriberName.get()
+                    + "님이 플레이리스트를 구독했습니다.",
+                NotificationLevel.INFO
+            )
         );
     }
 
-    private NotificationCreateCommand mapDirectMessage(EventEnvelope envelope) {
+    private Optional<NotificationCreateCommand> mapDirectMessage(
+        EventEnvelope envelope
+    ) {
 
         DirectMessageCreatedPayload payload =
             convertPayload(
@@ -158,12 +257,11 @@ public class NotificationEventMapper {
             "contentPreview"
         );
 
-        if (payload.contentPreview().length() > MAX_CONTENT_PREVIEW_LENGTH) {
-
-            throw new EventContractViolationException(
-                "contentPreview는 100자 이하여야 합니다."
+        String contentPreview =
+            normalizeContentPreview(
+                payload.contentPreview(),
+                envelope.eventId()
             );
-        }
 
         if (!envelope.aggregateId().equals(payload.directMessageId())) {
             throw new EventContractViolationException(
@@ -172,20 +270,46 @@ public class NotificationEventMapper {
             );
         }
 
-        String senderName =
-            notificationUserReader.getName(
+        if (!notificationUserReader.exists(
+            payload.receiverId()
+        )) {
+            log.info(
+                "알림 수신자가 존재하지 않아 생략: "
+                    + "eventId={}, receiverId={}",
+                envelope.eventId(),
+                payload.receiverId()
+            );
+
+            return Optional.empty();
+        }
+
+        Optional<String> senderName =
+            notificationUserReader.findName(
                 payload.senderId()
             );
 
-        return new NotificationCreateCommand(
-            payload.receiverId(),
-            envelope.eventId(),
-            NotificationType.DIRECT_MESSAGE,
-            payload.conversationId(),
-            payload.directMessageId(),
-            "[DM] " + senderName,
-            payload.contentPreview(),
-            NotificationLevel.INFO
+        if (senderName.isEmpty()) {
+            log.info(
+                "알림 행위자가 존재하지 않아 생략: "
+                    + "eventId={}, actorId={}",
+                envelope.eventId(),
+                payload.senderId()
+            );
+
+            return Optional.empty();
+        }
+
+        return Optional.of(
+            new NotificationCreateCommand(
+                payload.receiverId(),
+                envelope.eventId(),
+                NotificationType.DIRECT_MESSAGE,
+                payload.conversationId(),
+                payload.directMessageId(),
+                "[DM] " + senderName.get(),
+                contentPreview,
+                NotificationLevel.INFO
+            )
         );
     }
 

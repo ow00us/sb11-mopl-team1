@@ -37,8 +37,9 @@ public class NotificationKafkaListener {
             return;
         }
 
-        NotificationCreateCommand command = notificationEventMapper.map(envelope);
-
-        notificationService.createIfAbsent(command);
+        notificationEventMapper.map(envelope)
+            .ifPresent(
+                notificationService::createIfAbsent
+            );
     }
 }

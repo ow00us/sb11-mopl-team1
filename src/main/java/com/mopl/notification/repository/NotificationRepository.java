@@ -48,7 +48,7 @@ public interface NotificationRepository extends JpaRepository<Notification, UUID
                 content,
                 level
             )
-            VALUES (
+            SELECT
                 :notificationId,
                 :createdAt,
                 :createdAt,
@@ -60,6 +60,10 @@ public interface NotificationRepository extends JpaRepository<Notification, UUID
                 :title,
                 :content,
                 :level
+            WHERE EXISTS (
+                SELECT 1
+                FROM users
+                WHERE id = :receiverId
             )
             ON CONFLICT (
                 source_event_id,
