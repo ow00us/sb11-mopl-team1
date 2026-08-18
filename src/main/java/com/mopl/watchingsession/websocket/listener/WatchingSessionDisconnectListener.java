@@ -2,9 +2,9 @@ package com.mopl.watchingsession.websocket.listener;
 
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.service.WatchingSessionService;
-import com.mopl.watchingsession.websocket.stompsession.WatchSubscriptionAttributes;
 import com.mopl.watchingsession.websocket.broadcast.WatchingSessionBroadcaster;
 import java.security.Principal;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +22,12 @@ import org.springframework.web.socket.messaging.SessionDisconnectEvent;
  * 다만 브로드캐스트 대상 destination(/sub/contents/{contentId}/watch)을 정하려면
  * contentId가 필요하므로, end() 호출 전에 get()으로 세션 정보(watchingSession.content.id)를
  * 먼저 확보해둔다
+ *
+ * 소유권 판정은 sessionId만으로 한다(WatchingSessionService#endByConnection).
+ * 연결이 끊기면 그 연결에 딸린 모든 구독이 함께 끊기므로, 이 연결에서 마지막에 활성이던
+ * subscriptionId가 무엇이었는지는 판정에 필요하지 않다. 과거에는 세션 attribute에 기록해둔
+ * activeSubscriptionId를 조회해 함께 비교했지만, activate()가 SUBSCRIBE 처리(start()) 성공
+ * 후에야 호출되는 반면 presence는 start() 도중 이미 갱신되어 두 시점이 어긋날 수 있었다.
  */
 @Slf4j
 @Component
@@ -50,32 +56,17 @@ public class WatchingSessionDisconnectListener {
             return;
         }
 
-        // 이 연결에서 마지막으로 활성이던 subscriptionId를 세션 attribute에서 조회해 end()에 함께 넘긴다.
-        // 활성 구독이 없었다면(한 번도 watch 토픽을 구독하지 않은 연결) null이 되어 end()의 소유권 비교는 항상 실패해 안전하게 무동작 처리된다.
-        String activeSubscriptionId = WatchSubscriptionAttributes.currentActiveSubscriptionId(accessor);
+        // 삭제 대상과 브로드캐스트 대상이 반드시 같은 스냅샷이 되도록, 별도 get() 없이
+        // endByConnection()이 반환하는 DTO(삭제를 확정한 그 snapshotId 기준)만 사용한다.
+        Optional<WatchingSessionDto> ended = watchingSessionService.endByConnection(watcherId, sessionId);
 
-        // end()가 DB에서 세션을 지우기 전에 브로드 캐스트에 필요한 세션 정보 확보
-        WatchingSessionDto session = watchingSessionService.get(watcherId).orElse(null);
-
-        // 이미 없는 걸 알고있으니 불필요한 DB 호출 없게 얼리 리턴으로 정리
-        if (session == null) {
-            return;
-        }
-
-        // 이 sessionId가 지금도 이 watcherId의 세션 소유자인 경우에만 실제로 삭제됨
-        // 이미 다른 연결로 소유권이 넘어갔다면 삭제/브로드캐스트 하지 않음
-        boolean actuallyDeleted = watchingSessionService.end(watcherId, sessionId, activeSubscriptionId);
-
-        if (actuallyDeleted) {
-            // WatchingSessionBroadcaster는 정상적으로는 실패를 내부에서 격리하지만 이 리스너 입장에서 그 보장을 전제할 수는 없으므로 두는 마지막 방어선
-            // @EventListener 경로라 여기서 예외가 새 나가면 로그 한 줄 없이 조용히 삼켜진다.
+        ended.ifPresent(session -> {
             try {
                 watchingSessionBroadcaster.broadcastLeave(session, session.content().id());
             } catch (RuntimeException broadcastFailure) {
-                log.error("DISCONNECT 처리 중 LEAVE 브로드캐스트 실패: watcherId={}, contentId={}",
-                    watcherId, session.content().id(), broadcastFailure);
+                log.error("DISCONNECT 처리 중 LEAVE 브로드캐스트 실패: watcherId={}", watcherId, broadcastFailure);
             }
-        }
+        });
     }
 
     private UUID extractWatcherId(Principal principal) {

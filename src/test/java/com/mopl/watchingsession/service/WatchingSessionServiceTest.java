@@ -120,6 +120,18 @@ public class WatchingSessionServiceTest {
                 return Optional.of(current.snapshotId());
             });
 
+        when(watchingSessionPresenceWriter.deleteIfOwnerSession(any(), any()))
+            .thenAnswer(invocation -> {
+                UUID watcherId = invocation.getArgument(0);
+                String sessionId = invocation.getArgument(1);
+                WatchingPresence current = presenceStore.get(watcherId);
+                if (current == null || !current.sessionId().equals(sessionId)) {
+                    return Optional.empty();
+                }
+                presenceStore.remove(watcherId);
+                return Optional.of(current.snapshotId());
+            });
+
         when(watchingSessionPresenceWriter.renewIfOwner(any(), any(), any(), any()))
             .thenAnswer(invocation -> {
                 UUID watcherId = invocation.getArgument(0);
@@ -354,6 +366,62 @@ public class WatchingSessionServiceTest {
         boolean actuallyDeleted = watchingSessionService.end(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
         assertThat(actuallyDeleted).isFalse();
         verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any());
+    }
+
+    /* --- endByConnection() 메서드 검증 --- */
+    @Test
+    @DisplayName("sessionId가 일치하면 presence와 DB 스냅샷을 모두 삭제하고, 삭제된 스냅샷 기준 DTO를 반환한다")
+    void endByConnection_success_deletesPresenceAndSnapshot_returnsDto() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        WatchingSessionSnapshot snapshotFixture = createSnapshotFixture(
+            CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT, FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS));
+        when(watchingSessionSnapshotRepository.findById(SNAPSHOT_ID)).thenReturn(Optional.of(snapshotFixture));
+
+        Optional<WatchingSessionDto> result = watchingSessionService.endByConnection(WATCHER_ID, SESSION_ID);
+
+        assertThat(result).isPresent();
+        assertThat(result.get().id()).isEqualTo(SNAPSHOT_ID);
+        assertThat(result.get().content().id()).isEqualTo(CONTENT_ID);
+        assertThat(presenceStore).doesNotContainKey(WATCHER_ID);
+        verify(watchingSessionSnapshotWriter).deleteById(WATCHER_ID, SNAPSHOT_ID);
+    }
+
+    @Test
+    @DisplayName("sessionId가 불일치하면(다른 연결로 소유권 이전됨) 아무것도 지우지 않고 빈 Optional을 반환한다")
+    void endByConnection_returnsEmpty_whenSessionMismatches() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, OTHER_SESSION_ID, SUBSCRIPTION_ID);
+
+        Optional<WatchingSessionDto> result = watchingSessionService.endByConnection(WATCHER_ID, SESSION_ID);
+
+        assertThat(result).isEmpty();
+        assertThat(presenceStore).containsKey(WATCHER_ID); // 현재 소유자의 presence는 그대로
+        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any());
+    }
+
+    @Test
+    @DisplayName("presence 소유권은 확인됐지만 DB 스냅샷이 이미 다른 세대로 교체된 경우(0행 삭제) 빈 Optional을 반환하고 유령 LEAVE를 만들지 않는다")
+    void endByConnection_returnsEmpty_whenDbRowAlreadyReplacedByAnotherGeneration() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        WatchingSessionSnapshot snapshotFixture = createSnapshotFixture(
+            CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT, FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS));
+        when(watchingSessionSnapshotRepository.findById(SNAPSHOT_ID)).thenReturn(Optional.of(snapshotFixture));
+        // 다른 인스턴스가 이미 이 watcher의 새 세대로 행을 교체해 조건부 삭제가 0행에 그친 상황을 재현
+        when(watchingSessionSnapshotWriter.deleteById(WATCHER_ID, SNAPSHOT_ID)).thenReturn(0);
+
+        Optional<WatchingSessionDto> result = watchingSessionService.endByConnection(WATCHER_ID, SESSION_ID);
+
+        assertThat(result).isEmpty();
     }
 
     /* --- get() 메서드 검증 --- */
