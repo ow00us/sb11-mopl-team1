@@ -26,6 +26,12 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
     @Query("DELETE FROM WatchingSessionSnapshot s WHERE s.watcherId = :watcherId AND s.id = :snapshotId")
     int deleteByWatcherIdAndId(@Param("watcherId") UUID watcherId, @Param("snapshotId") UUID snapshotId);
 
+    // 만료된 지 오래된 스냅샷을 일괄 삭제하는 메서드
+    // expiresAt이 지난 행은 이미 조회 경로의 expiresAt 필터로 결과에서 제외되므로, 스토리지 정리 목적
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("DELETE FROM WatchingSessionSnapshot s WHERE s.expiresAt < :before")
+    int deleteAllByExpiresAtBefore(@Param("before") Instant before);
+
     // 콘텐츠 기준 시청 세션 목록 - 첫 페이지, 최신순(내림차순)
     @Query("""
       SELECT s FROM WatchingSessionSnapshot s
@@ -112,16 +118,13 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
         @Param("now") Instant now
     );
 
-    // 아직 만료되지 않은 활성 세션의 expiresAt만 연장 (heartbeat 갱신용)
-    // 벌크 업데이트라 JPA auditing을 거치지 않아 updatedAt은 변경되지 않음 (마지막 heartbeat 시각으로 오염되지 않는 편이 스냅샷에 맞음)
-    // 리턴값: 갱신된 행 수 (0이면 활성 세션 없음 -> heartbeat 무효)
+    // heartbeat 갱신용 - expiresAt이 지났어도 갱신한다
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE WatchingSessionSnapshot s SET s.expiresAt = :newExpiresAt "
-    + "WHERE s.watcherId = :watcherId AND s.contentId = :contentId AND s.expiresAt > :now")
+    + "WHERE s.watcherId = :watcherId AND s.contentId = :contentId")
     int renewExpiresAt(
         @Param("watcherId") UUID watcherId,
         @Param("contentId") UUID contentId,
-        @Param("now") Instant now,
         @Param("newExpiresAt") Instant newExpiresAt
     );
 

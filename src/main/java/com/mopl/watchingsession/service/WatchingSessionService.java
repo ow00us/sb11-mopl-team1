@@ -21,7 +21,6 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -388,7 +387,7 @@ public class WatchingSessionService {
         int renewedRows;
         try {
             renewedRows = watchingSessionSnapshotWriter.renewExpiresAt(
-                watcherId, contentId, now, now.plus(watchingSessionProperties.getSessionTtl()));
+                watcherId, contentId, now.plus(watchingSessionProperties.getSessionTtl()));
         } catch (RuntimeException e) {
             log.error("세션 만료 시각 갱신 실패: watcherId={}, contentId={}", watcherId, contentId, e);
             return;
