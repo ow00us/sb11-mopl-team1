@@ -37,6 +37,26 @@ mopl.playlist.events      mopl.playlist.events.DLT
 mopl.premiere.events      mopl.premiere.events.DLT
 ```
 
+### Outbox relay 조정 값
+
+도메인 상태 변경과 함께 기록된 이벤트는 Outbox relay가 읽어 Kafka에 발행합니다. 아래 값은 모두 선택이며, 지정하지 않으면 기본값으로 동작합니다.
+
+| 환경 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `OUTBOX_RELAY_ENABLED` | `true` | relay 주기 실행 여부. 브로커 없이 기동해야 하는 환경에서만 끕니다 |
+| `OUTBOX_RELAY_INTERVAL` | `1000` | 이전 실행이 끝난 뒤 다음 실행까지의 간격(밀리초) |
+| `OUTBOX_RELAY_BATCH_SIZE` | `100` | 한 주기에 선점해 발행할 최대 건수 |
+| `OUTBOX_RELAY_ACK_TIMEOUT` | `10s` | broker 발행 확인을 기다리는 한도 |
+| `OUTBOX_LEASE_DURATION` | `30s` | 선점 유효 기간 |
+| `OUTBOX_RETRY_MAX_ATTEMPTS` | `10` | 이 횟수까지 실패하면 자동 재시도를 멈춥니다 |
+| `OUTBOX_RETRY_INITIAL_BACKOFF` | `5s` | 첫 실패 뒤 기다리는 시간 |
+| `OUTBOX_RETRY_MAX_BACKOFF` | `10m` | 재시도 간격 상한 |
+| `OUTBOX_RETRY_MULTIPLIER` | `2.0` | 실패할 때마다 간격에 곱하는 값 |
+
+`OUTBOX_LEASE_DURATION`이 짧으면 발행이 끝나기 전에 다른 인스턴스가 회수해 중복 발행이 늘고, 길면 relay가 비정상 종료했을 때 회수가 그만큼 지연됩니다. `OUTBOX_RELAY_ACK_TIMEOUT`보다 넉넉하게 둡니다.
+
+최대 시도 횟수를 넘긴 이벤트는 삭제하지 않고 최종 실패 상태로 남습니다. 자동 relay 대상에서는 빠지므로, 원인을 고친 뒤 `OutboxFailureService`로 다시 발행 대기로 돌립니다.
+
 ## DLT 조회와 수동 replay
 
 소비 실패는 공통 오류 처리가 재시도를 모두 소진한 뒤 `<원본 토픽>.DLT`로 옮깁니다. 옮겨진 레코드는 자동으로 다시 처리되지 않습니다. 원인을 확인한 뒤 사람이 다시 넣습니다.
