@@ -57,7 +57,7 @@ import org.testcontainers.utility.DockerImageName;
  * heartbeat와 TTL 만료의 실제 동작을 실제 Redis/DB로 검증하는 E2E.
  *
  * application-test.yml의 짧은 TTL 오버라이드(presence 2s / session 3s / heartbeat 500ms)에 의존한다.
- * 운영 값(90s/30m)을 그대로 쓰면 테스트가 분 단위로 늘어나 이 프로젝트의 다른 E2E와
+ * 운영 값(90s/120s)을 그대로 쓰면 테스트가 분 단위로 늘어나 이 프로젝트의 다른 E2E와
  * 시간 스케일이 맞지 않는다.
  */
 @Testcontainers
@@ -298,5 +298,42 @@ class WatchingSessionHeartbeatE2ETest {
             .pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() ->
                 assertThat(stringRedisTemplate.hasKey(presenceKey(watcherId))).isFalse());
+    }
+
+    @Test
+    @DisplayName("[E2E] heartbeat만 끊기고 연결·DISCONNECT는 오지 않는 상황에서 유령 세션이 단축된 session-ttl(3s) 안에 조회 경로에서 제외된다")
+    void withoutHeartbeatAndWithoutDisconnect_ghostSessionExcludedFromQueryWithinShortenedSessionTtl()
+        throws Exception {
+        // given: 시청 시작. 이 시점부터 heartbeat를 전혀 보내지 않는다.
+        // 네트워크 강제 종료로 UNSUBSCRIBE/DISCONNECT가 서버에 아예 도착하지 않는 상황과 유사한
+        // STOMP 연결 자체는 유지한 채(disconnect() 호출 안 함) heartbeat만 중단하는 것으로 재현
+        session = connectAs(watcherId, null);
+        session.subscribe("/sub/contents/" + contentId + "/watch", new StompFrameHandler() {
+            @Override
+            public Type getPayloadType(StompHeaders headers) {
+                return byte[].class;
+            }
+
+            @Override
+            public void handleFrame(StompHeaders headers, Object payload) {
+            }
+        });
+
+        await().atMost(5, TimeUnit.SECONDS)
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isPresent());
+
+        // when: session-ttl(테스트 프로파일 3s)이 지날 때까지 heartbeat 없이 대기한다.
+
+        // then: 조회 경로(watching-sessions 목록·watcherCount 집계가 공유하는 countByContentId)에서 제외된다
+        await().atMost(5, TimeUnit.SECONDS)
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .untilAsserted(() -> {
+                long count = snapshotRepository.countByContentId(contentId, null, Instant.now());
+                assertThat(count).isZero();
+            });
+
+        // DB 행 자체는 아직 남아있다 - end() 경로를 안 탔으므로 물리적 삭제는 스위퍼의 책임
+        assertThat(snapshotRepository.findByWatcherId(watcherId)).isPresent();
     }
 }

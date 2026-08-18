@@ -844,11 +844,11 @@ public class WatchingSessionServiceTest {
         mockUserExists(WATCHER_ID);
         mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
         watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
-        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any(), any())).thenReturn(1);
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(1);
 
         watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
 
-        verify(watchingSessionSnapshotWriter).renewExpiresAt(eq(WATCHER_ID), eq(CONTENT_ID), any(), any());
+        verify(watchingSessionSnapshotWriter).renewExpiresAt(eq(WATCHER_ID), eq(CONTENT_ID), any());
     }
 
     @Test
@@ -861,7 +861,7 @@ public class WatchingSessionServiceTest {
 
         watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, OTHER_SESSION_ID, SUBSCRIPTION_ID);
 
-        verify(watchingSessionSnapshotWriter, never()).renewExpiresAt(any(), any(), any(), any());
+        verify(watchingSessionSnapshotWriter, never()).renewExpiresAt(any(), any(), any());
     }
 
     @Test
@@ -869,7 +869,7 @@ public class WatchingSessionServiceTest {
     void heartbeat_skipsDbUpdate_whenNoActiveSession() {
         watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
 
-        verify(watchingSessionSnapshotWriter, never()).renewExpiresAt(any(), any(), any(), any());
+        verify(watchingSessionSnapshotWriter, never()).renewExpiresAt(any(), any(), any());
     }
 
     @Test
@@ -879,7 +879,7 @@ public class WatchingSessionServiceTest {
         mockUserExists(WATCHER_ID);
         mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
         watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
-        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any(), any())).thenReturn(0);
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
 
         assertThatCode(() ->
             watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
