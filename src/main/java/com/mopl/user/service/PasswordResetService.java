@@ -7,6 +7,7 @@ import com.mopl.user.entity.User;
 import com.mopl.user.mail.TemporaryPasswordEmailSender;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.user.security.TemporaryPasswordGenerator;
+import com.mopl.user.storage.RefreshTokenStore;
 import java.util.Locale;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -57,6 +58,11 @@ public class PasswordResetService {
      */
     private final TemporaryPasswordEmailSender
         temporaryPasswordEmailSender;
+
+    /**
+     * 비밀번호 초기화 전 기존 로그인 세션을 전부 폐기하는 저장소
+     */
+    private final RefreshTokenStore refreshTokenStore;
 
     /**
      * 사용자의 비밀번호를 임시 비밀번호로 초기화하고 이메일로 발송
@@ -133,6 +139,22 @@ public class PasswordResetService {
             passwordEncoder.encode(
                 temporaryPassword
             );
+
+        /*
+         * 비밀번호가 초기화되면 기존 인증 정보로 생성된 로그인 세션을
+         * 더 이상 신뢰할 수 없으므로 모든 Refresh Token Family를 폐기
+         *
+         * 비밀번호 해시 변경과 이메일 발송보다 먼저 실행하여
+         * Redis 폐기에 실패한 경우 사용자 비밀번호나 이메일 발송이
+         * 변경되지 않도록 한다.
+         *
+         * 이후 이메일 발송이 실패하면 데이터베이스 비밀번호 변경은
+         * 롤백되지만 기존 Refresh Token 세션은 폐기된 상태로 남는다.
+         * 이는 기존 세션을 남기는 것보다 안전한 fail-closed 정책
+         */
+        refreshTokenStore.revokeAllByUserId(
+            user.getId()
+        );
 
         /*
          * User 엔티티에는 임시 비밀번호 원문이 아닌
