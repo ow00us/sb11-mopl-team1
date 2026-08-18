@@ -14,25 +14,28 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class WatchingSessionSnapshotWriter {
 
+    // upsert가 새 행을 만들었는지(신규 삽입/콘텐츠 전환) 여부를 함께 반환. 실패 보상시 지워도 되는 행인지 판단용
+    public record UpsertResult(WatchingSessionSnapshot snapshot, boolean isNewIdentity) {}
+
     private final WatchingSessionSnapshotRepository watchingSessionSnapshotRepository;
 
     // 동일 콘텐츠 재구독은 세션 연속 -> createdAt 유지
     // 다른 콘텐츠로 전환할 때만 createdAt 갱신되도록 delete+insert로 처리
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public WatchingSessionSnapshot upsert(UUID watcherId, UUID contentId, Instant expiresAt) {
+    public UpsertResult upsert(UUID watcherId, UUID contentId, Instant expiresAt) {
         return watchingSessionSnapshotRepository.findByWatcherId(watcherId)
             .map(existing -> replaceOrRefresh(existing, contentId, expiresAt))
-            .orElseGet(() -> insertNew(watcherId, contentId, expiresAt));
+            .orElseGet(() -> new UpsertResult(insertNew(watcherId, contentId, expiresAt), true));
     }
 
-    private WatchingSessionSnapshot replaceOrRefresh(WatchingSessionSnapshot existing, UUID contentId, Instant expiresAt) {
+    private UpsertResult replaceOrRefresh(WatchingSessionSnapshot existing, UUID contentId, Instant expiresAt) {
         if (existing.getContentId().equals(contentId)) {
             existing.refresh(contentId, expiresAt);
-            return watchingSessionSnapshotRepository.saveAndFlush(existing);
+            return new UpsertResult(watchingSessionSnapshotRepository.saveAndFlush(existing), false);
         }
         watchingSessionSnapshotRepository.delete(existing);
         watchingSessionSnapshotRepository.flush();
-        return insertNew(existing.getWatcherId(), contentId, expiresAt);
+        return new UpsertResult(insertNew(existing.getWatcherId(), contentId, expiresAt), true);
     }
 
     private WatchingSessionSnapshot insertNew(UUID watcherId, UUID contentId, Instant expiresAt) {
@@ -44,9 +47,18 @@ public class WatchingSessionSnapshotWriter {
                 .build());
     }
 
+    /**
+     * watcherId만이 아니라 정확히 이 snapshotId와 일치하는 행만 삭제한다.
+     *
+     * blind delete(watcherId 기준)를 쓰면, 다른 인스턴스가 그 사이 같은 watcher에 대해
+     * 새 세대의 행을 만들었을 때 그 새 행까지 함께 지워버릴 수 있다. presence가 확인해준
+     * snapshotId로 조건을 좁혀야 이 레이스가 닫힌다.
+     *
+     * @return 실제로 삭제된 행 수 (0이면 이미 다른 세대로 교체된 뒤라는 뜻)
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void delete(UUID watcherId) {
-        watchingSessionSnapshotRepository.deleteByWatcherId(watcherId);
+    public int deleteById(UUID watcherId, UUID snapshotId) {
+        return watchingSessionSnapshotRepository.deleteByWatcherIdAndId(watcherId, snapshotId);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

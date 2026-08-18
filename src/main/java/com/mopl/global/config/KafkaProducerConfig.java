@@ -114,6 +114,24 @@ public class KafkaProducerConfig {
     }
 
     /**
+     * DLT replay 전용 템플릿입니다.
+     *
+     * <p>값을 원본 바이트 그대로 보냅니다. DLT 에 남은 값을 다시 만들어 보내면 소비자가 처음
+     * 받은 것과 다른 메시지가 되어 실패 재현이 성립하지 않고, 값이 깨진 레코드는 애초에 다시
+     * 만들 수 없습니다.
+     *
+     * <p>{@link #deadLetterKafkaTemplate()} 을 쓰지 않는 이유는 전달 시한입니다. 그쪽은 실패를
+     * 빨리 드러내려고 짧게 잡혀 있는데, replay 는 사람이 지켜보는 단발 작업이라 같은 기준을
+     * 적용할 이유가 없습니다.
+     */
+    @Bean
+    public KafkaTemplate<String, byte[]> replayKafkaTemplate() {
+        ProducerFactory<String, byte[]> factory = new DefaultKafkaProducerFactory<>(
+            baseProducerProperties(), new StringSerializer(), new ByteArraySerializer());
+        return new KafkaTemplate<>(factory);
+    }
+
+    /**
      * DLT 발행 전용 템플릿입니다.
      *
      * <p>DLT 로 가는 값은 두 종류입니다. 처리 예외라면 역직렬화까지 성공한
