@@ -143,11 +143,10 @@ public class WatchingSessionService {
                         watcherId, snapshot.getId(), contentId, sessionId, subscriptionId, snapshot.getCreatedAt(), watchingSessionProperties.getPresenceTtl());
                 } catch (RuntimeException presenceFailure) {
                     if (upsertResult.isNewIdentity()) {
-                        // 이번 호출이 만든 새 행 -> 지워도 이전에 유효했던 세션은 없음
-                        watchingSessionSnapshotWriter.delete(watcherId);
+                        // snapshot.getId()로 조건부 삭제. watcherId만으로 지우면 그 사이 다른
+                        // 인스턴스가 만든 새 세대를 함께 지울 수 있다.
+                        watchingSessionSnapshotWriter.deleteById(watcherId, snapshot.getId());
                     }
-                    // 동일 콘텐츠 재구독(refresh)이면 DB 행은 직전까지 유효했던 세션이므로 지우지 않고 둔다
-                    // 이미 커밋된 트랜잭션이라 expiresAt 연장 자체를 되돌릴 수는 없어 start()재시도가 성공하거나 남은 presence가 자연 만료되어야 정리됨
                     throw presenceFailure;
                 }
             }
@@ -176,20 +175,25 @@ public class WatchingSessionService {
 
     // delete 성격의 메서드
     public boolean end(UUID watcherId, String currentSessionId, String currentSubscriptionId) {
-
         WatcherLock watcherLock = acquireWatcherLock(watcherId);
         try {
             synchronized (watcherLock) {
-                // 소유권 확인과 삭제가 한번의 원자 연산
-                boolean deleted = watchingSessionPresenceWriter.deleteIfOwner(
+                Optional<UUID> deletedSnapshotId = watchingSessionPresenceWriter.deleteIfOwner(
                     watcherId, currentSessionId, currentSubscriptionId);
-                if (!deleted) {
+                if (deletedSnapshotId.isEmpty()) {
                     return false;
                 }
 
-                // presence 삭제가 확인된 뒤에만 DB 스냅샷 삭제
-                // 여기서 예외가 나면 DB 행이 남지만 유령은 session-ttl 경과 후 조회에서 자연히 제외됨
-                watchingSessionSnapshotWriter.delete(watcherId);
+                int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, deletedSnapshotId.get());
+                if (deletedRows == 0) {
+                    // presence 소유권은 확인됐지만 DB 행은 이미 다른 세대로 교체된 뒤였다.
+                    // 그 새 세대는 자기 presence까지 써놓은 상태이므로, 이 사용자는 지금도
+                    // (다른 콘텐츠를) 시청 중이다. 여기서 true를 반환하면 살아있는 세션에 대해
+                    // LEAVE가 나가 유령이 생긴다.
+                    log.warn("presence 소유권 확인 후 DB 스냅샷이 이미 교체됨, 퇴장 처리 생략: "
+                        + "watcherId={}, snapshotId={}", watcherId, deletedSnapshotId.get());
+                    return false;
+                }
                 return true;
             }
         } finally {

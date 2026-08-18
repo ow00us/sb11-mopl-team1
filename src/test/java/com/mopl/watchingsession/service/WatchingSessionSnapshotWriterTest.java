@@ -136,49 +136,70 @@ public class WatchingSessionSnapshotWriterTest {
 
 
     @Test
-    @DisplayName("delete()는 해당 watcher의 스냅샷을 실제로 DB에서 제거하고 flush까지 반영")
-    void delete_removesExistingRow() {
+    @DisplayName("deleteById()는 snapshotId가 일치할 때만 DB에서 제거하고 flush까지 반영")
+    void deleteById_removesExistingRow_whenSnapshotIdMatches() {
+        // given
+        UUID watcherId = insertUser();
+        UUID contentId = insertContent();
+        UpsertResult result = writer.upsert(watcherId, contentId, Instant.now().plusSeconds(60));
+        assertThat(repository.count()).isEqualTo(1);
+
+        // when
+        int deletedRows = writer.deleteById(watcherId, result.snapshot().getId());
+
+        // then
+        assertThat(deletedRows).isEqualTo(1);
+        assertThat(repository.count()).isZero();
+        assertThat(repository.findByWatcherId(watcherId)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("deleteById()는 snapshotId가 일치하지 않으면(이미 다른 세대로 교체됨) 삭제하지 않는다")
+    void deleteById_doesNothing_whenSnapshotIdDoesNotMatch() {
         // given
         UUID watcherId = insertUser();
         UUID contentId = insertContent();
         writer.upsert(watcherId, contentId, Instant.now().plusSeconds(60));
         assertThat(repository.count()).isEqualTo(1);
 
-        // when
-        writer.delete(watcherId);
+        // when: 존재하지 않는(다른) snapshotId로 삭제 시도
+        int deletedRows = writer.deleteById(watcherId, UUID.randomUUID());
 
-        // then:
-        assertThat(repository.count()).isZero();
-        assertThat(repository.findByWatcherId(watcherId)).isEmpty();
+        // then: 아무것도 지워지지 않음 - 이 조건부 삭제가 막으려는 정확한 시나리오
+        assertThat(deletedRows).isZero();
+        assertThat(repository.count()).isEqualTo(1);
+        assertThat(repository.findByWatcherId(watcherId)).isPresent();
     }
 
     @Test
-    @DisplayName("해당 watcher의 스냅샷이 없으면 delete()는 예외 없이 아무 일도 하지 않음")
-    void delete_doesNothing_whenNoRowExists() {
+    @DisplayName("deleteById()는 해당 watcher의 스냅샷이 없으면 예외 없이 0을 반환한다")
+    void deleteById_doesNothing_whenNoRowExists() {
         // given
         UUID watcherId = UUID.randomUUID(); // 스냅샷을 만든 적 없는 임의의 watcherId
 
-        // when & then: 존재하지 않는 행에 대한 삭제는 예외를 던지지 않아야 함
-        writer.delete(watcherId);
+        // when & then
+        int deletedRows = writer.deleteById(watcherId, UUID.randomUUID());
 
+        assertThat(deletedRows).isZero();
         assertThat(repository.count()).isZero();
     }
 
     @Test
-    @DisplayName("다른 watcher의 스냅샷은 delete()의 영향을 받지 않음")
-    void delete_onlyRemovesTargetWatchersRow() {
+    @DisplayName("다른 watcher의 스냅샷은 deleteById()의 영향을 받지 않는다")
+    void deleteById_onlyRemovesTargetWatchersRow() {
         // given
         UUID watcherId1 = insertUser();
         UUID watcherId2 = insertUser();
         UUID contentId = insertContent();
-        writer.upsert(watcherId1, contentId, Instant.now().plusSeconds(60));
+        UpsertResult result1 = writer.upsert(watcherId1, contentId, Instant.now().plusSeconds(60));
         writer.upsert(watcherId2, contentId, Instant.now().plusSeconds(60));
         assertThat(repository.count()).isEqualTo(2);
 
         // when
-        writer.delete(watcherId1);
+        int deletedRows = writer.deleteById(watcherId1, result1.snapshot().getId());
 
         // then
+        assertThat(deletedRows).isEqualTo(1);
         assertThat(repository.count()).isEqualTo(1);
         assertThat(repository.findByWatcherId(watcherId1)).isEmpty();
         assertThat(repository.findByWatcherId(watcherId2)).isPresent();

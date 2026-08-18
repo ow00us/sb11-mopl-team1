@@ -55,6 +55,8 @@ public class WatchingSessionPresenceWriterTest {
 
         assertThat(result).isPresent();
         assertThat(result.get().watcherId()).isEqualTo(WATCHER_ID);
+        assertThat(result.get().snapshotId()).isEqualTo(SNAPSHOT_ID);
+        assertThat(result.get().contentId()).isEqualTo(CONTENT_ID);
         assertThat(result.get().sessionId()).isEqualTo("old-session");
         assertThat(result.get().subscriptionId()).isEqualTo("old-sub");
         assertThat(result.get().startedAt()).isEqualTo(previousStartedAt);
@@ -99,55 +101,55 @@ public class WatchingSessionPresenceWriterTest {
     }
 
     @Test
-    @DisplayName("deleteIfOwner()는 스크립트가 1을 반환하면 true")
+    @DisplayName("deleteIfOwner()는 소유권이 일치하면 삭제된 presence의 snapshotId를 반환한다")
     void deleteIfOwner_returnsTrue_whenScriptReturnsOne() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
             eq(SESSION_ID), eq(SUBSCRIPTION_ID)))
-            .thenReturn(1L);
+            .thenReturn(List.of("1", SNAPSHOT_ID.toString()));
 
-        assertThat(writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID)).isTrue();
+        Optional<UUID> result = writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(result).contains(SNAPSHOT_ID);
     }
 
     @Test
-    @DisplayName("deleteIfOwner()는 소유권 불일치(0)일 때 false")
-    void deleteIfOwner_returnsFalse_whenOwnerMismatch() {
+    @DisplayName("deleteIfOwner()는 소유권 불일치(0)일 때 빈 Optional을 반환한다")
+    void deleteIfOwner_returnsEmpty_whenOwnerMismatch() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
             eq(SESSION_ID), eq(SUBSCRIPTION_ID)))
-            .thenReturn(0L);
+            .thenReturn(List.of("0", ""));
 
-        assertThat(writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID)).isFalse();
+        assertThat(writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID)).isEmpty();
     }
 
     @Test
-    @DisplayName("deleteIfOwner()는 활성 세션 없음(-1)일 때도 false")
-    void deleteIfOwner_returnsFalse_whenNoActiveSession() {
+    @DisplayName("deleteIfOwner()는 활성 세션 없음(-1)일 때도 빈 Optional을 반환한다")
+    void deleteIfOwner_returnsEmpty_whenNoActiveSession() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
             eq(SESSION_ID), eq(SUBSCRIPTION_ID)))
-            .thenReturn(-1L);
+            .thenReturn(List.of("-1", ""));
 
-        assertThat(writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID)).isFalse();
+        assertThat(writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID)).isEmpty();
     }
 
     @Test
-    @DisplayName("deleteIfOwner()는 subscriptionId가 null이면 빈 문자열로 안전하게 넘긴다 (DISCONNECT 경로)")
-    void deleteIfOwner_passesEmptyString_whenSubscriptionIdNull() {
+    @DisplayName("deleteIfOwner()는 snapshotId 파싱에 실패하면 방어적으로 빈 Optional을 반환한다")
+    void deleteIfOwner_returnsEmpty_whenSnapshotIdMissing() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
-            eq(SESSION_ID), eq("")))
-            .thenReturn(0L);
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID)))
+            .thenReturn(List.of("1"));
 
-        boolean result = writer.deleteIfOwner(WATCHER_ID, SESSION_ID, null);
-
-        assertThat(result).isFalse();
+        assertThat(writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID)).isEmpty();
     }
 
     @Test
-    @DisplayName("deleteIfOwner() 도중 Redis 예외가 나면 격리되어 false를 반환한다 (연결 종료 경로라 되돌릴 것이 없음)")
+    @DisplayName("deleteIfOwner() 도중 Redis 예외가 나면 격리되어 빈 Optional을 반환한다")
     void deleteIfOwner_isolatesRedisFailure() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
             eq(SESSION_ID), eq(SUBSCRIPTION_ID)))
             .thenThrow(new RuntimeException("Redis 연결 끊김"));
 
-        assertThat(writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID)).isFalse();
+        assertThat(writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID)).isEmpty();
     }
 
     @Test
@@ -178,5 +180,16 @@ public class WatchingSessionPresenceWriterTest {
             .thenThrow(new RuntimeException("Redis 연결 끊김"));
 
         assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60))).isFalse();
+    }
+
+    @Test
+    @DisplayName("renewIfOwner()는 스크립트가 null을 반환하면 예외 없이 false (unboxing NPE 방지)")
+    void renewIfOwner_returnsFalse_whenScriptReturnsNull() {
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq("60000")))
+            .thenReturn(null);
+
+        assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60)))
+            .isFalse();
     }
 }

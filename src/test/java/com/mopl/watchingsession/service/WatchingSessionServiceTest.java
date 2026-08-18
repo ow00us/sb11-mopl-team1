@@ -27,7 +27,6 @@ import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import com.mopl.watchingsession.service.WatchingSessionSnapshotWriter.UpsertResult;
-import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
@@ -67,7 +66,6 @@ public class WatchingSessionServiceTest {
     @Mock
     UserRepository userRepository;
 
-    private WatchingSessionProperties watchingSessionProperties;
     private WatchingSessionService watchingSessionService;
 
     // Lua 스크립트와 동일한 소유권 의미론을 가진 상태 저장소
@@ -76,7 +74,8 @@ public class WatchingSessionServiceTest {
     private static final UUID SNAPSHOT_ID = UUID.fromString("00000000-0000-0000-0000-000000000000");
     private static final UUID WATCHER_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID CONTENT_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
-    private static final UUID NEW_CONTENT_ID = UUID.fromString("33322222-2222-2222-2222-222222222222");
+    private static final UUID NEW_CONTENT_ID = UUID.fromString("33333333-3333-3333-3333-333333333333");
+    private static final UUID THIRD_CONTENT_ID = UUID.fromString("44444444-4444-4444-4444-444444444444");
     private static final Instant FIRST_CREATED_AT = Instant.parse("2026-07-29T10:00:00Z");
     private static final String SESSION_ID = "session-123";
     private static final String OTHER_SESSION_ID = "session-999";
@@ -86,13 +85,15 @@ public class WatchingSessionServiceTest {
     @BeforeEach
     void setUp() {
         presenceStore.clear();
-        watchingSessionProperties = new WatchingSessionProperties();
+        WatchingSessionProperties watchingSessionProperties = new WatchingSessionProperties();
         watchingSessionProperties.setSessionTtl(Duration.ofMinutes(30));
         watchingSessionProperties.setPresenceTtl(Duration.ofSeconds(60));
 
         watchingSessionService = new WatchingSessionService(
             watchingSessionProperties, watchingSessionSnapshotRepository, contentRepository,
             userRepository, watchingSessionSnapshotWriter, watchingSessionPresenceWriter);
+
+        when(watchingSessionSnapshotWriter.deleteById(any(), any())).thenReturn(1);
 
         when(watchingSessionPresenceWriter.swap(any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(invocation -> {
@@ -105,27 +106,32 @@ public class WatchingSessionServiceTest {
             });
 
         when(watchingSessionPresenceWriter.deleteIfOwner(any(), any(), any()))
-            .thenAnswer(invocation -> tryMatch(invocation, presenceStore::remove));
+            .thenAnswer(invocation -> {
+                UUID watcherId = invocation.getArgument(0);
+                String sessionId = invocation.getArgument(1);
+                String subscriptionId = invocation.getArgument(2);
+                WatchingPresence current = presenceStore.get(watcherId);
+                if (current == null
+                    || !current.sessionId().equals(sessionId)
+                    || !Objects.equals(current.subscriptionId(), subscriptionId)) {
+                    return Optional.empty();
+                }
+                presenceStore.remove(watcherId);
+                return Optional.of(current.snapshotId());
+            });
 
         when(watchingSessionPresenceWriter.renewIfOwner(any(), any(), any(), any()))
-            .thenAnswer(invocation -> tryMatch(invocation, watcherId -> { /* 값은 그대로, TTL만 연장 */ }));
-    }
-
-    private boolean tryMatch(org.mockito.invocation.InvocationOnMock invocation,
-        java.util.function.Consumer<UUID> onMatch) {
-        UUID watcherId = invocation.getArgument(0);
-        String sessionId = invocation.getArgument(1);
-        String subscriptionId = invocation.getArgument(2);
-        WatchingPresence current = presenceStore.get(watcherId);
-        if (current == null) {
-            return false;
-        }
-        boolean matches = current.sessionId().equals(sessionId)
-            && Objects.equals(current.subscriptionId(), subscriptionId);
-        if (matches) {
-            onMatch.accept(watcherId);
-        }
-        return matches;
+            .thenAnswer(invocation -> {
+                UUID watcherId = invocation.getArgument(0);
+                String sessionId = invocation.getArgument(1);
+                String subscriptionId = invocation.getArgument(2);
+                WatchingPresence current = presenceStore.get(watcherId);
+                if (current == null) {
+                    return false;
+                }
+                return current.sessionId().equals(sessionId)
+                    && Objects.equals(current.subscriptionId(), subscriptionId);
+            });
     }
 
     // --- Fixture Helpers ---
@@ -175,14 +181,6 @@ public class WatchingSessionServiceTest {
             .thenReturn(new UpsertResult(snapshot, isNewIdentity));
     }
 
-    @SuppressWarnings("unchecked")
-    private int watcherLockMapSize() throws Exception {
-        Field field = WatchingSessionService.class.getDeclaredField("watcherLocks");
-        field.setAccessible(true);
-        Map<UUID, ?> locks = (Map<UUID, ?>) field.get(watchingSessionService);
-        return locks.size();
-    }
-
     /* --- start() 메서드 검증 --- */
     @Test
     @DisplayName("첫 구독은 이전 세션 없이 시작하고, presence에 새 소유자를 기록한다")
@@ -219,6 +217,31 @@ public class WatchingSessionServiceTest {
     }
 
     @Test
+    @DisplayName("연속 재구독(A→B→C, 서로 다른 콘텐츠)에서 각 start()는 자신이 밀어낸 직전 콘텐츠만 정확히 반환한다")
+    void start_success_chainedResubscribeAcrossDifferentContents_returnsCorrectPreviousContentEach() {
+        mockContentExists(CONTENT_ID);
+        mockContentExists(NEW_CONTENT_ID);
+        mockContentExists(THIRD_CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        WatchingSessionService.ReplacedSession onA =
+            watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, "sub-A");
+
+        mockUpsert(NEW_CONTENT_ID, Instant.now(), true);
+        WatchingSessionService.ReplacedSession onB =
+            watchingSessionService.start(WATCHER_ID, NEW_CONTENT_ID, SESSION_ID, "sub-B");
+
+        mockUpsert(THIRD_CONTENT_ID, Instant.now(), true);
+        WatchingSessionService.ReplacedSession onC =
+            watchingSessionService.start(WATCHER_ID, THIRD_CONTENT_ID, SESSION_ID, "sub-C");
+
+        assertThat(onA.previous()).isNull();
+        assertThat(onB.previous().content().id()).isEqualTo(CONTENT_ID);       // B가 밀어낸 건 A
+        assertThat(onC.previous().content().id()).isEqualTo(NEW_CONTENT_ID);   // C가 밀어낸 건 B, A가 아님
+    }
+
+    @Test
     @DisplayName("동일 콘텐츠 재구독 도중 presence swap이 실패해도 직전 세션의 DB 행은 삭제되지 않는다")
     void start_keepsDbRow_whenSwapFailsDuringRefreshOfSameContent() {
         mockContentExists(CONTENT_ID);
@@ -235,7 +258,7 @@ public class WatchingSessionServiceTest {
             watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, OTHER_SUBSCRIPTION_ID))
             .isInstanceOf(RuntimeException.class);
 
-        verify(watchingSessionSnapshotWriter, never()).delete(WATCHER_ID);
+        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any());
     }
 
     @Test
@@ -251,7 +274,7 @@ public class WatchingSessionServiceTest {
             watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
             .isInstanceOf(RuntimeException.class);
 
-        verify(watchingSessionSnapshotWriter).delete(WATCHER_ID);
+        verify(watchingSessionSnapshotWriter).deleteById(WATCHER_ID, SNAPSHOT_ID);
     }
 
     @Test
@@ -291,7 +314,7 @@ public class WatchingSessionServiceTest {
 
         assertThat(deleted).isTrue();
         assertThat(presenceStore).doesNotContainKey(WATCHER_ID);
-        verify(watchingSessionSnapshotWriter).delete(WATCHER_ID);
+        verify(watchingSessionSnapshotWriter).deleteById(WATCHER_ID, SNAPSHOT_ID);
     }
 
     @Test
@@ -306,7 +329,7 @@ public class WatchingSessionServiceTest {
 
         assertThat(deleted).isFalse();
         assertThat(presenceStore).containsKey(WATCHER_ID); // 현재 소유자의 presence는 그대로
-        verify(watchingSessionSnapshotWriter, never()).delete(any());
+        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any());
     }
 
     @Test
@@ -330,7 +353,7 @@ public class WatchingSessionServiceTest {
     void end_success_returnsFalse_whenNoActiveSession() {
         boolean actuallyDeleted = watchingSessionService.end(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
         assertThat(actuallyDeleted).isFalse();
-        verify(watchingSessionSnapshotWriter, never()).delete(any());
+        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any());
     }
 
     /* --- get() 메서드 검증 --- */

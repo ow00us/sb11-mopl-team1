@@ -113,12 +113,12 @@ public class WatchingSessionPresenceIntegrationTest {
     void deleteIfOwner_removesKey_onlyWhenOwnerMatches() {
         writer.swap(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), DEFAULT_TTL);
 
-        boolean deletedByOtherOwner = writer.deleteIfOwner(WATCHER_ID, "other-session", "other-sub");
-        assertThat(deletedByOtherOwner).isFalse();
+        Optional<UUID> deletedByOtherOwner = writer.deleteIfOwner(WATCHER_ID, "other-session", "other-sub");
+        assertThat(deletedByOtherOwner).isEmpty();
         assertThat(stringRedisTemplate.hasKey(KEY)).isTrue(); // 낡은 요청이 현재 세션을 지우지 않음
 
-        boolean deletedByRealOwner = writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
-        assertThat(deletedByRealOwner).isTrue();
+        Optional<UUID> deletedByRealOwner = writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+        assertThat(deletedByRealOwner).contains(SNAPSHOT_ID); // 삭제된 presence가 가리키던 snapshotId를 반환
         assertThat(stringRedisTemplate.hasKey(KEY)).isFalse();
     }
 
@@ -158,7 +158,40 @@ public class WatchingSessionPresenceIntegrationTest {
 
         Thread.sleep(300);
 
-        boolean result = writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+        Optional<UUID> result = writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("레거시 문자열 타입 presence 키가 있어도 WRONGTYPE 없이 swap()이 성공하고 갈아치운다")
+    void swap_overwritesLegacyStringKey_withoutWrongTypeError() {
+        stringRedisTemplate.opsForValue().set(KEY, "{\"legacy\":\"json\"}");
+
+        Optional<WatchingPresence> previous = writer.swap(
+            WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), DEFAULT_TTL);
+
+        assertThat(previous).isEmpty(); // 레거시 값은 파싱하지 않고 "직전 소유자 없음"으로 취급
+        assertThat(stringRedisTemplate.opsForHash().get(KEY, "sessionId")).isEqualTo(SESSION_ID);
+    }
+
+    @Test
+    @DisplayName("레거시 문자열 타입 presence 키에 대해 deleteIfOwner()는 예외 없이 빈 Optional을 반환한다")
+    void deleteIfOwner_returnsEmpty_forLegacyStringKey_withoutWrongTypeError() {
+        stringRedisTemplate.opsForValue().set(KEY, "{\"legacy\":\"json\"}");
+
+        Optional<UUID> result = writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(result).isEmpty();
+        assertThat(stringRedisTemplate.opsForValue().get(KEY)).isEqualTo("{\"legacy\":\"json\"}"); // 건드리지 않음
+    }
+
+    @Test
+    @DisplayName("레거시 문자열 타입 presence 키에 대해 renewIfOwner()는 예외 없이 false를 반환한다")
+    void renewIfOwner_returnsFalse_forLegacyStringKey_withoutWrongTypeError() {
+        stringRedisTemplate.opsForValue().set(KEY, "{\"legacy\":\"json\"}");
+
+        boolean result = writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60));
+
         assertThat(result).isFalse();
     }
 }

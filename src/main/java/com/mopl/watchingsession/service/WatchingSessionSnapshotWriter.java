@@ -47,9 +47,18 @@ public class WatchingSessionSnapshotWriter {
                 .build());
     }
 
+    /**
+     * watcherId만이 아니라 정확히 이 snapshotId와 일치하는 행만 삭제한다.
+     *
+     * blind delete(watcherId 기준)를 쓰면, 다른 인스턴스가 그 사이 같은 watcher에 대해
+     * 새 세대의 행을 만들었을 때 그 새 행까지 함께 지워버릴 수 있다. presence가 확인해준
+     * snapshotId로 조건을 좁혀야 이 레이스가 닫힌다.
+     *
+     * @return 실제로 삭제된 행 수 (0이면 이미 다른 세대로 교체된 뒤라는 뜻)
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void delete(UUID watcherId) {
-        watchingSessionSnapshotRepository.deleteByWatcherId(watcherId);
+    public int deleteById(UUID watcherId, UUID snapshotId) {
+        return watchingSessionSnapshotRepository.deleteByWatcherIdAndId(watcherId, snapshotId);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

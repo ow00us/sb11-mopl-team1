@@ -22,9 +22,11 @@ import org.springframework.stereotype.Component;
  * 비교와 실행을 Lua 스크립트 하나로 묶어 원자적으로 처리합니다.
  * Redis는 스크립트 실행 도중 다른 클라이언트의 명령을 끼워넣지 않습니다.
  *
- * 값을 Hash로 저장하는 이유는 Lua가 HGET으로 필드를 직접 읽게 하기 위함입니다.
- * JSON 문자열로 두면 스크립트가 cjson 파싱과 필드명에 의존하게 되어, 레코드 필드명을 바꾸는
- * 순간 소유권 판정이 조용히 실패합니다.
+ * 값을 Hash로 저장해 Lua가 HGET으로 필드를 직접 읽게 합니다. 배포 직후에는 이전 버전이
+ * 남긴 문자열(JSON) 타입 키가 섞여 있을 수 있어, 모든 스크립트가 HGETALL/HGET을 호출하기
+ * 전에 TYPE을 먼저 확인합니다. hash가 아니면(레거시 문자열 또는 키 없음) "활성 세션 없음"과
+ * 동일하게 처리합니다 — 이전 형식을 굳이 파싱해 되살리지 않고, 다음 start()가 자연스럽게
+ * 새 Hash로 덮어씁니다.
  *
  * 인자·필드가 모두 평문 문자열이라 StringRedisTemplate을 사용합니다.
  * JSON 값 직렬화기를 쓰는 RedisTemplate<String, Object>로 ARGV를 넘기면 따옴표가 붙어
@@ -42,11 +44,14 @@ public class WatchingSessionPresenceWriter {
     private static final String FIELD_SUBSCRIPTION_ID = "subscriptionId";
     private static final String FIELD_STARTED_AT = "startedAt";
 
-    // 직전 소유자를 먼저 읽어둔 뒤 새 소유자로 덮어쓴다
-    // 읽기와 쓰기가 한 스크립트 안에 있어야 연속 재구독 시나리오에서 각 호출이 자기가 밀ㄹ어낸 직전 소유자를 정확히 돌려받는다
-    // DEL을 먼저 하는 이유는 스키마가 바뀌었을 때 옛 필드가 남지 않게 하기 위함
+    // TYPE이 hash일 때만 이전 값을 읽는다. 레거시 문자열 키는 빈 배열로 취급해
+    // "직전 소유자 없음"과 동일한 결과를 낸다. DEL은 타입과 무관하게 항상 동작하므로
+    // 쓰기 자체는 레거시 키 위에서도 안전하다.
     private static final String SWAP_LUA = """
-        local previous = redis.call('HGETALL', KEYS[1])
+        local previous = {}
+        if redis.call('TYPE', KEYS[1])['ok'] == 'hash' then
+          previous = redis.call('HGETALL', KEYS[1])
+        end
         redis.call('DEL', KEYS[1])
         redis.call('HSET', KEYS[1],
             'snapshotId', ARGV[1],
@@ -59,26 +64,28 @@ public class WatchingSessionPresenceWriter {
         """;
 
     // 키가 없으면 HGET이 false를 반환해 문자열 비교가 실패
-    // 1 = 삭제됨, 0 = 소유권 불일치(이상 신호), - 1= 활성 세션 없음(정상)
+    // 반환: {'1', snapshotId} 삭제됨 / {'0', ''} 소유권 불일치(이상 신호) /
+    //       {'-1', ''} 활성 세션 없음(hash 아님 포함, 정상 흐름)
     private static final String DELETE_IF_OWNER_LUA = """
-        if redis.call('EXISTS', KEYS[1]) == 0 then
-          return -1
+        if redis.call('TYPE', KEYS[1])['ok'] ~= 'hash' then
+          return {'-1', ''}
         end
         if redis.call('HGET', KEYS[1], 'sessionId') == ARGV[1]
-            and redis.call('HGET', KEYS[1], 'subscriptionId') == ARGV[2] then
-          return redis.call('DEL', KEYS[1])
+           and redis.call('HGET', KEYS[1], 'subscriptionId') == ARGV[2] then
+          local snapshotId = redis.call('HGET', KEYS[1], 'snapshotId')
+          redis.call('DEL', KEYS[1])
+          return {'1', snapshotId}
         end
-        return 0
+        return {'0', ''}
         """;
 
     // PEXPIRE는 키가 있을 때만 1을 반환하고 키를 새로 만들지 않아 이미 만료된 presence를 heartbeat가 되살리지 않는다
-    // 1 = 연장됨, 0 = 소유권 불일치(이상 신호), -1 = 활성 세션 없음(정상)
     private static final String RENEW_IF_OWNER_LUA = """
-        if redis.call('EXISTS', KEYS[1]) == 0 then
+        if redis.call('TYPE', KEYS[1])['ok'] ~= 'hash' then
           return -1
         end
         if redis.call('HGET', KEYS[1], 'sessionId') == ARGV[1]
-            and redis.call('HGET', KEYS[1], 'subscriptionId') == ARGV[2] then
+           and redis.call('HGET', KEYS[1], 'subscriptionId') == ARGV[2] then
           return redis.call('PEXPIRE', KEYS[1], ARGV[3])
         end
         return 0
@@ -88,8 +95,9 @@ public class WatchingSessionPresenceWriter {
     @SuppressWarnings("rawtypes")
     private static final RedisScript<List> SWAP_SCRIPT =
         new DefaultRedisScript<>(SWAP_LUA, List.class);
-    private static final RedisScript<Long> DELETE_IF_OWNER_SCRIPT =
-        new DefaultRedisScript<>(DELETE_IF_OWNER_LUA, Long.class);
+    @SuppressWarnings("rawtypes")
+    private static final RedisScript<List> DELETE_IF_OWNER_SCRIPT =
+        new DefaultRedisScript<>(DELETE_IF_OWNER_LUA, List.class);
     private static final RedisScript<Long> RENEW_IF_OWNER_SCRIPT =
         new DefaultRedisScript<>(RENEW_IF_OWNER_LUA, Long.class);
 
@@ -103,8 +111,8 @@ public class WatchingSessionPresenceWriter {
      * 호출자(start)가 DB 스냅샷을 보상 삭제하고 클라이언트에 실패를 알려야 한다.
      */
     @SuppressWarnings("unchecked")
-    public Optional<WatchingPresence> swap(UUID watcherId, UUID snapshotId, UUID contentId, String sessionId,
-        String subscriptionId, Instant startedAt, Duration ttl) {
+    public Optional<WatchingPresence> swap(UUID watcherId, UUID snapshotId, UUID contentId,
+        String sessionId, String subscriptionId, Instant startedAt, Duration ttl) {
 
         List<String> previous = stringRedisTemplate.execute(
             SWAP_SCRIPT,
@@ -122,24 +130,46 @@ public class WatchingSessionPresenceWriter {
     /**
      * 요청자가 현재 소유자일 때만 presence를 삭제한다.
      *
-     * @return 실제로 삭제했으면 true. 소유권 불일치·키 없음·Redis 실패는 모두 false.
+     * @return 실제로 삭제했다면 그 presence가 가리키던 DB 스냅샷 id. 소유권 불일치·활성 세션
+     *         없음·Redis 실패는 전부 빈 Optional.
      */
-    public boolean deleteIfOwner(UUID watcherId, String sessionId, String subscriptionId) {
+    @SuppressWarnings("ConstantConditions")
+    public Optional<UUID> deleteIfOwner(UUID watcherId, String sessionId, String subscriptionId) {
         try {
-            Long result = stringRedisTemplate.execute(
+            List<String> result = stringRedisTemplate.execute(
                 DELETE_IF_OWNER_SCRIPT,
                 List.of(key(watcherId)),
                 nullSafe(sessionId),
                 nullSafe(subscriptionId));
 
-            if (result == 0L) {
-                // 활성 세션은 있는데 소유자가 다름 -> 낡은 탭이 현재 소유자를 가리킴
-                log.warn("Presence 소유권 불일치로 삭제 거부: watcherId={}", watcherId);
+            if (result == null || result.isEmpty()) {
+                log.error("Presence 삭제 스크립트가 예상 못한 빈 응답을 반환함: watcherId={}", watcherId);
+                return Optional.empty();
             }
-            return result == 1L;
+
+            String code = result.get(0);
+            if ("0".equals(code)) {
+                // 활성 세션은 있는데 소유자가 다름 -> 낡은 탭이 현재 소유자를 침범하려 한 것.
+                // 정상 흐름에서는 나오면 안 되는 경로라 WARN으로 남긴다.
+                log.warn("Presence 소유권 불일치로 삭제 거부: watcherId={}", watcherId);
+                return Optional.empty();
+            }
+            if (!"1".equals(code)) {
+                // "-1": 활성 세션 없음 또는 레거시 문자열 키. 정상 흐름이라 로그 없음.
+                return Optional.empty();
+            }
+
+            String snapshotIdRaw = result.size() > 1 ? result.get(1) : null;
+            if (snapshotIdRaw == null || snapshotIdRaw.isBlank()) {
+                // 이론상 HSET이 항상 snapshotId를 채우므로 도달하면 안 되는 경로.
+                // 방어적으로 처리해 잘못된 id로 DB 삭제가 나가는 것을 막는다.
+                log.error("Presence 삭제는 성공했으나 snapshotId를 복원하지 못함: watcherId={}", watcherId);
+                return Optional.empty();
+            }
+            return Optional.of(UUID.fromString(snapshotIdRaw));
         } catch (RuntimeException e) {
             log.error("Presence 소유권 삭제 실패: watcherId={}", watcherId, e);
-            return false;
+            return Optional.empty();
         }
     }
 
@@ -148,6 +178,7 @@ public class WatchingSessionPresenceWriter {
      *
      * @return 실제로 연장했으면 true. 소유권 불일치·키 없음·Redis 실패는 모두 false.
      */
+    @SuppressWarnings("ConstantConditions")
     public boolean renewIfOwner(UUID watcherId, String sessionId, String subscriptionId, Duration ttl) {
         try {
             Long result = stringRedisTemplate.execute(
@@ -157,10 +188,16 @@ public class WatchingSessionPresenceWriter {
                 nullSafe(subscriptionId),
                 String.valueOf(ttl.toMillis()));
 
-            if (result == 0L) {
+            if (result == null) {
+                // 파이프라인/트랜잭션 모드 등에서만 나올 수 있는 응답. 예외 경로(아래 catch)와
+                // 원인이 다르므로 "Redis 실패"로 뭉뚱그리지 않고 별도로 남긴다.
+                log.error("Presence TTL 갱신 스크립트가 예상 못한 null을 반환함: watcherId={}", watcherId);
+                return false;
+            }
+            if (Long.valueOf(0L).equals(result)) {
                 log.warn("Presence 소유권 불일치로 TTL 연장 거부: watcherId={}", watcherId);
             }
-            return result == 1L;
+            return Long.valueOf(1L).equals(result);
         } catch (RuntimeException e) {
             log.error("Presence TTL 갱신 실패: watcherId={}", watcherId, e);
             return false;
@@ -168,17 +205,17 @@ public class WatchingSessionPresenceWriter {
     }
 
     // HGETALL은 필드와 값이 번갈아 담긴 평평한 배열을 반환한다. 키가 없으면 빈 배열 반환
+    @SuppressWarnings("ConstantConditions")
     private Optional<WatchingPresence> toPresence(UUID watcherId, List<String> flat) {
         if (flat == null || flat.isEmpty()) {
             return Optional.empty();
         }
 
-        Map<String , String> fields = new HashMap<>();
+        Map<String, String> fields = new HashMap<>();
         for (int i = 0; i + 1 < flat.size(); i += 2) {
             fields.put(flat.get(i), flat.get(i + 1));
         }
 
-        // 필드가 비면 소유자 없음으로 처리함
         if (!fields.keySet().containsAll(List.of(
             FIELD_SNAPSHOT_ID, FIELD_CONTENT_ID, FIELD_SESSION_ID, FIELD_STARTED_AT))) {
             log.warn("presence 필드가 불완전해 이전 소유자를 복원하지 못함: watcherId={}", watcherId);
