@@ -619,7 +619,8 @@ class UserServiceTest {
          */
         verifyNoInteractions(
             userRepository,
-            passwordEncoder
+            passwordEncoder,
+            refreshTokenStore
         );
     }
 
@@ -654,7 +655,8 @@ class UserServiceTest {
          */
         verifyNoInteractions(
             userRepository,
-            passwordEncoder
+            passwordEncoder,
+            refreshTokenStore
         );
     }
 
@@ -690,6 +692,10 @@ class UserServiceTest {
          * 수행하면 안된다.
          */
         verifyNoInteractions(passwordEncoder);
+
+        verifyNoInteractions(
+            refreshTokenStore
+        );
     }
 
     @Test
@@ -841,6 +847,60 @@ class UserServiceTest {
     }
 
     @Test
+    @DisplayName("권한 변경 중 Refresh Token 세션 폐기에 실패하면 요청도 실패한다")
+    void updateRole_fail_whenRefreshTokenRevocationFails() {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        User user =
+            createUserFixture(userId);
+
+        UserRoleUpdateRequest request =
+            new UserRoleUpdateRequest(
+                UserRole.ADMIN
+            );
+
+        when(userRepository.findById(userId))
+            .thenReturn(
+                Optional.of(user)
+            );
+
+        IllegalStateException redisException =
+            new IllegalStateException(
+                "Redis 세션 폐기 실패"
+            );
+
+        when(
+            refreshTokenStore
+                .revokeAllByUserId(userId)
+        ).thenThrow(redisException);
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.updateRole(
+                userId,
+                request
+            )
+        ).isSameAs(redisException);
+
+        verify(userRepository)
+            .findById(userId);
+
+        verify(refreshTokenStore)
+            .revokeAllByUserId(userId);
+
+        /*
+         * 실제 Spring 트랜잭션에서는 런타임 예외가 전파되어
+         * 변경 감지에 의한 role UPDATE가 롤백
+         */
+        verify(userRepository, never())
+            .save(any(User.class));
+    }
+
+    @Test
     @DisplayName("권한을 변경할 사용자가 없으면 실패한다")
     void updateRole_fail_whenUserDoesNotExist() {
         // given
@@ -924,6 +984,58 @@ class UserServiceTest {
          */
         verify(refreshTokenStore)
             .revokeAllByUserId(userId);
+    }
+
+    @Test
+    @DisplayName("계정 잠금 중 Refresh Token 세션 폐기에 실패하면 요청도 실패한다")
+    void updateLocked_fail_whenRefreshTokenRevocationFails() {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        User user =
+            createUserFixture(userId);
+
+        UserLockUpdateRequest request =
+            new UserLockUpdateRequest(true);
+
+        when(userRepository.findById(userId))
+            .thenReturn(
+                Optional.of(user)
+            );
+
+        IllegalStateException redisException =
+            new IllegalStateException(
+                "Redis 세션 폐기 실패"
+            );
+
+        when(
+            refreshTokenStore
+                .revokeAllByUserId(userId)
+        ).thenThrow(redisException);
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.updateLocked(
+                userId,
+                request
+            )
+        ).isSameAs(redisException);
+
+        verify(userRepository)
+            .findById(userId);
+
+        verify(refreshTokenStore)
+            .revokeAllByUserId(userId);
+
+        /*
+         * 명시적 save()는 호출하지 않으며 실제 locked 변경의
+         * 롤백 여부는 트랜잭션 통합 테스트에서 검증
+         */
+        verify(userRepository, never())
+            .save(any(User.class));
     }
 
     @Test
