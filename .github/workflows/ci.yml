@@ -78,20 +78,6 @@ jobs:
           --health-timeout 3s
           --health-retries 10
 
-      elasticsearch:
-        image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
-        env:
-          discovery.type: single-node
-          xpack.security.enabled: "false"
-          ES_JAVA_OPTS: -Xms512m -Xmx512m
-        ports:
-          - 9200:9200
-        options: >-
-          --health-cmd "curl --fail --silent http://localhost:9200/_cluster/health || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-
     steps:
       - uses: actions/checkout@v4
 
@@ -100,6 +86,37 @@ jobs:
 
       - name: Verify non-root runtime user
         run: test "$(docker image inspect --format '{{.Config.User}}' mopl:ci)" = "mopl"
+
+      - name: Build Elasticsearch image
+        run: docker build --tag mopl-es:ci ./docker/elasticsearch
+
+      - name: Start Elasticsearch container
+        run: |
+          docker run --detach \
+            --name mopl-es-ci \
+            --network host \
+            --env discovery.type=single-node \
+            --env xpack.security.enabled=false \
+            --env ES_JAVA_OPTS="-Xms512m -Xmx512m" \
+            mopl-es:ci
+
+      - name: Wait for Elasticsearch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:9200/_cluster/health >/dev/null 2>&1; then
+              echo "Elasticsearch is ready."
+              exit 0
+            fi
+            echo "Waiting for Elasticsearch ($attempt/60)"
+            sleep 2
+          done
+
+          echo "Elasticsearch did not become ready in time."
+          docker logs mopl-es-ci || true
+          exit 1
 
       # 이 job 은 컨테이너가 정상 기동해 healthy 가 되는지만 봅니다. Kafka 브로커는
       # 띄우지 않고 주소만 넘깁니다. prod 는 토픽을 생성하지도 검증하지도 않고 도메인
@@ -159,6 +176,10 @@ jobs:
       - name: Remove smoke container
         if: always()
         run: docker rm --force mopl-ci || true
+
+      - name: Remove Elasticsearch container
+        if: always()
+        run: docker rm --force mopl-es-ci || true
 
   coverage-upload:
     name: Coverage upload
