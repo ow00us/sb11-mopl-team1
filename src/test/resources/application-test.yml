@@ -27,6 +27,10 @@ mopl:
   outbox:
     # lease 만료 회수를 기다리지 않고 검증하기 위해 짧게 둡니다.
     lease-duration: 2s
+    relay:
+      # 스케줄 실행이 테스트 데이터를 먼저 가져가면 검증이 흔들립니다. relay 통합
+      # 테스트는 컴포넌트를 직접 만들어 호출합니다.
+      enabled: false
 
 jwt:
   secret: MVB4n0vCRFADVbcto73tHp0Ghw2bWmriymBGLOuR2Q4=
