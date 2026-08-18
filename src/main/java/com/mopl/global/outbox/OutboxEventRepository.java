@@ -43,9 +43,12 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
      * <p>재시도 대기 중인 건이 뒤로 밀리는 것도 이 정렬이 의도하는 동작입니다. 최초 기록은
      * {@code nextAttemptAt} 이 발생 시각과 같으므로 신규 건 사이의 순서는 발생 순과 같습니다.
      *
-     * <p>같은 partition key 의 발행 순서는 이 조회가 보장하지 않습니다. 앞선 이벤트가 끝나기
-     * 전에 뒤 이벤트를 발행하지 않는 규칙은 #230·#231 의 순서 검사가 담당하며,
-     * {@code idx_outbox_events_partition_order} 를 씁니다.
+     * <p>같은 partition key 안에서 앞선 이벤트가 끝나기 전에 뒤 이벤트를 발행하지 않는 규칙은
+     * 아직 어디에도 없습니다. relay 는 이 정렬대로 발행하므로, 앞선 이벤트가 실패해 재시도
+     * 대기로 밀리면 뒤 이벤트가 먼저 나갑니다. {@code orderingScope} 가 {@code AGGREGATE} 인
+     * 이벤트에는 이 순서가 계약이므로, 선점 조건에 같은 키의 앞선 대기 건이 없어야 한다는
+     * 조건을 더해야 합니다. {@code idx_outbox_events_partition_order} 가 그 검사를 위한
+     * 인덱스입니다.
      */
     List<OutboxEvent> findByStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscIdAsc(
         OutboxStatus status, Instant now, Limit limit);
