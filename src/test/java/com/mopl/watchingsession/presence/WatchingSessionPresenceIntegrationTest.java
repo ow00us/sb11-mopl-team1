@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.mopl.global.config.RedisConfig;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,7 +17,7 @@ import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -40,6 +42,7 @@ public class WatchingSessionPresenceIntegrationTest {
 
     private static final UUID WATCHER_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID CONTENT_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
+    private static final UUID SNAPSHOT_ID = UUID.fromString("33333333-3333-3333-3333-333333333333");
     private static final String SESSION_ID = "session-1";
     private static final String SUBSCRIPTION_ID = "sub-1";
     private static final String KEY = "mopl:presence:watcher:" + WATCHER_ID;
@@ -49,108 +52,146 @@ public class WatchingSessionPresenceIntegrationTest {
     private WatchingSessionPresenceWriter writer;
 
     @Autowired
-    private RedisTemplate<String, Object> redisTemplate;
+    private StringRedisTemplate stringRedisTemplate;
 
     @BeforeEach
     void clearPresenceKeys() {
-        redisTemplate.delete(KEY);
+        stringRedisTemplate.delete(KEY);
     }
 
     @Test
-    @DisplayName("write()는 실제 Redis에 WatchingPresence 값을 그대로 저장한다")
-    void write_actuallyStoresPresenceInRedis() {
-        Instant startedAt = Instant.now();
+    @DisplayName("swap()은 값을 Hash로 저장하고, 필드 이름·값이 전부 평문 문자열이다")
+    void swap_storesValueAsPlainStringHash() {
+        writer.swap(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), DEFAULT_TTL);
 
-        writer.write(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, startedAt, DEFAULT_TTL);
-
-        Object stored = redisTemplate.opsForValue().get(KEY);
-        assertThat(stored).isInstanceOf(WatchingPresence.class);
-        WatchingPresence presence = (WatchingPresence) stored;
-        assertThat(presence.watcherId()).isEqualTo(WATCHER_ID);
-        assertThat(presence.contentId()).isEqualTo(CONTENT_ID);
-        assertThat(presence.sessionId()).isEqualTo(SESSION_ID);
-        assertThat(presence.subscriptionId()).isEqualTo(SUBSCRIPTION_ID);
-        assertThat(presence.startedAt()).isEqualTo(startedAt);
+        Map<Object, Object> entries = stringRedisTemplate.opsForHash().entries(KEY);
+        assertThat(entries)
+            .containsEntry("snapshotId", SNAPSHOT_ID.toString())
+            .containsEntry("contentId", CONTENT_ID.toString())
+            .containsEntry("sessionId", SESSION_ID)
+            .containsEntry("subscriptionId", SUBSCRIPTION_ID);
+        assertThat(entries).doesNotContainKey("watcherId"); // 키에 이미 있어 필드로 중복 저장하지 않음
     }
 
     @Test
-    @DisplayName("write()는 지정한 TTL을 실제 Redis 키에 적용한다")
-    void write_actuallyAppliesTtlInRedis() {
-        writer.write(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), Duration.ofSeconds(60));
+    @DisplayName("swap()은 지정한 TTL을 실제 Redis 키에 적용한다")
+    void swap_appliesTtl() {
+        writer.swap(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(),
+            Duration.ofSeconds(60));
 
-        Long ttl = redisTemplate.getExpire(KEY, TimeUnit.SECONDS);
-
+        Long ttl = stringRedisTemplate.getExpire(KEY, TimeUnit.SECONDS);
         assertThat(ttl).isGreaterThan(0).isLessThanOrEqualTo(60);
     }
 
     @Test
-    @DisplayName("같은 watcherId로 다시 write()하면 기존 키를 덮어쓰고 최신 값만 남는다")
-    void write_overwritesExistingKeyForSameWatcher() {
-        writer.write(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), DEFAULT_TTL);
+    @DisplayName("첫 swap()은 직전 소유자가 없어 빈 Optional을 반환한다")
+    void swap_returnsEmpty_onFirstCall() {
+        Optional<WatchingPresence> previous = writer.swap(
+            WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), DEFAULT_TTL);
 
-        UUID newContentId = UUID.randomUUID();
-        writer.write(WATCHER_ID, newContentId, SESSION_ID, "sub-2", Instant.now(), DEFAULT_TTL);
-
-        Object stored = redisTemplate.opsForValue().get(KEY);
-        assertThat(stored).isInstanceOf(WatchingPresence.class);
-        WatchingPresence presence = (WatchingPresence) stored;
-        assertThat(presence.contentId()).isEqualTo(newContentId);
-        assertThat(presence.subscriptionId()).isEqualTo("sub-2");
+        assertThat(previous).isEmpty();
     }
 
     @Test
-    @DisplayName("delete()는 실제 Redis에서 키를 제거한다")
-    void delete_actuallyRemovesKeyFromRedis() {
-        writer.write(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), DEFAULT_TTL);
-        assertThat(redisTemplate.hasKey(KEY)).isTrue();
+    @DisplayName("연속된 swap()은 각각 자신이 밀어낸 직전 소유자를 정확히 하나씩 반환한다 (A->B->C 재구독)")
+    void swap_returnsExactlyOnePreviousOwner_perCall_onChainedResubscribe() {
+        writer.swap(WATCHER_ID, UUID.randomUUID(), CONTENT_ID, "session-A", "sub-A", Instant.now(), DEFAULT_TTL);
 
-        writer.delete(WATCHER_ID);
+        Optional<WatchingPresence> previousForB = writer.swap(
+            WATCHER_ID, UUID.randomUUID(), CONTENT_ID, "session-B", "sub-B", Instant.now(), DEFAULT_TTL);
+        Optional<WatchingPresence> previousForC = writer.swap(
+            WATCHER_ID, UUID.randomUUID(), CONTENT_ID, "session-C", "sub-C", Instant.now(), DEFAULT_TTL);
 
-        assertThat(redisTemplate.hasKey(KEY)).isFalse();
-        assertThat(redisTemplate.opsForValue().get(KEY)).isNull();
+        assertThat(previousForB).isPresent();
+        assertThat(previousForB.get().sessionId()).isEqualTo("session-A");
+        assertThat(previousForC).isPresent();
+        assertThat(previousForC.get().sessionId()).isEqualTo("session-B");
     }
 
     @Test
-    @DisplayName("존재하지 않는 키에 delete()를 호출해도 아무 일도 일어나지 않는다")
-    void delete_doesNothing_whenKeyDoesNotExist() {
-        UUID neverWrittenWatcherId = UUID.randomUUID();
+    @DisplayName("deleteIfOwner()는 소유권이 일치할 때만 실제로 키를 삭제한다")
+    void deleteIfOwner_removesKey_onlyWhenOwnerMatches() {
+        writer.swap(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), DEFAULT_TTL);
 
-        writer.delete(neverWrittenWatcherId);
+        Optional<UUID> deletedByOtherOwner = writer.deleteIfOwner(WATCHER_ID, "other-session", "other-sub");
+        assertThat(deletedByOtherOwner).isEmpty();
+        assertThat(stringRedisTemplate.hasKey(KEY)).isTrue(); // 낡은 요청이 현재 세션을 지우지 않음
 
-        assertThat(redisTemplate.hasKey("mopl:presence:watcher:" + neverWrittenWatcherId)).isFalse();
+        Optional<UUID> deletedByRealOwner = writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+        assertThat(deletedByRealOwner).contains(SNAPSHOT_ID); // 삭제된 presence가 가리키던 snapshotId를 반환
+        assertThat(stringRedisTemplate.hasKey(KEY)).isFalse();
     }
 
     @Test
-    @DisplayName("renew()는 실제 Redis에서 기존 키의 TTL을 재설정한다")
-    void renew_actuallyResetsTtlInRedis() {
-        writer.write(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), Duration.ofSeconds(5));
+    @DisplayName("renewIfOwner()는 소유권이 일치할 때만 TTL을 연장하고, 저장된 값은 바꾸지 않는다")
+    void renewIfOwner_extendsTtl_onlyWhenOwnerMatches_andKeepsValue() {
+        writer.swap(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(),
+            Duration.ofSeconds(5));
 
-        boolean result = writer.renew(WATCHER_ID, Duration.ofSeconds(60));
+        boolean renewedByOtherOwner = writer.renewIfOwner(WATCHER_ID, "other-session", "other-sub",
+            Duration.ofSeconds(60));
+        assertThat(renewedByOtherOwner).isFalse();
 
-        assertThat(result).isTrue();
-        Long ttl = redisTemplate.getExpire(KEY, TimeUnit.SECONDS);
+        boolean renewedByRealOwner = writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID,
+            Duration.ofSeconds(60));
+        assertThat(renewedByRealOwner).isTrue();
+
+        Long ttl = stringRedisTemplate.getExpire(KEY, TimeUnit.SECONDS);
         assertThat(ttl).isGreaterThan(5).isLessThanOrEqualTo(60);
+        assertThat(stringRedisTemplate.opsForHash().get(KEY, "sessionId")).isEqualTo(SESSION_ID);
     }
 
     @Test
-    @DisplayName("renew()는 존재하지 않는 키에 대해 false를 반환하고 키를 새로 생성하지 않는다")
-    void renew_doesNotCreateKey_whenKeyDoesNotExists() {
-        boolean result = writer.renew(WATCHER_ID, Duration.ofSeconds(60));
+    @DisplayName("renewIfOwner()는 존재하지 않는 키에 대해 false를 반환하고 키를 새로 만들지 않는다")
+    void renewIfOwner_doesNotCreateKey_whenKeyDoesNotExist() {
+        boolean result = writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60));
 
         assertThat(result).isFalse();
-        assertThat(redisTemplate.hasKey(KEY)).isFalse();
+        assertThat(stringRedisTemplate.hasKey(KEY)).isFalse();
     }
 
     @Test
-    @DisplayName("renew()는 저장된 presence 값 자체는 변경하지 않는다")
-    void renew_doesNotModifyStoredValue() {
-        Instant startedAt = Instant.now();
-        writer.write(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, startedAt, DEFAULT_TTL);
+    @DisplayName("만료된 presence에 대한 deleteIfOwner()는 false를 반환한다 (TTL이 소유권 수명)")
+    void deleteIfOwner_returnsFalse_afterTtlExpires() throws InterruptedException {
+        writer.swap(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(),
+            Duration.ofMillis(200));
 
-        writer.renew(WATCHER_ID, Duration.ofSeconds(60));
+        Thread.sleep(300);
 
-        WatchingPresence presence = (WatchingPresence) redisTemplate.opsForValue().get(KEY);
-        assertThat(presence.contentId()).isEqualTo(CONTENT_ID);
-        assertThat(presence.startedAt()).isEqualTo(startedAt);
+        Optional<UUID> result = writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("레거시 문자열 타입 presence 키가 있어도 WRONGTYPE 없이 swap()이 성공하고 갈아치운다")
+    void swap_overwritesLegacyStringKey_withoutWrongTypeError() {
+        stringRedisTemplate.opsForValue().set(KEY, "{\"legacy\":\"json\"}");
+
+        Optional<WatchingPresence> previous = writer.swap(
+            WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), DEFAULT_TTL);
+
+        assertThat(previous).isEmpty(); // 레거시 값은 파싱하지 않고 "직전 소유자 없음"으로 취급
+        assertThat(stringRedisTemplate.opsForHash().get(KEY, "sessionId")).isEqualTo(SESSION_ID);
+    }
+
+    @Test
+    @DisplayName("레거시 문자열 타입 presence 키에 대해 deleteIfOwner()는 예외 없이 빈 Optional을 반환한다")
+    void deleteIfOwner_returnsEmpty_forLegacyStringKey_withoutWrongTypeError() {
+        stringRedisTemplate.opsForValue().set(KEY, "{\"legacy\":\"json\"}");
+
+        Optional<UUID> result = writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(result).isEmpty();
+        assertThat(stringRedisTemplate.opsForValue().get(KEY)).isEqualTo("{\"legacy\":\"json\"}"); // 건드리지 않음
+    }
+
+    @Test
+    @DisplayName("레거시 문자열 타입 presence 키에 대해 renewIfOwner()는 예외 없이 false를 반환한다")
+    void renewIfOwner_returnsFalse_forLegacyStringKey_withoutWrongTypeError() {
+        stringRedisTemplate.opsForValue().set(KEY, "{\"legacy\":\"json\"}");
+
+        boolean result = writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60));
+
+        assertThat(result).isFalse();
     }
 }

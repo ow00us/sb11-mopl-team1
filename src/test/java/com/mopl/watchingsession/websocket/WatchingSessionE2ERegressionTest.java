@@ -20,7 +20,6 @@ import com.mopl.watchingsession.dto.ChangeType;
 import com.mopl.watchingsession.dto.ContentChatDto;
 import com.mopl.watchingsession.dto.WatchingSessionChange;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
-import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
@@ -42,7 +41,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
@@ -107,7 +106,7 @@ class WatchingSessionE2ERegressionTest {
     private WatchingSessionSnapshotRepository snapshotRepository;
 
     @Autowired
-    private RedisTemplate<String, Object> redisTemplate;
+    private StringRedisTemplate stringRedisTemplate;
 
     private WebSocketStompClient stompClient;
     private ThreadPoolTaskScheduler taskScheduler;
@@ -264,9 +263,9 @@ class WatchingSessionE2ERegressionTest {
         assertThat(joinChange.watchingSessionDto().watcher().userId()).isEqualTo(watcherId);
 
         // then 1-1: Redis presence도 실제로 기록되었는지 확인
-        WatchingPresence presence = (WatchingPresence) redisTemplate.opsForValue().get(presenceKey(watcherId));
-        assertThat(presence).isNotNull();
-        assertThat(presence.contentId()).isEqualTo(contentId);
+        Map<Object, Object> presence = stringRedisTemplate.opsForHash().entries(presenceKey(watcherId));
+        assertThat(presence).isNotEmpty();
+        assertThat(presence.get("contentId")).isEqualTo(contentId.toString());
 
         // when 2: 채팅 전송
         SubscriptionResult<ContentChatDto> chatResult =
@@ -290,7 +289,7 @@ class WatchingSessionE2ERegressionTest {
         await().atMost(5, TimeUnit.SECONDS)
             .pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() ->
-                assertThat(redisTemplate.opsForValue().get(presenceKey(watcherId))).isNull());
+                assertThat(stringRedisTemplate.hasKey(presenceKey(watcherId))).isFalse());
     }
 
     @Test
@@ -472,6 +471,14 @@ class WatchingSessionE2ERegressionTest {
             .untilAsserted(() -> assertThat(leaveCount.get()).isZero());
         assertThat(snapshotRepository.findByWatcherId(watcherId)).isPresent();
 
+        // presence-ttl(테스트 프로파일 2s)이 소유권 수명이 된 이후로는, 앞선 두 번의 구독과
+        // 위 during(최대 2300ms) 대기를 거치며 TTL을 넘길 수 있다. 실제 클라이언트는
+        // heartbeat-interval(500ms)마다 갱신하므로 이 시점에도 presence가 살아있는 게 정상 조건이고,
+        // 이 테스트의 목적은 "낡은 구독 무동작 vs 진짜 구독 정상 퇴장" 검증이지 TTL 만료 검증이
+        // 아니므로 두 관심사가 우연히 얽히지 않게 heartbeat로 갱신해둔다.
+        session.send("/pub/contents/" + contentId + "/watch/heartbeat", null);
+        Thread.sleep(100);
+
         // when: 현재 활성 구독(sub-2)을 UNSUBSCRIBE - 실제 퇴장
         currentSubscription.unsubscribe();
 
@@ -511,7 +518,7 @@ class WatchingSessionE2ERegressionTest {
         await().atMost(5, TimeUnit.SECONDS)
             .pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() ->
-                assertThat(redisTemplate.opsForValue().get(presenceKey(watcherId))).isNotNull());
+                assertThat(stringRedisTemplate.hasKey(presenceKey(watcherId))).isTrue());
 
         // 별도 관찰자(다른 유저)가 같은 콘텐츠의 watch 토픽을 구독해 LEAVE 수신 여부를 확인한다.
         User observer = userRepository.save(User.builder()
@@ -552,7 +559,7 @@ class WatchingSessionE2ERegressionTest {
             await().atMost(5, TimeUnit.SECONDS)
                 .pollInterval(100, TimeUnit.MILLISECONDS)
                 .untilAsserted(() ->
-                    assertThat(redisTemplate.opsForValue().get(presenceKey(watcherId))).isNull());
+                    assertThat(stringRedisTemplate.hasKey(presenceKey(watcherId))).isFalse());
 
             WatchingSessionChange leaveChange = leaveReceived.get(5, TimeUnit.SECONDS);
             assertThat(leaveChange.watchingSessionDto().watcher().userId()).isEqualTo(watcherId);

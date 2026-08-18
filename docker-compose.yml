@@ -17,6 +17,18 @@ services:
     ports:
       - "6379:6379"
 
+  mailpit:
+    # 팀원마다 동일한 버전의 로컬 SMTP 서버를 사용하도록 버전을 고정
+    image: axllent/mailpit:v1.30.0
+    container_name: mopl-mailpit
+
+    ports:
+      # Spring Boot가 비밀번호 초기화 메일을 전달하는 SMTP 포트
+      - "1025:1025"
+
+      # 브라우저에서 발송된 테스트 메일을 확인하는 Mailpit 웹 UI 포트
+      - "8025:8025"
+
   kafka:
     image: apache/kafka:3.8.0
     container_name: mopl-kafka
