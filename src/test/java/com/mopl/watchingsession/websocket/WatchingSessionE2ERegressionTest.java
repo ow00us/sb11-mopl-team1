@@ -567,4 +567,67 @@ class WatchingSessionE2ERegressionTest {
             StompTestCleanup.disconnectQuietly(observerSession);
         }
     }
+
+    @Test
+    @DisplayName("[E2E 회귀] 구독(SUBSCRIBE) 직후 즉시 연결이 끊겨도 DB에서 세션이 삭제되고 관찰자에게 LEAVE가 브로드캐스트")
+    void disconnectImmediatelyAfterSubscribe_deletesSessionAndBroadcastsLeaveToObserver() throws Exception {
+        // given: 관찰자가 먼저 watch 토픽을 구독해 LEAVE 수신을 대기한다.
+        User observer = userRepository.save(User.builder()
+            .email("e2e-immediate-disconnect-observer-" + UUID.randomUUID() + "@test.com")
+            .passwordHash("hash")
+            .name("관찰자")
+            .role(UserRole.USER)
+            .locked(false)
+            .build());
+        StompSession observerSession = connectAs(observer.getId(), null);
+
+        String watchDestination = "/sub/contents/" + contentId + "/watch";
+        CompletableFuture<WatchingSessionChange> leaveReceived = new CompletableFuture<>();
+        observerSession.subscribe(watchDestination, new StompFrameHandler() {
+            @Override
+            public Type getPayloadType(StompHeaders headers) {
+                return WatchingSessionChange.class;
+            }
+
+            @Override
+            public void handleFrame(StompHeaders headers, @Nullable Object payload) {
+                WatchingSessionChange change = (WatchingSessionChange) payload;
+                if (change.type() == ChangeType.LEAVE) {
+                    leaveReceived.complete(change);
+                }
+            }
+        });
+        Thread.sleep(SETTLE_MILLIS);
+
+        try {
+            // when: 시청자가 구독(SUBSCRIBE)한 직후, activate() 도달 여부와 무관하게 곧바로 연결을 끊는다.
+            session = connectAs(watcherId, null);
+            session.subscribe(watchDestination, new StompFrameHandler() {
+                @Override
+                public Type getPayloadType(StompHeaders headers) {
+                    return WatchingSessionChange.class;
+                }
+
+                @Override
+                public void handleFrame(StompHeaders headers, @Nullable Object payload) {
+                }
+            });
+            session.disconnect();
+
+            // then: DB 스냅샷과 presence가 모두 삭제되고, 관찰자는 LEAVE를 수신한다.
+            await().atMost(5, TimeUnit.SECONDS)
+                .pollInterval(100, TimeUnit.MILLISECONDS)
+                .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty());
+
+            await().atMost(5, TimeUnit.SECONDS)
+                .pollInterval(100, TimeUnit.MILLISECONDS)
+                .untilAsserted(() ->
+                    assertThat(stringRedisTemplate.hasKey(presenceKey(watcherId))).isFalse());
+
+            WatchingSessionChange leaveChange = leaveReceived.get(5, TimeUnit.SECONDS);
+            assertThat(leaveChange.watchingSessionDto().watcher().userId()).isEqualTo(watcherId);
+        } finally {
+            StompTestCleanup.disconnectQuietly(observerSession);
+        }
+    }
 }
