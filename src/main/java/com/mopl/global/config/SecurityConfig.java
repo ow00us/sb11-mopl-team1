@@ -32,7 +32,8 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  * 보안 설정 골격입니다. 다음을 자리 잡아 두었습니다.
  *  - JWT 인증 필터를 스프링 시큐리티 체인에 연결
  *  - CSRF를 쿠키 방식으로 설정(쿠키 XSRF-TOKEN / 헤더 X-XSRF-TOKEN — 요구사항 준수)
- *  - 세션은 STATELESS(서버 세션을 만들지 않음)
+ *  - JWT SecurityContext는 HTTP 세션에 저장하지 않고 STATELESS로 관리
+ *  - OAuth2 인가 요청 정보는 Provider 연동 과정에서 임시 HTTP 세션을 사용할 수 있음
  *
  * 공개 API는 회원가입과 인증 진입점으로 한정합니다.
  * 공개 상태 변경 요청도 CSRF 검증은 그대로 적용합니다.
