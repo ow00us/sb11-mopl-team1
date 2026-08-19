@@ -16,6 +16,8 @@ import com.mopl.user.entity.UserRole;
 import com.mopl.user.mail.TemporaryPasswordEmailSender;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.user.security.TemporaryPasswordGenerator;
+import com.mopl.user.storage.RefreshTokenStore;
+import java.util.UUID;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,6 +27,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mail.MailSendException;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 비밀번호 초기화 서비스의 비즈니스 흐름을 검증하는 단위 테스트
@@ -50,6 +53,9 @@ class PasswordResetServiceTest {
     @Mock
     TemporaryPasswordEmailSender
         temporaryPasswordEmailSender;
+
+    @Mock
+    RefreshTokenStore refreshTokenStore;
 
     @InjectMocks
     PasswordResetService passwordResetService;
@@ -77,6 +83,9 @@ class PasswordResetServiceTest {
                 normalizedEmail,
                 "$2a$10$oldPasswordHash"
             );
+
+        UUID userId =
+            user.getId();
 
         when(
             userRepository.findByEmail(
@@ -123,6 +132,9 @@ class PasswordResetServiceTest {
             .encode(
                 temporaryPassword
             );
+
+        verify(refreshTokenStore)
+            .revokeAllByUserId(userId);
 
         verify(
             temporaryPasswordEmailSender
@@ -199,7 +211,8 @@ class PasswordResetServiceTest {
         verifyNoInteractions(
             temporaryPasswordGenerator,
             passwordEncoder,
-            temporaryPasswordEmailSender
+            temporaryPasswordEmailSender,
+            refreshTokenStore
         );
 
         verify(userRepository)
@@ -233,6 +246,9 @@ class PasswordResetServiceTest {
                 email,
                 "$2a$10$oldPasswordHash"
             );
+
+        UUID userId =
+            user.getId();
 
         MailSendException mailSendException =
             new MailSendException(
@@ -292,6 +308,98 @@ class PasswordResetServiceTest {
             email,
             temporaryPassword
         );
+
+        /*
+         * 이메일 발송 전에 세션 폐기가 완료
+         *
+         * 이메일 발송 실패로 비밀번호 DB 변경은 롤백되지만,
+         * 보안상 기존 로그인 세션은 폐기된 상태를 유지
+         */
+        verify(refreshTokenStore)
+            .revokeAllByUserId(userId);
+    }
+
+    @Test
+    @DisplayName("Refresh Token 전체 세션 폐기에 실패하면 비밀번호와 이메일을 변경하지 않는다")
+    void resetPassword_fail_whenRefreshTokenRevocationFails() {
+        // given
+        String email =
+            "user@example.com";
+
+        String oldPasswordHash =
+            "$2a$10$oldPasswordHash";
+
+        String temporaryPassword =
+            "Abcd2345!TestPwd";
+
+        String encodedPassword =
+            "$2a$10$encodedTemporaryPassword";
+
+        ResetPasswordRequest request =
+            new ResetPasswordRequest(email);
+
+        User user =
+            createUser(
+                email,
+                oldPasswordHash
+            );
+
+        UUID userId =
+            user.getId();
+
+        when(
+            userRepository.findByEmail(email)
+        ).thenReturn(
+            Optional.of(user)
+        );
+
+        when(
+            temporaryPasswordGenerator.generate()
+        ).thenReturn(
+            temporaryPassword
+        );
+
+        when(
+            passwordEncoder.encode(
+                temporaryPassword
+            )
+        ).thenReturn(
+            encodedPassword
+        );
+
+        IllegalStateException redisException =
+            new IllegalStateException(
+                "Redis 세션 폐기 실패"
+            );
+
+        when(
+            refreshTokenStore
+                .revokeAllByUserId(userId)
+        ).thenThrow(redisException);
+
+        // when & then
+        assertThatThrownBy(
+            () ->
+                passwordResetService
+                    .resetPassword(request)
+        ).isSameAs(redisException);
+
+        /*
+         * 세션 폐기가 실패했으므로 비밀번호 변경과
+         * 이메일 발송까지 진행하면 안된다.
+         */
+        assertThat(
+            user.getPasswordHash()
+        ).isEqualTo(
+            oldPasswordHash
+        );
+
+        verify(refreshTokenStore)
+            .revokeAllByUserId(userId);
+
+        verifyNoInteractions(
+            temporaryPasswordEmailSender
+        );
     }
 
     /**
@@ -305,12 +413,28 @@ class PasswordResetServiceTest {
         String email,
         String passwordHash
     ) {
-        return User.builder()
-            .email(email)
-            .passwordHash(passwordHash)
-            .name("테스트 사용자")
-            .role(UserRole.USER)
-            .locked(false)
-            .build();
+        User user =
+            User.builder()
+                .email(email)
+                .passwordHash(passwordHash)
+                .name("테스트 사용자")
+                .role(UserRole.USER)
+                .locked(false)
+                .build();
+
+        /*
+         * 단위 테스트에서는 JPA가 UUID를 생성하지 않으므로
+         * 실제 DB에서 조회된 사용자와 같은 상태를 만들기 위해
+         * 테스트용 UUID를 직접 설정
+         */
+        ReflectionTestUtils.setField(
+            user,
+            "id",
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            )
+        );
+
+        return user;
     }
 }

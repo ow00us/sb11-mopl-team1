@@ -3,6 +3,9 @@ package com.mopl.watchingsession.websocket;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -21,6 +24,7 @@ import com.mopl.watchingsession.dto.ContentChatDto;
 import com.mopl.watchingsession.dto.WatchingSessionChange;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
+import com.mopl.watchingsession.service.WatchingSessionService;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -28,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -39,10 +44,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
+import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
 import org.springframework.messaging.simp.stomp.StompHeaders;
@@ -54,8 +61,10 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
+import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -75,6 +84,24 @@ import org.testcontainers.utility.DockerImageName;
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
 class WatchingSessionE2ERegressionTest {
+
+    /**
+     *
+     * SessionDisconnectEvent는 StompSubProtocolHandler.afterSessionEnded()가 합성 DISCONNECT
+     * 메시지를 clientInboundChannel로 다시 보내는 방식으로 발행되므로, SUBSCRIBE/SEND와 같은
+     * 채널·스레드풀을 공유한다. 기본 풀 크기는 availableProcessors() 기준이라, CPU가 적은
+     * 테스트 환경에서는 그 테스트가 SUBSCRIBE 처리 스레드를 래치로 붙잡아 두는 동안
+     * DISCONNECT 처리가 함께 막혀 데드락처럼 보이는 타임아웃이 날 수 있다.
+     * 테스트에서만 여유 스레드를 확보해 이 경합을 없앤다.
+     */
+    @TestConfiguration
+    static class InboundChannelTestConfig implements WebSocketMessageBrokerConfigurer {
+
+        @Override
+        public void configureClientInboundChannel(ChannelRegistration registration) {
+            registration.taskExecutor().corePoolSize(4);
+        }
+    }
 
     private record SubscriptionResult<T>(Subscription subscription, CompletableFuture<T> future) {}
 
@@ -107,6 +134,9 @@ class WatchingSessionE2ERegressionTest {
 
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
+
+    @MockitoSpyBean
+    private WatchingSessionService watchingSessionService;
 
     private WebSocketStompClient stompClient;
     private ThreadPoolTaskScheduler taskScheduler;

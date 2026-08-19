@@ -21,6 +21,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -173,7 +174,7 @@ public class WatchingSessionService {
         }
     }
 
-    // delete 성격의 메서드
+    // delete 성격의 메서드 (원래 구현으로 복원 - DB 조회 없이 boolean만 반환)
     public boolean end(UUID watcherId, String currentSessionId, String currentSubscriptionId) {
         WatcherLock watcherLock = acquireWatcherLock(watcherId);
         try {
@@ -186,15 +187,47 @@ public class WatchingSessionService {
 
                 int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, deletedSnapshotId.get());
                 if (deletedRows == 0) {
-                    // presence 소유권은 확인됐지만 DB 행은 이미 다른 세대로 교체된 뒤였다.
-                    // 그 새 세대는 자기 presence까지 써놓은 상태이므로, 이 사용자는 지금도
-                    // (다른 콘텐츠를) 시청 중이다. 여기서 true를 반환하면 살아있는 세션에 대해
-                    // LEAVE가 나가 유령이 생긴다.
                     log.warn("presence 소유권 확인 후 DB 스냅샷이 이미 교체됨, 퇴장 처리 생략: "
                         + "watcherId={}, snapshotId={}", watcherId, deletedSnapshotId.get());
                     return false;
                 }
                 return true;
+            }
+        } finally {
+            releaseWatcherLock(watcherId);
+        }
+    }
+
+    /**
+     * WebSocket 연결 자체가 끊긴 경우(DISCONNECT) 전용 종료 메서드.
+     * subscriptionId는 비교하지 않고 sessionId만으로 소유권을 판정한다.
+     *
+     * end()와 달리 DB 삭제 직전에 스냅샷을 먼저 조회해 DTO로 반환한다. 호출자가 별도로
+     * get(watcherId)을 먼저 호출해 DTO를 떼어두면, 그 사이 같은 연결에서 재구독이 끼어들 경우
+     * 삭제된 콘텐츠와 브로드캐스트되는 콘텐츠가 어긋날 수 있어 이 메서드가 조회와 삭제를
+     * 같은 임계 구역 안에서 묶는다.
+     */
+    public Optional<WatchingSessionDto> endByConnection(UUID watcherId, String sessionId) {
+        WatcherLock watcherLock = acquireWatcherLock(watcherId);
+        try {
+            synchronized (watcherLock) {
+                Optional<UUID> deletedSnapshotId = watchingSessionPresenceWriter.deleteIfOwnerSession(
+                    watcherId, sessionId);
+                if (deletedSnapshotId.isEmpty()) {
+                    return Optional.empty();
+                }
+
+                UUID snapshotId = deletedSnapshotId.get();
+                WatchingSessionSnapshot snapshot = watchingSessionSnapshotRepository.findById(snapshotId)
+                    .orElse(null);
+
+                int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, snapshotId);
+                if (deletedRows == 0 || snapshot == null) {
+                    log.warn("presence 소유권 확인 후 DB 스냅샷이 이미 교체됨, 퇴장 처리 생략: "
+                        + "watcherId={}, snapshotId={}", watcherId, snapshotId);
+                    return Optional.empty();
+                }
+                return Optional.of(enrich(snapshot));
             }
         } finally {
             releaseWatcherLock(watcherId);
