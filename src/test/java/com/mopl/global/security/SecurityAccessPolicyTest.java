@@ -218,6 +218,43 @@ class SecurityAccessPolicyTest {
             .andExpect(status().isNoContent());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "/oauth2/authorization/google",
+        "/login/oauth2/code/google"
+    })
+    @DisplayName("OAuth2 인증 진입점과 Callback 경로는 JWT 없이 접근할 수 있다")
+    void oauth2Paths_withoutJwt_passSecurityFilter(
+        String path
+    ) throws Exception {
+        /*
+         * 현재 테스트 환경에는 실제 OAuth ClientRegistration이 없으므로
+         * OAuth2 Login Filter는 활성화되지 않는다.
+         *
+         * 따라서 공개 보안 경로를 통과한 뒤 요청을 처리할 Controller가 없어
+         * 404가 반환되는 것이 정상이다.
+         * 이 테스트의 목적은 해당 요청이
+         * JWT 부재로 401 또는 403을 반환하지 않는지 확인하는 것이다.
+         */
+        mockMvc.perform(
+                get(path)
+            )
+            .andExpect(
+                status().isNotFound()
+            );
+
+        /*
+         * Authorization 헤더가 없고 OAuth2 공개 경로이므로
+         * JWT Provider가 Access Token 검증을 시도해서는 안된.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
     @Test
     @DisplayName("WebSocket handshake 경로는 HTTP 메서드와 CSRF에 관계없이 접근할 수 있다")
     void webSocketHandshake_doesNotRequireJwtOrCsrf() throws Exception {
