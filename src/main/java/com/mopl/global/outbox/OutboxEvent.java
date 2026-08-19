@@ -70,6 +70,19 @@ public class OutboxEvent extends BaseEntity {
     @Column(name = "ordering_scope", updatable = false, nullable = false, length = 50)
     private String orderingScope;
 
+    /**
+     * 도메인 사건을 한 번만 식별하는 키입니다.
+     *
+     * <p>{@code eventId} 는 envelope 를 식별합니다. 도메인 연산이 두 번 실행되어 envelope 를
+     * 각각 새로 만들면 {@code eventId} 가 서로 달라 두 행이 모두 저장되고 이벤트가 두 번
+     * 발행됩니다. 이 값은 그 경우를 막습니다.
+     *
+     * <p>유니크 제약이 걸려 있습니다. 같은 키의 두 번째 기록은 저장되지 않고, 기록이 도메인
+     * 트랜잭션 안에서 일어나므로 도메인 변경도 함께 롤백됩니다.
+     */
+    @Column(name = "deduplication_key", updatable = false, nullable = false, length = 200)
+    private String deduplicationKey;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private OutboxStatus status;
@@ -172,6 +185,7 @@ public class OutboxEvent extends BaseEntity {
         String payload,
         String partitionKey,
         String orderingScope,
+        String deduplicationKey,
         Instant nextAttemptAt
     ) {
         this.eventId = eventId;
@@ -182,6 +196,7 @@ public class OutboxEvent extends BaseEntity {
         this.payload = payload;
         this.partitionKey = partitionKey;
         this.orderingScope = orderingScope;
+        this.deduplicationKey = deduplicationKey;
         this.status = OutboxStatus.PENDING;
         this.attempts = 0;
         this.nextAttemptAt = nextAttemptAt;

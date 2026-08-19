@@ -63,7 +63,8 @@ class OutboxClaimerIntegrationTest {
     private OutboxEvent pending(String partitionKey, Instant nextAttemptAt) {
         return new OutboxEvent(
             UUID.randomUUID(), "follow.created", 1, UUID.randomUUID(), nextAttemptAt,
-            "{\"followerId\":\"a\"}", partitionKey, "NONE", nextAttemptAt);
+            "{\"followerId\":\"a\"}", partitionKey, "NONE",
+            "follow.created:" + partitionKey, nextAttemptAt);
     }
 
     private List<OutboxEvent> savePending(int count, Instant nextAttemptAt) {

@@ -20,6 +20,9 @@ public class OutboxRecorderImpl implements OutboxRecorder {
     /** 현재 지원하는 최소 envelope 버전입니다. 계약상 최초 버전이 1 입니다. */
     private static final int MINIMUM_SUPPORTED_VERSION = 1;
 
+    /** {@code outbox_events.deduplication_key} 컬럼 길이입니다. */
+    private static final int MAX_DEDUPLICATION_KEY_LENGTH = 200;
+
     private final OutboxEventRepository outboxEventRepository;
 
     public OutboxRecorderImpl(OutboxEventRepository outboxEventRepository) {
@@ -36,11 +39,17 @@ public class OutboxRecorderImpl implements OutboxRecorder {
      *
      * <p>같은 트랜잭션이므로 도메인 변경이 롤백되면 기록도 남지 않고, 기록이 실패하면 도메인
      * 변경도 커밋되지 않습니다.
+     *
+     * <p>중복 사건 거부도 이 성질에 기댑니다. 유니크 제약 위반을 잡아서 다른 결과로 바꾸지
+     * 않습니다. 그렇게 하면 호출부가 "이미 기록됨"으로 보고 넘어가기 쉬운데, 이 상황은 도메인
+     * 연산이 두 번 실행됐다는 신호라 트랜잭션을 되돌리는 편이 맞습니다.
      */
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
-    public void record(EventEnvelope envelope, String partitionKey, String orderingScope) {
-        validate(envelope, partitionKey, orderingScope);
+    public void record(
+        EventEnvelope envelope, String partitionKey, String orderingScope, String deduplicationKey
+    ) {
+        validate(envelope, partitionKey, orderingScope, deduplicationKey);
 
         Instant recordedAt = Instant.now();
 
@@ -55,6 +64,7 @@ public class OutboxRecorderImpl implements OutboxRecorder {
             envelope.payload().toString(),
             partitionKey,
             orderingScope,
+            deduplicationKey,
             // 기록 즉시 발행 대상이 되도록 둡니다. 재시도 지연은 relay 가 정합니다.
             recordedAt));
 
@@ -69,7 +79,9 @@ public class OutboxRecorderImpl implements OutboxRecorder {
      * 그 시점에는 되돌릴 수 없고 DLT 에서 원인을 되짚어야 합니다. 기록 시점이 가장 싸게
      * 막을 수 있는 자리입니다.
      */
-    private void validate(EventEnvelope envelope, String partitionKey, String orderingScope) {
+    private void validate(
+        EventEnvelope envelope, String partitionKey, String orderingScope, String deduplicationKey
+    ) {
         if (envelope == null) {
             throw new EventContractViolationException("envelope 이 null 입니다.");
         }
@@ -80,6 +92,7 @@ public class OutboxRecorderImpl implements OutboxRecorder {
         requireText(envelope.type(), "type");
         requireText(partitionKey, "partitionKey");
         requireText(orderingScope, "orderingScope");
+        requireDeduplicationKey(deduplicationKey);
 
         if (envelope.version() < MINIMUM_SUPPORTED_VERSION) {
             throw new EventContractViolationException(
@@ -106,6 +119,22 @@ public class OutboxRecorderImpl implements OutboxRecorder {
     private void requirePayload(JsonNode payload) {
         if (payload == null || payload.isNull() || payload.isMissingNode()) {
             throw new EventContractViolationException("payload 이(가) 없습니다.");
+        }
+    }
+
+    /**
+     * 중복 판정 키를 확인합니다.
+     *
+     * <p>길이를 여기서 봅니다. 컬럼 상한을 넘기면 저장 시점에 데이터베이스 오류로 드러나는데,
+     * 그 메시지는 어느 값이 문제인지 알려주지 않습니다.
+     */
+    private void requireDeduplicationKey(String deduplicationKey) {
+        requireText(deduplicationKey, "deduplicationKey");
+
+        if (deduplicationKey.length() > MAX_DEDUPLICATION_KEY_LENGTH) {
+            throw new EventContractViolationException(
+                "deduplicationKey 가 너무 깁니다. 최대 " + MAX_DEDUPLICATION_KEY_LENGTH
+                    + ", 실제 " + deduplicationKey.length());
         }
     }
 
