@@ -336,8 +336,10 @@ class WatchingSessionHeartbeatE2ETest {
                 long count = snapshotRepository.countByContentId(contentId, null, Instant.now());
                 assertThat(count).isZero();
             });
-
-        // DB 행 자체는 아직 남아있다 - end() 경로를 안 탔으므로 물리적 삭제는 스위퍼의 책임
-        assertThat(snapshotRepository.findByWatcherId(watcherId)).isPresent();
+        // presence가 없는 만료 행은 스위퍼가 물리적으로 삭제한다.
+        await().atMost(5, TimeUnit.SECONDS)
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .untilAsserted(() ->
+                assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty());
     }
 }

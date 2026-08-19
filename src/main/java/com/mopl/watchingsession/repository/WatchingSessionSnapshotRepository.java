@@ -26,9 +26,22 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
     @Query("DELETE FROM WatchingSessionSnapshot s WHERE s.watcherId = :watcherId AND s.id = :snapshotId")
     int deleteByWatcherIdAndId(@Param("watcherId") UUID watcherId, @Param("snapshotId") UUID snapshotId);
 
-    // 만료 후보 조회 메서드
-    @Query("SELECT s FROM WatchingSessionSnapshot s WHERE s.expiresAt < :before")
-    List<WatchingSessionSnapshot> findExpiredCandidates(@Param("before") Instant before, Pageable pageable);
+    // expiresAt, id 기준 안정 정렬 + 키셋 커서. cursorExpiresAt가 null이면 처음부터 조회한다.
+    // (기존 findByContentIdAfterAsc와 동일한 커서 관례를 따름)
+    @Query("""
+        SELECT s FROM WatchingSessionSnapshot s
+        WHERE s.expiresAt < :before
+          AND (cast(:cursorExpiresAt as timestamp) IS NULL
+            OR s.expiresAt > :cursorExpiresAt
+            OR (s.expiresAt = :cursorExpiresAt AND s.id > :cursorId))
+        ORDER BY s.expiresAt ASC, s.id ASC
+        """)
+    List<WatchingSessionSnapshot> findExpiredCandidatesAfterCursor(
+        @Param("before") Instant before,
+        @Param("cursorExpiresAt") Instant cursorExpiresAt,
+        @Param("cursorId") UUID cursorId,
+        Pageable pageable);
+
     // 만료된 지 오래된 스냅샷을 일괄 삭제하는 메서드
     // 스위퍼가 presence 미존재를 확인한 id 집합만 대상
     @Modifying(clearAutomatically = true, flushAutomatically = true)

@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -46,6 +47,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -888,7 +890,7 @@ public class WatchingSessionServiceTest {
     }
 
     @Test
-    @DisplayName("DB renewExpiresAt이 0이면 upsert로 재생성하고 presence의 snapshotId를 새 값으로 동기화한다")
+    @DisplayName("DB renewExpiresAt이 0이면 insertIfAbsent로 재생성하고 presence의 snapshotId를 동기화한다")
     void heartbeat_recoversMissingSnapshot_whenRenewReturnsZero() {
         mockContentExists(CONTENT_ID);
         mockUserExists(WATCHER_ID);
@@ -899,27 +901,25 @@ public class WatchingSessionServiceTest {
         WatchingSessionSnapshot recovered = createSnapshotFixture(
             UUID.randomUUID(), WATCHER_ID, CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT,
             FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS));
-        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
-            .thenReturn(new UpsertResult(recovered, true));
+        when(watchingSessionSnapshotWriter.insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(Optional.of(recovered));
         when(watchingSessionPresenceWriter.updateSnapshotIdIfOwner(
             eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(recovered.getId())))
             .thenReturn(true);
 
-        // start()가 setup 단계에서 이미 upsert를 한 번 호출했으므로, 아래 verify가
-        // heartbeat의 복구 호출만 세도록 그 이전 상호작용을 리셋한다.
         clearInvocations(watchingSessionSnapshotWriter, watchingSessionPresenceWriter);
 
         watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
 
-        verify(watchingSessionSnapshotWriter).upsert(eq(WATCHER_ID), eq(CONTENT_ID), any());
+        verify(watchingSessionSnapshotWriter).insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any());
         verify(watchingSessionPresenceWriter).updateSnapshotIdIfOwner(
             WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, recovered.getId());
         verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any());
     }
 
     @Test
-    @DisplayName("복구 도중 소유권이 다른 세대로 넘어가면(재구독 경합), 방금 만든 행을 보상 삭제한다")
-    void heartbeat_compensatesOrphanRow_whenSnapshotIdSyncFailsDuringRecovery() {
+    @DisplayName("복구 직후 소유권이 다른 세대로 넘어가 동기화가 실패하면 방금 삽입한 행만 보상 삭제한다")
+    void heartbeat_compensatesOrphanRow_whenSnapshotIdSyncFailsRightAfterInsert() {
         mockContentExists(CONTENT_ID);
         mockUserExists(WATCHER_ID);
         mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
@@ -929,8 +929,8 @@ public class WatchingSessionServiceTest {
         WatchingSessionSnapshot recovered = createSnapshotFixture(
             UUID.randomUUID(), WATCHER_ID, CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT,
             FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS));
-        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
-            .thenReturn(new UpsertResult(recovered, true));
+        when(watchingSessionSnapshotWriter.insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(Optional.of(recovered));
         when(watchingSessionPresenceWriter.updateSnapshotIdIfOwner(
             eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(recovered.getId())))
             .thenReturn(false);
@@ -941,15 +941,55 @@ public class WatchingSessionServiceTest {
     }
 
     @Test
-    @DisplayName("복구 중 upsert가 예외를 던져도 heartbeat 자체는 예외 없이 끝난다")
-    void heartbeat_doesNotThrow_whenRecoveryUpsertFails() {
+    @DisplayName("낡은 heartbeat가 그 사이 다른 콘텐츠로 넘어간 새 소유자의 행을 발견하면 아무것도 하지 않는다")
+    void heartbeat_backsOff_whenAnotherRowAlreadyExists_dueToRaceWithNewStart() {
         mockContentExists(CONTENT_ID);
         mockUserExists(WATCHER_ID);
         mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
         watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
         when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
-        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
-            .thenThrow(new RuntimeException("DB 연결 끊김"));
+        // insertIfAbsent는 watcherId에 이미 다른 행(예: 새 start()가 만든 다른 콘텐츠 행)이
+        // 있음을 확인하고 빈 Optional을 반환 - 재현의 핵심
+        when(watchingSessionSnapshotWriter.insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(Optional.empty());
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionPresenceWriter, never())
+            .updateSnapshotIdIfOwner(any(), any(), any(), any());
+        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any());
+    }
+
+    @Test
+    @DisplayName("INSERT가 모두 실패하면 재시도 실패가 catch로 새지 않고 정상적으로 잡혀 heartbeat는 예외 없이 끝난다")
+    void heartbeat_doesNotThrow_whenInitialInsertAndRetryBothFail() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
+        when(watchingSessionSnapshotWriter.insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenThrow(new DataIntegrityViolationException("동시 삽입 충돌"))
+            .thenThrow(new DataIntegrityViolationException("재시도도 충돌"));
+
+        assertThatCode(() ->
+            watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
+            .doesNotThrowAnyException();
+
+        verify(watchingSessionSnapshotWriter, times(2)).insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any());
+    }
+
+    @Test
+    @DisplayName("재시도 도중 DataIntegrityViolationException이 아닌 다른 RuntimeException이 나도 격리된다")
+    void heartbeat_doesNotThrow_whenRetryFailsWithDifferentRuntimeException() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
+        when(watchingSessionSnapshotWriter.insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenThrow(new DataIntegrityViolationException("동시 삽입 충돌"))
+            .thenThrow(new RuntimeException("DB 연결 끊김")); // 재시도는 다른 종류의 예외
 
         assertThatCode(() ->
             watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))

@@ -405,32 +405,43 @@ public class WatchingSessionService {
         WatcherLock watcherLock = acquireWatcherLock(watcherId);
         try {
             synchronized (watcherLock) {
-                UpsertResult recovered;
+                Optional<WatchingSessionSnapshot> recovered;
                 try {
-                    recovered = watchingSessionSnapshotWriter.upsert(
-                        watcherId, contentId, now.plus(watchingSessionProperties.getSessionTtl()));
-                } catch (DataIntegrityViolationException e) {
-                    // 인스턴스 간 동시 삽입 충돌 한번 재시도
-                    // TODO: 동시 INSERT 재시도 정책 구현에서 같이 리팩토링
-                    recovered = watchingSessionSnapshotWriter.upsert(
-                        watcherId, contentId, now.plus(watchingSessionProperties.getSessionTtl()));
+                    try {
+                        recovered = watchingSessionSnapshotWriter.insertIfAbsent(
+                            watcherId, contentId, now.plus(watchingSessionProperties.getSessionTtl()));
+                    } catch (DataIntegrityViolationException e) {
+                        // TODO: 동시 INSERT 재시도 정책 구현에서 같이 리팩토링
+                        // 인스턴스 간 동시 삽입 충돌 - 한 번 재시도. 재시도 자체가 실패하면
+                        // 바깥 catch(RuntimeException)로 넘어가야 하므로 여기서 한 번 더 감싼다.
+                        recovered = watchingSessionSnapshotWriter.insertIfAbsent(
+                            watcherId, contentId, now.plus(watchingSessionProperties.getSessionTtl()));
+                    }
                 } catch (RuntimeException e) {
                     log.error("DB 행 소실 후 복구 실패: watcherId={}, contentId={}", watcherId, contentId, e);
                     return;
                 }
 
+                if (recovered.isEmpty()) {
+                    // watcherId에 대해 이미 다른 행이 존재함
+                    log.debug("복구 시도 중 다른 행이 이미 존재해 물러남(낡은 heartbeat로 추정): watcherId={}, contentId={}",
+                        watcherId, contentId);
+                    return;
+                }
+
+                WatchingSessionSnapshot snapshot = recovered.get();
                 boolean synced = watchingSessionPresenceWriter.updateSnapshotIdIfOwner(
-                    watcherId, sessionId, subscriptionId, recovered.snapshot().getId());
+                    watcherId, sessionId, subscriptionId, snapshot.getId());
 
                 if (!synced) {
-                    // 복구 도중 소유권이 넘어감 -> 자신이 만든 세대에 한해 보상 삭제
-                    watchingSessionSnapshotWriter.deleteById(watcherId, recovered.snapshot().getId());
-                    log.warn("DB 행 재생성 도중 소유권이 이전돼 고아 행을 보상삭제함: watcherId={}", watcherId);
+                    // 방금 삽입한 행이 확실하므로(insertIfAbsent는 기존 행을 건드리지 않음) 안전하게 보상 삭제할 수 있다.
+                    watchingSessionSnapshotWriter.deleteById(watcherId, snapshot.getId());
+                    log.warn("DB 행 재생성 직후 소유권이 이전돼 고아 행을 보상 삭제함: watcherId={}", watcherId);
                     return;
                 }
 
                 log.warn("presence는 존재하나 DB 행이 없어 재생성함(복구): watcherId={}, contentId={}, newSnapshotId={}",
-                    watcherId, contentId, recovered.snapshot().getId());
+                    watcherId, contentId, snapshot.getId());
             }
         } finally {
             releaseWatcherLock(watcherId);

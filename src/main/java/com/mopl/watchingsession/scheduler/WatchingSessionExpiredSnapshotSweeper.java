@@ -39,15 +39,31 @@ public class WatchingSessionExpiredSnapshotSweeper {
 
     private static final int SWEEP_BATCH_SIZE = 500;
 
+    // 배치 사이 진행을 보장하는 키셋 커서. 스위퍼 인스턴스는 싱글턴이라 필드로 유지해도 안전.
+    private volatile Cursor cursor = Cursor.START;
+
+    private record Cursor(Instant expiresAt, java.util.UUID id) {
+        static final Cursor START = new Cursor(null, null);
+    }
+
     @Scheduled(fixedDelayString = "#{@watchingSessionProperties.sweepInterval.toMillis()}")
     public void sweep() {
         Instant threshold = Instant.now();
         try {
-            List<WatchingSessionSnapshot> candidates = watchingSessionSnapshotRepository.
-                findExpiredCandidates(threshold, PageRequest.of(0, SWEEP_BATCH_SIZE));
+            List<WatchingSessionSnapshot> candidates = watchingSessionSnapshotRepository
+                .findExpiredCandidatesAfterCursor(
+                    threshold, cursor.expiresAt(), cursor.id(), PageRequest.of(0, SWEEP_BATCH_SIZE));
+
             if (candidates.isEmpty()) {
+                cursor = Cursor.START; // 끝까지 돌았으니 다음 실행은 처음부터 다시 순환
                 return;
             }
+
+            WatchingSessionSnapshot last = candidates.get(candidates.size() - 1);
+            // 이번 배치가 꽉 찼으면(더 남았을 가능성) 그 다음 지점으로 전진, 덜 찼으면(끝에 도달) 다음 실행에서 바로 처음부터 시작해 한 번의 빈 사이클을 아낀다.
+            cursor = (candidates.size() < SWEEP_BATCH_SIZE)
+                ? Cursor.START
+                : new Cursor(last.getExpiresAt(), last.getId());
 
             Set<UUID> watcherIds = candidates.stream()
                 .map(WatchingSessionSnapshot::getWatcherId)
