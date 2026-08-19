@@ -64,26 +64,22 @@ public class WatchingSessionSnapshotWriterTest {
 
     private UUID insertUser() {
         UUID id = UUID.randomUUID();
-        transactionTemplate.executeWithoutResult(status -> {
-            entityManager.createNativeQuery(
-                    "INSERT INTO users (id, email, password_hash, name, role, locked, created_at, updated_at)"
-                        + "VALUES (:id, :email, 'stub', 'stub', 'USER', false, now(), now())")
-                .setParameter("id", id)
-                .setParameter("email", id + "@test.local")
-                .executeUpdate();
-        });
+        transactionTemplate.executeWithoutResult(status -> entityManager.createNativeQuery(
+                "INSERT INTO users (id, email, password_hash, name, role, locked, created_at, updated_at)"
+                    + "VALUES (:id, :email, 'stub', 'stub', 'USER', false, now(), now())")
+            .setParameter("id", id)
+            .setParameter("email", id + "@test.local")
+            .executeUpdate());
         return id;
     }
 
     private UUID insertContent() {
         UUID id = UUID.randomUUID();
-        transactionTemplate.executeWithoutResult(status -> {
-            entityManager.createNativeQuery(
-                    "INSERT INTO contents (id, type, source, title, description, average_rating, review_count, watcher_count, created_at, updated_at)"
-                        + "VALUES (:id, 'MOVIE', 'MANUAL', 'stub', '테스트 설명', 0.0, 0, 0, now(), now())")
-                .setParameter("id", id)
-                .executeUpdate();
-        });
+        transactionTemplate.executeWithoutResult(status -> entityManager.createNativeQuery(
+                "INSERT INTO contents (id, type, source, title, description, average_rating, review_count, watcher_count, created_at, updated_at)"
+                    + "VALUES (:id, 'MOVIE', 'MANUAL', 'stub', '테스트 설명', 0.0, 0, 0, now(), now())")
+            .setParameter("id", id)
+            .executeUpdate());
         return id;
     }
 
@@ -139,8 +135,8 @@ public class WatchingSessionSnapshotWriterTest {
 
 
     @Test
-    @DisplayName("deleteById()는 snapshotId가 일치할 때만 DB에서 제거하고 flush까지 반영")
-    void deleteById_removesExistingRow_whenSnapshotIdMatches() {
+    @DisplayName("deleteById()는 snapshotId와 expectedUpdatedAt이 일치할 때만 DB에서 제거하고 flush까지 반영")
+    void deleteById_removesExistingRow_whenSnapshotIdAndUpdatedAtMatch() {
         // given
         UUID watcherId = insertUser();
         UUID contentId = insertContent();
@@ -148,11 +144,38 @@ public class WatchingSessionSnapshotWriterTest {
         assertThat(repository.count()).isEqualTo(1);
 
         // when
-        int deletedRows = writer.deleteById(watcherId, result.snapshot().getId());
+        int deletedRows = writer.deleteById(watcherId, result.snapshot().getId(), result.snapshot().getUpdatedAt());
 
         // then
         assertThat(deletedRows).isEqualTo(1);
         assertThat(repository.count()).isZero();
+        assertThat(repository.findByWatcherId(watcherId)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("deleteById()는 expectedUpdatedAt이 실제 updatedAt과 다르면(다른 세대) 삭제하지 않는다")
+    void deleteById_doesNotDelete_whenExpectedUpdatedAtMismatches() {
+        UUID watcherId = insertUser();
+        UUID contentId = insertContent();
+        UpsertResult result = writer.upsert(watcherId, contentId, Instant.now().plusSeconds(60));
+        Instant staleUpdatedAt = result.snapshot().getUpdatedAt().minusSeconds(60);
+
+        int deletedRows = writer.deleteById(watcherId, result.snapshot().getId(), staleUpdatedAt);
+
+        assertThat(deletedRows).isZero();
+        assertThat(repository.findByWatcherId(watcherId)).isPresent(); // 삭제되지 않음
+    }
+
+    @Test
+    @DisplayName("deleteById()는 expectedUpdatedAt이 null이면(구버전 폴백) 세대 비교 없이 삭제한다")
+    void deleteById_deletes_whenExpectedUpdatedAtIsNull() {
+        UUID watcherId = insertUser();
+        UUID contentId = insertContent();
+        UpsertResult result = writer.upsert(watcherId, contentId, Instant.now().plusSeconds(60));
+
+        int deletedRows = writer.deleteById(watcherId, result.snapshot().getId(), null);
+
+        assertThat(deletedRows).isEqualTo(1);
         assertThat(repository.findByWatcherId(watcherId)).isEmpty();
     }
 
@@ -162,11 +185,11 @@ public class WatchingSessionSnapshotWriterTest {
         // given
         UUID watcherId = insertUser();
         UUID contentId = insertContent();
-        writer.upsert(watcherId, contentId, Instant.now().plusSeconds(60));
+        UpsertResult result = writer.upsert(watcherId, contentId, Instant.now().plusSeconds(60));
         assertThat(repository.count()).isEqualTo(1);
 
         // when: 존재하지 않는(다른) snapshotId로 삭제 시도
-        int deletedRows = writer.deleteById(watcherId, UUID.randomUUID());
+        int deletedRows = writer.deleteById(watcherId, UUID.randomUUID(), result.snapshot().getUpdatedAt());
 
         // then: 아무것도 지워지지 않음 - 이 조건부 삭제가 막으려는 정확한 시나리오
         assertThat(deletedRows).isZero();
@@ -181,7 +204,7 @@ public class WatchingSessionSnapshotWriterTest {
         UUID watcherId = UUID.randomUUID(); // 스냅샷을 만든 적 없는 임의의 watcherId
 
         // when & then
-        int deletedRows = writer.deleteById(watcherId, UUID.randomUUID());
+        int deletedRows = writer.deleteById(watcherId, UUID.randomUUID(), Instant.now());
 
         assertThat(deletedRows).isZero();
         assertThat(repository.count()).isZero();
@@ -199,7 +222,7 @@ public class WatchingSessionSnapshotWriterTest {
         assertThat(repository.count()).isEqualTo(2);
 
         // when
-        int deletedRows = writer.deleteById(watcherId1, result1.snapshot().getId());
+        int deletedRows = writer.deleteById(watcherId1, result1.snapshot().getId(), result1.snapshot().getUpdatedAt());
 
         // then
         assertThat(deletedRows).isEqualTo(1);

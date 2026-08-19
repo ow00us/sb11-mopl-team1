@@ -1,5 +1,6 @@
 package com.mopl.watchingsession.presence;
 
+import static com.mopl.global.util.InstantPrecisionUtils.normalizeToMicros;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -9,6 +10,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter.DeletedSnapshot;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -42,20 +44,23 @@ public class WatchingSessionPresenceWriterTest {
     void swap_parsesPreviousPresenceFromScriptResult() {
         Instant previousStartedAt = Instant.parse("2026-08-18T00:00:00Z");
         Instant newStartedAt = Instant.now();
+        Instant newSnapshotUpdatedAt = normalizeToMicros(Instant.now());
+        Instant previousSnapshotUpdatedAt = newSnapshotUpdatedAt.minusSeconds(3600);
         List<String> previousFields = List.of(
             "snapshotId", SNAPSHOT_ID.toString(),
             "contentId", CONTENT_ID.toString(),
             "sessionId", "old-session",
             "subscriptionId", "old-sub",
-            "startedAt", previousStartedAt.toString());
+            "startedAt", previousStartedAt.toString(),
+            "snapshotUpdatedAt", previousSnapshotUpdatedAt.toString());
 
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
             eq(SNAPSHOT_ID.toString()), eq(CONTENT_ID.toString()), eq(SESSION_ID), eq(SUBSCRIPTION_ID),
-            eq(newStartedAt.toString()), eq("60000")))
+            eq(newStartedAt.toString()), eq("60000"), eq(newSnapshotUpdatedAt.toString())))
             .thenReturn(previousFields);
 
         Optional<WatchingPresence> result = writer.swap(
-            WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, newStartedAt, Duration.ofSeconds(60));
+            WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, newStartedAt, newSnapshotUpdatedAt, Duration.ofSeconds(60));
 
         assertThat(result).isPresent();
         assertThat(result.get().watcherId()).isEqualTo(WATCHER_ID);
@@ -64,6 +69,30 @@ public class WatchingSessionPresenceWriterTest {
         assertThat(result.get().sessionId()).isEqualTo("old-session");
         assertThat(result.get().subscriptionId()).isEqualTo("old-sub");
         assertThat(result.get().startedAt()).isEqualTo(previousStartedAt);
+        assertThat(result.get().snapshotUpdatedAt()).isEqualTo(previousSnapshotUpdatedAt);
+    }
+
+    @Test
+    @DisplayName("swap()은 직전 값에 snapshotUpdatedAt 필드가 없으면(구버전 레코드) null로 채워 복원한다")
+    void swap_parsesPreviousPresence_withNullSnapshotUpdatedAt_whenFieldMissing() {
+        List<String> previousFields = List.of(
+            "snapshotId", SNAPSHOT_ID.toString(),
+            "contentId", CONTENT_ID.toString(),
+            "sessionId", "old-session",
+            "subscriptionId", "old-sub",
+            "startedAt", Instant.now().toString());
+        // snapshotUpdatedAt 필드 없음 - 구버전 시나리오
+
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            any(), any(), any(), any(), any(), any(), any()))
+            .thenReturn(previousFields);
+
+        Optional<WatchingPresence> result = writer.swap(
+            WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID,
+            Instant.now(), Instant.now(), Duration.ofSeconds(60));
+
+        assertThat(result).isPresent();
+        assertThat(result.get().snapshotUpdatedAt()).isNull();
     }
 
     @Test
@@ -74,7 +103,7 @@ public class WatchingSessionPresenceWriterTest {
             .thenReturn(List.of());
 
         Optional<WatchingPresence> result = writer.swap(
-            WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), Duration.ofSeconds(60));
+            WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), Instant.now(), Duration.ofSeconds(60));
 
         assertThat(result).isEmpty();
     }
@@ -87,7 +116,7 @@ public class WatchingSessionPresenceWriterTest {
             .thenReturn(List.of("sessionId", "old-session"));
 
         Optional<WatchingPresence> result = writer.swap(
-            WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), Duration.ofSeconds(60));
+            WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), Instant.now(), Duration.ofSeconds(60));
 
         assertThat(result).isEmpty();
     }
@@ -96,24 +125,42 @@ public class WatchingSessionPresenceWriterTest {
     @DisplayName("swap() 도중 Redis 예외가 나면 호출자에게 그대로 전파된다 (소유권 원본이라 격리하지 않음)")
     void swap_propagatesRedisFailure() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
-            any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("Redis 연결 끊김"));
 
         assertThatThrownBy(() -> writer.swap(
-            WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), Duration.ofSeconds(60)))
+            WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), Instant.now(), Duration.ofSeconds(60)))
             .isInstanceOf(RuntimeException.class);
     }
 
     @Test
     @DisplayName("deleteIfOwner()는 소유권이 일치하면 삭제된 presence의 snapshotId를 반환한다")
     void deleteIfOwner_returnsTrue_whenScriptReturnsOne() {
+        Instant expectedUpdatedAt = normalizeToMicros(Instant.now());
+
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
             eq(SESSION_ID), eq(SUBSCRIPTION_ID)))
-            .thenReturn(List.of("1", SNAPSHOT_ID.toString()));
+            .thenReturn(List.of("1", SNAPSHOT_ID.toString(), expectedUpdatedAt.toString()));
 
-        Optional<UUID> result = writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+        Optional<DeletedSnapshot> result = writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
 
-        assertThat(result).contains(SNAPSHOT_ID);
+        assertThat(result).isPresent();
+        assertThat(result.get().snapshotId()).isEqualTo(SNAPSHOT_ID);
+        assertThat(result.get().snapshotUpdatedAt()).isEqualTo(expectedUpdatedAt);
+    }
+
+    @Test
+    @DisplayName("deleteIfOwner()는 snapshotUpdatedAt이 빈 문자열(구버전 레코드)이면 null로 채워 반환한다")
+    void deleteIfOwner_returnsNullUpdatedAt_whenLegacyRecordHasNoToken() {
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID)))
+            .thenReturn(List.of("1", SNAPSHOT_ID.toString(), ""));
+
+        Optional<DeletedSnapshot> result = writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(result).isPresent();
+        assertThat(result.get().snapshotId()).isEqualTo(SNAPSHOT_ID);
+        assertThat(result.get().snapshotUpdatedAt()).isNull();
     }
 
     @Test
@@ -121,7 +168,7 @@ public class WatchingSessionPresenceWriterTest {
     void deleteIfOwner_returnsEmpty_whenOwnerMismatch() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
             eq(SESSION_ID), eq(SUBSCRIPTION_ID)))
-            .thenReturn(List.of("0", ""));
+            .thenReturn(List.of("0", "", ""));
 
         assertThat(writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID)).isEmpty();
     }
@@ -131,7 +178,7 @@ public class WatchingSessionPresenceWriterTest {
     void deleteIfOwner_returnsEmpty_whenNoActiveSession() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
             eq(SESSION_ID), eq(SUBSCRIPTION_ID)))
-            .thenReturn(List.of("-1", ""));
+            .thenReturn(List.of("-1", "", ""));
 
         assertThat(writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID)).isEmpty();
     }
@@ -159,19 +206,22 @@ public class WatchingSessionPresenceWriterTest {
     @Test
     @DisplayName("deleteIfOwnerSession()은 sessionId만 일치하면 subscriptionId와 무관하게 삭제된 presence의 snapshotId를 반환한다")
     void deleteIfOwnerSession_returnsTrue_whenSessionMatches() {
+        Instant expectedUpdatedAt = normalizeToMicros(Instant.now());
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)), eq(SESSION_ID)))
-            .thenReturn(List.of("1", SNAPSHOT_ID.toString()));
+            .thenReturn(List.of("1", SNAPSHOT_ID.toString(), expectedUpdatedAt.toString()));
 
-        Optional<UUID> result = writer.deleteIfOwnerSession(WATCHER_ID, SESSION_ID);
+        Optional<DeletedSnapshot> result = writer.deleteIfOwnerSession(WATCHER_ID, SESSION_ID);
 
-        assertThat(result).contains(SNAPSHOT_ID);
+        assertThat(result).isPresent();
+        assertThat(result.get().snapshotId()).isEqualTo(SNAPSHOT_ID);
+        assertThat(result.get().snapshotUpdatedAt()).isEqualTo(expectedUpdatedAt);
     }
 
     @Test
     @DisplayName("deleteIfOwnerSession()은 sessionId 불일치(0)일 때 빈 Optional을 반환한다")
     void deleteIfOwnerSession_returnsEmpty_whenSessionMismatch() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)), eq(SESSION_ID)))
-            .thenReturn(List.of("0", ""));
+            .thenReturn(List.of("0", "", ""));
 
         assertThat(writer.deleteIfOwnerSession(WATCHER_ID, SESSION_ID)).isEmpty();
     }
@@ -248,44 +298,48 @@ public class WatchingSessionPresenceWriterTest {
     @DisplayName("updateSnapshotIdIfOwner()는 스크립트가 1을 반환하면 true")
     void updateSnapshotIdIfOwner_returnsTrue_whenScriptReturnsOne() {
         UUID newSnapshotId = UUID.randomUUID();
+        Instant newSnapshotUpdatedAt = normalizeToMicros(Instant.now());
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
-            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(newSnapshotId.toString())))
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(newSnapshotId.toString()), eq(newSnapshotUpdatedAt.toString())))
             .thenReturn(1L);
 
-        assertThat(writer.updateSnapshotIdIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, newSnapshotId)).isTrue();
+        assertThat(writer.updateSnapshotIdIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, newSnapshotId, newSnapshotUpdatedAt)).isTrue();
     }
 
     @Test
     @DisplayName("updateSnapshotIdIfOwner()는 소유권 불일치(0)일 때 false")
     void updateSnapshotIdIfOwner_returnsFalse_whenOwnerMismatch() {
         UUID newSnapshotId = UUID.randomUUID();
+        Instant newSnapshotUpdatedAt = normalizeToMicros(Instant.now());
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
-            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(newSnapshotId.toString())))
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(newSnapshotId.toString()), eq(newSnapshotUpdatedAt.toString())))
             .thenReturn(0L);
 
-        assertThat(writer.updateSnapshotIdIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, newSnapshotId)).isFalse();
+        assertThat(writer.updateSnapshotIdIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, newSnapshotId, newSnapshotUpdatedAt)).isFalse();
     }
 
     @Test
     @DisplayName("updateSnapshotIdIfOwner() 도중 Redis 예외가 나면 격리되어 false를 반환한다")
     void updateSnapshotIdIfOwner_isolatesRedisFailure() {
         UUID newSnapshotId = UUID.randomUUID();
+        Instant newSnapshotUpdatedAt = normalizeToMicros(Instant.now());
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
-            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(newSnapshotId.toString())))
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(newSnapshotId.toString()), eq(newSnapshotUpdatedAt.toString())))
             .thenThrow(new RuntimeException("Redis 연결 끊김"));
 
-        assertThat(writer.updateSnapshotIdIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, newSnapshotId)).isFalse();
+        assertThat(writer.updateSnapshotIdIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, newSnapshotId, newSnapshotUpdatedAt)).isFalse();
     }
 
     @Test
     @DisplayName("updateSnapshotIdIfOwner()는 스크립트가 null을 반환하면 예외 없이 false")
     void updateSnapshotIdIfOwner_returnsFalse_whenScriptReturnsNull() {
         UUID newSnapshotId = UUID.randomUUID();
+        Instant newSnapshotUpdatedAt = normalizeToMicros(Instant.now());
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
-            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(newSnapshotId.toString())))
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(newSnapshotId.toString()), eq(newSnapshotUpdatedAt.toString())))
             .thenReturn(null);
 
-        assertThat(writer.updateSnapshotIdIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, newSnapshotId)).isFalse();
+        assertThat(writer.updateSnapshotIdIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, newSnapshotId, newSnapshotUpdatedAt)).isFalse();
     }
 
     @Test

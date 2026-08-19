@@ -10,6 +10,7 @@ import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -58,6 +59,9 @@ class WatchingSessionServiceRaceIntegrationTest {
 
     @Autowired
     private WatchingSessionSnapshotRepository snapshotRepository;
+
+    @Autowired
+    private WatchingSessionSnapshotWriter watchingSessionSnapshotWriter;
 
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
@@ -144,5 +148,75 @@ class WatchingSessionServiceRaceIntegrationTest {
         assertThat(ended.get().content().id()).isEqualTo(contentB.getId()); // A가 아니라 B여야 함
         assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty();
         assertThat(stringRedisTemplate.hasKey(presenceKey(watcherId))).isFalse();
+    }
+
+    @Test
+    @DisplayName("동일 콘텐츠 재구독으로 세대가 바뀐 뒤, 이전 세대를 쥔 낡은 end()는 새 세대의 행을 삭제하지 않는다")
+    void end_doesNotDeleteNewGeneration_whenStaleCallerHoldsOldGenerationToken() {
+        givenWatcherAndContent();
+
+        // 1) A가 구독 시작 - 세대 1
+        WatchingSessionService.ReplacedSession onA =
+            watchingSessionService.start(watcherId, contentId, SESSION_ID, SUBSCRIPTION_ID);
+        UUID snapshotId = onA.session().id();
+
+        // 2) 낡은 세대 토큰을 미리 확보 (실제로는 end() 호출 도중 레이스가 나는 지점이지만,
+        //    통합 테스트에서는 deleteIfOwner()가 반환하는 토큰을 직접 시뮬레이션)
+        Instant staleGenerationToken = snapshotRepository.findById(snapshotId).orElseThrow().getUpdatedAt();
+
+        // 3) 같은 콘텐츠로 재구독 - refresh라 id는 그대로, updatedAt만 갱신 (세대 2)
+        watchingSessionService.start(watcherId, contentId, SESSION_ID, "sub-B");
+        Instant newGenerationToken = snapshotRepository.findById(snapshotId).orElseThrow().getUpdatedAt();
+        assertThat(newGenerationToken).isNotEqualTo(staleGenerationToken);
+
+        // 4) 낡은 세대 토큰으로 DB 조건부 삭제를 직접 실행 - 삭제되지 않아야 함
+        int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, snapshotId, staleGenerationToken);
+
+        assertThat(deletedRows).isZero();
+        assertThat(snapshotRepository.findByWatcherId(watcherId)).isPresent(); // 세대 2 행 생존
+    }
+
+    @Test
+    @DisplayName("정상 end()는 현재 세대 토큰과 일치해 행을 삭제하고 LEAVE 대상 DTO를 반환한다")
+    void end_deletesCurrentGeneration_whenTokenMatches() {
+        givenWatcherAndContent();
+        watchingSessionService.start(watcherId, contentId, SESSION_ID, SUBSCRIPTION_ID);
+
+        boolean ended = watchingSessionService.end(watcherId, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(ended).isTrue();
+        assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("presence 소유권 확인과 DB 삭제 사이에 재구독이 끼어들어도 DB 삭제는 세대 토큰으로 다시 막는다")
+    void deleteById_blocksRace_evenIfPresenceCheckPassedBeforeResubscribe() {
+        givenWatcherAndContent();
+        watchingSessionService.start(watcherId, contentId, SESSION_ID, SUBSCRIPTION_ID);
+        UUID snapshotId = snapshotRepository.findByWatcherId(watcherId).orElseThrow().getId();
+        Instant tokenAtPresenceCheckTime = snapshotRepository.findById(snapshotId).orElseThrow().getUpdatedAt();
+
+        // presence 확인 이후, DB 삭제 실행 이전 시점에 재구독이 끼어드는 것을 시뮬레이션
+        watchingSessionService.start(watcherId, contentId, SESSION_ID, "sub-race");
+
+        // 낡은 시점에 확보한 토큰으로 삭제 시도 - 실패해야 함
+        int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, snapshotId, tokenAtPresenceCheckTime);
+
+        assertThat(deletedRows).isZero();
+    }
+
+    @Test
+    @DisplayName("start() 이후 presence에 기록된 세대 토큰은 DB의 updatedAt과 문자열 비교까지 정확히 일치한다")
+    void start_presenceGenerationToken_roundTripsExactlyWithDbUpdatedAt() {
+        givenWatcherAndContent();
+
+        watchingSessionService.start(watcherId, contentId, SESSION_ID, SUBSCRIPTION_ID);
+
+        Instant dbUpdatedAt = snapshotRepository.findByWatcherId(watcherId).orElseThrow().getUpdatedAt();
+        // presence Redis Hash를 직접 조회해 저장된 문자열이 DB 값과 정확히 같은지 확인
+        String presenceToken = stringRedisTemplate.opsForHash()
+            .get("mopl:presence:watcher:" + watcherId, "snapshotUpdatedAt").toString();
+
+        assertThat(Instant.parse(presenceToken)).isEqualTo(dbUpdatedAt);
     }
 }
