@@ -18,8 +18,9 @@ import org.springframework.validation.annotation.Validated;
  * 예:
  * watching-session:
  *   presence-ttl: 90s
- *   session-ttl: 30m
+ *   session-ttl: 120s
  *   heartbeat-interval: 20s
+ *   sweep-interval: 5m
  */
 
 @Getter
@@ -48,5 +49,12 @@ public class WatchingSessionProperties {
      */
     @NotNull
     private Duration heartbeatInterval;
+
+    /**
+     * 만료된 스냅샷을 정리하는 배치 주기. 서버 재시작 등으로 end() 경로를 타지 못한 행을 주기적으로 걷어낸다.
+     * 조회는 이미 expiresAt으로 걸러지므로 정합성에는 영향이 없어 짧게 잡을 필요가 없다.
+     */
+    @NotNull
+    private Duration sweepInterval;
 
 }

@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.mopl.global.config.RedisConfig;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
@@ -230,5 +232,42 @@ public class WatchingSessionPresenceIntegrationTest {
         boolean result = writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60));
 
         assertThat(result).isFalse();
+    }
+
+    @Test
+    @DisplayName("findExistingWatcherIds()는 실제 존재하는 키만 반환한다")
+    void findExistingWatcherIds_returnsOnlyRealKeys() {
+        UUID neverCreatedWatcher = UUID.randomUUID();
+        writer.swap(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), DEFAULT_TTL);
+
+        Set<UUID> result = writer.findExistingWatcherIds(List.of(WATCHER_ID, neverCreatedWatcher));
+
+        assertThat(result).containsExactly(WATCHER_ID);
+    }
+
+    @Test
+    @DisplayName("updateSnapshotIdIfOwner()는 소유권이 일치할 때만 snapshotId 필드를 교체하고, 다른 필드는 유지한다")
+    void updateSnapshotIdIfOwner_replacesOnlySnapshotIdField_whenOwnerMatches() {
+        writer.swap(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), DEFAULT_TTL);
+        UUID newSnapshotId = UUID.randomUUID();
+
+        boolean updated = writer.updateSnapshotIdIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, newSnapshotId);
+
+        assertThat(updated).isTrue();
+        Map<Object, Object> entries = stringRedisTemplate.opsForHash().entries(KEY);
+        assertThat(entries.get("snapshotId")).isEqualTo(newSnapshotId.toString());
+        assertThat(entries.get("sessionId")).isEqualTo(SESSION_ID); // 다른 필드는 그대로
+    }
+
+    @Test
+    @DisplayName("updateSnapshotIdIfOwner()는 소유권이 불일치하면 필드를 바꾸지 않고 false를 반환한다")
+    void updateSnapshotIdIfOwner_doesNotChangeField_whenOwnerMismatches() {
+        writer.swap(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), DEFAULT_TTL);
+        UUID newSnapshotId = UUID.randomUUID();
+
+        boolean updated = writer.updateSnapshotIdIfOwner(WATCHER_ID, "other-session", SUBSCRIPTION_ID, newSnapshotId);
+
+        assertThat(updated).isFalse();
+        assertThat(stringRedisTemplate.opsForHash().get(KEY, "snapshotId")).isEqualTo(SNAPSHOT_ID.toString());
     }
 }
