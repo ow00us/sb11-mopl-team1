@@ -20,8 +20,8 @@ import org.hibernate.type.SqlTypes;
  * <p>도메인 상태 변경과 같은 트랜잭션에서 기록해, 상태는 바뀌었는데 이벤트만 유실되는
  * 경우를 없앱니다. 커밋된 행을 relay 가 읽어 Kafka 에 발행합니다.
  *
- * <p>상태 전이는 이 클래스가 소유합니다. 발행 완료와 시도 실패만 두고, 재시도 backoff 와
- * 중단 상태 전환은 재시도 정책 이슈에서 붙입니다.
+ * <p>상태 전이는 이 클래스가 소유합니다. 언제 다시 시도할지와 언제 그만둘지는
+ * {@link OutboxRetryPolicy} 가 정하고, 이 클래스는 그 결과를 반영만 합니다.
  */
 @Getter
 @Entity
@@ -117,18 +117,50 @@ public class OutboxEvent extends BaseEntity {
     }
 
     /**
-     * 발행 시도가 실패했음을 기록합니다.
+     * 발행 시도가 실패했고 다시 시도할 것임을 기록합니다.
      *
-     * <p>상태를 발행 대기로 되돌리고 선점을 풉니다. 다음 시도 시각을 미루는 backoff 와 반복
-     * 실패를 중단 상태로 옮기는 판단은 #232 에서 붙습니다. 여기서는 시도 횟수와 마지막
-     * 오류만 남깁니다.
+     * <p>상태를 발행 대기로 되돌리고 선점을 풉니다. 다음 시도 시각은 호출부가 재시도 정책으로
+     * 계산해 넘깁니다. 이 값을 미루지 않으면 원인이 지속되는 실패를 주기마다 다시 두드려
+     * 정상 레코드의 발행을 밀어냅니다.
      */
-    public void markAttemptFailed(String lastError) {
+    public void markAttemptFailed(String lastError, Instant nextAttemptAt) {
         this.status = OutboxStatus.PENDING;
         this.attempts = this.attempts + 1;
         this.claimOwner = null;
         this.claimExpiresAt = null;
         this.lastError = lastError;
+        this.nextAttemptAt = nextAttemptAt;
+    }
+
+    /**
+     * 자동 재시도를 그만두고 최종 실패로 남깁니다.
+     *
+     * <p>삭제하지 않습니다. eventId 와 payload 가 남아 있어야 원인을 고친 뒤 같은 이벤트를
+     * 그대로 다시 발행할 수 있습니다.
+     */
+    public void markFailed(String lastError) {
+        this.status = OutboxStatus.FAILED;
+        this.attempts = this.attempts + 1;
+        this.claimOwner = null;
+        this.claimExpiresAt = null;
+        this.lastError = lastError;
+    }
+
+    /**
+     * 최종 실패한 이벤트를 다시 발행 대기로 돌립니다.
+     *
+     * <p>시도 횟수를 0 으로 되돌립니다. 원인을 고친 뒤 다시 넣는 것이므로, 남은 횟수가 없는
+     * 상태로 두면 한 번 실패하고 바로 최종 실패로 되돌아갑니다.
+     *
+     * <p>{@code lastError} 는 지우지 않습니다. 재처리 후에도 직전 실패 원인이 남아 있어야
+     * 같은 실패가 반복되는지 확인할 수 있습니다. 발행에 성공하면 그때 지워집니다.
+     */
+    public void requeue(Instant now) {
+        this.status = OutboxStatus.PENDING;
+        this.attempts = 0;
+        this.claimOwner = null;
+        this.claimExpiresAt = null;
+        this.nextAttemptAt = now;
     }
 
     public OutboxEvent(
