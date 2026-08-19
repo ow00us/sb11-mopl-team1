@@ -275,6 +275,65 @@ public class RedisRefreshTokenStore
         );
 
     /**
+     * 특정 사용자가 보유한 모든 Refresh Token Family 세션을
+     * 원자적으로 폐기하는 Lua Script
+     *
+     * <p>사용자별 Family 인덱스에서 모든 Family ID를 조회한 뒤,
+     * 실제 Family Hash에 저장된 사용자 UUID가 요청 사용자 UUID와
+     * 일치하는 세션만 삭제합니다.</p>
+     *
+     * <p>마지막에는 사용자별 Family 인덱스도 함께 제거합니다.
+     * Redis는 Lua Script 실행 중 다른 명령을 끼워 넣지 않으므로
+     * 일부 Family만 삭제된 중간 상태가 외부에 노출되지 않습니다.</p>
+     *
+     * <p>KEYS:</p>
+     * <ul>
+     *     <li>KEYS[1]: 사용자별 Family Set Key</li>
+     * </ul>
+     *
+     * <p>ARGV:</p>
+     * <ul>
+     *     <li>ARGV[1]: Family 세션 Key 접두어</li>
+     *     <li>ARGV[2]: 세션을 폐기할 사용자 UUID</li>
+     * </ul>
+     */
+    private static final DefaultRedisScript<Long>
+        REVOKE_ALL_FAMILIES_SCRIPT =
+        new DefaultRedisScript<>(
+            """
+            local familyIds =
+                redis.call('SMEMBERS', KEYS[1])
+            local revokedCount = 0
+
+            for _, familyId in ipairs(familyIds) do
+                local familyKey =
+                    ARGV[1] .. familyId
+                local storedUserId =
+                    redis.call(
+                        'HGET',
+                        familyKey,
+                        'userId'
+                    )
+
+                if storedUserId
+                    and storedUserId == ARGV[2] then
+                    revokedCount =
+                        revokedCount
+                        + redis.call(
+                            'DEL',
+                            familyKey
+                        )
+                end
+            end
+
+            redis.call('DEL', KEYS[1])
+
+            return revokedCount
+            """,
+            Long.class
+        );
+
+    /**
      * 사용자별 인덱스에서 실제 Family Key가 존재하는 Family ID만
      * 반환하고 만료된 ID는 Set에서 제거하는 Lua Script
      *
@@ -469,6 +528,38 @@ public class RedisRefreshTokenStore
             );
 
         return Long.valueOf(1L).equals(result);
+    }
+
+    /**
+     * 특정 사용자가 보유한 모든 Refresh Token Family 세션을 폐기
+     */
+    @Override
+    public long revokeAllByUserId(
+        UUID userId
+    ) {
+        if (userId == null) {
+            throw new IllegalArgumentException(
+                "Refresh Token 사용자 UUID는 null일 수 없습니다."
+            );
+        }
+
+        Long revokedCount =
+            redisTemplate.execute(
+                REVOKE_ALL_FAMILIES_SCRIPT,
+                List.of(
+                    userFamiliesKey(userId)
+                ),
+                FAMILY_KEY_PREFIX,
+                userId.toString()
+            );
+
+        if (revokedCount == null) {
+            throw new IllegalStateException(
+                "Refresh Token 전체 세션 폐기 결과를 확인할 수 없습니다."
+            );
+        }
+
+        return revokedCount;
     }
 
     /**

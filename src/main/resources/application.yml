@@ -102,7 +102,7 @@ password-reset:
     subject: ${PASSWORD_RESET_MAIL_SUBJECT:[모두의 플리] 임시 비밀번호 안내}
 
 watching-session:
-  presence-ttl: ${WATCHING_SESSION_PRESENCE_TTL:60s}
+  presence-ttl: ${WATCHING_SESSION_PRESENCE_TTL:90s}
   # TODO: FE heartbeat 배포 이후에 session-ttl 시간 단축
   session-ttl: ${WATCHING_SESSION_SESSION_TTL:30m}
   heartbeat-interval: ${WATCHING_SESSION_HEARTBEAT_INTERVAL:20s}
@@ -135,10 +135,37 @@ mopl:
     listener:
       # 로컬에 Kafka 를 띄우지 않고 개발할 때 false 로 두면 연결 경고가 반복되지 않습니다.
       auto-startup: ${KAFKA_LISTENER_AUTO_STARTUP:true}
+    dlt:
+      # DLT replay 발행 확인을 기다리는 한도입니다. 확인 전에 성공으로 기록하지 않습니다.
+      replay-ack-timeout: ${KAFKA_DLT_REPLAY_ACK_TIMEOUT:10s}
   outbox:
     # 선점 유효 기간입니다. 짧으면 발행이 끝나기 전에 다른 인스턴스가 회수해 중복 발행이
     # 늘고, 길면 relay 가 죽었을 때 회수가 그만큼 지연됩니다.
     lease-duration: ${OUTBOX_LEASE_DURATION:30s}
+    relay:
+      # 로컬에 Kafka 를 띄우지 않고 개발할 때 false 로 둡니다.
+      enabled: ${OUTBOX_RELAY_ENABLED:true}
+      # 이전 실행이 끝난 뒤부터 이 간격만큼 쉬고 다시 돕니다.
+      interval: ${OUTBOX_RELAY_INTERVAL:1000}
+      batch-size: ${OUTBOX_RELAY_BATCH_SIZE:100}
+      # broker 확인을 기다리는 한도입니다. 넘으면 실패로 보고 다음 주기에 다시 시도합니다.
+      ack-timeout: ${OUTBOX_RELAY_ACK_TIMEOUT:10s}
+    retry:
+      # 이 횟수까지 실패하면 자동 재시도를 멈추고 최종 실패로 남깁니다. 사람이 원인을
+      # 고친 뒤 다시 대기로 돌립니다.
+      max-attempts: ${OUTBOX_RETRY_MAX_ATTEMPTS:10}
+      # 첫 실패 뒤 기다리는 시간입니다. 이후 multiplier 배씩 늘어납니다.
+      initial-backoff: ${OUTBOX_RETRY_INITIAL_BACKOFF:5s}
+      # 간격 상한입니다. 없으면 몇 번 실패한 뒤 다음 시도가 며칠 뒤로 밀립니다.
+      max-backoff: ${OUTBOX_RETRY_MAX_BACKOFF:10m}
+      multiplier: ${OUTBOX_RETRY_MULTIPLIER:2.0}
+
+  realtime:
+    relay:
+      # Redis 없이 다른 기능을 개발할 때 false 로 두면 구독 재연결이 반복되지 않습니다.
+      enabled: ${REALTIME_RELAY_ENABLED:true}
+      # 기동 시점에 Redis 가 준비되지 않았을 때 구독을 다시 시도하는 간격입니다.
+      subscribe-retry-interval: ${REALTIME_RELAY_SUBSCRIBE_RETRY_INTERVAL:30000}
 
 app:
   cors:

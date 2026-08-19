@@ -110,10 +110,30 @@ public interface RefreshTokenStore {
     );
 
     /**
+     * 특정 사용자가 보유한 모든 Refresh Token Family 세션을 폐기
+     *
+     * <p>비밀번호 변경, 비밀번호 초기화, 계정 잠금 또는 권한 변경처럼
+     * 기존 로그인 세션을 더 이상 신뢰할 수 없는 보안 상태 변경 시
+     * 해당 사용자의 모든 로그인 세션을 한 번에 제거합니다.</p>
+     *
+     * <p>구현체는 개별 Family를 애플리케이션 반복문으로 삭제하지 않고,
+     * 가능한 한 저장소 내부에서 원자적으로 처리해야 합니다. 이를 통해
+     * 일부 Family만 삭제된 상태가 외부에 노출되는 것을 방지합니다.</p>
+     *
+     * @param userId 모든 Refresh Token 세션을 폐기할 사용자 UUID
+     * @return 실제로 폐기한 Refresh Token Family 세션 수
+     */
+    long revokeAllByUserId(
+        UUID userId
+    );
+
+    /**
      * 특정 사용자가 보유한 현재 활성 Refresh Token Family ID를 조회
      *
-     * <p>비밀번호 변경, 계정 잠금과 전체 로그아웃 기능에서
-     * 해당 사용자의 모든 로그인 세션을 폐기할 때 사용할 수 있습니다.</p>
+     * <p>사용자별 활성 로그인 세션 조회나 저장소 상태 검증이 필요한 경우
+     * 사용할 수 있습니다.
+     * 모든 세션을 폐기할 때는 개별 Family를 반복해서
+     * 삭제하지 않고 {@link #revokeAllByUserId(UUID)}를 사용합니다.</p>
      *
      * <p>구현체는 이미 TTL이 만료된 Family를 인덱스에서 정리한 뒤
      * 실제 Family 세션 Key가 존재하는 ID만 반환해야 합니다.</p>
