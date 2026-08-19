@@ -159,6 +159,10 @@ mopl:
       # 간격 상한입니다. 없으면 몇 번 실패한 뒤 다음 시도가 며칠 뒤로 밀립니다.
       max-backoff: ${OUTBOX_RETRY_MAX_BACKOFF:10m}
       multiplier: ${OUTBOX_RETRY_MULTIPLIER:2.0}
+    metrics:
+      enabled: ${OUTBOX_METRICS_ENABLED:true}
+      # gauge 값을 다시 집계하는 간격입니다. 짧으면 집계 질의가 그만큼 자주 돕니다.
+      refresh-interval: ${OUTBOX_METRICS_REFRESH_INTERVAL:15000}
 
   realtime:
     relay:

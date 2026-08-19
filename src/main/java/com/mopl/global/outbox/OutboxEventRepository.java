@@ -32,6 +32,18 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
 
     long countByStatus(OutboxStatus status);
 
+    /** 선점 중인 레코드 수입니다. lease 가 만료됐지만 아직 회수되지 않은 것도 포함합니다. */
+    long countByClaimOwnerIsNotNull();
+
+    /**
+     * 해당 상태에서 가장 오래된 발생 시각입니다. 대상이 없으면 {@code null} 입니다.
+     *
+     * <p>발행 지연을 재는 기준이 기록 시각이 아니라 발생 시각인 이유가 있습니다. 도메인 사실이
+     * 언제 확정됐는지부터가 소비자가 기다린 시간입니다.
+     */
+    @Query("SELECT MIN(e.occurredAt) FROM OutboxEvent e WHERE e.status = :status")
+    Instant findOldestOccurredAt(@Param("status") OutboxStatus status);
+
     /**
      * 시도 시각이 지난 발행 대기 이벤트를 오래된 순으로 조회합니다.
      *
