@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -880,6 +881,75 @@ public class WatchingSessionServiceTest {
         mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
         watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
         when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
+
+        assertThatCode(() ->
+            watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
+            .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("DB renewExpiresAt이 0이면 upsert로 재생성하고 presence의 snapshotId를 새 값으로 동기화한다")
+    void heartbeat_recoversMissingSnapshot_whenRenewReturnsZero() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
+
+        WatchingSessionSnapshot recovered = createSnapshotFixture(
+            UUID.randomUUID(), WATCHER_ID, CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT,
+            FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS));
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(new UpsertResult(recovered, true));
+        when(watchingSessionPresenceWriter.updateSnapshotIdIfOwner(
+            eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(recovered.getId())))
+            .thenReturn(true);
+
+        // start()가 setup 단계에서 이미 upsert를 한 번 호출했으므로, 아래 verify가
+        // heartbeat의 복구 호출만 세도록 그 이전 상호작용을 리셋한다.
+        clearInvocations(watchingSessionSnapshotWriter, watchingSessionPresenceWriter);
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionSnapshotWriter).upsert(eq(WATCHER_ID), eq(CONTENT_ID), any());
+        verify(watchingSessionPresenceWriter).updateSnapshotIdIfOwner(
+            WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, recovered.getId());
+        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any());
+    }
+
+    @Test
+    @DisplayName("복구 도중 소유권이 다른 세대로 넘어가면(재구독 경합), 방금 만든 행을 보상 삭제한다")
+    void heartbeat_compensatesOrphanRow_whenSnapshotIdSyncFailsDuringRecovery() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
+
+        WatchingSessionSnapshot recovered = createSnapshotFixture(
+            UUID.randomUUID(), WATCHER_ID, CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT,
+            FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS));
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(new UpsertResult(recovered, true));
+        when(watchingSessionPresenceWriter.updateSnapshotIdIfOwner(
+            eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(recovered.getId())))
+            .thenReturn(false);
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionSnapshotWriter).deleteById(WATCHER_ID, recovered.getId());
+    }
+
+    @Test
+    @DisplayName("복구 중 upsert가 예외를 던져도 heartbeat 자체는 예외 없이 끝난다")
+    void heartbeat_doesNotThrow_whenRecoveryUpsertFails() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenThrow(new RuntimeException("DB 연결 끊김"));
 
         assertThatCode(() ->
             watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))

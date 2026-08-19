@@ -176,29 +176,26 @@ public class WatchingSessionSnapshotRepositoryTest {
     }
 
     @Test
-    @DisplayName("deleteAllByExpiresAtBefore는 기준 시각보다 먼저 만료된 행만 삭제하고 개수를 반환한다")
-    void deleteAllByExpiresAtBefore_success_deletesOnlyExpiredRows() {
-        // given
+    @DisplayName("deleteAllByIdInAndExpiresAtBefore는 대상 id 중 여전히 만료 상태인 행만 삭제한다")
+    void deleteAllByIdInAndExpiresAtBefore_success_deletesOnlyStillExpiredRows() {
         Instant now = Instant.now();
-        UUID expiredWatcher1 = insertUser();
-        UUID expiredWatcher2 = insertUser();
-        UUID activeWatcher = insertUser();
+        UUID watcherA = insertUser();
+        UUID watcherB = insertUser();
         UUID contentId = insertContent();
-
-        persistSnapshot(expiredWatcher1, contentId, now.minusSeconds(600), now.minusSeconds(60));
-        persistSnapshot(expiredWatcher2, contentId, now.minusSeconds(600), now.minusSeconds(1));
-        persistSnapshot(activeWatcher, contentId, now, now.plusSeconds(60));
+        WatchingSessionSnapshot stillExpired =
+            persistSnapshot(watcherA, contentId, now.minusSeconds(600), now.minusSeconds(60));
+        // 후보로 뽑힌 뒤 그 사이 heartbeat로 갱신돼 더 이상 만료 상태가 아닌 행을 재현
+        WatchingSessionSnapshot renewedSince =
+            persistSnapshot(watcherB, contentId, now.minusSeconds(600), now.plusSeconds(60));
         entityManager.clear();
 
-        // when
-        int deleted = repository.deleteAllByExpiresAtBefore(now);
+        int deleted = repository.deleteAllByIdInAndExpiresAtBefore(
+            List.of(stillExpired.getId(), renewedSince.getId()), now);
         entityManager.clear();
 
-        // then
-        assertThat(deleted).isEqualTo(2);
-        assertThat(repository.findByWatcherId(expiredWatcher1)).isEmpty();
-        assertThat(repository.findByWatcherId(expiredWatcher2)).isEmpty();
-        assertThat(repository.findByWatcherId(activeWatcher)).isPresent();
+        assertThat(deleted).isEqualTo(1);
+        assertThat(repository.findByWatcherId(watcherA)).isEmpty();
+        assertThat(repository.findByWatcherId(watcherB)).isPresent(); // 그 사이 갱신된 행은 보호됨
     }
 
     @Test
@@ -211,11 +208,42 @@ public class WatchingSessionSnapshotRepositoryTest {
         persistSnapshot(watcherId, contentId, now, now.plusSeconds(60));
 
         // when
-        int deleted = repository.deleteAllByExpiresAtBefore(now.minusSeconds(600));
+        int deleted = repository.deleteAllByIdInAndExpiresAtBefore(List.of(), now.minusSeconds(600));
 
         // then
         assertThat(deleted).isZero();
         assertThat(repository.findByWatcherId(watcherId)).isPresent();
+    }
+
+    @Test
+    @DisplayName("findExpiredCandidates는 기준 시각보다 먼저 만료된 행만 반환한다")
+    void findExpiredCandidates_returnsOnlyExpiredRows() {
+        Instant now = Instant.now();
+        UUID expiredWatcher = insertUser();
+        UUID activeWatcher = insertUser();
+        UUID contentId = insertContent();
+        WatchingSessionSnapshot expired =
+            persistSnapshot(expiredWatcher, contentId, now.minusSeconds(600), now.minusSeconds(60));
+        persistSnapshot(activeWatcher, contentId, now, now.plusSeconds(60));
+        entityManager.clear();
+
+        List<WatchingSessionSnapshot> result = repository.findExpiredCandidates(now, PageRequest.of(0, 500));
+
+        assertThat(result).extracting(WatchingSessionSnapshot::getId).containsExactly(expired.getId());
+    }
+
+    @Test
+    @DisplayName("findExpiredCandidates는 페이지 크기를 넘지 않는다")
+    void findExpiredCandidates_respectsPageSize() {
+        Instant now = Instant.now();
+        UUID contentId = insertContent();
+        for (int i = 0; i < 3; i++) {
+            persistSnapshot(insertUser(), contentId, now.minusSeconds(600), now.minusSeconds(60));
+        }
+
+        List<WatchingSessionSnapshot> result = repository.findExpiredCandidates(now, PageRequest.of(0, 2));
+
+        assertThat(result).hasSize(2);
     }
 
     @Test

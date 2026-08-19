@@ -7,6 +7,7 @@ import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import com.mopl.watchingsession.service.WatchingSessionSnapshotWriter.UpsertResult;
 import jakarta.persistence.EntityManager;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -203,5 +204,19 @@ public class WatchingSessionSnapshotWriterTest {
         assertThat(repository.count()).isEqualTo(1);
         assertThat(repository.findByWatcherId(watcherId1)).isEmpty();
         assertThat(repository.findByWatcherId(watcherId2)).isPresent();
+    }
+
+    @Test
+    @DisplayName("deleteAllByIdInAndExpiresAtBefore()는 Repository의 동일 이름 메서드에 위임한다")
+    void deleteAllByIdInAndExpiresAtBefore_delegatesToRepository() {
+        UUID watcherId = insertUser();
+        UUID contentId = insertContent();
+        Instant now = Instant.now();
+        UpsertResult result = writer.upsert(watcherId, contentId, now.minusSeconds(1));
+
+        int deleted = writer.deleteAllByIdInAndExpiresAtBefore(List.of(result.snapshot().getId()), now);
+
+        assertThat(deleted).isEqualTo(1);
+        assertThat(repository.findByWatcherId(watcherId)).isEmpty();
     }
 }
