@@ -31,6 +31,12 @@ mopl:
       # 스케줄 실행이 테스트 데이터를 먼저 가져가면 검증이 흔들립니다. relay 통합
       # 테스트는 컴포넌트를 직접 만들어 호출합니다.
       enabled: false
+    retry:
+      # 최대 횟수 초과를 몇 번의 호출로 검증할 수 있게 낮춥니다.
+      max-attempts: 3
+      initial-backoff: 1s
+      max-backoff: 4s
+      multiplier: 2.0
 
   realtime:
     relay:
