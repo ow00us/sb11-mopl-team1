@@ -6,21 +6,28 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.mopl.directmessage.dto.DirectMessageCreatedEvent;
 import com.mopl.directmessage.dto.DirectMessageDto;
 import com.mopl.directmessage.entity.ConversationParticipant;
 import com.mopl.directmessage.entity.DirectMessage;
 import com.mopl.directmessage.entity.ParticipantSlot;
+import com.mopl.directmessage.event.DirectMessageOutboxEventFactory;
 import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.directmessage.repository.DirectMessageRepository;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.event.EventEnvelope;
+import com.mopl.global.outbox.OutboxRecorder;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
 import java.time.Instant;
@@ -32,9 +39,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -72,6 +81,12 @@ class DirectMessageServiceTest {
 
     @Mock
     private ApplicationEventPublisher eventPublisher;
+
+    @Mock
+    DirectMessageOutboxEventFactory outboxEventFactory;
+
+    @Mock
+    OutboxRecorder outboxRecorder;
 
     @InjectMocks
     DirectMessageService directMessageService;
@@ -809,6 +824,16 @@ class DirectMessageServiceTest {
             return message;
         });
 
+        EventEnvelope envelope =
+            mock(EventEnvelope.class);
+
+        when(
+            outboxEventFactory.create(
+                any(DirectMessage.class),
+                eq(USER_ID_2)
+            )
+        ).thenReturn(envelope);
+
         // when
         DirectMessageDto result =
             directMessageService.create(
@@ -852,6 +877,139 @@ class DirectMessageServiceTest {
 
         assertThat(result.content())
             .isEqualTo("반가워요!");
+
+        verify(outboxEventFactory)
+            .create(
+                any(DirectMessage.class),
+                eq(USER_ID_2)
+            );
+
+        verify(outboxRecorder)
+            .record(
+                envelope,
+                CONVERSATION_ID.toString(),
+                "conversationId",
+                "direct-message.created:"
+                    + messageId
+            );
+
+        verify(eventPublisher)
+            .publishEvent(
+                any(DirectMessageCreatedEvent.class)
+            );
+
+        InOrder inOrder =
+            inOrder(
+                directMessageRepository,
+                outboxEventFactory,
+                outboxRecorder,
+                eventPublisher
+            );
+
+        inOrder.verify(directMessageRepository)
+            .save(
+                any(DirectMessage.class)
+            );
+
+        inOrder.verify(outboxEventFactory)
+            .create(
+                any(DirectMessage.class),
+                eq(USER_ID_2)
+            );
+
+        inOrder.verify(outboxRecorder)
+            .record(
+                envelope,
+                CONVERSATION_ID.toString(),
+                "conversationId",
+                "direct-message.created:"
+                    + messageId
+            );
+
+        inOrder.verify(eventPublisher)
+            .publishEvent(
+                any(DirectMessageCreatedEvent.class)
+            );
+    }
+
+    @Test
+    @DisplayName("Outbox 기록에 실패하면 DM 생성 이벤트를 발행하지 않는다.")
+    void create_outboxRecordFails_doesNotPublishEvent() {
+        // given
+        stubParticipantsAndUsers();
+
+        UUID messageId =
+            UUID.fromString(
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            );
+
+        Instant createdAt =
+            Instant.parse(
+                "2026-08-19T01:00:00Z"
+            );
+
+        when(
+            directMessageRepository.save(
+                any(DirectMessage.class)
+            )
+        ).thenAnswer(invocation -> {
+            DirectMessage message =
+                invocation.getArgument(0);
+
+            ReflectionTestUtils.setField(
+                message,
+                "id",
+                messageId
+            );
+
+            ReflectionTestUtils.setField(
+                message,
+                "createdAt",
+                createdAt
+            );
+
+            return message;
+        });
+
+        EventEnvelope envelope =
+            mock(EventEnvelope.class);
+
+        when(
+            outboxEventFactory.create(
+                any(DirectMessage.class),
+                eq(USER_ID_2)
+            )
+        ).thenReturn(envelope);
+
+        doThrow(
+            new DataIntegrityViolationException(
+                "Outbox 기록 실패"
+            )
+        ).when(outboxRecorder)
+            .record(
+                envelope,
+                CONVERSATION_ID.toString(),
+                "conversationId",
+                "direct-message.created:"
+                    + messageId
+            );
+
+        // when & then
+        assertThatThrownBy(() ->
+            directMessageService.create(
+                USER_ID_1,
+                CONVERSATION_ID,
+                "반가워요!"
+            )
+        )
+            .isInstanceOf(
+                DataIntegrityViolationException.class
+            );
+
+        verify(eventPublisher, never())
+            .publishEvent(
+                any(DirectMessageCreatedEvent.class)
+            );
     }
 
     @Test
@@ -877,7 +1035,10 @@ class DirectMessageServiceTest {
         verifyNoInteractions(
             participantRepository,
             userRepository,
-            directMessageRepository
+            directMessageRepository,
+            outboxEventFactory,
+            outboxRecorder,
+            eventPublisher
         );
     }
 }

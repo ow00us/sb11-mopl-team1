@@ -6,12 +6,15 @@ import com.mopl.directmessage.repository.DirectMessageRepository;
 import com.mopl.directmessage.entity.ConversationParticipant;
 import com.mopl.directmessage.dto.DirectMessageDto;
 import com.mopl.directmessage.entity.DirectMessage;
+import com.mopl.directmessage.event.DirectMessageOutboxEventFactory;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.user.entity.User;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.common.UserSummary;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.event.EventEnvelope;
+import com.mopl.global.outbox.OutboxRecorder;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -38,6 +41,8 @@ public class DirectMessageService {
     private final ConversationParticipantRepository participantRepository;
     private final UserRepository userRepository;
     private final ApplicationEventPublisher eventPublisher;
+    private final DirectMessageOutboxEventFactory outboxEventFactory;
+    private final OutboxRecorder outboxRecorder;
 
     public CursorResponse<DirectMessageDto> getDirectMessages(
         UUID requesterId,
@@ -372,6 +377,19 @@ public class DirectMessageService {
                 receiverIdBySenderId,
                 userSummaries
             );
+
+        EventEnvelope envelope =
+            outboxEventFactory.create(
+                savedMessage,
+                response.receiver().userId()
+            );
+
+        outboxRecorder.record(
+            envelope,
+            conversationId.toString(),
+            "conversationId",
+            "direct-message.created:" + savedMessage.getId()
+        );
 
         eventPublisher.publishEvent(
             new DirectMessageCreatedEvent(response)
