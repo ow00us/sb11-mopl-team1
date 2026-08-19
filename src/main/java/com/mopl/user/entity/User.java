@@ -28,8 +28,15 @@ public class User extends BaseEntity {
     @Column(nullable = false, length = 255)
     private String email;
 
-    // 인코딩 된 비밀번호
-    @Column(name = "password_hash", nullable = false, length = 255)
+    /*
+     * 로컬 이메일·비밀번호 로그인에 사용하는 BCrypt 비밀번호 해시
+     *
+     * 로컬 회원가입 사용자는 반드시 비밀번호 해시를 저장
+     * OAuth로만 가입한 사용자는 로컬 비밀번호가 없으므로 null일 수 있다.
+     *
+     * 비밀번호 원문은 어떤 경우에도 이 필드에 저장하지 않는다.
+     */
+    @Column(name = "password_hash", length = 255)
     private String passwordHash;
 
     // 서비스 화면에 표시할 사용자 이름
