@@ -12,6 +12,9 @@ import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -70,13 +73,17 @@ class MoplUserDetailsServiceTest {
         verify(userRepository).findByEmail("user@example.com");
     }
 
-    @Test
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"", "   "})
     @DisplayName("로컬 비밀번호가 없는 OAuth 전용 사용자는 로컬 인증 사용자로 조회하지 않는다")
-    void loadUserByUsername_fail_whenOAuthOnlyUser() {
+    void loadUserByUsername_fail_whenOAuthOnlyUser(
+        String passwordHash
+    ) {
         // given
         User oauthOnlyUser = User.builder()
             .email("oauth-only@example.com")
-            .passwordHash(null)
+            .passwordHash(passwordHash)
             .name("OAuth 전용 사용자")
             .role(UserRole.USER)
             .locked(false)

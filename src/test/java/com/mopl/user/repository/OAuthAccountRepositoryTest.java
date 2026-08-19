@@ -96,6 +96,42 @@ class OAuthAccountRepositoryTest {
             .isNull();
     }
 
+    @Test
+    @DisplayName("사용자에게 특정 Provider 계정이 연결되어 있는지 확인할 수 있다")
+    void existsByUserIdAndProvider_success() {
+        // given
+        User user = persistUser(
+            "linked-provider@example.com",
+            null
+        );
+
+        OAuthAccount account = OAuthAccount.builder()
+            .user(user)
+            .provider(OAuthProvider.GOOGLE)
+            .providerUserId("linked-google-id")
+            .build();
+
+        entityManager.persistAndFlush(account);
+        entityManager.clear();
+
+        // when
+        boolean googleLinked =
+            oauthAccountRepository.existsByUserIdAndProvider(
+                user.getId(),
+                OAuthProvider.GOOGLE
+            );
+
+        boolean kakaoLinked =
+            oauthAccountRepository.existsByUserIdAndProvider(
+                user.getId(),
+                OAuthProvider.KAKAO
+            );
+
+        // then
+        assertThat(googleLinked).isTrue();
+        assertThat(kakaoLinked).isFalse();
+    }
+
     /**
      * 동일한 외부 OAuth 계정이 서로 다른 서비스 사용자에게 연결되면
      * 계정 탈취나 사용자 식별 오류가 발생할 수 있으므로 DB에서 차단
