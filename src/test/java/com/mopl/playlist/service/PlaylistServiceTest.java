@@ -405,10 +405,15 @@ class PlaylistServiceTest {
     @Test
     @DisplayName("구독 성공 시 upsert rows=1 이면 subscriberCount 를 증가시킨다")
     void subscribe_success() {
+        UUID subscriptionId = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
         Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        PlaylistSubscription subscription = savedSubscriptionWithCreatedAt(
+                subscriptionId, PLAYLIST_ID, OTHER_ID, Instant.now());
         when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
         when(subscriptionRepository.insertIfAbsent(PLAYLIST_ID.toString(), OTHER_ID.toString()))
                 .thenReturn(1);
+        when(subscriptionRepository.findByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
+                .thenReturn(Optional.of(subscription));
 
         playlistService.subscribe(PLAYLIST_ID, OTHER_ID);
 

@@ -233,7 +233,27 @@ public class PlaylistServiceImpl implements PlaylistService {
             // 엔티티 setter/증감 메서드 대신 원자적 SQL UPDATE 로 lost update 를 방지한다.
             // 신규 삽입 경로에서만 카운터를 증가시켜 중복 요청이 재증가시키지 않도록 한다.
             playlistRepository.incrementSubscriberCount(playlistId);
+            recordSubscriptionCreatedEvent(playlist, subscriberId);
         }
+    }
+
+    // 계약 docs/07-kafka-outbox-contract.md §8.2
+    // - envelope 조립은 PlaylistSubscriptionEventFactory 가 담당
+    // - partitionKey: subscriptionId, orderingScope: NONE
+    // - deduplicationKey: playlist.subscription.created:<subscriptionId>
+    // - insertIfAbsent 는 rows 만 반환하므로 aggregateId 확보 위해 재조회한다.
+    //   rows=1 직후 조회가 empty 인 것은 인프라 이상이므로 500 으로 노출한다.
+    private void recordSubscriptionCreatedEvent(Playlist playlist, UUID subscriberId) {
+        PlaylistSubscription subscription = subscriptionRepository
+                .findByPlaylistIdAndSubscriberId(playlist.getId(), subscriberId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_ERROR));
+        UUID subscriptionId = subscription.getId();
+        outboxRecorder.record(
+                playlistSubscriptionEventFactory.createSubscriptionCreatedEnvelope(
+                        subscription, playlist.getOwnerId()),
+                subscriptionId.toString(),
+                "NONE",
+                "playlist.subscription.created:" + subscriptionId);
     }
 
     @Override
