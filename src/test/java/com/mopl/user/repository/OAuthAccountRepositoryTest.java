@@ -86,6 +86,21 @@ class OAuthAccountRepositoryTest {
 
         OAuthAccount foundAccount = result.get();
 
+        /*
+         * OAuth 로그인 조회는 연결된 User를 즉시 사용하므로
+         * @EntityGraph를 통해 OAuthAccount와 User가 한 번에 로딩되어야 한다.
+         *
+         * getUser()를 호출하기 전에 로딩 상태를 검사하여,
+         * 추후 @EntityGraph가 제거돼 추가 조회가 발생하는 회귀를 방지
+         */
+        boolean userLoaded =
+            entityManager.getEntityManager()
+                .getEntityManagerFactory()
+                .getPersistenceUnitUtil()
+                .isLoaded(foundAccount, "user");
+
+        assertThat(userLoaded).isTrue();
+
         assertThat(foundAccount.getProvider())
             .isEqualTo(OAuthProvider.GOOGLE);
         assertThat(foundAccount.getProviderUserId())
