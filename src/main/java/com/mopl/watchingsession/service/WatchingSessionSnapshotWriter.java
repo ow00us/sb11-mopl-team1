@@ -59,8 +59,8 @@ public class WatchingSessionSnapshotWriter {
      * @return 실제로 삭제된 행 수 (0이면 이미 다른 세대로 교체된 뒤라는 뜻)
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public int deleteById(UUID watcherId, UUID snapshotId) {
-        return watchingSessionSnapshotRepository.deleteByWatcherIdAndId(watcherId, snapshotId);
+    public int deleteById(UUID watcherId, UUID snapshotId, Instant expectedUpdatedAt) {
+        return watchingSessionSnapshotRepository.deleteByWatcherIdAndId(watcherId, snapshotId, expectedUpdatedAt);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

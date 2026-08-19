@@ -1,5 +1,7 @@
 package com.mopl.watchingsession.service;
 
+import static com.mopl.global.util.InstantPrecisionUtils.normalizeToMicros;
+
 import com.mopl.content.entity.Content;
 import com.mopl.content.repository.ContentRepository;
 import com.mopl.global.common.CursorResponse;
@@ -14,6 +16,7 @@ import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
+import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter.DeletedSnapshot;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.time.Instant;
 import java.util.List;
@@ -137,12 +140,12 @@ public class WatchingSessionService {
                 try {
                     // presence가 소유권의 원본이므로 실패를 삼키지 않고 그대로 전파
                     previousPresence = watchingSessionPresenceWriter.swap(
-                        watcherId, snapshot.getId(), contentId, sessionId, subscriptionId, snapshot.getCreatedAt(), watchingSessionProperties.getPresenceTtl());
+                        watcherId, snapshot.getId(), contentId, sessionId, subscriptionId, snapshot.getCreatedAt(), normalizeToMicros(snapshot.getUpdatedAt()), watchingSessionProperties.getPresenceTtl());
                 } catch (RuntimeException presenceFailure) {
                     if (upsertResult.isNewIdentity()) {
                         // snapshot.getId()로 조건부 삭제. watcherId만으로 지우면 그 사이 다른
                         // 인스턴스가 만든 새 세대를 함께 지울 수 있다.
-                        watchingSessionSnapshotWriter.deleteById(watcherId, snapshot.getId());
+                        watchingSessionSnapshotWriter.deleteById(watcherId, snapshot.getId(), snapshot.getUpdatedAt());
                     }
                     throw presenceFailure;
                 }
@@ -175,16 +178,16 @@ public class WatchingSessionService {
         WatcherLock watcherLock = acquireWatcherLock(watcherId);
         try {
             synchronized (watcherLock) {
-                Optional<UUID> deletedSnapshotId = watchingSessionPresenceWriter.deleteIfOwner(
+                Optional<DeletedSnapshot> deleted = watchingSessionPresenceWriter.deleteIfOwner(
                     watcherId, currentSessionId, currentSubscriptionId);
-                if (deletedSnapshotId.isEmpty()) {
+                if (deleted.isEmpty()) {
                     return false;
                 }
 
-                int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, deletedSnapshotId.get());
+                int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, deleted.get().snapshotId(), deleted.get().snapshotUpdatedAt());
                 if (deletedRows == 0) {
                     log.warn("presence 소유권 확인 후 DB 스냅샷이 이미 교체됨, 퇴장 처리 생략: "
-                        + "watcherId={}, snapshotId={}", watcherId, deletedSnapshotId.get());
+                        + "watcherId={}, snapshotId={}", watcherId, deleted.get().snapshotId());
                     return false;
                 }
                 return true;
@@ -207,17 +210,17 @@ public class WatchingSessionService {
         WatcherLock watcherLock = acquireWatcherLock(watcherId);
         try {
             synchronized (watcherLock) {
-                Optional<UUID> deletedSnapshotId = watchingSessionPresenceWriter.deleteIfOwnerSession(
+                Optional<DeletedSnapshot> deleted = watchingSessionPresenceWriter.deleteIfOwnerSession(
                     watcherId, sessionId);
-                if (deletedSnapshotId.isEmpty()) {
+                if (deleted.isEmpty()) {
                     return Optional.empty();
                 }
 
-                UUID snapshotId = deletedSnapshotId.get();
+                UUID snapshotId = deleted.get().snapshotId();
                 WatchingSessionSnapshot snapshot = watchingSessionSnapshotRepository.findById(snapshotId)
                     .orElse(null);
 
-                int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, snapshotId);
+                int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, snapshotId,  deleted.get().snapshotUpdatedAt());
                 if (deletedRows == 0 || snapshot == null) {
                     log.warn("presence 소유권 확인 후 DB 스냅샷이 이미 교체됨, 퇴장 처리 생략: "
                         + "watcherId={}, snapshotId={}", watcherId, snapshotId);
@@ -419,11 +422,11 @@ public class WatchingSessionService {
 
                 WatchingSessionSnapshot snapshot = recovered.get();
                 boolean synced = watchingSessionPresenceWriter.updateSnapshotIdIfOwner(
-                    watcherId, sessionId, subscriptionId, snapshot.getId());
+                    watcherId, sessionId, subscriptionId, snapshot.getId(), normalizeToMicros(snapshot.getUpdatedAt()));
 
                 if (!synced) {
                     // 방금 삽입한 행이 확실하므로(insertIfAbsent는 기존 행을 건드리지 않음) 안전하게 보상 삭제할 수 있다.
-                    watchingSessionSnapshotWriter.deleteById(watcherId, snapshot.getId());
+                    watchingSessionSnapshotWriter.deleteById(watcherId, snapshot.getId(), normalizeToMicros(snapshot.getUpdatedAt()));
                     log.warn("DB 행 재생성 직후 소유권이 이전돼 고아 행을 보상 삭제함: watcherId={}", watcherId);
                     return;
                 }
