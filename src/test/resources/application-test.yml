@@ -37,6 +37,9 @@ mopl:
       initial-backoff: 1s
       max-backoff: 4s
       multiplier: 2.0
+    metrics:
+      # 갱신 시점을 테스트가 정할 수 있어야 gauge 값을 확정적으로 확인할 수 있습니다.
+      enabled: false
 
   realtime:
     relay:
@@ -51,6 +54,7 @@ watching-session:
   presence-ttl: 2s
   session-ttl: 3s
   heartbeat-interval: 500ms
+  sweep-interval: 10m
 
 tmdb:
   access-token: test-dummy-token

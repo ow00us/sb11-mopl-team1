@@ -82,6 +82,9 @@ class OutboxRelayIntegrationTest {
     MutableClock relayClock;
 
     @Autowired
+    OutboxMetrics outboxMetrics;
+
+    @Autowired
     OutboxClaimer outboxClaimer;
 
     @Autowired
@@ -159,10 +162,11 @@ class OutboxRelayIntegrationTest {
             OutboxStatusWriter outboxStatusWriter,
             FlakyKafkaTemplate flakyKafkaTemplate,
             ObjectMapper objectMapper,
+            OutboxMetrics outboxMetrics,
             MutableClock relayClock
         ) {
             return new OutboxRelay(
-                outboxClaimer, outboxStatusWriter, flakyKafkaTemplate, objectMapper,
+                outboxClaimer, outboxStatusWriter, flakyKafkaTemplate, objectMapper, outboxMetrics,
                 100, Duration.ofSeconds(10), relayClock);
         }
     }
@@ -202,7 +206,8 @@ class OutboxRelayIntegrationTest {
     private OutboxEvent pending(String type, UUID aggregateId, String payload) {
         return new OutboxEvent(
             UUID.randomUUID(), type, 1, aggregateId, NOW.minusSeconds(1),
-            payload, aggregateId.toString(), "AGGREGATE", NOW.minusSeconds(1));
+            payload, aggregateId.toString(), "AGGREGATE",
+            type + ":" + aggregateId, NOW.minusSeconds(1));
     }
 
     private OutboxEvent reload(OutboxEvent event) {
@@ -279,14 +284,14 @@ class OutboxRelayIntegrationTest {
             pending("follow.created", aggregateId, "{\"followerId\":\"a\"}"));
 
         OutboxStatusWriter failingWriter =
-            new OutboxStatusWriter(outboxEventRepository, outboxRetryPolicy) {
+            new OutboxStatusWriter(outboxEventRepository, outboxRetryPolicy, outboxMetrics) {
             @Override
             public void markPublished(UUID id, Instant publishedAt) {
                 throw new IllegalStateException("데이터베이스 연결 실패");
             }
         };
         OutboxRelay relay = new OutboxRelay(
-            outboxClaimer, failingWriter, flakyKafkaTemplate, objectMapper,
+            outboxClaimer, failingWriter, flakyKafkaTemplate, objectMapper, outboxMetrics,
             100, Duration.ofSeconds(10), relayClock);
 
         assertThat(relay.publishClaimed()).isZero();

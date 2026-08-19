@@ -3,10 +3,13 @@ package com.mopl.watchingsession.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.mopl.global.config.JpaConfig;
+import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import com.mopl.watchingsession.service.WatchingSessionSnapshotWriter.UpsertResult;
 import jakarta.persistence.EntityManager;
 import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -203,5 +206,49 @@ public class WatchingSessionSnapshotWriterTest {
         assertThat(repository.count()).isEqualTo(1);
         assertThat(repository.findByWatcherId(watcherId1)).isEmpty();
         assertThat(repository.findByWatcherId(watcherId2)).isPresent();
+    }
+
+    @Test
+    @DisplayName("deleteAllByIdInAndExpiresAtBefore()는 Repository의 동일 이름 메서드에 위임한다")
+    void deleteAllByIdInAndExpiresAtBefore_delegatesToRepository() {
+        UUID watcherId = insertUser();
+        UUID contentId = insertContent();
+        Instant now = Instant.now();
+        UpsertResult result = writer.upsert(watcherId, contentId, now.minusSeconds(1));
+
+        int deleted = writer.deleteAllByIdInAndExpiresAtBefore(List.of(result.snapshot().getId()), now);
+
+        assertThat(deleted).isEqualTo(1);
+        assertThat(repository.findByWatcherId(watcherId)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("insertIfAbsent()는 watcherId에 이미 어떤 행이든 있으면(다른 콘텐츠 포함) 손대지 않고 빈 Optional을 반환한다")
+    void insertIfAbsent_returnsEmpty_whenAnyRowAlreadyExists_evenDifferentContent() {
+        UUID watcherId = insertUser();
+        UUID existingContentId = insertContent();
+        UUID staleContentId = insertContent();
+        writer.upsert(watcherId, existingContentId, Instant.now().plusSeconds(60));
+
+        Optional<WatchingSessionSnapshot> result =
+            writer.insertIfAbsent(watcherId, staleContentId, Instant.now().plusSeconds(60));
+
+        assertThat(result).isEmpty();
+        // 기존 행이 그대로 유지됐는지 확인 - 콘텐츠가 바뀌거나 지워지지 않아야 함
+        assertThat(repository.findByWatcherId(watcherId).orElseThrow().getContentId())
+            .isEqualTo(existingContentId);
+    }
+
+    @Test
+    @DisplayName("insertIfAbsent()는 watcherId에 대한 행이 전혀 없을 때만 새로 삽입한다")
+    void insertIfAbsent_insertsNewRow_whenNothingExists() {
+        UUID watcherId = insertUser();
+        UUID contentId = insertContent();
+
+        Optional<WatchingSessionSnapshot> result =
+            writer.insertIfAbsent(watcherId, contentId, Instant.now().plusSeconds(60));
+
+        assertThat(result).isPresent();
+        assertThat(repository.count()).isEqualTo(1);
     }
 }

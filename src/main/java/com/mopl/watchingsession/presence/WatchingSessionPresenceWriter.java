@@ -1,14 +1,19 @@
 package com.mopl.watchingsession.presence;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -106,6 +111,17 @@ public class WatchingSessionPresenceWriter {
         return 0
         """;
 
+    private static final String UPDATE_SNAPSHOT_ID_IF_OWNER_LUA = """
+        local key = KEYS[1]
+        local sessionId = ARGV[1]
+        local subscriptionId = ARGV[2]
+        local newSnapshotId = ARGV[3]
+        if redis.call('HGET', key, 'sessionId') ~= sessionId then return 0 end
+        if redis.call('HGET', key, 'subscriptionId') ~= subscriptionId then return 0 end
+        redis.call('HSET', key, 'snapshotId', newSnapshotId)
+        return 1
+        """;
+
     // DefaultRedisScript는 본문의 SHA1을 캐싱해 EVALSHA로 실행되므로 인스턴스를 재사용한다
     @SuppressWarnings("rawtypes")
     private static final RedisScript<List> SWAP_SCRIPT =
@@ -118,6 +134,8 @@ public class WatchingSessionPresenceWriter {
         new DefaultRedisScript<>(DELETE_IF_OWNER_SESSION_LUA, List.class);
     private static final RedisScript<Long> RENEW_IF_OWNER_SCRIPT =
         new DefaultRedisScript<>(RENEW_IF_OWNER_LUA, Long.class);
+    private static final RedisScript<Long> UPDATE_SNAPSHOT_ID_IF_OWNER_SCRIPT =
+        new DefaultRedisScript<>(UPDATE_SNAPSHOT_ID_IF_OWNER_LUA, Long.class);
 
     private final StringRedisTemplate stringRedisTemplate;
 
@@ -247,6 +265,57 @@ public class WatchingSessionPresenceWriter {
             fields.get(FIELD_SESSION_ID),
             fields.get(FIELD_SUBSCRIPTION_ID),
             Instant.parse(fields.get(FIELD_STARTED_AT))));
+    }
+
+    /**
+     * 여러 watcherId의 presence 존재 여부를 파이프라인 한 번으로 확인한다.
+     * 스위퍼가 후보마다 개별 EXISTS를 왕복하지 않도록 하는 용도.
+     */
+    public Set<UUID> findExistingWatcherIds(Collection<UUID> watcherIds) {
+        if (watcherIds.isEmpty()) {
+            return Set.of();
+        }
+        List<UUID> ordered = List.copyOf(watcherIds);
+        try {
+            List<Object> results = stringRedisTemplate.executePipelined((RedisCallback<Object>) connection -> {
+                for (UUID watcherId : ordered) {
+                    connection.keyCommands().exists(key(watcherId).getBytes(StandardCharsets.UTF_8));
+                }
+                return null;
+            });
+
+            Set<UUID> existing = new HashSet<>();
+            for (int i = 0; i < ordered.size() ; i++) {
+                if (Boolean.TRUE.equals(results.get(i))) {
+                    existing.add(ordered.get(i));
+                }
+            }
+            return existing;
+        } catch (RuntimeException e) {
+            log.error("Presence 일괄 존재 확인 실패: watcherIdCount={}", ordered.size(), e);
+            // 확인 실패 시 전부 존재한다고 간주, 삭제를 보수적으로 건너뜀
+            return Set.copyOf(ordered);
+        }
+    }
+
+    /**
+     * 소유권이 일치할 때만 presence의 snapshotId 필드를 새 값으로 교체한다.
+     * DB 행이 재생성됐을 때(heartbeat 자가 복구) presence가 그 새 세대를 가리키도록 맞추는 용도.
+     */
+    public boolean updateSnapshotIdIfOwner(UUID watcherId, String sessionId, String subscriptionId,
+        UUID newSnapshotId) {
+        try {
+            Long result = stringRedisTemplate.execute(
+                UPDATE_SNAPSHOT_ID_IF_OWNER_SCRIPT,
+                List.of(key(watcherId)),
+                nullSafe(sessionId),
+                nullSafe(subscriptionId),
+                newSnapshotId.toString());
+            return Long.valueOf(1L).equals(result);
+        } catch (RuntimeException e) {
+            log.error("Presence snapshotId 갱신 실패: watcherId={}", watcherId, e);
+            return false;
+        }
     }
 
     // DISCONNECT는 프레임에 subscriptionId가 없어 null이 넘어올 수 있음 -> 빈 문자열로 바꿔 넘기면 안전하게 무동작이 됨

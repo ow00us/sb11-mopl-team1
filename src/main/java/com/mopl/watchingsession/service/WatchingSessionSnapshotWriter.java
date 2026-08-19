@@ -3,6 +3,8 @@ package com.mopl.watchingsession.service;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.time.Instant;
+import java.util.Collection;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -62,8 +64,24 @@ public class WatchingSessionSnapshotWriter {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public int renewExpiresAt(UUID watcherId, UUID contentId, Instant now, Instant newExpiresAt) {
-        return watchingSessionSnapshotRepository.renewExpiresAt(watcherId, contentId, now, newExpiresAt);
+    public int deleteAllByIdInAndExpiresAtBefore(Collection<UUID> ids, Instant before) {
+        return watchingSessionSnapshotRepository.deleteAllByIdInAndExpiresAtBefore(ids, before);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public int renewExpiresAt(UUID watcherId, UUID contentId, Instant newExpiresAt) {
+        return watchingSessionSnapshotRepository.renewExpiresAt(watcherId, contentId, newExpiresAt);
+    }
+
+    /**
+     * heartbeat 자가 복구 전용. watcherId 행 자체가 아예 없을 때만 새로 삽입한다.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Optional<WatchingSessionSnapshot> insertIfAbsent(UUID watcherId, UUID contentId, Instant expiresAt) {
+        if (watchingSessionSnapshotRepository.findByWatcherId(watcherId).isPresent()) {
+            return Optional.empty();
+        }
+        return Optional.of(insertNew(watcherId, contentId, expiresAt));
     }
 
 }

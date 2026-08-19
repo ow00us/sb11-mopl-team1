@@ -5,15 +5,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 
@@ -238,5 +242,85 @@ public class WatchingSessionPresenceWriterTest {
 
         assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60)))
             .isFalse();
+    }
+
+    @Test
+    @DisplayName("updateSnapshotIdIfOwner()는 스크립트가 1을 반환하면 true")
+    void updateSnapshotIdIfOwner_returnsTrue_whenScriptReturnsOne() {
+        UUID newSnapshotId = UUID.randomUUID();
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(newSnapshotId.toString())))
+            .thenReturn(1L);
+
+        assertThat(writer.updateSnapshotIdIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, newSnapshotId)).isTrue();
+    }
+
+    @Test
+    @DisplayName("updateSnapshotIdIfOwner()는 소유권 불일치(0)일 때 false")
+    void updateSnapshotIdIfOwner_returnsFalse_whenOwnerMismatch() {
+        UUID newSnapshotId = UUID.randomUUID();
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(newSnapshotId.toString())))
+            .thenReturn(0L);
+
+        assertThat(writer.updateSnapshotIdIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, newSnapshotId)).isFalse();
+    }
+
+    @Test
+    @DisplayName("updateSnapshotIdIfOwner() 도중 Redis 예외가 나면 격리되어 false를 반환한다")
+    void updateSnapshotIdIfOwner_isolatesRedisFailure() {
+        UUID newSnapshotId = UUID.randomUUID();
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(newSnapshotId.toString())))
+            .thenThrow(new RuntimeException("Redis 연결 끊김"));
+
+        assertThat(writer.updateSnapshotIdIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, newSnapshotId)).isFalse();
+    }
+
+    @Test
+    @DisplayName("updateSnapshotIdIfOwner()는 스크립트가 null을 반환하면 예외 없이 false")
+    void updateSnapshotIdIfOwner_returnsFalse_whenScriptReturnsNull() {
+        UUID newSnapshotId = UUID.randomUUID();
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(newSnapshotId.toString())))
+            .thenReturn(null);
+
+        assertThat(writer.updateSnapshotIdIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, newSnapshotId)).isFalse();
+    }
+
+    @Test
+    @DisplayName("findExistingWatcherIds()는 파이프라인 결과를 순서대로 매핑해 존재하는 watcherId만 반환한다")
+    void findExistingWatcherIds_returnsOnlyExistingOnes_inPipelineOrder() {
+        UUID w1 = UUID.randomUUID();
+        UUID w2 = UUID.randomUUID();
+        UUID w3 = UUID.randomUUID();
+        when(stringRedisTemplate.executePipelined(any(RedisCallback.class)))
+            .thenReturn(List.of(true, false, true));
+
+        Set<UUID> result = writer.findExistingWatcherIds(List.of(w1, w2, w3));
+
+        assertThat(result).containsExactlyInAnyOrder(w1, w3);
+    }
+
+    @Test
+    @DisplayName("findExistingWatcherIds()는 빈 입력에 대해 Redis를 호출하지 않고 빈 Set을 반환한다")
+    void findExistingWatcherIds_returnsEmptySet_withoutRedisCall_whenInputEmpty() {
+        Set<UUID> result = writer.findExistingWatcherIds(List.of());
+
+        assertThat(result).isEmpty();
+        verify(stringRedisTemplate, never()).executePipelined(any(RedisCallback.class));
+    }
+
+    @Test
+    @DisplayName("findExistingWatcherIds() 도중 Redis 예외가 나면 격리되어 전체를 '존재함'으로 보수적으로 반환한다")
+    void findExistingWatcherIds_treatsAllAsExisting_whenRedisFails() {
+        UUID w1 = UUID.randomUUID();
+        UUID w2 = UUID.randomUUID();
+        when(stringRedisTemplate.executePipelined(any(RedisCallback.class)))
+            .thenThrow(new RuntimeException("Redis 연결 끊김"));
+
+        Set<UUID> result = writer.findExistingWatcherIds(List.of(w1, w2));
+
+        assertThat(result).containsExactlyInAnyOrder(w1, w2);
     }
 }
