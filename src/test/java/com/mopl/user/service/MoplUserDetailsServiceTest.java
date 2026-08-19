@@ -71,6 +71,36 @@ class MoplUserDetailsServiceTest {
     }
 
     @Test
+    @DisplayName("로컬 비밀번호가 없는 OAuth 전용 사용자는 로컬 인증 사용자로 조회하지 않는다")
+    void loadUserByUsername_fail_whenOAuthOnlyUser() {
+        // given
+        User oauthOnlyUser = User.builder()
+            .email("oauth-only@example.com")
+            .passwordHash(null)
+            .name("OAuth 전용 사용자")
+            .role(UserRole.USER)
+            .locked(false)
+            .build();
+
+        when(userRepository.findByEmail("oauth-only@example.com"))
+            .thenReturn(Optional.of(oauthOnlyUser));
+
+        /*
+         * OAuth 전용 사용자의 이메일이 users 테이블에 존재하더라도
+         * 로컬 비밀번호가 없으므로 이메일·비밀번호 인증에는 실패해야 한다.
+         */
+        assertThatThrownBy(() ->
+            moplUserDetailsService.loadUserByUsername(
+                "oauth-only@example.com"
+            )
+        )
+            .isInstanceOf(UsernameNotFoundException.class);
+
+        verify(userRepository)
+            .findByEmail("oauth-only@example.com");
+    }
+
+    @Test
     @DisplayName("등록되지 않은 이메일이면 인증 사용자 조회에 실패한다")
     void loadUserByUsername_fail_whenUserDoesNotExist() {
         // given
