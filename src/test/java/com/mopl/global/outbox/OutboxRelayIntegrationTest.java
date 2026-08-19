@@ -13,6 +13,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -31,6 +33,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.ProducerFactory;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.testcontainers.containers.KafkaContainer;
@@ -43,7 +47,8 @@ import org.testcontainers.utility.DockerImageName;
  * Outbox 레코드가 Kafka 로 나가고 그 결과가 상태에 반영되는지 검증합니다.
  *
  * <p>실제 broker 가 필요합니다. 발행 확인을 받은 뒤에만 완료로 바뀌는지가 핵심인데, 템플릿을
- * 모킹하면 그 순서가 검증되지 않습니다.
+ * 전부 모킹하면 그 순서가 검증되지 않습니다. 발행 실패만 테스트가 조작할 수 있게 템플릿을
+ * 한 겹 감쌉니다.
  *
  * <p>스케줄 실행은 끕니다. 주기 실행이 준비 중인 데이터를 먼저 가져가면 결과가 흔들립니다.
  * 대신 relay 를 직접 만들어 호출 시점을 테스트가 정합니다.
@@ -80,7 +85,13 @@ class OutboxRelayIntegrationTest {
     OutboxClaimer outboxClaimer;
 
     @Autowired
-    KafkaTemplate<String, EventEnvelope> eventKafkaTemplate;
+    OutboxRetryPolicy outboxRetryPolicy;
+
+    @Autowired
+    FlakyKafkaTemplate flakyKafkaTemplate;
+
+    @Autowired
+    OutboxFailureService outboxFailureService;
 
     @Autowired
     OutboxEventRepository outboxEventRepository;
@@ -92,13 +103,50 @@ class OutboxRelayIntegrationTest {
     JdbcTemplate jdbcTemplate;
 
     /**
-     * relay 를 직접 만들어 등록합니다.
+     * 지정한 횟수만큼 발행을 실패시키는 템플릿입니다.
+     *
+     * <p>일시 실패 후 성공을 검증하려면 실패가 언제 끝나는지를 테스트가 정할 수 있어야
+     * 합니다. broker 를 껐다 켜는 방식은 컨테이너 재기동 시간에 따라 결과가 흔들립니다.
+     */
+    static class FlakyKafkaTemplate extends KafkaTemplate<String, EventEnvelope> {
+
+        private final AtomicInteger failuresLeft = new AtomicInteger();
+
+        FlakyKafkaTemplate(ProducerFactory<String, EventEnvelope> producerFactory) {
+            super(producerFactory);
+        }
+
+        void failNext(int count) {
+            failuresLeft.set(count);
+        }
+
+        @Override
+        public CompletableFuture<SendResult<String, EventEnvelope>> send(
+            String topic, String key, EventEnvelope data
+        ) {
+            if (failuresLeft.getAndDecrement() > 0) {
+                return CompletableFuture.failedFuture(
+                    new IllegalStateException("일시적인 broker 오류"));
+            }
+            return super.send(topic, key, data);
+        }
+    }
+
+    /**
+     * relay 와 발행 템플릿을 직접 만들어 등록합니다.
      *
      * <p>{@code mopl.outbox.relay.enabled} 가 test 프로파일에서 꺼져 있어 운영 빈은 만들어지지
      * 않습니다. 스케줄 없이 호출 시점을 테스트가 정하기 위한 구성입니다.
      */
     @TestConfiguration
     static class RelayConfig {
+
+        @Bean
+        FlakyKafkaTemplate flakyKafkaTemplate(
+            ProducerFactory<String, EventEnvelope> eventProducerFactory
+        ) {
+            return new FlakyKafkaTemplate(eventProducerFactory);
+        }
 
         @Bean
         MutableClock relayClock() {
@@ -109,12 +157,12 @@ class OutboxRelayIntegrationTest {
         OutboxRelay outboxRelay(
             OutboxClaimer outboxClaimer,
             OutboxStatusWriter outboxStatusWriter,
-            KafkaTemplate<String, EventEnvelope> eventKafkaTemplate,
+            FlakyKafkaTemplate flakyKafkaTemplate,
             ObjectMapper objectMapper,
             MutableClock relayClock
         ) {
             return new OutboxRelay(
-                outboxClaimer, outboxStatusWriter, eventKafkaTemplate, objectMapper,
+                outboxClaimer, outboxStatusWriter, flakyKafkaTemplate, objectMapper,
                 100, Duration.ofSeconds(10), relayClock);
         }
     }
@@ -141,13 +189,24 @@ class OutboxRelayIntegrationTest {
     @BeforeEach
     void clear() {
         outboxEventRepository.deleteAll();
+        flakyKafkaTemplate.failNext(0);
         relayClock.set(NOW);
+    }
+
+    /** relay 의 시각을 옮긴 뒤 그 relay 를 돌려줍니다. backoff 와 lease 판정 기준입니다. */
+    private OutboxRelay atClock(Instant now) {
+        relayClock.set(now);
+        return outboxRelay;
     }
 
     private OutboxEvent pending(String type, UUID aggregateId, String payload) {
         return new OutboxEvent(
             UUID.randomUUID(), type, 1, aggregateId, NOW.minusSeconds(1),
             payload, aggregateId.toString(), "AGGREGATE", NOW.minusSeconds(1));
+    }
+
+    private OutboxEvent reload(OutboxEvent event) {
+        return outboxEventRepository.findById(event.getId()).orElseThrow();
     }
 
     /**
@@ -176,7 +235,7 @@ class OutboxRelayIntegrationTest {
         OutboxEvent saved = outboxEventRepository.saveAndFlush(
             pending("follow.created", aggregateId, "{\"followerId\":\"a\",\"followeeId\":\"b\"}"));
 
-        int published = outboxRelay.publishClaimed();
+        int published = atClock(NOW).publishClaimed();
 
         assertThat(published).isEqualTo(1);
 
@@ -195,7 +254,7 @@ class OutboxRelayIntegrationTest {
         // 같은 aggregate 의 이벤트가 다른 파티션으로 흩어집니다.
         assertThat(record.key()).isEqualTo(saved.getPartitionKey());
 
-        OutboxEvent after = outboxEventRepository.findById(saved.getId()).orElseThrow();
+        OutboxEvent after = reload(saved);
         assertThat(after.getStatus()).isEqualTo(OutboxStatus.PUBLISHED);
         assertThat(after.getPublishedAt()).isEqualTo(NOW);
         // 선점을 남겨두면 만료 lease 회수 조회가 이미 끝난 레코드를 계속 훑습니다.
@@ -219,14 +278,15 @@ class OutboxRelayIntegrationTest {
         OutboxEvent saved = outboxEventRepository.saveAndFlush(
             pending("follow.created", aggregateId, "{\"followerId\":\"a\"}"));
 
-        OutboxStatusWriter failingWriter = new OutboxStatusWriter(outboxEventRepository) {
+        OutboxStatusWriter failingWriter =
+            new OutboxStatusWriter(outboxEventRepository, outboxRetryPolicy) {
             @Override
             public void markPublished(UUID id, Instant publishedAt) {
                 throw new IllegalStateException("데이터베이스 연결 실패");
             }
         };
         OutboxRelay relay = new OutboxRelay(
-            outboxClaimer, failingWriter, eventKafkaTemplate, objectMapper,
+            outboxClaimer, failingWriter, flakyKafkaTemplate, objectMapper,
             100, Duration.ofSeconds(10), relayClock);
 
         assertThat(relay.publishClaimed()).isZero();
@@ -234,7 +294,7 @@ class OutboxRelayIntegrationTest {
         // 발행 자체는 끝났어야 합니다.
         awaitRecordWithKey(aggregateId.toString());
 
-        OutboxEvent after = outboxEventRepository.findById(saved.getId()).orElseThrow();
+        OutboxEvent after = reload(saved);
         assertThat(after.getStatus()).isEqualTo(OutboxStatus.PENDING);
         assertThat(after.getAttempts()).isZero();
         assertThat(after.getLastError()).isNull();
@@ -252,42 +312,148 @@ class OutboxRelayIntegrationTest {
         jdbcTemplate.update(
             "UPDATE outbox_events SET status = 'PUBLISHED' WHERE id = ?", saved.getId());
 
-        assertThat(outboxRelay.publishClaimed()).isZero();
+        assertThat(atClock(NOW).publishClaimed()).isZero();
     }
 
     @Test
-    @DisplayName("발행할 수 없는 이벤트는 완료로 바꾸지 않고 실패를 남긴다")
-    void publishClaimed_keepsRecordPendingWhenPublishFails() {
-        // 토픽이 정해지지 않은 타입입니다. broker 를 건드리지 않고 발행 실패를 만들 수 있습니다.
+    @DisplayName("발행에 실패하면 완료로 바꾸지 않고 시도 횟수와 원인, 다음 시도 시각을 남긴다")
+    void publishClaimed_recordsFailureAndBacksOff() {
         OutboxEvent saved = outboxEventRepository.saveAndFlush(
-            pending("unknown.created", UUID.randomUUID(), "{\"a\":1}"));
+            pending("follow.created", UUID.randomUUID(), "{\"followerId\":\"a\"}"));
+        flakyKafkaTemplate.failNext(1);
 
-        int published = outboxRelay.publishClaimed();
+        assertThat(atClock(NOW).publishClaimed()).isZero();
 
-        assertThat(published).isZero();
-
-        OutboxEvent after = outboxEventRepository.findById(saved.getId()).orElseThrow();
+        OutboxEvent after = reload(saved);
         assertThat(after.getStatus()).isEqualTo(OutboxStatus.PENDING);
         assertThat(after.getPublishedAt()).isNull();
         assertThat(after.getAttempts()).isEqualTo(1);
-        assertThat(after.getLastError()).contains("unknown.created");
-        // 선점을 풀어야 다음 주기가 바로 다시 시도할 수 있습니다.
+        assertThat(after.getLastError()).contains("일시적인 broker 오류");
+        // application-test.yml 의 initial-backoff 가 1초입니다.
+        assertThat(after.getNextAttemptAt()).isEqualTo(NOW.plusSeconds(1));
+        // 선점을 풀어야 backoff 가 지난 뒤 다른 인스턴스도 가져갈 수 있습니다.
         assertThat(after.getClaimOwner()).isNull();
         assertThat(after.getClaimExpiresAt()).isNull();
     }
 
     @Test
-    @DisplayName("실패한 레코드는 다음 주기에 다시 발행 대상이 된다")
-    void publishClaimed_retriesFailedRecordOnNextRun() {
+    @DisplayName("backoff가 지나기 전에는 다시 선점하지 않는다")
+    void publishClaimed_waitsForBackoff() {
+        OutboxEvent saved = outboxEventRepository.saveAndFlush(
+            pending("follow.created", UUID.randomUUID(), "{\"followerId\":\"a\"}"));
+        flakyKafkaTemplate.failNext(1);
+
+        atClock(NOW).publishClaimed();
+
+        assertThat(atClock(NOW.plusMillis(500)).publishClaimed()).isZero();
+        assertThat(reload(saved).getAttempts()).isEqualTo(1);
+    }
+
+    /**
+     * 원인이 사라지면 남은 시도 안에서 발행이 끝나야 합니다.
+     *
+     * <p>브로커 순단처럼 잠시 실패하는 상황이 곧바로 최종 실패가 되면 사람이 매번 개입해야
+     * 합니다.
+     */
+    @Test
+    @DisplayName("일시 실패한 레코드는 backoff 이후 다시 시도해 발행에 성공한다")
+    void publishClaimed_succeedsAfterTransientFailures() {
+        UUID aggregateId = UUID.randomUUID();
+        OutboxEvent saved = outboxEventRepository.saveAndFlush(
+            pending("follow.created", aggregateId, "{\"followerId\":\"a\"}"));
+        flakyKafkaTemplate.failNext(2);
+
+        assertThat(atClock(NOW).publishClaimed()).isZero();
+        // 1초 backoff 후 두 번째 시도, 2초 backoff 후 세 번째 시도입니다.
+        assertThat(atClock(NOW.plusSeconds(1)).publishClaimed()).isZero();
+        assertThat(atClock(NOW.plusSeconds(3)).publishClaimed()).isEqualTo(1);
+
+        awaitRecordWithKey(aggregateId.toString());
+
+        OutboxEvent after = reload(saved);
+        assertThat(after.getStatus()).isEqualTo(OutboxStatus.PUBLISHED);
+        assertThat(after.getAttempts()).isEqualTo(2);
+        // 성공하면 직전 실패 원인은 지웁니다. 남겨두면 실패한 이벤트로 오해합니다.
+        assertThat(after.getLastError()).isNull();
+    }
+
+    @Test
+    @DisplayName("최대 시도 횟수를 넘기면 최종 실패로 남기고 자동 relay 대상에서 뺀다")
+    void publishClaimed_marksFailedAfterMaxAttempts() {
+        OutboxEvent saved = outboxEventRepository.saveAndFlush(
+            pending("follow.created", UUID.randomUUID(), "{\"followerId\":\"a\"}"));
+        flakyKafkaTemplate.failNext(99);
+
+        // application-test.yml 의 max-attempts 가 3 입니다.
+        atClock(NOW).publishClaimed();
+        atClock(NOW.plusSeconds(1)).publishClaimed();
+        atClock(NOW.plusSeconds(3)).publishClaimed();
+
+        OutboxEvent after = reload(saved);
+        assertThat(after.getStatus()).isEqualTo(OutboxStatus.FAILED);
+        assertThat(after.getAttempts()).isEqualTo(3);
+        assertThat(after.getLastError()).contains("일시적인 broker 오류");
+        assertThat(after.getClaimOwner()).isNull();
+
+        // 시간이 아무리 지나도 자동으로 다시 가져가지 않습니다.
+        assertThat(atClock(NOW.plus(Duration.ofDays(1))).publishClaimed()).isZero();
+        assertThat(reload(saved).getAttempts()).isEqualTo(3);
+    }
+
+    /**
+     * 최종 실패 이벤트를 사람이 다시 넣는 경로입니다.
+     *
+     * <p>새 레코드를 만들지 않고 기존 행을 되돌립니다. eventId 나 partitionKey 가 바뀌면
+     * 소비자 멱등 판정과 파티션 내 순서가 함께 깨집니다.
+     */
+    @Test
+    @DisplayName("수동 재처리한 최종 실패 이벤트는 같은 eventId로 발행된다")
+    void requeue_thenPublishesWithSameEventId() throws Exception {
+        UUID aggregateId = UUID.randomUUID();
+        OutboxEvent saved = outboxEventRepository.saveAndFlush(
+            pending("follow.created", aggregateId, "{\"followerId\":\"a\"}"));
+        flakyKafkaTemplate.failNext(99);
+
+        atClock(NOW).publishClaimed();
+        atClock(NOW.plusSeconds(1)).publishClaimed();
+        atClock(NOW.plusSeconds(3)).publishClaimed();
+        assertThat(reload(saved).getStatus()).isEqualTo(OutboxStatus.FAILED);
+
+        // 원인을 고친 뒤 다시 넣는 상황입니다.
+        flakyKafkaTemplate.failNext(0);
+        Instant requeuedAt = NOW.plusSeconds(10);
+        assertThat(outboxFailureService.requeue(saved.getEventId(), requeuedAt)).isTrue();
+
+        OutboxEvent requeued = reload(saved);
+        assertThat(requeued.getStatus()).isEqualTo(OutboxStatus.PENDING);
+        // 남은 횟수가 없는 채로 두면 한 번 실패하고 바로 최종 실패로 되돌아갑니다.
+        assertThat(requeued.getAttempts()).isZero();
+        assertThat(requeued.getNextAttemptAt()).isEqualTo(requeuedAt);
+
+        assertThat(atClock(requeuedAt).publishClaimed()).isEqualTo(1);
+
+        ConsumerRecord<String, String> record = awaitRecordWithKey(aggregateId.toString());
+        EventEnvelope got = objectMapper.readValue(record.value(), EventEnvelope.class);
+        assertThat(got.eventId()).isEqualTo(saved.getEventId());
+        assertThat(record.key()).isEqualTo(saved.getPartitionKey());
+
+        OutboxEvent after = reload(saved);
+        assertThat(after.getStatus()).isEqualTo(OutboxStatus.PUBLISHED);
+        assertThat(after.getEventId()).isEqualTo(saved.getEventId());
+        assertThat(after.getPartitionKey()).isEqualTo(saved.getPartitionKey());
+    }
+
+    @Test
+    @DisplayName("발행 토픽이 정해지지 않은 이벤트도 실패로 기록한다")
+    void publishClaimed_recordsFailureForUnknownType() {
         OutboxEvent saved = outboxEventRepository.saveAndFlush(
             pending("unknown.created", UUID.randomUUID(), "{\"a\":1}"));
 
-        outboxRelay.publishClaimed();
-        relayClock.set(NOW.plusSeconds(1));
-        outboxRelay.publishClaimed();
+        assertThat(atClock(NOW).publishClaimed()).isZero();
 
-        OutboxEvent after = outboxEventRepository.findById(saved.getId()).orElseThrow();
-        assertThat(after.getAttempts()).isEqualTo(2);
+        OutboxEvent after = reload(saved);
+        assertThat(after.getStatus()).isEqualTo(OutboxStatus.PENDING);
+        assertThat(after.getLastError()).contains("unknown.created");
     }
 
     /**
@@ -307,11 +473,11 @@ class OutboxRelayIntegrationTest {
             "UPDATE outbox_events SET claim_owner = 'dead-relay', claim_expires_at = ? WHERE id = ?",
             Timestamp.from(NOW.minusSeconds(1)), saved.getId());
 
-        assertThat(outboxRelay.publishClaimed()).isEqualTo(1);
+        assertThat(atClock(NOW).publishClaimed()).isEqualTo(1);
 
         awaitRecordWithKey(aggregateId.toString());
 
-        OutboxEvent after = outboxEventRepository.findById(saved.getId()).orElseThrow();
+        OutboxEvent after = reload(saved);
         assertThat(after.getStatus()).isEqualTo(OutboxStatus.PUBLISHED);
         assertThat(after.getClaimOwner()).isNull();
     }
@@ -319,7 +485,7 @@ class OutboxRelayIntegrationTest {
     @Test
     @DisplayName("발행 대기 레코드가 없으면 아무 것도 보내지 않는다")
     void publishClaimed_returnsZeroWhenNothingPending() {
-        assertThat(outboxRelay.publishClaimed()).isZero();
+        assertThat(atClock(NOW).publishClaimed()).isZero();
     }
 
     /**
@@ -339,13 +505,10 @@ class OutboxRelayIntegrationTest {
         saved.add(outboxEventRepository.saveAndFlush(
             pending("follow.created", UUID.randomUUID(), "{\"followerId\":\"c\"}")));
 
-        assertThat(outboxRelay.publishClaimed()).isEqualTo(2);
+        assertThat(atClock(NOW).publishClaimed()).isEqualTo(2);
 
-        assertThat(outboxEventRepository.findById(saved.get(0).getId()).orElseThrow().getStatus())
-            .isEqualTo(OutboxStatus.PUBLISHED);
-        assertThat(outboxEventRepository.findById(saved.get(1).getId()).orElseThrow().getStatus())
-            .isEqualTo(OutboxStatus.PENDING);
-        assertThat(outboxEventRepository.findById(saved.get(2).getId()).orElseThrow().getStatus())
-            .isEqualTo(OutboxStatus.PUBLISHED);
+        assertThat(reload(saved.get(0)).getStatus()).isEqualTo(OutboxStatus.PUBLISHED);
+        assertThat(reload(saved.get(1)).getStatus()).isEqualTo(OutboxStatus.PENDING);
+        assertThat(reload(saved.get(2)).getStatus()).isEqualTo(OutboxStatus.PUBLISHED);
     }
 }
