@@ -6,6 +6,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.event.EventEnvelope;
@@ -32,11 +35,13 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.KafkaContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -44,6 +49,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 @SpringBootTest
+@AutoConfigureMockMvc(addFilters = false)
 @ActiveProfiles("test")
 @Testcontainers
 @TestPropertySource(properties = {
@@ -102,6 +108,9 @@ class NotificationKafkaIntegrationTest {
 
     @Autowired
     JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    MockMvc mockMvc;
 
     @MockitoSpyBean
     NotificationRepository notificationRepository;
@@ -549,5 +558,111 @@ class NotificationKafkaIntegrationTest {
                 RECEIVER_ID
             )
         ).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("SSE 미연결 중 저장된 Kafka 알림을 " + "REST 조회로 복구")
+    void consume_withoutSseConnection_recoversNotificationByRest()
+        throws Exception {
+
+        // given
+        EventEnvelope envelope =
+            directMessageCreatedEnvelope();
+
+        // when
+        eventKafkaTemplate.send(
+            MoplTopics.DIRECT_MESSAGE_EVENTS,
+            DIRECT_MESSAGE_ID.toString(),
+            envelope
+        ).get();
+
+        // Kafka 소비와 DB 저장이 끝날 때까지 기다린다.
+        await()
+            .atMost(TIMEOUT)
+            .untilAsserted(() ->
+                assertThat(
+                    countNotification(
+                        EVENT_ID,
+                        RECEIVER_ID
+                    )
+                ).isEqualTo(1L)
+            );
+
+        Notification saved =
+            notificationRepository.findAll()
+                .stream()
+                .filter(notification ->
+                    EVENT_ID.equals(
+                        notification.getSourceEventId()
+                    )
+                )
+                .findFirst()
+                .orElseThrow();
+
+        // then
+        mockMvc.perform(
+                get("/api/notifications")
+                    .param("limit", "10")
+                    .param(
+                        "sortDirection",
+                        "DESCENDING"
+                    )
+                    .param("sortBy", "createdAt")
+                    .principal(
+                        () -> RECEIVER_ID.toString()
+                    )
+            )
+            .andExpect(status().isOk())
+            .andExpect(
+                jsonPath("$.data[0].id")
+                    .value(saved.getId().toString())
+            )
+            .andExpect(
+                jsonPath("$.data[0].receiverId")
+                    .value(RECEIVER_ID.toString())
+            )
+            .andExpect(
+                jsonPath("$.data[0].type")
+                    .value("DIRECT_MESSAGE")
+            )
+            .andExpect(
+                jsonPath("$.data[0].resourceId")
+                    .value(CONVERSATION_ID.toString())
+            )
+            .andExpect(
+                jsonPath("$.data[0].title")
+                    .value("[DM] 발신자")
+            )
+            .andExpect(
+                jsonPath("$.data[0].content")
+                    .value("안녕하세요")
+            )
+            .andExpect(
+                jsonPath("$.totalCount")
+                    .value(1)
+            );
+
+        // 다른 사용자는 수신자의 알림을 조회할 수 없다.
+        mockMvc.perform(
+                get("/api/notifications")
+                    .param("limit", "10")
+                    .param(
+                        "sortDirection",
+                        "DESCENDING"
+                    )
+                    .param("sortBy", "createdAt")
+                    .principal(
+                        () -> SENDER_ID.toString()
+                    )
+            )
+            .andExpect(status().isOk())
+            .andExpect(
+                jsonPath("$.data")
+                    .isEmpty()
+            )
+            .andExpect(
+                jsonPath("$.totalCount")
+                    .value(0)
+            );
     }
 }
