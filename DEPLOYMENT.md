@@ -58,6 +58,31 @@ mopl.direct-message.events  mopl.direct-message.events.DLT
 
 최대 시도 횟수를 넘긴 이벤트는 삭제하지 않고 최종 실패 상태로 남습니다. 자동 relay 대상에서는 빠지므로, 원인을 고친 뒤 `OutboxFailureService`로 다시 발행 대기로 돌립니다.
 
+### 전달 상태 확인
+
+발행 실패는 조용히 쌓입니다. 도메인 요청은 정상 응답을 받고 커밋까지 끝나므로 이벤트가 나가지 않아도 API 지표에는 흔적이 없습니다. 아래 지표가 그 상황을 드러냅니다.
+
+| 지표 | 종류 | 의미 |
+| --- | --- | --- |
+| `mopl_outbox_events{state="pending"}` | gauge | 발행을 기다리는 레코드 수 |
+| `mopl_outbox_events{state="claimed"}` | gauge | relay가 선점 중인 레코드 수 |
+| `mopl_outbox_events{state="failed"}` | gauge | 자동 재시도를 멈춘 레코드 수 |
+| `mopl_outbox_oldest_pending_age_seconds` | gauge | 가장 오래된 대기 이벤트의 발생 후 경과 시간 |
+| `mopl_outbox_relay_records_total{outcome="published"}` | counter | 발행 확인까지 마친 건수 |
+| `mopl_outbox_relay_records_total{outcome="retried"}` | counter | 실패 후 다시 시도하기로 한 건수 |
+| `mopl_outbox_relay_records_total{outcome="exhausted"}` | counter | 최대 시도 횟수를 넘겨 최종 실패로 남긴 건수 |
+| `mopl_outbox_relay_batch_size` | summary | 한 주기에 선점한 레코드 수 |
+| `mopl_outbox_relay_duration_seconds` | timer | 한 주기의 선점부터 상태 반영까지 걸린 시간 |
+| `mopl_kafka_dlt_records_total{topic="..."}` | counter | DLT로 옮긴 레코드 수 |
+
+전달이 멈췄는지는 대기 건수보다 `mopl_outbox_oldest_pending_age_seconds`로 판단합니다. 대기 건수는 유입이 늘어도 함께 커지지만, 가장 오래된 대기 이벤트의 경과 시간은 발행이 진행되는 한 낮게 유지됩니다. 이 값이 계속 커지면 relay가 멈췄거나 특정 이벤트가 반복 실패하는 중입니다.
+
+`mopl_outbox_events{state="failed"}`가 0보다 크면 사람이 개입할 때까지 그대로 남습니다. 원인을 확인한 뒤 다시 발행 대기로 돌려야 합니다.
+
+gauge 값은 `OUTBOX_METRICS_REFRESH_INTERVAL`(기본 15000밀리초)마다 집계합니다. 수집 시점마다 집계하지 않는 이유는 수집 주기가 그대로 데이터베이스 부하가 되기 때문입니다. `OUTBOX_METRICS_ENABLED=false`로 두면 갱신을 멈추고 값이 직전 상태에 고정됩니다.
+
+지표는 `/actuator/prometheus`로 노출합니다. 이 경로는 인증이 필요한 경로이므로, 스크레이퍼가 접근할 방법은 배포 환경에서 별도로 정합니다.
+
 ## DLT 조회와 수동 replay
 
 소비 실패는 공통 오류 처리가 재시도를 모두 소진한 뒤 `<원본 토픽>.DLT`로 옮깁니다. 옮겨진 레코드는 자동으로 다시 처리되지 않습니다. 원인을 확인한 뒤 사람이 다시 넣습니다.
