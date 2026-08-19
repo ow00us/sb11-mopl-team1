@@ -290,7 +290,11 @@ public class WatchingSessionServiceTest {
     void start_deletesDbRow_whenSwapFailsDuringNewInsert() {
         mockContentExists(CONTENT_ID);
         mockUserExists(WATCHER_ID);
-        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        Instant updatedAtWithNanos = Instant.parse("2026-08-19T00:00:00.123456789Z");
+        WatchingSessionSnapshot snapshot = createSnapshotFixture(
+            CONTENT_ID, FIRST_CREATED_AT, updatedAtWithNanos, updatedAtWithNanos.plus(1, ChronoUnit.HOURS));
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(new UpsertResult(snapshot, true));
         when(watchingSessionPresenceWriter.swap(any(), any(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("Redis 연결 끊김"));
 
@@ -298,7 +302,8 @@ public class WatchingSessionServiceTest {
             watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
             .isInstanceOf(RuntimeException.class);
 
-        verify(watchingSessionSnapshotWriter).deleteById(eq(WATCHER_ID), eq(SNAPSHOT_ID), any());
+        verify(watchingSessionSnapshotWriter).deleteById(
+            eq(WATCHER_ID), eq(SNAPSHOT_ID), eq(Instant.parse("2026-08-19T00:00:00.123457Z")));
     }
 
     @Test
@@ -363,7 +368,33 @@ public class WatchingSessionServiceTest {
             eq(WATCHER_ID), eq(SNAPSHOT_ID), eq(CONTENT_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID),
             any(), tokenCaptor.capture(), any());
 
-        // plusNanos(500) 반올림 규약: .789 -> +500 -> .789289(나노) 자리올림으로 마이크로초 457로 반올림
+        // plusNanos(500) 반올림 규약: .123456789 + 500ns = .123457289 -> 마이크로초 절삭 -> .123457
+        assertThat(tokenCaptor.getValue()).isEqualTo(Instant.parse("2026-08-19T00:00:00.123457Z"));
+        assertThat(tokenCaptor.getValue()).isNotEqualTo(updatedAtWithNanos);
+    }
+
+    @Test
+    @DisplayName("신규 삽입 직후 presence swap이 실패하면, 나노초를 포함한 메모리 상 updatedAt이 정규화된 값으로 보상 삭제된다")
+    void start_normalizesUpdatedAt_beforeCompensatingDeleteOnSwapFailure() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+
+        Instant updatedAtWithNanos = Instant.parse("2026-08-19T00:00:00.123456789Z");
+        WatchingSessionSnapshot snapshot = createSnapshotFixture(
+            CONTENT_ID, FIRST_CREATED_AT, updatedAtWithNanos, updatedAtWithNanos.plus(1, ChronoUnit.HOURS));
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(new UpsertResult(snapshot, true));
+        when(watchingSessionPresenceWriter.swap(any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenThrow(new RuntimeException("Redis 연결 끊김"));
+
+        assertThatThrownBy(() ->
+            watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
+            .isInstanceOf(RuntimeException.class);
+
+        ArgumentCaptor<Instant> tokenCaptor = ArgumentCaptor.forClass(Instant.class);
+        verify(watchingSessionSnapshotWriter).deleteById(eq(WATCHER_ID), eq(SNAPSHOT_ID), tokenCaptor.capture());
+
+        // .789 나노 -> +500 반올림 -> .123457로 정규화된 값이어야 한다 (원본 그대로면 실패)
         assertThat(tokenCaptor.getValue()).isEqualTo(Instant.parse("2026-08-19T00:00:00.123457Z"));
         assertThat(tokenCaptor.getValue()).isNotEqualTo(updatedAtWithNanos);
     }
@@ -1093,8 +1124,8 @@ public class WatchingSessionServiceTest {
     }
 
     @Test
-    @DisplayName("복구된 스냅샷의 updatedAt도 나노초가 절삭돼 presence에 기록된다")
-    void heartbeat_truncatesRecoveredSnapshotUpdatedAt_toMicrosBeforeSyncingPresence() {
+    @DisplayName("복구된 스냅샷의 updatedAt도 마이크로초로 반올림돼 presence에 기록된다")
+    void heartbeat_normalizesRecoveredSnapshotUpdatedAt_toMicrosBeforeSyncingPresence() {
         mockContentExists(CONTENT_ID);
         mockUserExists(WATCHER_ID);
         mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);

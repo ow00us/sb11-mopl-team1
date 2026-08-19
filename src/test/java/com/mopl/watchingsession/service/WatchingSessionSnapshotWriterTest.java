@@ -1,5 +1,6 @@
 package com.mopl.watchingsession.service;
 
+import static com.mopl.global.util.InstantPrecisionUtils.normalizeToMicros;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.mopl.global.config.JpaConfig;
@@ -229,6 +230,28 @@ public class WatchingSessionSnapshotWriterTest {
         assertThat(repository.count()).isEqualTo(1);
         assertThat(repository.findByWatcherId(watcherId1)).isEmpty();
         assertThat(repository.findByWatcherId(watcherId2)).isPresent();
+    }
+
+    @Test
+    @DisplayName("보상 삭제에 쓰이는 정규화된 updatedAt은 실제 DB 컬럼에 저장된 값과 문자열 비교까지 정확히 일치한다")
+    void deleteById_normalizedUpdatedAt_matchesActualPersistedColumnValue() {
+        UUID watcherId = insertUser();
+        UUID contentId = insertContent();
+
+        UpsertResult result = writer.upsert(watcherId, contentId, Instant.now().plusSeconds(60));
+        Instant inMemoryUpdatedAt = result.snapshot().getUpdatedAt(); // saveAndFlush 직전 메모리 값
+
+        // 실제 DB에 물리적으로 저장된 값을 재조회 (JDBC 드라이버의 실제 절삭/반올림 결과)
+        Instant persistedUpdatedAt = repository.findById(result.snapshot().getId())
+            .orElseThrow().getUpdatedAt();
+
+        Instant normalized = normalizeToMicros(inMemoryUpdatedAt);
+
+        // 정규화된 메모리 값이 실제 DB 저장값과 정확히 일치해야 조건부 삭제가 성립한다
+        assertThat(normalized).isEqualTo(persistedUpdatedAt);
+
+        int deletedRows = writer.deleteById(watcherId, result.snapshot().getId(), normalized);
+        assertThat(deletedRows).isEqualTo(1);
     }
 
     @Test

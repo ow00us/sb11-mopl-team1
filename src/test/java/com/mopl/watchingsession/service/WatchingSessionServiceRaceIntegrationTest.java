@@ -1,6 +1,8 @@
 package com.mopl.watchingsession.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 
 import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentType;
@@ -9,6 +11,7 @@ import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
+import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.time.Instant;
 import java.util.Optional;
@@ -16,11 +19,13 @@ import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -61,7 +66,7 @@ class WatchingSessionServiceRaceIntegrationTest {
     private WatchingSessionSnapshotRepository snapshotRepository;
 
     @Autowired
-    private WatchingSessionSnapshotWriter watchingSessionSnapshotWriter;
+    private WatchingSessionPresenceWriter watchingSessionPresenceWriter;
 
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
@@ -151,32 +156,6 @@ class WatchingSessionServiceRaceIntegrationTest {
     }
 
     @Test
-    @DisplayName("동일 콘텐츠 재구독으로 세대가 바뀐 뒤, 이전 세대를 쥔 낡은 end()는 새 세대의 행을 삭제하지 않는다")
-    void end_doesNotDeleteNewGeneration_whenStaleCallerHoldsOldGenerationToken() {
-        givenWatcherAndContent();
-
-        // 1) A가 구독 시작 - 세대 1
-        WatchingSessionService.ReplacedSession onA =
-            watchingSessionService.start(watcherId, contentId, SESSION_ID, SUBSCRIPTION_ID);
-        UUID snapshotId = onA.session().id();
-
-        // 2) 낡은 세대 토큰을 미리 확보 (실제로는 end() 호출 도중 레이스가 나는 지점이지만,
-        //    통합 테스트에서는 deleteIfOwner()가 반환하는 토큰을 직접 시뮬레이션)
-        Instant staleGenerationToken = snapshotRepository.findById(snapshotId).orElseThrow().getUpdatedAt();
-
-        // 3) 같은 콘텐츠로 재구독 - refresh라 id는 그대로, updatedAt만 갱신 (세대 2)
-        watchingSessionService.start(watcherId, contentId, SESSION_ID, "sub-B");
-        Instant newGenerationToken = snapshotRepository.findById(snapshotId).orElseThrow().getUpdatedAt();
-        assertThat(newGenerationToken).isNotEqualTo(staleGenerationToken);
-
-        // 4) 낡은 세대 토큰으로 DB 조건부 삭제를 직접 실행 - 삭제되지 않아야 함
-        int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, snapshotId, staleGenerationToken);
-
-        assertThat(deletedRows).isZero();
-        assertThat(snapshotRepository.findByWatcherId(watcherId)).isPresent(); // 세대 2 행 생존
-    }
-
-    @Test
     @DisplayName("정상 end()는 현재 세대 토큰과 일치해 행을 삭제하고 LEAVE 대상 DTO를 반환한다")
     void end_deletesCurrentGeneration_whenTokenMatches() {
         givenWatcherAndContent();
@@ -186,23 +165,6 @@ class WatchingSessionServiceRaceIntegrationTest {
 
         assertThat(ended).isTrue();
         assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty();
-    }
-
-    @Test
-    @DisplayName("presence 소유권 확인과 DB 삭제 사이에 재구독이 끼어들어도 DB 삭제는 세대 토큰으로 다시 막는다")
-    void deleteById_blocksRace_evenIfPresenceCheckPassedBeforeResubscribe() {
-        givenWatcherAndContent();
-        watchingSessionService.start(watcherId, contentId, SESSION_ID, SUBSCRIPTION_ID);
-        UUID snapshotId = snapshotRepository.findByWatcherId(watcherId).orElseThrow().getId();
-        Instant tokenAtPresenceCheckTime = snapshotRepository.findById(snapshotId).orElseThrow().getUpdatedAt();
-
-        // presence 확인 이후, DB 삭제 실행 이전 시점에 재구독이 끼어드는 것을 시뮬레이션
-        watchingSessionService.start(watcherId, contentId, SESSION_ID, "sub-race");
-
-        // 낡은 시점에 확보한 토큰으로 삭제 시도 - 실패해야 함
-        int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, snapshotId, tokenAtPresenceCheckTime);
-
-        assertThat(deletedRows).isZero();
     }
 
     @Test
@@ -218,5 +180,35 @@ class WatchingSessionServiceRaceIntegrationTest {
             .get("mopl:presence:watcher:" + watcherId, "snapshotUpdatedAt").toString();
 
         assertThat(Instant.parse(presenceToken)).isEqualTo(dbUpdatedAt);
+    }
+
+    @Test
+    @DisplayName("presence 소유권 확인 직후 다른 인스턴스의 재구독이 끼어들어도 end()는 false를 반환하고 새 세대 행은 살아남는다")
+    void end_returnsFalse_andPreservesNewGeneration_whenResubscribeRacesBetweenPresenceCheckAndDbDelete() {
+        givenWatcherAndContent();
+        watchingSessionService.start(watcherId, contentId, SESSION_ID, SUBSCRIPTION_ID);
+        UUID snapshotId = snapshotRepository.findByWatcherId(watcherId).orElseThrow().getId();
+
+        // end()가 presence 소유권 확인(deleteIfOwner)을 마친 직후, DB 삭제를 실행하기 전 사이에
+        // 다른 인스턴스의 재구독이 끼어드는 좁은 시간창을 결정적으로 재현하기 위해 spy로 개입한다.
+        WatchingSessionPresenceWriter realWriter = watchingSessionPresenceWriter;
+        WatchingSessionPresenceWriter spyWriter = Mockito.spy(realWriter);
+        doAnswer(invocation -> {
+            Object result = invocation.callRealMethod(); // 실제 소유권 확인·삭제는 그대로 수행
+            // 소유권 확인이 끝난 이 시점에 동일 콘텐츠로 재구독 - 세대 2, DB 행 refresh
+            watchingSessionService.start(watcherId, contentId, SESSION_ID, "sub-race");
+            return result;
+        }).when(spyWriter).deleteIfOwner(eq(watcherId), eq(SESSION_ID), eq(SUBSCRIPTION_ID));
+
+        ReflectionTestUtils.setField(watchingSessionService, "watchingSessionPresenceWriter", spyWriter);
+        try {
+            boolean ended = watchingSessionService.end(watcherId, SESSION_ID, SUBSCRIPTION_ID);
+
+            // end()가 확보한 토큰은 세대 1의 것이라 세대 2로 바뀐 DB 행 삭제 조건과 불일치 -> 0행 삭제 -> false
+            assertThat(ended).isFalse();
+            assertThat(snapshotRepository.findById(snapshotId)).isPresent(); // 세대 2 행 생존
+        } finally {
+            ReflectionTestUtils.setField(watchingSessionService, "watchingSessionPresenceWriter", realWriter);
+        }
     }
 }

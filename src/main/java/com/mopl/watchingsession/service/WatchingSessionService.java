@@ -145,7 +145,7 @@ public class WatchingSessionService {
                     if (upsertResult.isNewIdentity()) {
                         // snapshot.getId()로 조건부 삭제. watcherId만으로 지우면 그 사이 다른
                         // 인스턴스가 만든 새 세대를 함께 지울 수 있다.
-                        watchingSessionSnapshotWriter.deleteById(watcherId, snapshot.getId(), snapshot.getUpdatedAt());
+                        watchingSessionSnapshotWriter.deleteById(watcherId, snapshot.getId(), normalizeToMicros(snapshot.getUpdatedAt()));
                     }
                     throw presenceFailure;
                 }
@@ -445,13 +445,20 @@ public class WatchingSessionService {
      * backoff 없이 즉시 재시도한다
      */
     private <T> T retryOnceOnDuplicateKeyConflict(Supplier<T> operation) {
+        DataIntegrityViolationException firstFailure;
         try {
             return operation.get();
         } catch (DataIntegrityViolationException e) {
             if (!DbConflictUtils.isDuplicateKeyViolation(e)) {
                 throw e;
             }
+            firstFailure = e;
         }
-        return operation.get();
+        try {
+            return operation.get();
+        } catch (RuntimeException retryFailure) {
+            retryFailure.addSuppressed(firstFailure);
+            throw retryFailure;
+        }
     }
 }

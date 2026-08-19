@@ -56,6 +56,8 @@ public class WatchingSessionSnapshotWriter {
      * 새 세대의 행을 만들었을 때 그 새 행까지 함께 지워버릴 수 있다. presence가 확인해준
      * snapshotId로 조건을 좁혀야 이 레이스가 닫힌다.
      *
+     * @param expectedUpdatedAt presence가 기록해 둔 세대 토큰. 이 값과 행의 updatedAt이 같을 때만 삭제한다.
+     * null이면(구버전 presence 폴백) 세대 비교를 건너뛴다.
      * @return 실제로 삭제된 행 수 (0이면 이미 다른 세대로 교체된 뒤라는 뜻)
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)

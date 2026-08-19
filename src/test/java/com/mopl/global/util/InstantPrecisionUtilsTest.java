@@ -34,4 +34,12 @@ public class InstantPrecisionUtilsTest {
         assertThat(InstantPrecisionUtils.normalizeToMicros(value)).isEqualTo(value);
     }
 
+    @Test
+    @DisplayName("나노초 나머지가 정확히 500이면 다음 마이크로초로 올림된다")
+    void normalizeToMicros_roundsUp_whenSubMicroRemainderIsExactly500() {
+        Instant value = Instant.parse("2026-08-19T00:00:00.123456500Z");
+
+        assertThat(InstantPrecisionUtils.normalizeToMicros(value))
+            .isEqualTo(Instant.parse("2026-08-19T00:00:00.123457Z"));
+    }
 }

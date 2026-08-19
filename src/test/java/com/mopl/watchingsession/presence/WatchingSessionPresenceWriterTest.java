@@ -99,7 +99,7 @@ public class WatchingSessionPresenceWriterTest {
     @DisplayName("swap()은 직전 소유자가 없으면(빈 배열) 빈 Optional을 반환한다")
     void swap_returnsEmpty_whenNoPreviousOwner() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
-            any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(List.of());
 
         Optional<WatchingPresence> result = writer.swap(
@@ -112,7 +112,7 @@ public class WatchingSessionPresenceWriterTest {
     @DisplayName("swap()은 저장된 필드가 불완전하면(스키마 전환 중 옛 형식) 빈 Optional을 반환한다")
     void swap_returnsEmpty_whenFieldsIncomplete() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
-            any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(List.of("sessionId", "old-session"));
 
         Optional<WatchingPresence> result = writer.swap(

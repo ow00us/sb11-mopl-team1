@@ -93,7 +93,7 @@ public class WatchingSessionPresenceWriter {
     // 반환 규약은 DELETE_IF_OWNER_LUA와 동일
     private static final String DELETE_IF_OWNER_SESSION_LUA = """
         if redis.call('TYPE', KEYS[1])['ok'] ~= 'hash' then
-          return {'-1', ''}
+          return {'-1', '', ''}
         end
         if redis.call('HGET', KEYS[1], 'sessionId') == ARGV[1] then
           local snapshotId = redis.call('HGET', KEYS[1], 'snapshotId')
@@ -122,6 +122,7 @@ public class WatchingSessionPresenceWriter {
         local subscriptionId = ARGV[2]
         local newSnapshotId = ARGV[3]
         local newSnapshotUpdatedAt = ARGV[4]
+        if redis.call('TYPE', key)['ok'] ~= 'hash' then return 0 end
         if redis.call('HGET', key, 'sessionId') ~= sessionId then return 0 end
         if redis.call('HGET', key, 'subscriptionId') ~= subscriptionId then return 0 end
         redis.call('HSET', key, 'snapshotId', newSnapshotId, 'snapshotUpdatedAt', newSnapshotUpdatedAt)
