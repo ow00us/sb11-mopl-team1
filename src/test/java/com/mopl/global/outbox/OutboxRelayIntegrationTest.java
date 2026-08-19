@@ -180,7 +180,12 @@ class OutboxRelayIntegrationTest {
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
 
         probe = new KafkaConsumer<>(props, new StringDeserializer(), new StringDeserializer());
-        probe.subscribe(List.of(MoplTopics.FOLLOW_EVENTS));
+        probe.subscribe(
+            List.of(
+                MoplTopics.FOLLOW_EVENTS,
+                MoplTopics.DIRECT_MESSAGE_EVENTS
+            )
+        );
     }
 
     @AfterAll
@@ -268,6 +273,121 @@ class OutboxRelayIntegrationTest {
         assertThat(after.getLastError()).isNull();
         assertThat(after.getPartitionKey()).isEqualTo(saved.getPartitionKey());
         assertThat(after.getOrderingScope()).isEqualTo("AGGREGATE");
+    }
+
+    @Test
+    @DisplayName("DM Outbox 이벤트를 같은 eventId와 대화 파티션 키로 발행한다")
+    void publishClaimed_directMessageEvent_preservesEventIdAndConversationKey()
+        throws Exception {
+
+        UUID directMessageId =
+            UUID.randomUUID();
+
+        UUID conversationId =
+            UUID.randomUUID();
+
+        UUID senderId =
+            UUID.randomUUID();
+
+        UUID receiverId =
+            UUID.randomUUID();
+
+        String payload =
+            objectMapper.valueToTree(
+                Map.of(
+                    "directMessageId",
+                    directMessageId,
+                    "conversationId",
+                    conversationId,
+                    "senderId",
+                    senderId,
+                    "receiverId",
+                    receiverId,
+                    "contentPreview",
+                    "안녕하세요"
+                )
+            ).toString();
+
+        OutboxEvent saved =
+            outboxEventRepository.saveAndFlush(
+                new OutboxEvent(
+                    UUID.randomUUID(),
+                    "direct-message.created",
+                    1,
+                    directMessageId,
+                    NOW.minusSeconds(1),
+                    payload,
+                    conversationId.toString(),
+                    "conversationId",
+                    "direct-message.created:"
+                        + directMessageId,
+                    NOW.minusSeconds(1)
+                )
+            );
+
+        int published =
+            atClock(NOW).publishClaimed();
+
+        assertThat(published)
+            .isEqualTo(1);
+
+        ConsumerRecord<String, String> record =
+            awaitRecordWithKey(
+                conversationId.toString()
+            );
+
+        EventEnvelope envelope =
+            objectMapper.readValue(
+                record.value(),
+                EventEnvelope.class
+            );
+
+        assertThat(record.topic())
+            .isEqualTo(
+                MoplTopics.DIRECT_MESSAGE_EVENTS
+            );
+
+        assertThat(record.key())
+            .isEqualTo(
+                conversationId.toString()
+            );
+
+        assertThat(envelope.eventId())
+            .isEqualTo(
+                saved.getEventId()
+            );
+
+        assertThat(envelope.aggregateId())
+            .isEqualTo(directMessageId);
+
+        assertThat(
+            envelope.payload()
+                .get("directMessageId")
+                .asText()
+        ).isEqualTo(
+            directMessageId.toString()
+        );
+
+        assertThat(
+            envelope.payload()
+                .get("conversationId")
+                .asText()
+        ).isEqualTo(
+            conversationId.toString()
+        );
+
+        OutboxEvent publishedEvent =
+            reload(saved);
+
+        assertThat(publishedEvent.getStatus())
+            .isEqualTo(
+                OutboxStatus.PUBLISHED
+            );
+
+        assertThat(publishedEvent.getEventId())
+            .isEqualTo(
+                saved.getEventId()
+            );
     }
 
     /**
