@@ -62,7 +62,7 @@ class OutboxEventRepositoryIntegrationTest {
             payload,
             partitionKey,
             "NONE",
-            "test.pending:" + UUID.randomUUID(),
+            "follow.created:" + partitionKey,
             occurredAt);
     }
 
@@ -81,7 +81,7 @@ class OutboxEventRepositoryIntegrationTest {
         OutboxEvent saved = outboxEventRepository.saveAndFlush(new OutboxEvent(
             eventId, "premiere.upcoming", 2, aggregateId, occurredAt,
             "{\"contentId\":\"c1\",\"startsAt\":\"2026-08-14T04:00:00Z\"}",
-            "content-1", "contentId", "premiere.upcoming:" + eventId, occurredAt));
+            "content-1", "contentId", "premiere.upcoming:" + aggregateId, occurredAt));
 
         OutboxEvent found = outboxEventRepository.findByEventId(eventId).orElseThrow();
 
@@ -92,7 +92,6 @@ class OutboxEventRepositoryIntegrationTest {
         assertThat(found.getOccurredAt()).isEqualTo(occurredAt);
         assertThat(found.getPartitionKey()).isEqualTo("content-1");
         assertThat(found.getOrderingScope()).isEqualTo("contentId");
-        assertThat(found.getDeduplicationKey()).isEqualTo("premiere.upcoming:" + eventId);
 
         assertThat(found.getStatus()).isEqualTo(OutboxStatus.PENDING);
         assertThat(found.getAttempts()).isZero();
@@ -165,12 +164,11 @@ class OutboxEventRepositoryIntegrationTest {
 
         outboxEventRepository.saveAndFlush(new OutboxEvent(
             eventId, "follow.created", 1, UUID.randomUUID(), occurredAt,
-            "{}", "k1", "NONE", "follow.created:" + UUID.randomUUID(), occurredAt));
+            "{}", "k1", "NONE", "follow.created:k1", occurredAt));
 
-        // dedup key 를 다르게 두어 UNIQUE 위반이 event_id 로 인해 발생함을 명확히 합니다.
         assertThatThrownBy(() -> outboxEventRepository.saveAndFlush(new OutboxEvent(
             eventId, "follow.created", 1, UUID.randomUUID(), occurredAt,
-            "{}", "k2", "NONE", "follow.created:" + UUID.randomUUID(), occurredAt)))
+            "{}", "k2", "NONE", "follow.created:k2", occurredAt)))
             .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -268,7 +266,6 @@ class OutboxEventRepositoryIntegrationTest {
             "idx_outbox_events_pending",
             "idx_outbox_events_claim_expires_at",
             "idx_outbox_events_partition_order",
-            "uk_outbox_events_event_id",
-            "uk_outbox_events_deduplication_key");
+            "uk_outbox_events_event_id");
     }
 }

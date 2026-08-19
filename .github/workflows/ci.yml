@@ -248,7 +248,7 @@ jobs:
                 gen_random_uuid(), now(), now(),
                 '$event_id', 'follow.created', 1, '$aggregate_id', now(),
                 '{\"followerId\": \"$aggregate_id\"}'::jsonb,
-                '$aggregate_id', 'AGGREGATE', 'follow.created:$event_id',
+                '$aggregate_id', 'AGGREGATE', 'follow.created:$aggregate_id',
                 'PENDING', 0, now()
               );"
 

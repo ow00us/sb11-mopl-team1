@@ -52,12 +52,10 @@ class OutboxFailureServiceIntegrationTest {
 
     private OutboxEvent save(Instant occurredAt) {
         UUID aggregateId = UUID.randomUUID();
-        UUID eventId = UUID.randomUUID();
         return outboxEventRepository.saveAndFlush(new OutboxEvent(
-            eventId, "follow.created", 1, aggregateId, occurredAt,
+            UUID.randomUUID(), "follow.created", 1, aggregateId, occurredAt,
             "{\"followerId\":\"a\"}", aggregateId.toString(), "AGGREGATE",
-            "follow.created:" + eventId,
-            occurredAt));
+            "follow.created:" + aggregateId, occurredAt));
     }
 
     /** 최종 실패는 relay 가 만드는 상태입니다. 여기서는 relay 없이 상태만 맞춥니다. */

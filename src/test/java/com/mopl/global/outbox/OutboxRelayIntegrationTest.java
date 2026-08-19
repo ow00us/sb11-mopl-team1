@@ -200,12 +200,10 @@ class OutboxRelayIntegrationTest {
     }
 
     private OutboxEvent pending(String type, UUID aggregateId, String payload) {
-        UUID eventId = UUID.randomUUID();
         return new OutboxEvent(
-            eventId, type, 1, aggregateId, NOW.minusSeconds(1),
+            UUID.randomUUID(), type, 1, aggregateId, NOW.minusSeconds(1),
             payload, aggregateId.toString(), "AGGREGATE",
-            type + ":" + eventId,
-            NOW.minusSeconds(1));
+            type + ":" + aggregateId, NOW.minusSeconds(1));
     }
 
     private OutboxEvent reload(OutboxEvent event) {

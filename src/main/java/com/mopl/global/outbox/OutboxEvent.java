@@ -71,12 +71,14 @@ public class OutboxEvent extends BaseEntity {
     private String orderingScope;
 
     /**
-     * 사건별 중복 기록 방지 키입니다.
+     * 도메인 사건을 한 번만 식별하는 키입니다.
      *
-     * <p>예: {@code follow.created:<followId>}. UNIQUE 인덱스로 같은 사건의 두 번째 INSERT 를
-     * 데이터베이스가 거부합니다.
+     * <p>{@code eventId} 는 envelope 를 식별합니다. 도메인 연산이 두 번 실행되어 envelope 를
+     * 각각 새로 만들면 {@code eventId} 가 서로 달라 두 행이 모두 저장되고 이벤트가 두 번
+     * 발행됩니다. 이 값은 그 경우를 막습니다.
      *
-     * <p>참조: docs/07-kafka-outbox-contract.md §9
+     * <p>유니크 제약이 걸려 있습니다. 같은 키의 두 번째 기록은 저장되지 않고, 기록이 도메인
+     * 트랜잭션 안에서 일어나므로 도메인 변경도 함께 롤백됩니다.
      */
     @Column(name = "deduplication_key", updatable = false, nullable = false, length = 200)
     private String deduplicationKey;

@@ -138,8 +138,7 @@ class OutboxRecorderIntegrationTest {
 
         // REQUIRED 였다면 기록만 혼자 커밋됩니다. 도메인 변경이 뒤이어 실패해도 이벤트는
         // 남아, 일어나지 않은 일의 알림이 발행됩니다. 그래서 조용히 성공시키지 않습니다.
-        assertThatThrownBy(() -> outboxRecorder.record(
-            event, "key", "NONE", "test.no-tx:" + event.eventId()))
+        assertThatThrownBy(() -> outboxRecorder.record(event, "key", "NONE", "follow.created:key"))
             .isInstanceOf(IllegalTransactionStateException.class);
 
         assertThat(outboxEventRepository.count()).isZero();
@@ -164,11 +163,10 @@ class OutboxRecorderIntegrationTest {
     @DisplayName("파티션 키나 순서 범위가 비면 거부한다")
     void missingRoutingInformation_isRejected() {
         EventEnvelope event = envelope();
-        String dedupKey = "test.routing:" + event.eventId();
 
-        assertThatThrownBy(() -> domainCaller.recordWithRouting(event, " ", "NONE", dedupKey))
+        assertThatThrownBy(() -> domainCaller.recordWithRouting(event, " ", "NONE"))
             .isInstanceOf(EventContractViolationException.class);
-        assertThatThrownBy(() -> domainCaller.recordWithRouting(event, "key", "", dedupKey))
+        assertThatThrownBy(() -> domainCaller.recordWithRouting(event, "key", ""))
             .isInstanceOf(EventContractViolationException.class);
 
         assertThat(outboxEventRepository.count()).isZero();
@@ -254,6 +252,88 @@ class OutboxRecorderIntegrationTest {
      * <p>도메인 변경 자리에는 {@code processed_events} 행을 씁니다. 외래 키가 없어 다른
      * 도메인을 끌어오지 않고도 "같은 트랜잭션에 묶인 쓰기"를 만들 수 있습니다.
      */
+    @Test
+    @DisplayName("기록한 이벤트에 중복 판정 키가 함께 저장된다")
+    void record_storesDeduplicationKey() {
+        EventEnvelope event = envelope();
+        String deduplicationKey = "follow.created:" + UUID.randomUUID();
+
+        domainCaller.recordWithDeduplicationKey(event, deduplicationKey);
+
+        OutboxEvent saved = outboxEventRepository.findByEventId(event.eventId()).orElseThrow();
+        assertThat(saved.getDeduplicationKey()).isEqualTo(deduplicationKey);
+    }
+
+    /**
+     * 같은 사건이 두 번 기록되는 경우입니다.
+     *
+     * <p>envelope 를 각각 새로 만들면 {@code eventId} 가 서로 달라 event_id 유니크로는 막히지
+     * 않습니다. 이 경우를 막는 것이 중복 판정 키의 목적입니다.
+     */
+    @Test
+    @DisplayName("eventId가 달라도 같은 중복 판정 키의 두 번째 기록은 거부한다")
+    void duplicateDeduplicationKey_isRejected() {
+        String deduplicationKey = "follow.created:" + UUID.randomUUID();
+        EventEnvelope first = envelope();
+        EventEnvelope second = envelope();
+
+        assertThat(first.eventId()).isNotEqualTo(second.eventId());
+
+        domainCaller.recordWithDeduplicationKey(first, deduplicationKey);
+
+        assertThatThrownBy(() -> domainCaller.recordWithDeduplicationKey(second, deduplicationKey))
+            .isInstanceOf(DataIntegrityViolationException.class);
+
+        assertThat(outboxEventRepository.count()).isEqualTo(1);
+        assertThat(outboxEventRepository.findByEventId(first.eventId())).isPresent();
+        assertThat(outboxEventRepository.findByEventId(second.eventId())).isEmpty();
+    }
+
+    /**
+     * 거부가 도메인 트랜잭션까지 되돌리는지 확인합니다.
+     *
+     * <p>한 트랜잭션에서 두 번 기록하고 두 번째가 거부되면, 앞서 성공한 첫 번째도 남지 않아야
+     * 합니다. 남는다면 거부를 잡아 삼킨 것이거나 기록이 별도 트랜잭션에서 커밋된 것입니다.
+     */
+    @Test
+    @DisplayName("중복 판정 키가 거부되면 같은 트랜잭션의 앞선 기록도 남지 않는다")
+    void duplicateDeduplicationKey_rollsBackDomainTransaction() {
+        String deduplicationKey = "follow.created:" + UUID.randomUUID();
+
+        assertThatThrownBy(() ->
+            domainCaller.recordTwice(envelope(), envelope(), deduplicationKey))
+            .isInstanceOf(DataIntegrityViolationException.class);
+
+        assertThat(outboxEventRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("중복 판정 키가 비어 있으면 계약 위반으로 거부한다")
+    void blankDeduplicationKey_isRejected() {
+        EventEnvelope event = envelope();
+
+        assertThatThrownBy(() -> domainCaller.recordWithDeduplicationKey(event, "  "))
+            .isInstanceOf(EventContractViolationException.class);
+
+        assertThat(outboxEventRepository.count()).isZero();
+    }
+
+    /**
+     * 컬럼 상한을 넘기면 저장 시점에 데이터베이스 오류로 드러나는데, 그 메시지는 어느 값이
+     * 문제인지 알려주지 않습니다.
+     */
+    @Test
+    @DisplayName("중복 판정 키가 200자를 넘으면 계약 위반으로 거부한다")
+    void tooLongDeduplicationKey_isRejected() {
+        EventEnvelope event = envelope();
+        String tooLong = "follow.created:" + "x".repeat(200);
+
+        assertThatThrownBy(() -> domainCaller.recordWithDeduplicationKey(event, tooLong))
+            .isInstanceOf(EventContractViolationException.class);
+
+        assertThat(outboxEventRepository.count()).isZero();
+    }
+
     static class DomainCaller {
 
         private final OutboxRecorder outboxRecorder;
@@ -270,8 +350,8 @@ class OutboxRecorderIntegrationTest {
             processedEventRepository.save(
                 new ProcessedEvent("domain-change", UUID.randomUUID(), "domain"));
 
-            outboxRecorder.record(
-                envelope, "partition-key", "NONE", "test.event:" + envelope.eventId());
+            outboxRecorder.record(envelope, "partition-key", "NONE",
+                envelope.type() + ":" + envelope.aggregateId());
 
             if (failAfterRecord) {
                 throw new IllegalStateException("도메인 처리 실패");
@@ -280,8 +360,28 @@ class OutboxRecorderIntegrationTest {
 
         @Transactional
         public void recordWithRouting(EventEnvelope envelope, String partitionKey,
-            String orderingScope, String deduplicationKey) {
-            outboxRecorder.record(envelope, partitionKey, orderingScope, deduplicationKey);
+            String orderingScope) {
+            outboxRecorder.record(envelope, partitionKey, orderingScope,
+                envelope.type() + ":" + envelope.aggregateId());
+        }
+
+        /** 중복 판정 키를 테스트가 직접 정하는 경로입니다. */
+        @Transactional
+        public void recordWithDeduplicationKey(EventEnvelope envelope, String deduplicationKey) {
+            outboxRecorder.record(envelope, "partition-key", "NONE", deduplicationKey);
+        }
+
+        /**
+         * 한 트랜잭션에서 두 번 기록합니다.
+         *
+         * <p>두 번째가 거부될 때 첫 번째까지 함께 사라지는지 확인하는 데 씁니다.
+         */
+        @Transactional
+        public void recordTwice(
+            EventEnvelope first, EventEnvelope second, String deduplicationKey
+        ) {
+            outboxRecorder.record(first, "partition-key", "NONE", deduplicationKey);
+            outboxRecorder.record(second, "partition-key", "NONE", deduplicationKey);
         }
     }
 }

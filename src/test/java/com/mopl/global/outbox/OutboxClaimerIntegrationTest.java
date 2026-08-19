@@ -64,7 +64,7 @@ class OutboxClaimerIntegrationTest {
         return new OutboxEvent(
             UUID.randomUUID(), "follow.created", 1, UUID.randomUUID(), nextAttemptAt,
             "{\"followerId\":\"a\"}", partitionKey, "NONE",
-            "test.claim:" + UUID.randomUUID(), nextAttemptAt);
+            "follow.created:" + partitionKey, nextAttemptAt);
     }
 
     private List<OutboxEvent> savePending(int count, Instant nextAttemptAt) {
