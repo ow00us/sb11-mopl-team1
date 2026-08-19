@@ -5,11 +5,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jws;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
 import java.util.UUID;
+import java.util.Base64;
 import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -62,6 +66,85 @@ class JwtProviderImplTest {
         assertThat(authentication.getAuthorities())
             .extracting(authority -> authority.getAuthority())
             .containsExactly("ROLE_USER");
+    }
+
+    @Test
+    @DisplayName("32바이트보다 긴 Secret을 사용해도 HS256 액세스 토큰을 발급한다")
+    void createAccessToken_usesHs256_whenSecretIsLongerThan32Bytes() {
+        // given
+        /*
+         * JJWT의 Keys.hmacShaKeyFor()는 48바이트 키를 전달하면
+         * 자동으로 HmacSHA384 키를 생성
+         *
+         * 서비스의 JWT 계약은 HS256이므로 경계가 바뀌는
+         * 48바이트 Secret을 사용해 알고리즘이 고정되는지 검증
+         */
+        byte[] longSecretBytes =
+            new byte[48];
+
+        String longSecret =
+            Base64.getEncoder()
+                .encodeToString(
+                    longSecretBytes
+                );
+
+        JwtProperties jwtProperties =
+            new JwtProperties();
+
+        jwtProperties.setIssuer("mopl");
+        jwtProperties.setSecret(longSecret);
+        jwtProperties.setAccessTokenExpiration(
+            Duration.ofMinutes(30)
+        );
+
+        JwtProviderImpl providerWithLongSecret =
+            new JwtProviderImpl(jwtProperties);
+
+        UUID userId =
+            UUID.fromString(
+                "22222222-2222-2222-2222-222222222222"
+            );
+
+        // when
+        String token =
+            providerWithLongSecret.createAccessToken(
+                userId,
+                "USER"
+            );
+
+        /*
+         * 검증 측에서도 동일한 원본 바이트를 HmacSHA256 키로
+         * 생성합니다. 발급 토큰이 HS384나 HS512라면
+         * 이 파싱 과정이 정상적으로 완료되지 않는다.
+         */
+        SecretKey hs256SigningKey =
+            new SecretKeySpec(
+                longSecretBytes,
+                "HmacSHA256"
+            );
+
+        Jws<Claims> parsedToken =
+            Jwts.parser()
+                .verifyWith(hs256SigningKey)
+                .build()
+                .parseSignedClaims(token);
+
+        // then
+        assertThat(
+            parsedToken.getHeader()
+                .getAlgorithm()
+        ).isEqualTo("HS256");
+
+        assertThat(
+            parsedToken.getPayload()
+                .getSubject()
+        ).isEqualTo(
+            userId.toString()
+        );
+
+        assertThat(
+            providerWithLongSecret.validate(token)
+        ).isTrue();
     }
 
     @Test
