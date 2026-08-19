@@ -301,13 +301,29 @@ sourceEventId: Kafka eventId
 
 같은 도메인 사건으로 Outbox가 두 번 생성되지 않도록 생산자가 사건별 `deduplicationKey`를 만든다. 이 값은 Outbox에서 유일해야 한다.
 
-```text
-follow.created:<followId>
-playlist.subscription.created:<subscriptionId>
-direct-message.created:<directMessageId>
-```
+`outbox_events.deduplication_key`는 `NOT NULL`이며 유니크 제약이 걸려 있다. 기록 포트가 이 값을 필수로 받으므로, Outbox에 기록하는 모든 생산 도메인은 키를 만들어야 한다.
 
-단순 `(aggregateType, aggregateId, eventType, eventVersion)`을 모든 이벤트의 공통 유일 키로 강제하지 않는다. 같은 aggregate에서 같은 타입의 사건이 여러 번 발생할 수 있기 때문이다.
+확정 카탈로그의 키 형식은 다음과 같다.
+
+| 이벤트 | deduplication key |
+| --- | --- |
+| `follow.created` | `follow.created:<followId>` |
+| `playlist.subscription.created` | `playlist.subscription.created:<subscriptionId>` |
+| `direct-message.created` | `direct-message.created:<directMessageId>` |
+
+`eventId`로는 이 경우를 막을 수 없다. `eventId`는 envelope을 식별하므로, 도메인 연산이 두 번 실행되어 envelope을 각각 새로 만들면 값이 서로 달라 두 건이 모두 저장된다.
+
+#### 새 이벤트의 키를 정하는 규칙
+
+1. `<eventType>:<사건 식별자>` 형식을 쓴다. 앞에 타입을 두어야 다른 이벤트의 키와 겹치지 않는다.
+2. 사건 식별자는 **같은 사건을 다시 만들어도 같은 값이 나오는 것**을 쓴다. 대개 그 사건이 만든 행의 기본 키다. 시각, 요청 식별자, 난수처럼 시도마다 달라지는 값은 쓸 수 없다.
+3. 사건이 행을 만들지 않는다면(상태 전이 같은 경우) 전이를 유일하게 가리키는 값을 조합한다. 예를 들어 회차가 있는 전이는 `<eventType>:<aggregateId>:<회차>`로 둔다.
+4. 같은 aggregate에서 같은 타입의 사건이 여러 번 발생할 수 있다면 `aggregateId`만으로는 부족하다. 그 경우 2회차 이후가 조용히 거부된다.
+5. 키는 200자를 넘을 수 없다.
+
+단순 `(aggregateType, aggregateId, eventType, eventVersion)`을 모든 이벤트의 공통 유일 키로 강제하지 않는다. 4번과 같은 이유로, 같은 aggregate에서 같은 타입의 사건이 여러 번 발생할 수 있기 때문이다.
+
+키가 겹치면 두 번째 기록이 거부되고 도메인 트랜잭션도 함께 롤백된다. 조용히 넘어가지 않는다. 도메인 연산이 두 번 실행됐다는 신호이므로 되돌리는 편이 맞다.
 
 ### 순서 게이트
 
