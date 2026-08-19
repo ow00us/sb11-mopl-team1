@@ -1,8 +1,10 @@
 package com.mopl.playlist.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.outbox.OutboxRecorder;
 import com.mopl.global.util.CursorUtils;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
@@ -12,6 +14,7 @@ import com.mopl.content.entity.ContentType;
 import com.mopl.playlist.entity.Playlist;
 import com.mopl.playlist.entity.PlaylistContent;
 import com.mopl.playlist.entity.PlaylistSubscription;
+import com.mopl.playlist.event.PlaylistSubscriptionEventFactory;
 import com.mopl.content.repository.ContentRepository;
 import com.mopl.playlist.repository.PlaylistContentRepository;
 import com.mopl.playlist.repository.PlaylistRepository;
@@ -25,6 +28,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
@@ -52,6 +56,9 @@ class PlaylistServiceTest {
     @Mock ContentRepository contentRepository;
     @Mock PlaylistContentSaver playlistContentSaver;
     @Mock UserRepository userRepository;
+    @Mock OutboxRecorder outboxRecorder;
+    @Spy PlaylistSubscriptionEventFactory playlistSubscriptionEventFactory =
+            new PlaylistSubscriptionEventFactory(new ObjectMapper());
 
     @InjectMocks
     PlaylistServiceImpl playlistService;
@@ -433,6 +440,53 @@ class PlaylistServiceTest {
         playlistService.subscribe(PLAYLIST_ID, OTHER_ID);
 
         verify(playlistRepository, never()).incrementSubscriberCount(any(UUID.class));
+    }
+
+    // 계약 docs/07-kafka-outbox-contract.md §8.2: playlist.subscription.created 는
+    // PlaylistServiceImpl.subscribe() 가 INSERT 성공(rows=1) 으로 판정한 경우에만 Outbox 기록한다.
+    // 여기서는 호출 여부만 검증하고 envelope 필드 정확성은 후속 Envelope 커밋에서 다룬다.
+
+    @Test
+    @DisplayName("구독 신규 판정 시 OutboxRecorder.record 를 1회 호출한다")
+    void subscribe_success_recordsOutboxOnce() {
+        UUID subscriptionId = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        PlaylistSubscription subscription = savedSubscriptionWithCreatedAt(
+                subscriptionId, PLAYLIST_ID, OTHER_ID, Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(subscriptionRepository.insertIfAbsent(PLAYLIST_ID.toString(), OTHER_ID.toString()))
+                .thenReturn(1);
+        when(subscriptionRepository.findByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
+                .thenReturn(Optional.of(subscription));
+
+        playlistService.subscribe(PLAYLIST_ID, OTHER_ID);
+
+        verify(outboxRecorder, times(1)).record(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("중복 구독 판정 시 OutboxRecorder.record 를 호출하지 않는다")
+    void subscribe_duplicate_doesNotRecordOutbox() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(subscriptionRepository.insertIfAbsent(PLAYLIST_ID.toString(), OTHER_ID.toString()))
+                .thenReturn(0);
+
+        playlistService.subscribe(PLAYLIST_ID, OTHER_ID);
+
+        verify(outboxRecorder, never()).record(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("자기 자신 플레이리스트 구독 차단 시 OutboxRecorder.record 를 호출하지 않는다")
+    void subscribe_fail_owner_doesNotRecordOutbox() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+
+        assertThatThrownBy(() -> playlistService.subscribe(PLAYLIST_ID, OWNER_ID))
+                .isInstanceOf(BusinessException.class);
+
+        verify(outboxRecorder, never()).record(any(), any(), any(), any());
     }
 
     @Test

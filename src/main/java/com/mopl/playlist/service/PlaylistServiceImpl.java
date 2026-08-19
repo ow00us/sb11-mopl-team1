@@ -7,6 +7,7 @@ import com.mopl.global.common.ContentSummary;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.outbox.OutboxRecorder;
 import com.mopl.global.util.CursorUtils;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
@@ -16,6 +17,7 @@ import com.mopl.global.common.UserSummary;
 import com.mopl.playlist.entity.Playlist;
 import com.mopl.playlist.entity.PlaylistContent;
 import com.mopl.playlist.entity.PlaylistSubscription;
+import com.mopl.playlist.event.PlaylistSubscriptionEventFactory;
 import com.mopl.playlist.repository.PlaylistContentRepository;
 import com.mopl.playlist.repository.PlaylistRepository;
 import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
@@ -56,6 +58,8 @@ public class PlaylistServiceImpl implements PlaylistService {
     private final ContentRepository contentRepository;
     private final PlaylistContentSaver playlistContentSaver;
     private final UserRepository userRepository;
+    private final OutboxRecorder outboxRecorder;
+    private final PlaylistSubscriptionEventFactory playlistSubscriptionEventFactory;
 
     @Override
     @Transactional
