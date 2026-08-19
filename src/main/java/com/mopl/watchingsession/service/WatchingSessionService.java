@@ -6,6 +6,7 @@ import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.util.CursorUtils;
+import com.mopl.global.util.DbConflictUtils;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.config.WatchingSessionProperties;
@@ -14,7 +15,6 @@ import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
-import com.mopl.watchingsession.service.WatchingSessionSnapshotWriter.UpsertResult;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +22,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -129,13 +130,8 @@ public class WatchingSessionService {
 
                 // DB 스냅샷 갱신
                 WatchingSessionSnapshotWriter.UpsertResult upsertResult;
-                try {
-                    upsertResult = watchingSessionSnapshotWriter.upsert(watcherId, contentId,
-                        expiresAt);
-                } catch (DataIntegrityViolationException e) {
-                    upsertResult = watchingSessionSnapshotWriter.upsert(watcherId, contentId,
-                        expiresAt);
-                }
+                upsertResult = retryOnceOnDuplicateKeyConflict(
+                    () -> watchingSessionSnapshotWriter.upsert(watcherId, contentId, expiresAt));
                 snapshot = upsertResult.snapshot();
 
                 try {
@@ -407,16 +403,8 @@ public class WatchingSessionService {
             synchronized (watcherLock) {
                 Optional<WatchingSessionSnapshot> recovered;
                 try {
-                    try {
-                        recovered = watchingSessionSnapshotWriter.insertIfAbsent(
-                            watcherId, contentId, now.plus(watchingSessionProperties.getSessionTtl()));
-                    } catch (DataIntegrityViolationException e) {
-                        // TODO: 동시 INSERT 재시도 정책 구현에서 같이 리팩토링
-                        // 인스턴스 간 동시 삽입 충돌 - 한 번 재시도. 재시도 자체가 실패하면
-                        // 바깥 catch(RuntimeException)로 넘어가야 하므로 여기서 한 번 더 감싼다.
-                        recovered = watchingSessionSnapshotWriter.insertIfAbsent(
-                            watcherId, contentId, now.plus(watchingSessionProperties.getSessionTtl()));
-                    }
+                    recovered = retryOnceOnDuplicateKeyConflict(() -> watchingSessionSnapshotWriter.insertIfAbsent(
+                        watcherId, contentId, now.plus(watchingSessionProperties.getSessionTtl())));
                 } catch (RuntimeException e) {
                     log.error("DB 행 소실 후 복구 실패: watcherId={}, contentId={}", watcherId, contentId, e);
                     return;
@@ -446,5 +434,21 @@ public class WatchingSessionService {
         } finally {
             releaseWatcherLock(watcherId);
         }
+    }
+
+    /**
+     * 중복키 충돌(DataIntegrityViolationException)만 1회 재시도
+     * 중복키가 아닌 무결성 위반(FK 위반 등)은 재시도 없이 즉시 전파한다.
+     * backoff 없이 즉시 재시도한다
+     */
+    private <T> T retryOnceOnDuplicateKeyConflict(Supplier<T> operation) {
+        try {
+            return operation.get();
+        } catch (DataIntegrityViolationException e) {
+            if (!DbConflictUtils.isDuplicateKeyViolation(e)) {
+                throw e;
+            }
+        }
+        return operation.get();
     }
 }

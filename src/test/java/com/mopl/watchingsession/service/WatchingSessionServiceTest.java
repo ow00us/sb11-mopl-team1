@@ -30,6 +30,7 @@ import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import com.mopl.watchingsession.service.WatchingSessionSnapshotWriter.UpsertResult;
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -170,6 +171,11 @@ public class WatchingSessionServiceTest {
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(userRepository.findAllById(any())).thenReturn(List.of(mockUser));
+    }
+
+    private static DataIntegrityViolationException duplicateKeyViolation() {
+        return new DataIntegrityViolationException(
+            "동시 삽입 충돌", new SQLException("중복", "23505"));
     }
 
     private WatchingSessionSnapshot createSnapshotFixture(UUID id, UUID watcherId, UUID contentId, Instant createdAt, Instant updatedAt, Instant expiresAt) {
@@ -314,6 +320,25 @@ public class WatchingSessionServiceTest {
             .isInstanceOf(WatchingSessionService.StartFailedException.class);
 
         assertThat(presenceStore).doesNotContainKey(WATCHER_ID); // end()가 보상 삭제까지 완료
+    }
+
+    @Test
+    @DisplayName("start()에서 upsert 중복키 충돌이 1회 발생해도 재시도로 세션이 정상 시작된다")
+    void start_recovers_whenUpsertConflictsOnceThenSucceeds() {
+        mockContentExists(CONTENT_ID);
+        UpsertResult successResult = new UpsertResult(
+            createSnapshotFixture(SNAPSHOT_ID, WATCHER_ID, CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT,
+                FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS)), true);
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenThrow(duplicateKeyViolation())
+            .thenReturn(successResult);
+        mockUserExists(WATCHER_ID);
+
+        WatchingSessionService.ReplacedSession result =
+            watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(result.session()).isNotNull();
+        verify(watchingSessionSnapshotWriter, times(2)).upsert(eq(WATCHER_ID), eq(CONTENT_ID), any());
     }
 
     /* --- end() 메서드 검증 --- */
@@ -961,7 +986,7 @@ public class WatchingSessionServiceTest {
     }
 
     @Test
-    @DisplayName("INSERT가 모두 실패하면 재시도 실패가 catch로 새지 않고 정상적으로 잡혀 heartbeat는 예외 없이 끝난다")
+    @DisplayName("INSERT가 재시도까지 모두 중복키 충돌로 실패하면 catch로 새지 않고 heartbeat는 예외 없이 끝난다")
     void heartbeat_doesNotThrow_whenInitialInsertAndRetryBothFail() {
         mockContentExists(CONTENT_ID);
         mockUserExists(WATCHER_ID);
@@ -969,8 +994,8 @@ public class WatchingSessionServiceTest {
         watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
         when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
         when(watchingSessionSnapshotWriter.insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any()))
-            .thenThrow(new DataIntegrityViolationException("동시 삽입 충돌"))
-            .thenThrow(new DataIntegrityViolationException("재시도도 충돌"));
+            .thenThrow(duplicateKeyViolation())
+            .thenThrow(duplicateKeyViolation());
 
         assertThatCode(() ->
             watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
@@ -980,19 +1005,63 @@ public class WatchingSessionServiceTest {
     }
 
     @Test
-    @DisplayName("재시도 도중 DataIntegrityViolationException이 아닌 다른 RuntimeException이 나도 격리된다")
-    void heartbeat_doesNotThrow_whenRetryFailsWithDifferentRuntimeException() {
+    @DisplayName("첫 시도에서 중복키가 아닌 RuntimeException이 나면 재시도 없이 즉시 격리된다")
+    void heartbeat_doesNotThrow_whenFirstAttemptFailsWithNonDuplicateKeyException() {
         mockContentExists(CONTENT_ID);
         mockUserExists(WATCHER_ID);
         mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
         watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
         when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
         when(watchingSessionSnapshotWriter.insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any()))
-            .thenThrow(new DataIntegrityViolationException("동시 삽입 충돌"))
-            .thenThrow(new RuntimeException("DB 연결 끊김")); // 재시도는 다른 종류의 예외
+            .thenThrow(new RuntimeException("DB 연결 끊김"));
 
         assertThatCode(() ->
             watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
             .doesNotThrowAnyException();
+
+        verify(watchingSessionSnapshotWriter, times(1)).insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any());
+    }
+
+    @Test
+    @DisplayName("중복키 충돌이 1회만 발생하면 재시도로 성공한다")
+    void heartbeat_recovers_whenDuplicateKeyConflictsOnceThenSucceeds() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
+
+        WatchingSessionSnapshot recovered = createSnapshotFixture(
+            UUID.randomUUID(), WATCHER_ID, CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT,
+            FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS));
+        when(watchingSessionSnapshotWriter.insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenThrow(duplicateKeyViolation())
+            .thenReturn(Optional.of(recovered));
+        when(watchingSessionPresenceWriter.updateSnapshotIdIfOwner(
+            eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(recovered.getId())))
+            .thenReturn(true);
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionSnapshotWriter, times(2)).insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any());
+    }
+
+    @Test
+    @DisplayName("중복키가 아닌 무결성 위반(FK 위반 등)은 재시도 없이 즉시 전파된다")
+    void heartbeat_doesNotThrow_whenNonDuplicateKeyViolationPropagatesWithoutRetry() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
+        when(watchingSessionSnapshotWriter.insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenThrow(new DataIntegrityViolationException(
+                "FK 위반", new SQLException("FK 위반", "23503")));
+
+        assertThatCode(() ->
+            watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
+            .doesNotThrowAnyException();
+
+        verify(watchingSessionSnapshotWriter, times(1)).insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any());
     }
 }
