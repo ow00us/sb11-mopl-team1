@@ -94,9 +94,85 @@ jobs:
       - name: Verify non-root runtime user
         run: test "$(docker image inspect --format '{{.Config.User}}' mopl:ci)" = "mopl"
 
-      # 이 job 은 컨테이너가 정상 기동해 healthy 가 되는지만 봅니다. Kafka 브로커는
-      # 띄우지 않고 주소만 넘깁니다. prod 는 토픽을 생성하지도 검증하지도 않고 도메인
-      # 리스너가 아직 없어 기동 중 브로커에 접속하지 않습니다.
+      # Kafka 는 services 블록이 아니라 step 에서 띄웁니다. KRaft 브로커는 광고 주소와
+      # controller quorum 을 함께 맞춰야 하는데, services 블록은 기동 인자를 세밀하게
+      # 조정하기 어렵고 준비 여부도 브로커 API 로 확인하는 편이 확실합니다.
+      - name: Start Kafka broker
+        run: |
+          docker run --detach \
+            --name mopl-ci-kafka \
+            --network host \
+            --env KAFKA_NODE_ID=1 \
+            --env KAFKA_PROCESS_ROLES=broker,controller \
+            --env KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093 \
+            --env KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://127.0.0.1:9092 \
+            --env KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT \
+            --env KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+            --env KAFKA_CONTROLLER_QUORUM_VOTERS=1@127.0.0.1:9093 \
+            --env KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT \
+            --env KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+            --env KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+            --env KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+            --env KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 \
+            apache/kafka:3.7.1
+
+      - name: Wait for Kafka broker
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for attempt in {1..60}; do
+            if docker exec mopl-ci-kafka /opt/kafka/bin/kafka-broker-api-versions.sh \
+                 --bootstrap-server 127.0.0.1:9092 > /dev/null 2>&1; then
+              echo "Kafka broker is ready."
+              exit 0
+            fi
+
+            echo "Waiting for Kafka broker ($attempt/60)"
+            sleep 2
+          done
+
+          echo "Kafka broker did not become ready in time."
+          docker logs mopl-ci-kafka
+          exit 1
+
+      # 운영과 같은 순서입니다. 토픽을 먼저 준비하고 애플리케이션은 그것을 확인만 합니다.
+      #
+      # 목록은 MoplTopics 에서 뽑습니다. 여기에 손으로 적어 두면 토픽이 늘어날 때마다
+      # 뒤처지고, 그 사실이 기동 실패로만 드러납니다.
+      - name: Create required topics
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          topics="$(grep --only-matching --extended-regexp '"mopl\.[a-z.-]+"' \
+            src/main/java/com/mopl/global/event/MoplTopics.java | tr -d '"' | sort --unique)"
+
+          # 상수 이름이나 파일 위치가 바뀌면 목록이 비는데, 그대로 두면 토픽을 하나도
+          # 만들지 않고 다음 단계의 기동 실패로 넘어갑니다. 여기서 원인을 밝힙니다.
+          if [[ -z "$topics" ]]; then
+            echo "MoplTopics 에서 토픽 이름을 찾지 못했습니다. 추출 규칙을 확인하세요."
+            exit 1
+          fi
+
+          echo "준비할 토픽:"
+          echo "$topics"
+
+          for topic in $topics; do
+            for name in "$topic" "$topic.DLT"; do
+              docker exec mopl-ci-kafka /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server 127.0.0.1:9092 \
+                --create --if-not-exists \
+                --topic "$name" --partitions 3 --replication-factor 1
+            done
+          done
+
+          docker exec mopl-ci-kafka /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server 127.0.0.1:9092 --list
+
+      # KAFKA_TOPIC_VERIFY 를 켭니다. 토픽이 준비된 환경이므로, 필요한 토픽이 하나라도
+      # 없으면 기동이 실패해야 합니다. DLT 가 없으면 DLT 발행이 실패하면서 원본 처리까지
+      # 막히므로 기동 시점에 드러내는 편이 낫습니다.
       - name: Start production container
         run: |
           docker run --detach \
@@ -116,6 +192,7 @@ jobs:
             --env CORS_ALLOWED_ORIGINS=http://localhost:5173 \
             --env WS_ALLOWED_ORIGINS=http://localhost:5173 \
             --env KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092 \
+            --env KAFKA_TOPIC_VERIFY=true \
             mopl:ci
 
       - name: Wait for healthy application
@@ -148,13 +225,75 @@ jobs:
           docker logs mopl-ci
           exit 1
 
+      # 도메인 상태 변경 대신 Outbox 에 직접 한 건을 넣어 발행 경로를 확인합니다. 발행
+      # 도메인이 아직 없으므로 이 방법이 relay·직렬화·토픽 결정을 한 번에 지나는 가장
+      # 짧은 경로입니다. 소비까지 확인해야 계약이 왕복으로 성립하는지 알 수 있습니다.
+      - name: Verify event round-trip through Outbox relay
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          event_id="$(uuidgen)"
+          aggregate_id="$(uuidgen)"
+          echo "eventId=$event_id"
+
+          docker run --rm --network host --env PGPASSWORD=mopl postgres:16 \
+            psql --host 127.0.0.1 --username mopl --dbname mopl --set ON_ERROR_STOP=1 --command "
+              INSERT INTO outbox_events (
+                id, created_at, updated_at,
+                event_id, type, version, aggregate_id, occurred_at, payload,
+                partition_key, ordering_scope,
+                status, attempts, next_attempt_at
+              ) VALUES (
+                gen_random_uuid(), now(), now(),
+                '$event_id', 'follow.created', 1, '$aggregate_id', now(),
+                '{\"followerId\": \"$aggregate_id\"}'::jsonb,
+                '$aggregate_id', 'AGGREGATE',
+                'PENDING', 0, now()
+              );"
+
+          docker exec mopl-ci-kafka /opt/kafka/bin/kafka-console-consumer.sh \
+            --bootstrap-server 127.0.0.1:9092 \
+            --topic mopl.follow.events \
+            --from-beginning --max-messages 1 --timeout-ms 60000 \
+            > consumed-event.json
+
+          cat consumed-event.json
+          grep --quiet "$event_id" consumed-event.json
+
+          # 발행 확인을 받은 뒤에만 완료로 바뀌어야 합니다. 소비된 것만 보면 Outbox 상태가
+          # 대기로 남아 같은 이벤트가 다시 나가는 상황을 놓칩니다.
+          for attempt in {1..30}; do
+            status="$(docker run --rm --network host --env PGPASSWORD=mopl postgres:16 \
+              psql --host 127.0.0.1 --username mopl --dbname mopl --tuples-only --no-align \
+              --command "SELECT status FROM outbox_events WHERE event_id = '$event_id'")"
+
+            if [[ "$status" == "PUBLISHED" ]]; then
+              echo "Outbox record is marked published."
+              exit 0
+            fi
+
+            echo "Waiting for outbox status ($attempt/30): $status"
+            sleep 2
+          done
+
+          echo "Outbox record did not reach PUBLISHED."
+          exit 1
+
       - name: Print application logs on failure
         if: failure()
         run: docker logs mopl-ci || true
 
+      - name: Print Kafka diagnostics on failure
+        if: failure()
+        run: |
+          docker logs mopl-ci-kafka || true
+          docker exec mopl-ci-kafka /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server 127.0.0.1:9092 --describe || true
+
       - name: Remove smoke container
         if: always()
-        run: docker rm --force mopl-ci || true
+        run: docker rm --force mopl-ci mopl-ci-kafka || true
 
   coverage-upload:
     name: Coverage upload
