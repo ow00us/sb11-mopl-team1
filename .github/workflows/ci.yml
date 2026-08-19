@@ -242,13 +242,13 @@ jobs:
               INSERT INTO outbox_events (
                 id, created_at, updated_at,
                 event_id, type, version, aggregate_id, occurred_at, payload,
-                partition_key, ordering_scope,
+                partition_key, ordering_scope, deduplication_key,
                 status, attempts, next_attempt_at
               ) VALUES (
                 gen_random_uuid(), now(), now(),
                 '$event_id', 'follow.created', 1, '$aggregate_id', now(),
                 '{\"followerId\": \"$aggregate_id\"}'::jsonb,
-                '$aggregate_id', 'AGGREGATE',
+                '$aggregate_id', 'AGGREGATE', 'follow.created:$event_id',
                 'PENDING', 0, now()
               );"
 
