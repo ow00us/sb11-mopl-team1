@@ -2,6 +2,7 @@ package com.mopl.playlist.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.common.CursorResponse;
+import com.mopl.global.event.EventEnvelope;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.outbox.OutboxRecorder;
@@ -492,6 +493,52 @@ class PlaylistServiceTest {
                 .isInstanceOf(BusinessException.class);
 
         verify(outboxRecorder, never()).record(any(), any(), any(), any());
+    }
+
+    /**
+     * 계약 docs/07-kafka-outbox-contract.md §8.2 playlist.subscription.created 카탈로그 검증.
+     * envelope 필드와 partitionKey·orderingScope·deduplicationKey 모두 계약이 정한 값이어야 한다.
+     */
+    @Test
+    @DisplayName("구독 신규 판정 시 계약 §8.2 필드를 채운 envelope 로 OutboxRecorder.record 를 호출한다")
+    void subscribe_recordsOutboxWithContractCompliantEnvelope() {
+        UUID subscriptionId = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        Instant createdAt = Instant.parse("2026-08-19T05:00:00Z");
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        PlaylistSubscription subscription = savedSubscriptionWithCreatedAt(
+                subscriptionId, PLAYLIST_ID, OTHER_ID, createdAt);
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(subscriptionRepository.insertIfAbsent(PLAYLIST_ID.toString(), OTHER_ID.toString()))
+                .thenReturn(1);
+        when(subscriptionRepository.findByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
+                .thenReturn(Optional.of(subscription));
+
+        ArgumentCaptor<EventEnvelope> envelopeCaptor = ArgumentCaptor.forClass(EventEnvelope.class);
+        ArgumentCaptor<String> partitionKeyCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> orderingScopeCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> deduplicationKeyCaptor = ArgumentCaptor.forClass(String.class);
+
+        playlistService.subscribe(PLAYLIST_ID, OTHER_ID);
+
+        verify(outboxRecorder).record(
+                envelopeCaptor.capture(),
+                partitionKeyCaptor.capture(),
+                orderingScopeCaptor.capture(),
+                deduplicationKeyCaptor.capture());
+
+        EventEnvelope envelope = envelopeCaptor.getValue();
+        assertThat(envelope.eventId()).isNotNull();
+        assertThat(envelope.type()).isEqualTo("playlist.subscription.created");
+        assertThat(envelope.version()).isEqualTo(1);
+        assertThat(envelope.aggregateId()).isEqualTo(subscriptionId);
+        assertThat(envelope.occurredAt()).isEqualTo(createdAt);
+        assertThat(envelope.payload().get("playlistId").asText()).isEqualTo(PLAYLIST_ID.toString());
+        assertThat(envelope.payload().get("playlistOwnerId").asText()).isEqualTo(OWNER_ID.toString());
+        assertThat(envelope.payload().get("subscriberId").asText()).isEqualTo(OTHER_ID.toString());
+
+        assertThat(partitionKeyCaptor.getValue()).isEqualTo(subscriptionId.toString());
+        assertThat(orderingScopeCaptor.getValue()).isEqualTo("NONE");
+        assertThat(deduplicationKeyCaptor.getValue()).isEqualTo("playlist.subscription.created:" + subscriptionId);
     }
 
     @Test
