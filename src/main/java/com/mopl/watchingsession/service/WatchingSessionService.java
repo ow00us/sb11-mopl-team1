@@ -14,6 +14,7 @@ import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
+import com.mopl.watchingsession.service.WatchingSessionSnapshotWriter.UpsertResult;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -21,7 +22,6 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -388,7 +388,7 @@ public class WatchingSessionService {
         int renewedRows;
         try {
             renewedRows = watchingSessionSnapshotWriter.renewExpiresAt(
-                watcherId, contentId, now, now.plus(watchingSessionProperties.getSessionTtl()));
+                watcherId, contentId, now.plus(watchingSessionProperties.getSessionTtl()));
         } catch (RuntimeException e) {
             log.error("세션 만료 시각 갱신 실패: watcherId={}, contentId={}", watcherId, contentId, e);
             return;
@@ -396,8 +396,55 @@ public class WatchingSessionService {
 
         if (renewedRows == 0) {
             // Redis는 소유권을 확인했는데 DB 행이 없는 상태
-            log.warn("presence는 존재하나 DB 행이 없어 만료 시각을 갱신하지 못함: watcherId={}, contentId={}",
-                watcherId, contentId);
+            recoverMissingSnapshot(watcherId, contentId, sessionId, subscriptionId, now);
+        }
+    }
+
+    private void recoverMissingSnapshot(UUID watcherId, UUID contentId, String sessionId, String subscriptionId, Instant now) {
+        // INSERT를 포함하는 upsert()를 사용하므로 start()와 동일하게 watcherLock으로 직렬호
+        WatcherLock watcherLock = acquireWatcherLock(watcherId);
+        try {
+            synchronized (watcherLock) {
+                Optional<WatchingSessionSnapshot> recovered;
+                try {
+                    try {
+                        recovered = watchingSessionSnapshotWriter.insertIfAbsent(
+                            watcherId, contentId, now.plus(watchingSessionProperties.getSessionTtl()));
+                    } catch (DataIntegrityViolationException e) {
+                        // TODO: 동시 INSERT 재시도 정책 구현에서 같이 리팩토링
+                        // 인스턴스 간 동시 삽입 충돌 - 한 번 재시도. 재시도 자체가 실패하면
+                        // 바깥 catch(RuntimeException)로 넘어가야 하므로 여기서 한 번 더 감싼다.
+                        recovered = watchingSessionSnapshotWriter.insertIfAbsent(
+                            watcherId, contentId, now.plus(watchingSessionProperties.getSessionTtl()));
+                    }
+                } catch (RuntimeException e) {
+                    log.error("DB 행 소실 후 복구 실패: watcherId={}, contentId={}", watcherId, contentId, e);
+                    return;
+                }
+
+                if (recovered.isEmpty()) {
+                    // watcherId에 대해 이미 다른 행이 존재함
+                    log.debug("복구 시도 중 다른 행이 이미 존재해 물러남(낡은 heartbeat로 추정): watcherId={}, contentId={}",
+                        watcherId, contentId);
+                    return;
+                }
+
+                WatchingSessionSnapshot snapshot = recovered.get();
+                boolean synced = watchingSessionPresenceWriter.updateSnapshotIdIfOwner(
+                    watcherId, sessionId, subscriptionId, snapshot.getId());
+
+                if (!synced) {
+                    // 방금 삽입한 행이 확실하므로(insertIfAbsent는 기존 행을 건드리지 않음) 안전하게 보상 삭제할 수 있다.
+                    watchingSessionSnapshotWriter.deleteById(watcherId, snapshot.getId());
+                    log.warn("DB 행 재생성 직후 소유권이 이전돼 고아 행을 보상 삭제함: watcherId={}", watcherId);
+                    return;
+                }
+
+                log.warn("presence는 존재하나 DB 행이 없어 재생성함(복구): watcherId={}, contentId={}, newSnapshotId={}",
+                    watcherId, contentId, snapshot.getId());
+            }
+        } finally {
+            releaseWatcherLock(watcherId);
         }
     }
 }
