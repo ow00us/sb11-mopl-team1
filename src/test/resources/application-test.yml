@@ -45,7 +45,7 @@ watching-session:
   presence-ttl: 2s
   session-ttl: 3s
   heartbeat-interval: 500ms
-  sweep-interval: 1s
+  sweep-interval: 10m
 
 tmdb:
   access-token: test-dummy-token
