@@ -94,6 +94,8 @@ class OAuthAccountRepositoryTest {
             .isEqualTo(user.getId());
         assertThat(foundAccount.getUser().getPasswordHash())
             .isNull();
+        assertThat(foundAccount.getUser().getId())
+            .isEqualTo(user.getId());
     }
 
     @Test

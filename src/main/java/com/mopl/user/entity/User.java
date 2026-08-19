@@ -68,7 +68,7 @@ public class User extends BaseEntity {
      * .name("사용자") .role(UserRole.USER) .locked(false) .build();
      *
      * @param email           정규화된 이메일
-     * @param passwordHash    인코딩된 비밀번호
+     * @param passwordHash    인코딩된 비밀번호, OAuth 전용 사용자는 null
      * @param name            사용자 이름
      * @param profileImageUrl 프로필 이미지 URL, 없으면 null
      * @param role            사용자 권한
