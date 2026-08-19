@@ -1439,6 +1439,188 @@ class RedisRefreshTokenStoreTest {
     }
 
     @Test
+    @DisplayName("사용자의 모든 Refresh Token Family를 폐기한다")
+    void revokeAllByUserId_success() {
+        // given
+        UUID targetUserId =
+            UUID.randomUUID();
+
+        UUID otherUserId =
+            UUID.randomUUID();
+
+        UUID firstFamilyId =
+            UUID.randomUUID();
+
+        UUID secondFamilyId =
+            UUID.randomUUID();
+
+        UUID otherFamilyId =
+            UUID.randomUUID();
+
+        String firstTokenHash =
+            "9".repeat(64);
+
+        String secondTokenHash =
+            "a".repeat(64);
+
+        String otherTokenHash =
+            "b".repeat(64);
+
+        Duration expiration =
+            Duration.ofMinutes(30);
+
+        /*
+         * 폐기 대상 사용자에게 두 개의 로그인 세션을 저장
+         * 예를 들어 PC 브라우저와 모바일 브라우저에서 각각
+         * 로그인한 상태를 나타낸다.
+         */
+        refreshTokenStore.save(
+            targetUserId,
+            firstFamilyId,
+            firstTokenHash,
+            expiration
+        );
+
+        refreshTokenStore.save(
+            targetUserId,
+            secondFamilyId,
+            secondTokenHash,
+            expiration
+        );
+
+        /*
+         * 다른 사용자의 세션도 함께 저장하여 전체 폐기가
+         * 대상 사용자에게만 적용되는지 검증
+         */
+        refreshTokenStore.save(
+            otherUserId,
+            otherFamilyId,
+            otherTokenHash,
+            expiration
+        );
+
+        // when
+        long revokedCount =
+            refreshTokenStore.revokeAllByUserId(
+                targetUserId
+            );
+
+        // then
+        /*
+         * 대상 사용자가 보유했던 두 개의 Family가 모두
+         * 실제로 삭제됐으므로 2를 반환
+         */
+        assertThat(revokedCount)
+            .isEqualTo(2L);
+
+        /*
+         * 폐기된 기존 Refresh Token 해시로는
+         * 더 이상 사용자를 조회할 수 없어야 한다.
+         */
+        assertThat(
+            refreshTokenStore
+                .findUserIdByFamilyAndTokenHash(
+                    firstFamilyId,
+                    firstTokenHash
+                )
+        ).isEmpty();
+
+        assertThat(
+            refreshTokenStore
+                .findUserIdByFamilyAndTokenHash(
+                    secondFamilyId,
+                    secondTokenHash
+                )
+        ).isEmpty();
+
+        /*
+         * 대상 사용자의 Family 인덱스도 함께 제거
+         */
+        assertThat(
+            refreshTokenStore
+                .findFamilyIdsByUserId(
+                    targetUserId
+                )
+        ).isEmpty();
+
+        /*
+         * 다른 사용자의 Refresh Token Family는
+         * 전체 폐기의 영향을 받으면 안된다.
+         */
+        assertThat(
+            refreshTokenStore
+                .findUserIdByFamilyAndTokenHash(
+                    otherFamilyId,
+                    otherTokenHash
+                )
+        ).contains(otherUserId);
+
+        assertThat(
+            refreshTokenStore
+                .findFamilyIdsByUserId(
+                    otherUserId
+                )
+        ).containsExactly(otherFamilyId);
+    }
+
+    @Test
+    @DisplayName("활성 Refresh Token Family가 없는 사용자의 전체 폐기는 0을 반환한다")
+    void revokeAllByUserId_returnsZeroWhenUserHasNoFamily() {
+        // given
+        UUID userId =
+            UUID.randomUUID();
+
+        // when
+        long revokedCount =
+            refreshTokenStore.revokeAllByUserId(
+                userId
+            );
+
+        // then
+        /*
+         * 폐기할 세션이 없는 것은 오류가 아니라
+         * 이미 안전한 상태이므로 0을 반환
+         */
+        assertThat(revokedCount)
+            .isZero();
+
+        assertThat(
+            refreshTokenStore
+                .findFamilyIdsByUserId(
+                    userId
+                )
+        ).isEmpty();
+    }
+
+    @Test
+    @DisplayName("전체 세션 폐기의 사용자 UUID가 null이면 요청을 거부한다")
+    void revokeAllByUserId_rejectsNullUserId() {
+        // when & then
+        assertThatThrownBy(() ->
+            refreshTokenStore
+                .revokeAllByUserId(
+                    null
+                )
+        )
+            .isInstanceOf(
+                IllegalArgumentException.class
+            )
+            .hasMessage(
+                "Refresh Token 사용자 UUID는 null일 수 없습니다."
+            );
+
+        /*
+         * 유효하지 않은 요청으로 Redis 데이터가
+         * 생성되거나 변경되지 않아야 한다.
+         */
+        assertThat(
+            redisTemplate.keys(
+                "auth:refresh-token:*"
+            )
+        ).isEmpty();
+    }
+
+    @Test
     @DisplayName("Refresh Token Family 폐기 인자가 올바르지 않으면 요청을 거부한다")
     void revoke_rejectsInvalidArguments() {
         // given

@@ -79,6 +79,21 @@ public class WatchingSessionPresenceWriter {
         return {'0', ''}
         """;
 
+    // sessionId만 비교. DISCONNECT처럼 subscriptionId를 알 수 없는(연결 자체가 끊긴) 상황에서
+    // "이 연결이 지금도 소유자인가"만 판정하면 되는 경우에 사용한다.
+    // 반환 규약은 DELETE_IF_OWNER_LUA와 동일
+    private static final String DELETE_IF_OWNER_SESSION_LUA = """
+        if redis.call('TYPE', KEYS[1])['ok'] ~= 'hash' then
+          return {'-1', ''}
+        end
+        if redis.call('HGET', KEYS[1], 'sessionId') == ARGV[1] then
+          local snapshotId = redis.call('HGET', KEYS[1], 'snapshotId')
+          redis.call('DEL', KEYS[1])
+          return {'1', snapshotId}
+        end
+        return {'0', ''}
+        """;
+
     // PEXPIRE는 키가 있을 때만 1을 반환하고 키를 새로 만들지 않아 이미 만료된 presence를 heartbeat가 되살리지 않는다
     private static final String RENEW_IF_OWNER_LUA = """
         if redis.call('TYPE', KEYS[1])['ok'] ~= 'hash' then
@@ -98,6 +113,9 @@ public class WatchingSessionPresenceWriter {
     @SuppressWarnings("rawtypes")
     private static final RedisScript<List> DELETE_IF_OWNER_SCRIPT =
         new DefaultRedisScript<>(DELETE_IF_OWNER_LUA, List.class);
+    @SuppressWarnings("rawtypes")
+    private static final RedisScript<List> DELETE_IF_OWNER_SESSION_SCRIPT =
+        new DefaultRedisScript<>(DELETE_IF_OWNER_SESSION_LUA, List.class);
     private static final RedisScript<Long> RENEW_IF_OWNER_SCRIPT =
         new DefaultRedisScript<>(RENEW_IF_OWNER_LUA, Long.class);
 
@@ -133,7 +151,6 @@ public class WatchingSessionPresenceWriter {
      * @return 실제로 삭제했다면 그 presence가 가리키던 DB 스냅샷 id. 소유권 불일치·활성 세션
      *         없음·Redis 실패는 전부 빈 Optional.
      */
-    @SuppressWarnings("ConstantConditions")
     public Optional<UUID> deleteIfOwner(UUID watcherId, String sessionId, String subscriptionId) {
         try {
             List<String> result = stringRedisTemplate.execute(
@@ -142,33 +159,34 @@ public class WatchingSessionPresenceWriter {
                 nullSafe(sessionId),
                 nullSafe(subscriptionId));
 
-            if (result == null || result.isEmpty()) {
-                log.error("Presence 삭제 스크립트가 예상 못한 빈 응답을 반환함: watcherId={}", watcherId);
-                return Optional.empty();
-            }
-
-            String code = result.get(0);
-            if ("0".equals(code)) {
-                // 활성 세션은 있는데 소유자가 다름 -> 낡은 탭이 현재 소유자를 침범하려 한 것.
-                // 정상 흐름에서는 나오면 안 되는 경로라 WARN으로 남긴다.
-                log.warn("Presence 소유권 불일치로 삭제 거부: watcherId={}", watcherId);
-                return Optional.empty();
-            }
-            if (!"1".equals(code)) {
-                // "-1": 활성 세션 없음 또는 레거시 문자열 키. 정상 흐름이라 로그 없음.
-                return Optional.empty();
-            }
-
-            String snapshotIdRaw = result.size() > 1 ? result.get(1) : null;
-            if (snapshotIdRaw == null || snapshotIdRaw.isBlank()) {
-                // 이론상 HSET이 항상 snapshotId를 채우므로 도달하면 안 되는 경로.
-                // 방어적으로 처리해 잘못된 id로 DB 삭제가 나가는 것을 막는다.
-                log.error("Presence 삭제는 성공했으나 snapshotId를 복원하지 못함: watcherId={}", watcherId);
-                return Optional.empty();
-            }
-            return Optional.of(UUID.fromString(snapshotIdRaw));
+            return parseDeleteResult(watcherId, result, true);
         } catch (RuntimeException e) {
             log.error("Presence 소유권 삭제 실패: watcherId={}", watcherId, e);
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * 요청자의 sessionId가 현재 소유자일 때만 presence를 삭제한다. subscriptionId는 비교하지 않는다.
+     *
+     * WebSocket 연결 자체가 끊기는 DISCONNECT 처리 전용이다. 연결이 죽으면 그 연결에 딸린
+     * 모든 구독이 함께 죽으므로, "이 sessionId가 지금도 소유자인가"만으로 판정이 충분하다.
+     * 반대로 구독이 살아있는 상태(재구독, UNSUBSCRIBE)에서는 이 메서드를 쓰면 안 된다 —
+     * 같은 연결 안의 낡은 구독이 방금 갈아치운 새 구독을 지울 수 있다.
+     *
+     * @return 실제로 삭제했다면 그 presence가 가리키던 DB 스냅샷 id. 소유권 불일치·활성 세션
+     *         없음·Redis 실패는 전부 빈 Optional.
+     */
+    public Optional<UUID> deleteIfOwnerSession(UUID watcherId, String sessionId) {
+        try {
+            List<String> result = stringRedisTemplate.execute(
+                DELETE_IF_OWNER_SESSION_SCRIPT,
+                List.of(key(watcherId)),
+                nullSafe(sessionId));
+
+            return parseDeleteResult(watcherId, result, false);
+        } catch (RuntimeException e) {
+            log.error("Presence 세션 단위 소유권 삭제 실패: watcherId={}", watcherId, e);
             return Optional.empty();
         }
     }
@@ -238,5 +256,36 @@ public class WatchingSessionPresenceWriter {
 
     private String key(UUID watcherId) {
         return KEY_TEMPLATE.formatted(watcherId);
+    }
+
+    @SuppressWarnings("ConstantConditions")
+    private Optional<UUID> parseDeleteResult(UUID watcherId, List<String> result, boolean logMismatchAsWarn) {
+        if (result == null || result.isEmpty()) {
+            log.error("Presence 삭제 스크립트가 예상 못한 빈 응답을 반환함: watcherId={}", watcherId);
+            return Optional.empty();
+        }
+
+        String code = result.get(0);
+        if ("0".equals(code)) {
+            if (logMismatchAsWarn) {
+                log.warn("Presence 소유권 불일치로 삭제 거부: watcherId={}", watcherId);
+            } else {
+                log.debug("Presence 세션 소유권 불일치로 삭제 거부(다른 연결로 소유권 이전됨): watcherId={}", watcherId);
+            }
+            return Optional.empty();
+        }
+        if (!"1".equals(code)) {
+            // "-1": 활성 세션 없음 또는 레거시 문자열 키. 정상 흐름이라 로그 없음.
+            return Optional.empty();
+        }
+
+        String snapshotIdRaw = result.size() > 1 ? result.get(1) : null;
+        if (snapshotIdRaw == null || snapshotIdRaw.isBlank()) {
+            // 이론상 HSET이 항상 snapshotId를 채우므로 도달하면 안 되는 경로.
+            // 방어적으로 처리해 잘못된 id로 DB 삭제가 나가는 것을 막는다.
+            log.error("Presence 삭제는 성공했으나 snapshotId를 복원하지 못함: watcherId={}", watcherId);
+            return Optional.empty();
+        }
+        return Optional.of(UUID.fromString(snapshotIdRaw));
     }
 }

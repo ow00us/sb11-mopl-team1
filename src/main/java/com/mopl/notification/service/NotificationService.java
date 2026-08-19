@@ -8,6 +8,7 @@ import com.mopl.notification.entity.Notification;
 import com.mopl.notification.entity.NotificationLevel;
 import com.mopl.notification.entity.NotificationType;
 import com.mopl.notification.event.NotificationCreatedEvent;
+import com.mopl.notification.kafka.NotificationCreateCommand;
 import com.mopl.notification.repository.NotificationRepository;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
@@ -88,6 +89,44 @@ public class NotificationService {
         );
 
         return notificationDto;
+    }
+
+    @Transactional
+    public boolean createIfAbsent(NotificationCreateCommand command) {
+        UUID notificationId = UUID.randomUUID();
+        Instant createdAt = Instant.now();
+
+        int insertedCount = notificationRepository.insertIfAbsent(
+                notificationId,
+                createdAt,
+                command.receiverId(),
+                command.sourceEventId(),
+                command.type().name(),
+                command.resourceId(),
+                command.sourceEntityId(),
+                command.title(),
+                command.content(),
+                command.level().name()
+            );
+
+        if (insertedCount == 0) {
+            return false;
+        }
+
+        Notification saved = notificationRepository.findById(notificationId)
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "저장된 알림을 조회할 수 없습니다."
+                )
+            );
+
+        NotificationDto notificationDto = NotificationDto.from(saved);
+
+        eventPublisher.publishEvent(
+            new NotificationCreatedEvent(notificationDto)
+        );
+
+        return true;
     }
 
     public CursorResponse<NotificationDto> getUnreadNotifications(

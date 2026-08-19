@@ -163,6 +163,43 @@ public class WatchingSessionPresenceIntegrationTest {
     }
 
     @Test
+    @DisplayName("deleteIfOwnerSession()은 sessionId가 일치할 때만 실제로 키를 삭제한다 (subscriptionId 무관)")
+    void deleteIfOwnerSession_removesKey_onlyWhenSessionMatches() {
+        writer.swap(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(), DEFAULT_TTL);
+
+        Optional<UUID> deletedByOtherSession = writer.deleteIfOwnerSession(WATCHER_ID, "other-session");
+        assertThat(deletedByOtherSession).isEmpty();
+        assertThat(stringRedisTemplate.hasKey(KEY)).isTrue(); // 다른 연결이 현재 세션을 지우지 않음
+
+        Optional<UUID> deletedBySameSession = writer.deleteIfOwnerSession(WATCHER_ID, SESSION_ID);
+        assertThat(deletedBySameSession).contains(SNAPSHOT_ID);
+        assertThat(stringRedisTemplate.hasKey(KEY)).isFalse();
+    }
+
+    @Test
+    @DisplayName("만료된 presence에 대한 deleteIfOwnerSession()은 빈 Optional을 반환한다 (TTL이 소유권 수명)")
+    void deleteIfOwnerSession_returnsEmpty_afterTtlExpires() throws InterruptedException {
+        writer.swap(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, Instant.now(),
+            Duration.ofMillis(200));
+
+        Thread.sleep(300);
+
+        Optional<UUID> result = writer.deleteIfOwnerSession(WATCHER_ID, SESSION_ID);
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("레거시 문자열 타입 presence 키에 대해 deleteIfOwnerSession()은 예외 없이 빈 Optional을 반환한다")
+    void deleteIfOwnerSession_returnsEmpty_forLegacyStringKey_withoutWrongTypeError() {
+        stringRedisTemplate.opsForValue().set(KEY, "{\"legacy\":\"json\"}");
+
+        Optional<UUID> result = writer.deleteIfOwnerSession(WATCHER_ID, SESSION_ID);
+
+        assertThat(result).isEmpty();
+        assertThat(stringRedisTemplate.opsForValue().get(KEY)).isEqualTo("{\"legacy\":\"json\"}"); // 건드리지 않음
+    }
+
+    @Test
     @DisplayName("레거시 문자열 타입 presence 키가 있어도 WRONGTYPE 없이 swap()이 성공하고 갈아치운다")
     void swap_overwritesLegacyStringKey_withoutWrongTypeError() {
         stringRedisTemplate.opsForValue().set(KEY, "{\"legacy\":\"json\"}");
