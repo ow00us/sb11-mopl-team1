@@ -42,6 +42,7 @@ public class OutboxRelay {
     private final OutboxStatusWriter outboxStatusWriter;
     private final KafkaTemplate<String, EventEnvelope> eventKafkaTemplate;
     private final ObjectMapper objectMapper;
+    private final OutboxMetrics outboxMetrics;
 
     private final Clock clock;
 
@@ -66,10 +67,11 @@ public class OutboxRelay {
         OutboxStatusWriter outboxStatusWriter,
         KafkaTemplate<String, EventEnvelope> eventKafkaTemplate,
         ObjectMapper objectMapper,
+        OutboxMetrics outboxMetrics,
         @Value("${mopl.outbox.relay.batch-size}") int batchSize,
         @Value("${mopl.outbox.relay.ack-timeout}") Duration ackTimeout
     ) {
-        this(outboxClaimer, outboxStatusWriter, eventKafkaTemplate, objectMapper,
+        this(outboxClaimer, outboxStatusWriter, eventKafkaTemplate, objectMapper, outboxMetrics,
             batchSize, ackTimeout, Clock.systemUTC());
     }
 
@@ -79,6 +81,7 @@ public class OutboxRelay {
         OutboxStatusWriter outboxStatusWriter,
         KafkaTemplate<String, EventEnvelope> eventKafkaTemplate,
         ObjectMapper objectMapper,
+        OutboxMetrics outboxMetrics,
         int batchSize,
         Duration ackTimeout,
         Clock clock
@@ -87,6 +90,7 @@ public class OutboxRelay {
         this.outboxStatusWriter = outboxStatusWriter;
         this.eventKafkaTemplate = eventKafkaTemplate;
         this.objectMapper = objectMapper;
+        this.outboxMetrics = outboxMetrics;
         this.batchSize = batchSize;
         this.ackTimeout = ackTimeout;
         this.clock = clock;
@@ -99,6 +103,8 @@ public class OutboxRelay {
      * @return 발행 확인까지 마친 건수
      */
     public int publishClaimed() {
+        long startedAt = System.nanoTime();
+
         List<OutboxEvent> claimed = outboxClaimer.claim(owner, batchSize, clock.instant());
         if (claimed.isEmpty()) {
             return 0;
@@ -110,6 +116,10 @@ public class OutboxRelay {
                 published++;
             }
         }
+
+        // 선점이 비어 있던 주기는 재지 않습니다. 0 이 섞이면 실제 발행에 걸린 시간의
+        // 분포가 가려집니다.
+        outboxMetrics.recordBatch(claimed.size(), Duration.ofNanos(System.nanoTime() - startedAt));
 
         log.debug("Outbox relay 완료. owner={}, claimed={}, published={}",
             owner, claimed.size(), published);
