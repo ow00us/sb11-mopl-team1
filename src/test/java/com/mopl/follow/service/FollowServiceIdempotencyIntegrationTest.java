@@ -1,8 +1,11 @@
 package com.mopl.follow.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.follow.entity.Follow;
+import com.mopl.follow.event.FollowEventFactory;
 import com.mopl.follow.repository.FollowRepository;
 import com.mopl.global.config.JpaConfig;
+import com.mopl.global.outbox.OutboxRecorderImpl;
 import com.mopl.user.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -10,7 +13,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
@@ -35,7 +40,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @DataJpaTest
 @ActiveProfiles("test")
-@Import({JpaConfig.class, FollowService.class})
+@Import({
+        JpaConfig.class,
+        FollowService.class,
+        FollowEventFactory.class,
+        OutboxRecorderImpl.class,
+        FollowServiceIdempotencyIntegrationTest.TestJacksonConfig.class,
+})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Testcontainers
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -44,6 +55,16 @@ class FollowServiceIdempotencyIntegrationTest {
     @Container
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
+
+    // @DataJpaTest 는 JacksonAutoConfiguration 을 로드하지 않으므로 FollowEventFactory 가 요구하는
+    // ObjectMapper 를 테스트 컨텍스트에 명시적으로 등록한다.
+    @TestConfiguration
+    static class TestJacksonConfig {
+        @Bean
+        ObjectMapper objectMapper() {
+            return new ObjectMapper();
+        }
+    }
 
     @Autowired FollowService followService;
     @Autowired FollowRepository followRepository;

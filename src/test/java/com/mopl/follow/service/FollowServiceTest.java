@@ -1,22 +1,28 @@
 package com.mopl.follow.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.follow.dto.FollowDto;
 import com.mopl.follow.dto.FollowRecommendationItemDto;
 import com.mopl.follow.dto.FollowUserItemDto;
 import com.mopl.follow.entity.Follow;
+import com.mopl.follow.event.FollowEventFactory;
 import com.mopl.follow.repository.FollowRecommendationRow;
 import com.mopl.follow.repository.FollowRepository;
 import com.mopl.global.common.CursorResponse;
+import com.mopl.global.event.EventEnvelope;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.outbox.OutboxRecorder;
 import com.mopl.global.util.CursorUtils;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -37,6 +43,8 @@ class FollowServiceTest {
 
     @Mock FollowRepository followRepository;
     @Mock UserRepository userRepository;
+    @Mock OutboxRecorder outboxRecorder;
+    @Spy  FollowEventFactory followEventFactory = new FollowEventFactory(new ObjectMapper());
     @InjectMocks FollowService followService;
 
     private static final UUID FOLLOWER_ID = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
@@ -139,6 +147,99 @@ class FollowServiceTest {
         assertThatThrownBy(() -> followService.follow(FOLLOWER_ID, FOLLOWEE_ID))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INTERNAL_ERROR);
+    }
+
+    // 계약 docs/07-kafka-outbox-contract.md §8.1: follow.created 는 FollowService.follow() 가
+    // 최종적으로 신규 팔로우 생성으로 판정한 경우에만 Outbox 기록한다. 여기서는 호출 여부만
+    // 검증하고 envelope 필드 정확성은 후속 Envelope 커밋에서 다룬다.
+
+    @Test
+    @DisplayName("신규 팔로우 판정 시 OutboxRecorder.record 를 1회 호출한다")
+    void follow_success_new_recordsOutboxOnce() {
+        Follow saved = savedFollow(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID);
+        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(1);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.of(saved));
+
+        followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
+
+        verify(outboxRecorder, times(1)).record(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("중복 팔로우 판정 시 OutboxRecorder.record 를 호출하지 않는다")
+    void follow_duplicate_doesNotRecordOutbox() {
+        Follow existing = savedFollow(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID);
+        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(0);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.of(existing));
+
+        followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
+
+        verify(outboxRecorder, never()).record(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("동시 unfollow race 재시도로 신규 삽입 성공 시 OutboxRecorder.record 를 1회 호출한다")
+    void follow_raceRetryInserted_recordsOutboxOnce() {
+        Follow reinserted = savedFollow(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID);
+        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(0)
+                .thenReturn(1);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(reinserted));
+
+        followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
+
+        verify(outboxRecorder, times(1)).record(any(), any(), any(), any());
+    }
+
+    /**
+     * 계약 docs/07-kafka-outbox-contract.md §8.1 follow.created 카탈로그 검증.
+     * envelope 필드와 partitionKey·orderingScope·deduplicationKey 모두 계약이 정한 값이어야 한다.
+     */
+    @Test
+    @DisplayName("신규 팔로우 판정 시 계약 §8.1 필드를 채운 envelope 로 OutboxRecorder.record 를 호출한다")
+    void follow_recordsOutboxWithContractCompliantEnvelope() {
+        Instant createdAt = Instant.parse("2026-08-18T03:00:00Z");
+        Follow saved = savedFollowWithCreatedAt(FOLLOW_ID, FOLLOWER_ID, FOLLOWEE_ID, createdAt);
+        when(userRepository.existsById(FOLLOWEE_ID)).thenReturn(true);
+        when(followRepository.insertIfAbsent(FOLLOWER_ID.toString(), FOLLOWEE_ID.toString()))
+                .thenReturn(1);
+        when(followRepository.findByFollowerIdAndFolloweeId(FOLLOWER_ID, FOLLOWEE_ID))
+                .thenReturn(Optional.of(saved));
+
+        ArgumentCaptor<EventEnvelope> envelopeCaptor = ArgumentCaptor.forClass(EventEnvelope.class);
+        ArgumentCaptor<String> partitionKeyCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> orderingScopeCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> deduplicationKeyCaptor = ArgumentCaptor.forClass(String.class);
+
+        followService.follow(FOLLOWER_ID, FOLLOWEE_ID);
+
+        verify(outboxRecorder).record(
+                envelopeCaptor.capture(),
+                partitionKeyCaptor.capture(),
+                orderingScopeCaptor.capture(),
+                deduplicationKeyCaptor.capture());
+
+        EventEnvelope envelope = envelopeCaptor.getValue();
+        assertThat(envelope.eventId()).isNotNull();
+        assertThat(envelope.type()).isEqualTo("follow.created");
+        assertThat(envelope.version()).isEqualTo(1);
+        assertThat(envelope.aggregateId()).isEqualTo(FOLLOW_ID);
+        assertThat(envelope.occurredAt()).isEqualTo(createdAt);
+        assertThat(envelope.payload().get("followerId").asText()).isEqualTo(FOLLOWER_ID.toString());
+        assertThat(envelope.payload().get("followeeId").asText()).isEqualTo(FOLLOWEE_ID.toString());
+
+        assertThat(partitionKeyCaptor.getValue()).isEqualTo(FOLLOW_ID.toString());
+        assertThat(orderingScopeCaptor.getValue()).isEqualTo("NONE");
+        assertThat(deduplicationKeyCaptor.getValue()).isEqualTo("follow.created:" + FOLLOW_ID);
     }
 
     // ── unfollow ──────────────────────────────────────────────────────────────
