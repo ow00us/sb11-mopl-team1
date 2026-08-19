@@ -14,6 +14,7 @@ import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
+import com.mopl.watchingsession.service.WatchingSessionSnapshotWriter.UpsertResult;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -395,8 +396,44 @@ public class WatchingSessionService {
 
         if (renewedRows == 0) {
             // Redis는 소유권을 확인했는데 DB 행이 없는 상태
-            log.warn("presence는 존재하나 DB 행이 없어 만료 시각을 갱신하지 못함: watcherId={}, contentId={}",
-                watcherId, contentId);
+            recoverMissingSnapshot(watcherId, contentId, sessionId, subscriptionId, now);
+        }
+    }
+
+    private void recoverMissingSnapshot(UUID watcherId, UUID contentId, String sessionId, String subscriptionId, Instant now) {
+        // INSERT를 포함하는 upsert()를 사용하므로 start()와 동일하게 watcherLock으로 직렬호
+        WatcherLock watcherLock = acquireWatcherLock(watcherId);
+        try {
+            synchronized (watcherLock) {
+                UpsertResult recovered;
+                try {
+                    recovered = watchingSessionSnapshotWriter.upsert(
+                        watcherId, contentId, now.plus(watchingSessionProperties.getSessionTtl()));
+                } catch (DataIntegrityViolationException e) {
+                    // 인스턴스 간 동시 삽입 충돌 한번 재시도
+                    // TODO: 동시 INSERT 재시도 정책 구현에서 같이 리팩토링
+                    recovered = watchingSessionSnapshotWriter.upsert(
+                        watcherId, contentId, now.plus(watchingSessionProperties.getSessionTtl()));
+                } catch (RuntimeException e) {
+                    log.error("DB 행 소실 후 복구 실패: watcherId={}, contentId={}", watcherId, contentId, e);
+                    return;
+                }
+
+                boolean synced = watchingSessionPresenceWriter.updateSnapshotIdIfOwner(
+                    watcherId, sessionId, subscriptionId, recovered.snapshot().getId());
+
+                if (!synced) {
+                    // 복구 도중 소유권이 넘어감 -> 자신이 만든 세대에 한해 보상 삭제
+                    watchingSessionSnapshotWriter.deleteById(watcherId, recovered.snapshot().getId());
+                    log.warn("DB 행 재생성 도중 소유권이 이전돼 고아 행을 보상삭제함: watcherId={}", watcherId);
+                    return;
+                }
+
+                log.warn("presence는 존재하나 DB 행이 없어 재생성함(복구): watcherId={}, contentId={}, newSnapshotId={}",
+                    watcherId, contentId, recovered.snapshot().getId());
+            }
+        } finally {
+            releaseWatcherLock(watcherId);
         }
     }
 }

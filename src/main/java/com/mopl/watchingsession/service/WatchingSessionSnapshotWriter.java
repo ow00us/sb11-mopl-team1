@@ -3,6 +3,7 @@ package com.mopl.watchingsession.service;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -62,8 +63,8 @@ public class WatchingSessionSnapshotWriter {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public int deleteExpiredBefore(Instant before) {
-        return watchingSessionSnapshotRepository.deleteAllByExpiresAtBefore(before);
+    public int deleteAllByIdInAndExpiresAtBefore(Collection<UUID> ids, Instant before) {
+        return watchingSessionSnapshotRepository.deleteAllByIdInAndExpiresAtBefore(ids, before);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

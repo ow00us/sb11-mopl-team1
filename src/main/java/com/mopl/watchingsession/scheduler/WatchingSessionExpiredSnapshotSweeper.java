@@ -1,9 +1,17 @@
 package com.mopl.watchingsession.scheduler;
 
+import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
+import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
+import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import com.mopl.watchingsession.service.WatchingSessionSnapshotWriter;
 import java.time.Instant;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -26,14 +34,38 @@ import org.springframework.stereotype.Component;
 public class WatchingSessionExpiredSnapshotSweeper {
 
     private final WatchingSessionSnapshotWriter watchingSessionSnapshotWriter;
+    private final WatchingSessionPresenceWriter watchingSessionPresenceWriter;
+    private final WatchingSessionSnapshotRepository watchingSessionSnapshotRepository;
+
+    private static final int SWEEP_BATCH_SIZE = 500;
 
     @Scheduled(fixedDelayString = "#{@watchingSessionProperties.sweepInterval.toMillis()}")
     public void sweep() {
+        Instant threshold = Instant.now();
         try {
-            int deleted = watchingSessionSnapshotWriter.deleteExpiredBefore(Instant.now());
-            if (deleted > 0) {
-                log.info("만료된 시청 세션 스냅샷 정리 완료: deletedCount={}", deleted);
+            List<WatchingSessionSnapshot> candidates = watchingSessionSnapshotRepository.
+                findExpiredCandidates(threshold, PageRequest.of(0, SWEEP_BATCH_SIZE));
+            if (candidates.isEmpty()) {
+                return;
             }
+
+            Set<UUID> watcherIds = candidates.stream()
+                .map(WatchingSessionSnapshot::getWatcherId)
+                .collect(Collectors.toSet());
+            Set<UUID> alivePresence = watchingSessionPresenceWriter.findExistingWatcherIds(watcherIds);
+
+            List<UUID> orphanIds = candidates.stream()
+                .filter(c -> !alivePresence.contains(c.getWatcherId()))
+                .map(WatchingSessionSnapshot::getId)
+                .toList();
+
+            int deleted = orphanIds.isEmpty()
+                ? 0
+                :watchingSessionSnapshotWriter.deleteAllByIdInAndExpiresAtBefore(orphanIds, threshold);
+
+
+            log.info("만료된 시청 세션 스냅샷 정리 완료: candidateCount={}, deletedCount={}, skippedAlive={}",
+                candidates.size(), deleted, candidates.size() - orphanIds.size());
         } catch (RuntimeException e) {
             // 스윕 실패 자체가 스케줄러 자체를 죽이면 다음 주기까지 정리가 완전히 멈추므로 여기서 격리
             log.error("만료된 시청 세션 스냅샷 정리 실패", e);

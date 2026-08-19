@@ -26,11 +26,14 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
     @Query("DELETE FROM WatchingSessionSnapshot s WHERE s.watcherId = :watcherId AND s.id = :snapshotId")
     int deleteByWatcherIdAndId(@Param("watcherId") UUID watcherId, @Param("snapshotId") UUID snapshotId);
 
+    // 만료 후보 조회 메서드
+    @Query("SELECT s FROM WatchingSessionSnapshot s WHERE s.expiresAt < :before")
+    List<WatchingSessionSnapshot> findExpiredCandidates(@Param("before") Instant before, Pageable pageable);
     // 만료된 지 오래된 스냅샷을 일괄 삭제하는 메서드
-    // expiresAt이 지난 행은 이미 조회 경로의 expiresAt 필터로 결과에서 제외되므로, 스토리지 정리 목적
+    // 스위퍼가 presence 미존재를 확인한 id 집합만 대상
     @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("DELETE FROM WatchingSessionSnapshot s WHERE s.expiresAt < :before")
-    int deleteAllByExpiresAtBefore(@Param("before") Instant before);
+    @Query("DELETE FROM WatchingSessionSnapshot s WHERE s.id IN :ids AND s.expiresAt < :before")
+    int deleteAllByIdInAndExpiresAtBefore(@Param("ids") Collection<UUID> ids, @Param("before") Instant before);
 
     // 콘텐츠 기준 시청 세션 목록 - 첫 페이지, 최신순(내림차순)
     @Query("""
