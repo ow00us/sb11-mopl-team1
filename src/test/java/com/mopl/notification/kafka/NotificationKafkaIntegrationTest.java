@@ -5,8 +5,7 @@ import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.event.EventEnvelope;
@@ -27,6 +26,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import com.mopl.notification.service.NotificationService;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -34,7 +36,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.testcontainers.containers.KafkaContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -101,11 +103,17 @@ class NotificationKafkaIntegrationTest {
     @Autowired
     JdbcTemplate jdbcTemplate;
 
-    @Autowired
+    @MockitoSpyBean
     NotificationRepository notificationRepository;
 
-    @MockitoBean
+    @MockitoSpyBean
     SseEmitterManager sseEmitterManager;
+
+    @MockitoSpyBean
+    NotificationEventMapper notificationEventMapper;
+
+    @MockitoSpyBean
+    NotificationService notificationService;
 
     @BeforeEach
     void setUp() {
@@ -191,10 +199,7 @@ class NotificationKafkaIntegrationTest {
     }
 
     @Test
-    @DisplayName(
-        "Kafka DM 이벤트로 저장된 알림을 "
-            + "커밋 이후 SSE로 전송"
-    )
+    @DisplayName("Kafka DM 이벤트로 저장된 알림을 " + "커밋 이후 SSE로 전송")
     void consume_directMessageCreated_sendsSseAfterCommit()
         throws Exception {
 
@@ -351,5 +356,198 @@ class NotificationKafkaIntegrationTest {
             name,
             "USER"
         );
+    }
+
+    @Test
+    @DisplayName("같은 Kafka 이벤트를 중복 소비해도 " + "알림과 SSE를 한 번만 생성")
+    void consume_duplicateEvent_createsNotificationAndSseOnce()
+        throws Exception {
+
+        // given
+        EventEnvelope envelope =
+            directMessageCreatedEnvelope();
+
+        // when
+        eventKafkaTemplate.send(
+            MoplTopics.DIRECT_MESSAGE_EVENTS,
+            DIRECT_MESSAGE_ID.toString(),
+            envelope
+        ).get();
+
+        eventKafkaTemplate.send(
+            MoplTopics.DIRECT_MESSAGE_EVENTS,
+            DIRECT_MESSAGE_ID.toString(),
+            envelope
+        ).get();
+
+        // then
+        await()
+            .atMost(TIMEOUT)
+            .untilAsserted(() -> verify(
+                    notificationEventMapper,
+                    times(2)
+                ).map(
+                    any(EventEnvelope.class)
+                )
+            );
+
+        await()
+            .atMost(TIMEOUT)
+            .untilAsserted(() -> {
+                assertThat(
+                    countNotification(
+                        EVENT_ID,
+                        RECEIVER_ID
+                    )
+                ).isEqualTo(1L);
+
+                verify(
+                    sseEmitterManager,
+                    times(1)
+                ).send(
+                    eq(RECEIVER_ID),
+                    any(UUID.class),
+                    eq("notifications"),
+                    any(NotificationDto.class)
+                );
+            });
+    }
+
+    @Test
+    @DisplayName("Kafka 알림 저장이 실패하면 " + "SSE를 전송하지 않음")
+    void consume_storageFailure_doesNotSendSse()
+        throws Exception {
+
+        // given
+        EventEnvelope envelope =
+            directMessageCreatedEnvelope();
+
+        doThrow(
+            new DataIntegrityViolationException(
+                "알림 저장 실패"
+            )
+        ).when(notificationRepository)
+            .insertIfAbsent(
+                any(UUID.class),
+                any(Instant.class),
+                any(UUID.class),
+                any(UUID.class),
+                anyString(),
+                any(UUID.class),
+                any(UUID.class),
+                anyString(),
+                anyString(),
+                anyString()
+            );
+
+        // when
+        eventKafkaTemplate.send(
+            MoplTopics.DIRECT_MESSAGE_EVENTS,
+            DIRECT_MESSAGE_ID.toString(),
+            envelope
+        ).get();
+
+        // then
+        await()
+            .atMost(TIMEOUT)
+            .untilAsserted(() ->
+                verify(
+                    notificationRepository,
+                    times(4)
+                ).insertIfAbsent(
+                    any(UUID.class),
+                    any(Instant.class),
+                    any(UUID.class),
+                    any(UUID.class),
+                    anyString(),
+                    any(UUID.class),
+                    any(UUID.class),
+                    anyString(),
+                    anyString(),
+                    anyString()
+                )
+            );
+
+        assertThat(
+            countNotification(
+                EVENT_ID,
+                RECEIVER_ID
+            )
+        ).isZero();
+
+        verify(
+            sseEmitterManager,
+            never()
+        ).send(
+            any(UUID.class),
+            any(UUID.class),
+            anyString(),
+            any()
+        );
+    }
+
+    @Test
+    @DisplayName("SSE 연결이 종료되어도 " + "Kafka 알림 저장 결과를 유지")
+    void consume_sseConnectionFailure_preservesNotification()
+        throws Exception {
+
+        // given
+        SseEmitter emitter =
+            sseEmitterManager.subscribe(
+                RECEIVER_ID
+            );
+
+        emitter.complete();
+
+        EventEnvelope envelope =
+            directMessageCreatedEnvelope();
+
+        // when
+        eventKafkaTemplate.send(
+            MoplTopics.DIRECT_MESSAGE_EVENTS,
+            DIRECT_MESSAGE_ID.toString(),
+            envelope
+        ).get();
+
+        // then
+        await()
+            .atMost(TIMEOUT)
+            .untilAsserted(() ->
+                assertThat(
+                    countNotification(
+                        EVENT_ID,
+                        RECEIVER_ID
+                    )
+                ).isEqualTo(1L)
+            );
+
+        verify(
+            sseEmitterManager,
+            times(1)
+        ).send(
+            eq(RECEIVER_ID),
+            any(UUID.class),
+            eq("notifications"),
+            any(NotificationDto.class)
+        );
+
+        await()
+            .during(Duration.ofSeconds(2))
+            .atMost(TIMEOUT)
+            .untilAsserted(() ->
+                verify(
+                    notificationService,
+                    times(1)
+                ).createIfAbsent(
+                    any()
+                )
+            );
+
+        assertThat(
+            countNotification(
+                EVENT_ID,
+                RECEIVER_ID
+            )
+        ).isEqualTo(1L);
     }
 }
