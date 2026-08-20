@@ -1,8 +1,11 @@
 package com.mopl.playlist.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.common.CursorResponse;
+import com.mopl.global.event.EventEnvelope;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.outbox.OutboxRecorder;
 import com.mopl.global.util.CursorUtils;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
@@ -12,6 +15,7 @@ import com.mopl.content.entity.ContentType;
 import com.mopl.playlist.entity.Playlist;
 import com.mopl.playlist.entity.PlaylistContent;
 import com.mopl.playlist.entity.PlaylistSubscription;
+import com.mopl.playlist.event.PlaylistSubscriptionEventFactory;
 import com.mopl.content.repository.ContentRepository;
 import com.mopl.playlist.repository.PlaylistContentRepository;
 import com.mopl.playlist.repository.PlaylistRepository;
@@ -25,6 +29,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
@@ -52,6 +57,9 @@ class PlaylistServiceTest {
     @Mock ContentRepository contentRepository;
     @Mock PlaylistContentSaver playlistContentSaver;
     @Mock UserRepository userRepository;
+    @Mock OutboxRecorder outboxRecorder;
+    @Spy PlaylistSubscriptionEventFactory playlistSubscriptionEventFactory =
+            new PlaylistSubscriptionEventFactory(new ObjectMapper());
 
     @InjectMocks
     PlaylistServiceImpl playlistService;
@@ -398,10 +406,15 @@ class PlaylistServiceTest {
     @Test
     @DisplayName("구독 성공 시 upsert rows=1 이면 subscriberCount 를 증가시킨다")
     void subscribe_success() {
+        UUID subscriptionId = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
         Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        PlaylistSubscription subscription = savedSubscriptionWithCreatedAt(
+                subscriptionId, PLAYLIST_ID, OTHER_ID, Instant.now());
         when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
         when(subscriptionRepository.insertIfAbsent(PLAYLIST_ID.toString(), OTHER_ID.toString()))
                 .thenReturn(1);
+        when(subscriptionRepository.findByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
+                .thenReturn(Optional.of(subscription));
 
         playlistService.subscribe(PLAYLIST_ID, OTHER_ID);
 
@@ -433,6 +446,99 @@ class PlaylistServiceTest {
         playlistService.subscribe(PLAYLIST_ID, OTHER_ID);
 
         verify(playlistRepository, never()).incrementSubscriberCount(any(UUID.class));
+    }
+
+    // 계약 docs/07-kafka-outbox-contract.md §8.2: playlist.subscription.created 는
+    // PlaylistServiceImpl.subscribe() 가 INSERT 성공(rows=1) 으로 판정한 경우에만 Outbox 기록한다.
+    // 여기서는 호출 여부만 검증하고 envelope 필드 정확성은 후속 Envelope 커밋에서 다룬다.
+
+    @Test
+    @DisplayName("구독 신규 판정 시 OutboxRecorder.record 를 1회 호출한다")
+    void subscribe_success_recordsOutboxOnce() {
+        UUID subscriptionId = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        PlaylistSubscription subscription = savedSubscriptionWithCreatedAt(
+                subscriptionId, PLAYLIST_ID, OTHER_ID, Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(subscriptionRepository.insertIfAbsent(PLAYLIST_ID.toString(), OTHER_ID.toString()))
+                .thenReturn(1);
+        when(subscriptionRepository.findByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
+                .thenReturn(Optional.of(subscription));
+
+        playlistService.subscribe(PLAYLIST_ID, OTHER_ID);
+
+        verify(outboxRecorder, times(1)).record(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("중복 구독 판정 시 OutboxRecorder.record 를 호출하지 않는다")
+    void subscribe_duplicate_doesNotRecordOutbox() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(subscriptionRepository.insertIfAbsent(PLAYLIST_ID.toString(), OTHER_ID.toString()))
+                .thenReturn(0);
+
+        playlistService.subscribe(PLAYLIST_ID, OTHER_ID);
+
+        verify(outboxRecorder, never()).record(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("자기 자신 플레이리스트 구독 차단 시 OutboxRecorder.record 를 호출하지 않는다")
+    void subscribe_fail_owner_doesNotRecordOutbox() {
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+
+        assertThatThrownBy(() -> playlistService.subscribe(PLAYLIST_ID, OWNER_ID))
+                .isInstanceOf(BusinessException.class);
+
+        verify(outboxRecorder, never()).record(any(), any(), any(), any());
+    }
+
+    /**
+     * 계약 docs/07-kafka-outbox-contract.md §8.2 playlist.subscription.created 카탈로그 검증.
+     * envelope 필드와 partitionKey·orderingScope·deduplicationKey 모두 계약이 정한 값이어야 한다.
+     */
+    @Test
+    @DisplayName("구독 신규 판정 시 계약 §8.2 필드를 채운 envelope 로 OutboxRecorder.record 를 호출한다")
+    void subscribe_recordsOutboxWithContractCompliantEnvelope() {
+        UUID subscriptionId = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        Instant createdAt = Instant.parse("2026-08-19T05:00:00Z");
+        Playlist playlist = savedPlaylist(PLAYLIST_ID, OWNER_ID, "제목", "설명", Instant.now());
+        PlaylistSubscription subscription = savedSubscriptionWithCreatedAt(
+                subscriptionId, PLAYLIST_ID, OTHER_ID, createdAt);
+        when(playlistRepository.findById(PLAYLIST_ID)).thenReturn(Optional.of(playlist));
+        when(subscriptionRepository.insertIfAbsent(PLAYLIST_ID.toString(), OTHER_ID.toString()))
+                .thenReturn(1);
+        when(subscriptionRepository.findByPlaylistIdAndSubscriberId(PLAYLIST_ID, OTHER_ID))
+                .thenReturn(Optional.of(subscription));
+
+        ArgumentCaptor<EventEnvelope> envelopeCaptor = ArgumentCaptor.forClass(EventEnvelope.class);
+        ArgumentCaptor<String> partitionKeyCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> orderingScopeCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> deduplicationKeyCaptor = ArgumentCaptor.forClass(String.class);
+
+        playlistService.subscribe(PLAYLIST_ID, OTHER_ID);
+
+        verify(outboxRecorder).record(
+                envelopeCaptor.capture(),
+                partitionKeyCaptor.capture(),
+                orderingScopeCaptor.capture(),
+                deduplicationKeyCaptor.capture());
+
+        EventEnvelope envelope = envelopeCaptor.getValue();
+        assertThat(envelope.eventId()).isNotNull();
+        assertThat(envelope.type()).isEqualTo("playlist.subscription.created");
+        assertThat(envelope.version()).isEqualTo(1);
+        assertThat(envelope.aggregateId()).isEqualTo(subscriptionId);
+        assertThat(envelope.occurredAt()).isEqualTo(createdAt);
+        assertThat(envelope.payload().get("playlistId").asText()).isEqualTo(PLAYLIST_ID.toString());
+        assertThat(envelope.payload().get("playlistOwnerId").asText()).isEqualTo(OWNER_ID.toString());
+        assertThat(envelope.payload().get("subscriberId").asText()).isEqualTo(OTHER_ID.toString());
+
+        assertThat(partitionKeyCaptor.getValue()).isEqualTo(subscriptionId.toString());
+        assertThat(orderingScopeCaptor.getValue()).isEqualTo("NONE");
+        assertThat(deduplicationKeyCaptor.getValue()).isEqualTo("playlist.subscription.created:" + subscriptionId);
     }
 
     @Test

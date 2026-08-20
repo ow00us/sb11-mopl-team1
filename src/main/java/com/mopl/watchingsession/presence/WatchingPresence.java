@@ -9,6 +9,7 @@ public record WatchingPresence(
     UUID contentId,
     String sessionId,
     String subscriptionId,
-    Instant startedAt
+    Instant startedAt,
+    Instant snapshotUpdatedAt
 ) {
 }

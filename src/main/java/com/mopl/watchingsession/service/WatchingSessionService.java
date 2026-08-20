@@ -1,11 +1,14 @@
 package com.mopl.watchingsession.service;
 
+import static com.mopl.global.util.InstantPrecisionUtils.normalizeToMicros;
+
 import com.mopl.content.entity.Content;
 import com.mopl.content.repository.ContentRepository;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.util.CursorUtils;
+import com.mopl.global.util.DbConflictUtils;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.config.WatchingSessionProperties;
@@ -13,8 +16,8 @@ import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
+import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter.DeletedSnapshot;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
-import com.mopl.watchingsession.service.WatchingSessionSnapshotWriter.UpsertResult;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +25,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -129,24 +133,19 @@ public class WatchingSessionService {
 
                 // DB 스냅샷 갱신
                 WatchingSessionSnapshotWriter.UpsertResult upsertResult;
-                try {
-                    upsertResult = watchingSessionSnapshotWriter.upsert(watcherId, contentId,
-                        expiresAt);
-                } catch (DataIntegrityViolationException e) {
-                    upsertResult = watchingSessionSnapshotWriter.upsert(watcherId, contentId,
-                        expiresAt);
-                }
+                upsertResult = retryOnceOnDuplicateKeyConflict(
+                    () -> watchingSessionSnapshotWriter.upsert(watcherId, contentId, expiresAt));
                 snapshot = upsertResult.snapshot();
 
                 try {
                     // presence가 소유권의 원본이므로 실패를 삼키지 않고 그대로 전파
                     previousPresence = watchingSessionPresenceWriter.swap(
-                        watcherId, snapshot.getId(), contentId, sessionId, subscriptionId, snapshot.getCreatedAt(), watchingSessionProperties.getPresenceTtl());
+                        watcherId, snapshot.getId(), contentId, sessionId, subscriptionId, snapshot.getCreatedAt(), normalizeToMicros(snapshot.getUpdatedAt()), watchingSessionProperties.getPresenceTtl());
                 } catch (RuntimeException presenceFailure) {
                     if (upsertResult.isNewIdentity()) {
                         // snapshot.getId()로 조건부 삭제. watcherId만으로 지우면 그 사이 다른
                         // 인스턴스가 만든 새 세대를 함께 지울 수 있다.
-                        watchingSessionSnapshotWriter.deleteById(watcherId, snapshot.getId());
+                        watchingSessionSnapshotWriter.deleteById(watcherId, snapshot.getId(), normalizeToMicros(snapshot.getUpdatedAt()));
                     }
                     throw presenceFailure;
                 }
@@ -179,16 +178,16 @@ public class WatchingSessionService {
         WatcherLock watcherLock = acquireWatcherLock(watcherId);
         try {
             synchronized (watcherLock) {
-                Optional<UUID> deletedSnapshotId = watchingSessionPresenceWriter.deleteIfOwner(
+                Optional<DeletedSnapshot> deleted = watchingSessionPresenceWriter.deleteIfOwner(
                     watcherId, currentSessionId, currentSubscriptionId);
-                if (deletedSnapshotId.isEmpty()) {
+                if (deleted.isEmpty()) {
                     return false;
                 }
 
-                int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, deletedSnapshotId.get());
+                int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, deleted.get().snapshotId(), deleted.get().snapshotUpdatedAt());
                 if (deletedRows == 0) {
                     log.warn("presence 소유권 확인 후 DB 스냅샷이 이미 교체됨, 퇴장 처리 생략: "
-                        + "watcherId={}, snapshotId={}", watcherId, deletedSnapshotId.get());
+                        + "watcherId={}, snapshotId={}", watcherId, deleted.get().snapshotId());
                     return false;
                 }
                 return true;
@@ -211,17 +210,17 @@ public class WatchingSessionService {
         WatcherLock watcherLock = acquireWatcherLock(watcherId);
         try {
             synchronized (watcherLock) {
-                Optional<UUID> deletedSnapshotId = watchingSessionPresenceWriter.deleteIfOwnerSession(
+                Optional<DeletedSnapshot> deleted = watchingSessionPresenceWriter.deleteIfOwnerSession(
                     watcherId, sessionId);
-                if (deletedSnapshotId.isEmpty()) {
+                if (deleted.isEmpty()) {
                     return Optional.empty();
                 }
 
-                UUID snapshotId = deletedSnapshotId.get();
+                UUID snapshotId = deleted.get().snapshotId();
                 WatchingSessionSnapshot snapshot = watchingSessionSnapshotRepository.findById(snapshotId)
                     .orElse(null);
 
-                int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, snapshotId);
+                int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, snapshotId,  deleted.get().snapshotUpdatedAt());
                 if (deletedRows == 0 || snapshot == null) {
                     log.warn("presence 소유권 확인 후 DB 스냅샷이 이미 교체됨, 퇴장 처리 생략: "
                         + "watcherId={}, snapshotId={}", watcherId, snapshotId);
@@ -407,16 +406,8 @@ public class WatchingSessionService {
             synchronized (watcherLock) {
                 Optional<WatchingSessionSnapshot> recovered;
                 try {
-                    try {
-                        recovered = watchingSessionSnapshotWriter.insertIfAbsent(
-                            watcherId, contentId, now.plus(watchingSessionProperties.getSessionTtl()));
-                    } catch (DataIntegrityViolationException e) {
-                        // TODO: 동시 INSERT 재시도 정책 구현에서 같이 리팩토링
-                        // 인스턴스 간 동시 삽입 충돌 - 한 번 재시도. 재시도 자체가 실패하면
-                        // 바깥 catch(RuntimeException)로 넘어가야 하므로 여기서 한 번 더 감싼다.
-                        recovered = watchingSessionSnapshotWriter.insertIfAbsent(
-                            watcherId, contentId, now.plus(watchingSessionProperties.getSessionTtl()));
-                    }
+                    recovered = retryOnceOnDuplicateKeyConflict(() -> watchingSessionSnapshotWriter.insertIfAbsent(
+                        watcherId, contentId, now.plus(watchingSessionProperties.getSessionTtl())));
                 } catch (RuntimeException e) {
                     log.error("DB 행 소실 후 복구 실패: watcherId={}, contentId={}", watcherId, contentId, e);
                     return;
@@ -431,11 +422,11 @@ public class WatchingSessionService {
 
                 WatchingSessionSnapshot snapshot = recovered.get();
                 boolean synced = watchingSessionPresenceWriter.updateSnapshotIdIfOwner(
-                    watcherId, sessionId, subscriptionId, snapshot.getId());
+                    watcherId, sessionId, subscriptionId, snapshot.getId(), normalizeToMicros(snapshot.getUpdatedAt()));
 
                 if (!synced) {
                     // 방금 삽입한 행이 확실하므로(insertIfAbsent는 기존 행을 건드리지 않음) 안전하게 보상 삭제할 수 있다.
-                    watchingSessionSnapshotWriter.deleteById(watcherId, snapshot.getId());
+                    watchingSessionSnapshotWriter.deleteById(watcherId, snapshot.getId(), normalizeToMicros(snapshot.getUpdatedAt()));
                     log.warn("DB 행 재생성 직후 소유권이 이전돼 고아 행을 보상 삭제함: watcherId={}", watcherId);
                     return;
                 }
@@ -445,6 +436,29 @@ public class WatchingSessionService {
             }
         } finally {
             releaseWatcherLock(watcherId);
+        }
+    }
+
+    /**
+     * 중복키 충돌(DataIntegrityViolationException)만 1회 재시도
+     * 중복키가 아닌 무결성 위반(FK 위반 등)은 재시도 없이 즉시 전파한다.
+     * backoff 없이 즉시 재시도한다
+     */
+    private <T> T retryOnceOnDuplicateKeyConflict(Supplier<T> operation) {
+        DataIntegrityViolationException firstFailure;
+        try {
+            return operation.get();
+        } catch (DataIntegrityViolationException e) {
+            if (!DbConflictUtils.isDuplicateKeyViolation(e)) {
+                throw e;
+            }
+            firstFailure = e;
+        }
+        try {
+            return operation.get();
+        } catch (RuntimeException retryFailure) {
+            retryFailure.addSuppressed(firstFailure);
+            throw retryFailure;
         }
     }
 }

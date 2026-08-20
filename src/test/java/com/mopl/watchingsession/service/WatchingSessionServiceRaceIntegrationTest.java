@@ -1,6 +1,8 @@
 package com.mopl.watchingsession.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 
 import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentType;
@@ -9,17 +11,21 @@ import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
+import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -58,6 +64,9 @@ class WatchingSessionServiceRaceIntegrationTest {
 
     @Autowired
     private WatchingSessionSnapshotRepository snapshotRepository;
+
+    @Autowired
+    private WatchingSessionPresenceWriter watchingSessionPresenceWriter;
 
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
@@ -144,5 +153,62 @@ class WatchingSessionServiceRaceIntegrationTest {
         assertThat(ended.get().content().id()).isEqualTo(contentB.getId()); // A가 아니라 B여야 함
         assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty();
         assertThat(stringRedisTemplate.hasKey(presenceKey(watcherId))).isFalse();
+    }
+
+    @Test
+    @DisplayName("정상 end()는 현재 세대 토큰과 일치해 행을 삭제하고 LEAVE 대상 DTO를 반환한다")
+    void end_deletesCurrentGeneration_whenTokenMatches() {
+        givenWatcherAndContent();
+        watchingSessionService.start(watcherId, contentId, SESSION_ID, SUBSCRIPTION_ID);
+
+        boolean ended = watchingSessionService.end(watcherId, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(ended).isTrue();
+        assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("start() 이후 presence에 기록된 세대 토큰은 DB의 updatedAt과 문자열 비교까지 정확히 일치한다")
+    void start_presenceGenerationToken_roundTripsExactlyWithDbUpdatedAt() {
+        givenWatcherAndContent();
+
+        watchingSessionService.start(watcherId, contentId, SESSION_ID, SUBSCRIPTION_ID);
+
+        Instant dbUpdatedAt = snapshotRepository.findByWatcherId(watcherId).orElseThrow().getUpdatedAt();
+        // presence Redis Hash를 직접 조회해 저장된 문자열이 DB 값과 정확히 같은지 확인
+        String presenceToken = stringRedisTemplate.opsForHash()
+            .get("mopl:presence:watcher:" + watcherId, "snapshotUpdatedAt").toString();
+
+        assertThat(Instant.parse(presenceToken)).isEqualTo(dbUpdatedAt);
+    }
+
+    @Test
+    @DisplayName("presence 소유권 확인 직후 다른 인스턴스의 재구독이 끼어들어도 end()는 false를 반환하고 새 세대 행은 살아남는다")
+    void end_returnsFalse_andPreservesNewGeneration_whenResubscribeRacesBetweenPresenceCheckAndDbDelete() {
+        givenWatcherAndContent();
+        watchingSessionService.start(watcherId, contentId, SESSION_ID, SUBSCRIPTION_ID);
+        UUID snapshotId = snapshotRepository.findByWatcherId(watcherId).orElseThrow().getId();
+
+        // end()가 presence 소유권 확인(deleteIfOwner)을 마친 직후, DB 삭제를 실행하기 전 사이에
+        // 다른 인스턴스의 재구독이 끼어드는 좁은 시간창을 결정적으로 재현하기 위해 spy로 개입한다.
+        WatchingSessionPresenceWriter realWriter = watchingSessionPresenceWriter;
+        WatchingSessionPresenceWriter spyWriter = Mockito.spy(realWriter);
+        doAnswer(invocation -> {
+            Object result = invocation.callRealMethod(); // 실제 소유권 확인·삭제는 그대로 수행
+            // 소유권 확인이 끝난 이 시점에 동일 콘텐츠로 재구독 - 세대 2, DB 행 refresh
+            watchingSessionService.start(watcherId, contentId, SESSION_ID, "sub-race");
+            return result;
+        }).when(spyWriter).deleteIfOwner(eq(watcherId), eq(SESSION_ID), eq(SUBSCRIPTION_ID));
+
+        ReflectionTestUtils.setField(watchingSessionService, "watchingSessionPresenceWriter", spyWriter);
+        try {
+            boolean ended = watchingSessionService.end(watcherId, SESSION_ID, SUBSCRIPTION_ID);
+
+            // end()가 확보한 토큰은 세대 1의 것이라 세대 2로 바뀐 DB 행 삭제 조건과 불일치 -> 0행 삭제 -> false
+            assertThat(ended).isFalse();
+            assertThat(snapshotRepository.findById(snapshotId)).isPresent(); // 세대 2 행 생존
+        } finally {
+            ReflectionTestUtils.setField(watchingSessionService, "watchingSessionPresenceWriter", realWriter);
+        }
     }
 }

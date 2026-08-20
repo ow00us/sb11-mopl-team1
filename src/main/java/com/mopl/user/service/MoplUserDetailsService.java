@@ -35,6 +35,24 @@ public class MoplUserDetailsService implements UserDetailsService {
                 "등록되지 않은 이메일입니다."
             ));
 
+        /*
+         * OAuth로만 가입한 사용자는 로컬 비밀번호가 없으므로
+         * 이메일·비밀번호 인증을 사용할 수 없다.
+         *
+         * null이나 비어 있는 비밀번호 해시를 UserDetails로 전달하면
+         * PasswordEncoder 구현에 따라 예외 또는 불필요한 경고가 발생할 수 있다.
+         *
+         * UsernameNotFoundException을 사용하면 Spring Security가
+         * 존재하지 않는 사용자와 동일한 BadCredentialsException으로 변환하므로
+         * 외부 응답만으로 계정 가입 방식도 구분할 수 없다.
+         */
+        if (user.getPasswordHash() == null
+            || user.getPasswordHash().isBlank()) {
+            throw new UsernameNotFoundException(
+                "이메일·비밀번호 로그인을 사용할 수 없는 계정입니다."
+            );
+        }
+
         return new MoplUserDetails(user);
     }
 }
