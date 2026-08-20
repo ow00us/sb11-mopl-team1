@@ -4,12 +4,14 @@ import com.mopl.follow.dto.FollowDto;
 import com.mopl.follow.dto.FollowRecommendationItemDto;
 import com.mopl.follow.dto.FollowUserItemDto;
 import com.mopl.follow.entity.Follow;
+import com.mopl.follow.event.FollowEventFactory;
 import com.mopl.follow.repository.FollowRecommendationRow;
 import com.mopl.follow.repository.FollowRepository;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.common.UserSummary;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.outbox.OutboxRecorder;
 import com.mopl.global.util.CursorUtils;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
@@ -36,6 +38,8 @@ public class FollowService {
 
     private final FollowRepository followRepository;
     private final UserRepository userRepository;
+    private final OutboxRecorder outboxRecorder;
+    private final FollowEventFactory followEventFactory;
 
     @Transactional
     public FollowResult follow(UUID followerId, UUID followeeId) {
@@ -62,6 +66,9 @@ public class FollowService {
                 Follow refetched = followRepository
                         .findByFollowerIdAndFolloweeId(followerId, followeeId)
                         .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_ERROR));
+                if (retryInserted == 1) {
+                    recordFollowCreatedEvent(refetched);
+                }
                 return new FollowResult(FollowDto.from(refetched), retryInserted == 1);
             }
             // inserted=1 인데 조회가 비어 있으면 방금 넣은 것이 사라진 셈이라
@@ -69,7 +76,24 @@ public class FollowService {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR);
         }
 
-        return new FollowResult(FollowDto.from(found.get()), inserted == 1);
+        Follow follow = found.get();
+        if (inserted == 1) {
+            recordFollowCreatedEvent(follow);
+        }
+        return new FollowResult(FollowDto.from(follow), inserted == 1);
+    }
+
+    // 계약 docs/07-kafka-outbox-contract.md §8.1
+    // - envelope 조립은 FollowEventFactory 가 담당
+    // - partitionKey: followId, orderingScope: NONE
+    // - deduplicationKey: follow.created:<followId>
+    private void recordFollowCreatedEvent(Follow follow) {
+        UUID followId = follow.getId();
+        outboxRecorder.record(
+                followEventFactory.createFollowCreatedEnvelope(follow),
+                followId.toString(),
+                "NONE",
+                "follow.created:" + followId);
     }
 
     @Transactional
