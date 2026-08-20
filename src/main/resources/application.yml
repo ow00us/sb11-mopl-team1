@@ -37,6 +37,9 @@ spring:
     redis:
       timeout: 2s
       connect-timeout: 1s
+  elasticsearch:
+    connection-timeout: 3s
+    socket-timeout: 5s
   jpa:
     hibernate:
       ddl-auto: validate
@@ -117,6 +120,12 @@ sportsdb:
   api-key: ${SPORTSDB_API_KEY}
   league-ids: 4569,4328,4335,4331,4332,4334
 
+content-search:
+  watcher-count-refresh-interval-millis: 60000
+  retry:
+    interval-millis: 60000
+    max-attempts: 5
+
 external-content-batch:
   tmdb-max-pages: 5
   sportsdb-past-days: 3
@@ -195,6 +204,8 @@ spring:
     redis:
       host: localhost
       port: 6379
+  elasticsearch:
+    uris: http://localhost:9200
   flyway:
     enabled: true
     baseline-on-migrate: true
@@ -213,6 +224,8 @@ spring:
     redis:
       host: ${SPRING_DATA_REDIS_HOST}
       port: ${SPRING_DATA_REDIS_PORT}
+  elasticsearch:
+    uris: ${ELASTICSEARCH_URIS}
   jpa:
     properties:
       hibernate:

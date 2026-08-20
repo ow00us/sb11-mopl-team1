@@ -19,6 +19,8 @@ import com.mopl.content.dto.ContentUpdateRequest;
 import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentType;
 import com.mopl.content.repository.ContentRepository;
+import com.mopl.content.search.ContentSearchDeleteEvent;
+import com.mopl.content.search.ContentSearchSyncEvent;
 import com.mopl.content.storage.ThumbnailStorage;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
@@ -38,6 +40,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -53,6 +56,9 @@ class ContentServiceTest {
 
     @Mock
     WatchingSessionSnapshotRepository watchingSessionSnapshotRepository;
+
+    @Mock
+    ApplicationEventPublisher eventPublisher;
 
     @InjectMocks
     ContentServiceImpl contentService;
@@ -86,6 +92,7 @@ class ContentServiceTest {
         assertThat(result.thumbnailUrl()).isEqualTo(THUMBNAIL_URL);
         verify(thumbnailStorage).upload(thumbnail);
         verify(contentRepository).save(any(Content.class));
+        verify(eventPublisher).publishEvent(new ContentSearchSyncEvent(saved.getId()));
     }
 
     @Test
@@ -481,6 +488,7 @@ class ContentServiceTest {
 
         assertThat(result.title()).isEqualTo("새 제목");
         verify(thumbnailStorage, never()).upload(any());
+        verify(eventPublisher).publishEvent(new ContentSearchSyncEvent(CONTENT_ID));
     }
 
     @Test
@@ -547,6 +555,7 @@ class ContentServiceTest {
         contentService.delete(CONTENT_ID);
 
         verify(contentRepository).delete(content);
+        verify(eventPublisher).publishEvent(new ContentSearchDeleteEvent(CONTENT_ID));
     }
 
     @Test
