@@ -22,9 +22,17 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
     void deleteByWatcherId(UUID watcherId);
 
     // 조건부 삭제 (다중 인스턴스 세대 레이스 방지용) - 다른 인스턴스가 만든 새 세대는 건드리지 않음
+    // expectedUpdatedAt이 null이면(구버전 presence 폴백) 세대 비교를 건너뜀
     @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("DELETE FROM WatchingSessionSnapshot s WHERE s.watcherId = :watcherId AND s.id = :snapshotId")
-    int deleteByWatcherIdAndId(@Param("watcherId") UUID watcherId, @Param("snapshotId") UUID snapshotId);
+    @Query("""
+            DELETE FROM WatchingSessionSnapshot s
+            WHERE s.watcherId = :watcherId AND s.id = :snapshotId
+            AND (cast(:expectedUpdatedAt as timestamp) IS NULL OR s.updatedAt = :expectedUpdatedAt)
+          """)
+    int deleteByWatcherIdAndId(
+        @Param("watcherId") UUID watcherId,
+        @Param("snapshotId") UUID snapshotId,
+        @Param("expectedUpdatedAt") Instant expectedUpdatedAt);
 
     // expiresAt, id 기준 안정 정렬 + 키셋 커서. cursorExpiresAt가 null이면 처음부터 조회한다.
     // (기존 findByContentIdAfterAsc와 동일한 커서 관례를 따름)
