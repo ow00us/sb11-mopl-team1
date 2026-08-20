@@ -3,9 +3,11 @@ package com.mopl.playlist.service;
 import com.mopl.content.repository.ContentRepository;
 import com.mopl.global.common.ContentSummary;
 import com.mopl.global.config.JpaConfig;
+import com.mopl.global.outbox.OutboxRecorderImpl;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.entity.Playlist;
 import com.mopl.playlist.entity.PlaylistContent;
+import com.mopl.playlist.event.PlaylistSubscriptionEventFactory;
 import com.mopl.playlist.repository.PlaylistContentRepository;
 import com.mopl.playlist.repository.PlaylistRepository;
 import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
@@ -40,7 +42,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 // loadContentsBatch(목록 조회 경로)와 loadContents(단건 조회 경로)의 태그 로딩 방식을 통일하는 회귀 방지 테스트.
 @DataJpaTest
 @ActiveProfiles("test")
-@Import({JpaConfig.class, PlaylistContentSaver.class, PlaylistServiceImpl.class})
+@Import({
+        JpaConfig.class,
+        PlaylistContentSaver.class,
+        PlaylistServiceImpl.class,
+        OutboxRecorderImpl.class,
+        PlaylistSubscriptionEventFactory.class,
+        PlaylistIntegrationTestConfig.class,
+})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Testcontainers
 @Transactional(propagation = Propagation.NOT_SUPPORTED)

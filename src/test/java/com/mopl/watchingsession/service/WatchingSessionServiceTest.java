@@ -30,6 +30,7 @@ import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import com.mopl.watchingsession.service.WatchingSessionSnapshotWriter.UpsertResult;
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -43,6 +44,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -89,21 +91,21 @@ public class WatchingSessionServiceTest {
     void setUp() {
         presenceStore.clear();
         WatchingSessionProperties watchingSessionProperties = new WatchingSessionProperties();
-        watchingSessionProperties.setSessionTtl(Duration.ofMinutes(30));
+        watchingSessionProperties.setSessionTtl(Duration.ofMinutes(3));
         watchingSessionProperties.setPresenceTtl(Duration.ofSeconds(60));
 
         watchingSessionService = new WatchingSessionService(
             watchingSessionProperties, watchingSessionSnapshotRepository, contentRepository,
             userRepository, watchingSessionSnapshotWriter, watchingSessionPresenceWriter);
 
-        when(watchingSessionSnapshotWriter.deleteById(any(), any())).thenReturn(1);
+        when(watchingSessionSnapshotWriter.deleteById(any(), any(), any())).thenReturn(1);
 
-        when(watchingSessionPresenceWriter.swap(any(), any(), any(), any(), any(), any(), any()))
+        when(watchingSessionPresenceWriter.swap(any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(invocation -> {
                 UUID watcherId = invocation.getArgument(0);
                 WatchingPresence next = new WatchingPresence(
                     invocation.getArgument(1), watcherId, invocation.getArgument(2),
-                    invocation.getArgument(3), invocation.getArgument(4), invocation.getArgument(5));
+                    invocation.getArgument(3), invocation.getArgument(4), invocation.getArgument(5), invocation.getArgument(6));
                 WatchingPresence previous = presenceStore.put(watcherId, next);
                 return Optional.ofNullable(previous);
             });
@@ -120,7 +122,8 @@ public class WatchingSessionServiceTest {
                     return Optional.empty();
                 }
                 presenceStore.remove(watcherId);
-                return Optional.of(current.snapshotId());
+                return Optional.of(new WatchingSessionPresenceWriter.DeletedSnapshot(
+                    current.snapshotId(), current.snapshotUpdatedAt()));
             });
 
         when(watchingSessionPresenceWriter.deleteIfOwnerSession(any(), any()))
@@ -132,7 +135,8 @@ public class WatchingSessionServiceTest {
                     return Optional.empty();
                 }
                 presenceStore.remove(watcherId);
-                return Optional.of(current.snapshotId());
+                return Optional.of(new WatchingSessionPresenceWriter.DeletedSnapshot(
+                    current.snapshotId(), current.snapshotUpdatedAt()));
             });
 
         when(watchingSessionPresenceWriter.renewIfOwner(any(), any(), any(), any()))
@@ -170,6 +174,11 @@ public class WatchingSessionServiceTest {
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(userRepository.findAllById(any())).thenReturn(List.of(mockUser));
+    }
+
+    private static DataIntegrityViolationException duplicateKeyViolation() {
+        return new DataIntegrityViolationException(
+            "동시 삽입 충돌", new SQLException("중복", "23505"));
     }
 
     private WatchingSessionSnapshot createSnapshotFixture(UUID id, UUID watcherId, UUID contentId, Instant createdAt, Instant updatedAt, Instant expiresAt) {
@@ -266,14 +275,14 @@ public class WatchingSessionServiceTest {
 
         // 동일 콘텐츠 refresh -> isNewIdentity=false
         mockUpsert(CONTENT_ID, FIRST_CREATED_AT, false);
-        when(watchingSessionPresenceWriter.swap(any(), any(), any(), any(), any(), any(), any()))
+        when(watchingSessionPresenceWriter.swap(any(), any(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("Redis 연결 끊김"));
 
         assertThatThrownBy(() ->
             watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, OTHER_SUBSCRIPTION_ID))
             .isInstanceOf(RuntimeException.class);
 
-        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any());
+        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any(), any());
     }
 
     @Test
@@ -281,15 +290,20 @@ public class WatchingSessionServiceTest {
     void start_deletesDbRow_whenSwapFailsDuringNewInsert() {
         mockContentExists(CONTENT_ID);
         mockUserExists(WATCHER_ID);
-        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
-        when(watchingSessionPresenceWriter.swap(any(), any(), any(), any(), any(), any(), any()))
+        Instant updatedAtWithNanos = Instant.parse("2026-08-19T00:00:00.123456789Z");
+        WatchingSessionSnapshot snapshot = createSnapshotFixture(
+            CONTENT_ID, FIRST_CREATED_AT, updatedAtWithNanos, updatedAtWithNanos.plus(1, ChronoUnit.HOURS));
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(new UpsertResult(snapshot, true));
+        when(watchingSessionPresenceWriter.swap(any(), any(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("Redis 연결 끊김"));
 
         assertThatThrownBy(() ->
             watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
             .isInstanceOf(RuntimeException.class);
 
-        verify(watchingSessionSnapshotWriter).deleteById(WATCHER_ID, SNAPSHOT_ID);
+        verify(watchingSessionSnapshotWriter).deleteById(
+            eq(WATCHER_ID), eq(SNAPSHOT_ID), eq(Instant.parse("2026-08-19T00:00:00.123457Z")));
     }
 
     @Test
@@ -316,6 +330,75 @@ public class WatchingSessionServiceTest {
         assertThat(presenceStore).doesNotContainKey(WATCHER_ID); // end()가 보상 삭제까지 완료
     }
 
+    @Test
+    @DisplayName("start()에서 upsert 중복키 충돌이 1회 발생해도 재시도로 세션이 정상 시작된다")
+    void start_recovers_whenUpsertConflictsOnceThenSucceeds() {
+        mockContentExists(CONTENT_ID);
+        UpsertResult successResult = new UpsertResult(
+            createSnapshotFixture(SNAPSHOT_ID, WATCHER_ID, CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT,
+                FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS)), true);
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenThrow(duplicateKeyViolation())
+            .thenReturn(successResult);
+        mockUserExists(WATCHER_ID);
+
+        WatchingSessionService.ReplacedSession result =
+            watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(result.session()).isNotNull();
+        verify(watchingSessionSnapshotWriter, times(2)).upsert(eq(WATCHER_ID), eq(CONTENT_ID), any());
+    }
+
+    @Test
+    @DisplayName("presence에 기록되는 세대 토큰은 나노초 성분이 있어도 마이크로초로 정규화돼 DB 값과 일치한다")
+    void start_normalizesSnapshotUpdatedAt_toMicrosBeforeStoringInPresence() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+
+        Instant updatedAtWithNanos = Instant.parse("2026-08-19T00:00:00.123456789Z");
+        WatchingSessionSnapshot snapshot = createSnapshotFixture(
+            CONTENT_ID, FIRST_CREATED_AT, updatedAtWithNanos, updatedAtWithNanos.plus(1, ChronoUnit.HOURS));
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(new UpsertResult(snapshot, true));
+
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        ArgumentCaptor<Instant> tokenCaptor = ArgumentCaptor.forClass(Instant.class);
+        verify(watchingSessionPresenceWriter).swap(
+            eq(WATCHER_ID), eq(SNAPSHOT_ID), eq(CONTENT_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID),
+            any(), tokenCaptor.capture(), any());
+
+        // plusNanos(500) 반올림 규약: .123456789 + 500ns = .123457289 -> 마이크로초 절삭 -> .123457
+        assertThat(tokenCaptor.getValue()).isEqualTo(Instant.parse("2026-08-19T00:00:00.123457Z"));
+        assertThat(tokenCaptor.getValue()).isNotEqualTo(updatedAtWithNanos);
+    }
+
+    @Test
+    @DisplayName("신규 삽입 직후 presence swap이 실패하면, 나노초를 포함한 메모리 상 updatedAt이 정규화된 값으로 보상 삭제된다")
+    void start_normalizesUpdatedAt_beforeCompensatingDeleteOnSwapFailure() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+
+        Instant updatedAtWithNanos = Instant.parse("2026-08-19T00:00:00.123456789Z");
+        WatchingSessionSnapshot snapshot = createSnapshotFixture(
+            CONTENT_ID, FIRST_CREATED_AT, updatedAtWithNanos, updatedAtWithNanos.plus(1, ChronoUnit.HOURS));
+        when(watchingSessionSnapshotWriter.upsert(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(new UpsertResult(snapshot, true));
+        when(watchingSessionPresenceWriter.swap(any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenThrow(new RuntimeException("Redis 연결 끊김"));
+
+        assertThatThrownBy(() ->
+            watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
+            .isInstanceOf(RuntimeException.class);
+
+        ArgumentCaptor<Instant> tokenCaptor = ArgumentCaptor.forClass(Instant.class);
+        verify(watchingSessionSnapshotWriter).deleteById(eq(WATCHER_ID), eq(SNAPSHOT_ID), tokenCaptor.capture());
+
+        // .789 나노 -> +500 반올림 -> .123457로 정규화된 값이어야 한다 (원본 그대로면 실패)
+        assertThat(tokenCaptor.getValue()).isEqualTo(Instant.parse("2026-08-19T00:00:00.123457Z"));
+        assertThat(tokenCaptor.getValue()).isNotEqualTo(updatedAtWithNanos);
+    }
+
     /* --- end() 메서드 검증 --- */
     @Test
     @DisplayName("소유권이 일치하면 presence와 DB 스냅샷을 모두 삭제하고 true를 반환한다")
@@ -329,7 +412,7 @@ public class WatchingSessionServiceTest {
 
         assertThat(deleted).isTrue();
         assertThat(presenceStore).doesNotContainKey(WATCHER_ID);
-        verify(watchingSessionSnapshotWriter).deleteById(WATCHER_ID, SNAPSHOT_ID);
+        verify(watchingSessionSnapshotWriter).deleteById(eq(WATCHER_ID), eq(SNAPSHOT_ID), any());
     }
 
     @Test
@@ -344,7 +427,7 @@ public class WatchingSessionServiceTest {
 
         assertThat(deleted).isFalse();
         assertThat(presenceStore).containsKey(WATCHER_ID); // 현재 소유자의 presence는 그대로
-        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any());
+        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any(), any());
     }
 
     @Test
@@ -368,7 +451,7 @@ public class WatchingSessionServiceTest {
     void end_success_returnsFalse_whenNoActiveSession() {
         boolean actuallyDeleted = watchingSessionService.end(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
         assertThat(actuallyDeleted).isFalse();
-        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any());
+        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any(), any());
     }
 
     /* --- endByConnection() 메서드 검증 --- */
@@ -390,7 +473,7 @@ public class WatchingSessionServiceTest {
         assertThat(result.get().id()).isEqualTo(SNAPSHOT_ID);
         assertThat(result.get().content().id()).isEqualTo(CONTENT_ID);
         assertThat(presenceStore).doesNotContainKey(WATCHER_ID);
-        verify(watchingSessionSnapshotWriter).deleteById(WATCHER_ID, SNAPSHOT_ID);
+        verify(watchingSessionSnapshotWriter).deleteById(eq(WATCHER_ID), eq(SNAPSHOT_ID), any());
     }
 
     @Test
@@ -405,7 +488,7 @@ public class WatchingSessionServiceTest {
 
         assertThat(result).isEmpty();
         assertThat(presenceStore).containsKey(WATCHER_ID); // 현재 소유자의 presence는 그대로
-        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any());
+        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any(), any());
     }
 
     @Test
@@ -420,7 +503,7 @@ public class WatchingSessionServiceTest {
             CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT, FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS));
         when(watchingSessionSnapshotRepository.findById(SNAPSHOT_ID)).thenReturn(Optional.of(snapshotFixture));
         // 다른 인스턴스가 이미 이 watcher의 새 세대로 행을 교체해 조건부 삭제가 0행에 그친 상황을 재현
-        when(watchingSessionSnapshotWriter.deleteById(WATCHER_ID, SNAPSHOT_ID)).thenReturn(0);
+        when(watchingSessionSnapshotWriter.deleteById(eq(WATCHER_ID), eq(SNAPSHOT_ID), any())).thenReturn(0);
 
         Optional<WatchingSessionDto> result = watchingSessionService.endByConnection(WATCHER_ID, SESSION_ID);
 
@@ -904,7 +987,7 @@ public class WatchingSessionServiceTest {
         when(watchingSessionSnapshotWriter.insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any()))
             .thenReturn(Optional.of(recovered));
         when(watchingSessionPresenceWriter.updateSnapshotIdIfOwner(
-            eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(recovered.getId())))
+            eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(recovered.getId()), eq(recovered.getUpdatedAt())))
             .thenReturn(true);
 
         clearInvocations(watchingSessionSnapshotWriter, watchingSessionPresenceWriter);
@@ -913,8 +996,8 @@ public class WatchingSessionServiceTest {
 
         verify(watchingSessionSnapshotWriter).insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any());
         verify(watchingSessionPresenceWriter).updateSnapshotIdIfOwner(
-            WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, recovered.getId());
-        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any());
+            eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(recovered.getId()), any());
+        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any(), any());
     }
 
     @Test
@@ -932,12 +1015,12 @@ public class WatchingSessionServiceTest {
         when(watchingSessionSnapshotWriter.insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any()))
             .thenReturn(Optional.of(recovered));
         when(watchingSessionPresenceWriter.updateSnapshotIdIfOwner(
-            eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(recovered.getId())))
+            eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(recovered.getId()), any()))
             .thenReturn(false);
 
         watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
 
-        verify(watchingSessionSnapshotWriter).deleteById(WATCHER_ID, recovered.getId());
+        verify(watchingSessionSnapshotWriter).deleteById(eq(WATCHER_ID), eq(recovered.getId()), eq(recovered.getUpdatedAt()));
     }
 
     @Test
@@ -956,12 +1039,12 @@ public class WatchingSessionServiceTest {
         watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
 
         verify(watchingSessionPresenceWriter, never())
-            .updateSnapshotIdIfOwner(any(), any(), any(), any());
-        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any());
+            .updateSnapshotIdIfOwner(any(), any(), any(), any(), any());
+        verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any(), any());
     }
 
     @Test
-    @DisplayName("INSERT가 모두 실패하면 재시도 실패가 catch로 새지 않고 정상적으로 잡혀 heartbeat는 예외 없이 끝난다")
+    @DisplayName("INSERT가 재시도까지 모두 중복키 충돌로 실패하면 catch로 새지 않고 heartbeat는 예외 없이 끝난다")
     void heartbeat_doesNotThrow_whenInitialInsertAndRetryBothFail() {
         mockContentExists(CONTENT_ID);
         mockUserExists(WATCHER_ID);
@@ -969,8 +1052,8 @@ public class WatchingSessionServiceTest {
         watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
         when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
         when(watchingSessionSnapshotWriter.insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any()))
-            .thenThrow(new DataIntegrityViolationException("동시 삽입 충돌"))
-            .thenThrow(new DataIntegrityViolationException("재시도도 충돌"));
+            .thenThrow(duplicateKeyViolation())
+            .thenThrow(duplicateKeyViolation());
 
         assertThatCode(() ->
             watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
@@ -980,19 +1063,90 @@ public class WatchingSessionServiceTest {
     }
 
     @Test
-    @DisplayName("재시도 도중 DataIntegrityViolationException이 아닌 다른 RuntimeException이 나도 격리된다")
-    void heartbeat_doesNotThrow_whenRetryFailsWithDifferentRuntimeException() {
+    @DisplayName("첫 시도에서 중복키가 아닌 RuntimeException이 나면 재시도 없이 즉시 격리된다")
+    void heartbeat_doesNotThrow_whenFirstAttemptFailsWithNonDuplicateKeyException() {
         mockContentExists(CONTENT_ID);
         mockUserExists(WATCHER_ID);
         mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
         watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
         when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
         when(watchingSessionSnapshotWriter.insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any()))
-            .thenThrow(new DataIntegrityViolationException("동시 삽입 충돌"))
-            .thenThrow(new RuntimeException("DB 연결 끊김")); // 재시도는 다른 종류의 예외
+            .thenThrow(new RuntimeException("DB 연결 끊김"));
 
         assertThatCode(() ->
             watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
             .doesNotThrowAnyException();
+
+        verify(watchingSessionSnapshotWriter, times(1)).insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any());
+    }
+
+    @Test
+    @DisplayName("중복키 충돌이 1회만 발생하면 재시도로 성공한다")
+    void heartbeat_recovers_whenDuplicateKeyConflictsOnceThenSucceeds() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
+
+        WatchingSessionSnapshot recovered = createSnapshotFixture(
+            UUID.randomUUID(), WATCHER_ID, CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT,
+            FIRST_CREATED_AT.plus(1, ChronoUnit.HOURS));
+        when(watchingSessionSnapshotWriter.insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenThrow(duplicateKeyViolation())
+            .thenReturn(Optional.of(recovered));
+        when(watchingSessionPresenceWriter.updateSnapshotIdIfOwner(
+            eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(recovered.getId()), any()))
+            .thenReturn(true);
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionSnapshotWriter, times(2)).insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any());
+    }
+
+    @Test
+    @DisplayName("중복키가 아닌 무결성 위반(FK 위반 등)은 재시도 없이 즉시 전파된다")
+    void heartbeat_doesNotThrow_whenNonDuplicateKeyViolationPropagatesWithoutRetry() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
+        when(watchingSessionSnapshotWriter.insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenThrow(new DataIntegrityViolationException(
+                "FK 위반", new SQLException("FK 위반", "23503")));
+
+        assertThatCode(() ->
+            watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
+            .doesNotThrowAnyException();
+
+        verify(watchingSessionSnapshotWriter, times(1)).insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any());
+    }
+
+    @Test
+    @DisplayName("복구된 스냅샷의 updatedAt도 마이크로초로 반올림돼 presence에 기록된다")
+    void heartbeat_normalizesRecoveredSnapshotUpdatedAt_toMicrosBeforeSyncingPresence() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(0);
+
+        Instant recoveredUpdatedAtWithNanos = Instant.parse("2026-08-19T00:00:00.987654321Z");
+        WatchingSessionSnapshot recovered = createSnapshotFixture(
+            UUID.randomUUID(), WATCHER_ID, CONTENT_ID, FIRST_CREATED_AT,
+            recoveredUpdatedAtWithNanos, recoveredUpdatedAtWithNanos.plus(1, ChronoUnit.HOURS));
+        when(watchingSessionSnapshotWriter.insertIfAbsent(eq(WATCHER_ID), eq(CONTENT_ID), any()))
+            .thenReturn(Optional.of(recovered));
+        when(watchingSessionPresenceWriter.updateSnapshotIdIfOwner(any(), any(), any(), any(), any()))
+            .thenReturn(true);
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        ArgumentCaptor<Instant> tokenCaptor = ArgumentCaptor.forClass(Instant.class);
+        verify(watchingSessionPresenceWriter).updateSnapshotIdIfOwner(
+            eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(recovered.getId()), tokenCaptor.capture());
+
+        assertThat(tokenCaptor.getValue()).isEqualTo(Instant.parse("2026-08-19T00:00:00.987654Z"));
     }
 }
