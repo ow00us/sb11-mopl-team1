@@ -12,10 +12,14 @@ import static org.mockito.Mockito.when;
 import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentType;
 import com.mopl.content.repository.ContentRepository;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
+import org.springframework.data.elasticsearch.core.mapping.IndexCoordinates;
+import org.springframework.data.elasticsearch.core.query.UpdateQuery;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class ContentSearchSyncListenerTest {
@@ -25,47 +29,64 @@ class ContentSearchSyncListenerTest {
     private final ContentRepository contentRepository = mock(ContentRepository.class);
     private final ContentSearchRepository contentSearchRepository = mock(ContentSearchRepository.class);
     private final ContentDocumentMapper contentDocumentMapper = mock(ContentDocumentMapper.class);
+    private final ElasticsearchOperations elasticsearchOperations = mock(ElasticsearchOperations.class);
 
-    private final ContentSearchSyncListener listener =
-            new ContentSearchSyncListener(contentRepository, contentSearchRepository, contentDocumentMapper);
+    private final ContentSearchSyncListener listener = new ContentSearchSyncListener(
+            contentRepository, contentSearchRepository, contentDocumentMapper, elasticsearchOperations);
 
     // ── handleSync ───────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("콘텐츠가 존재하면 기존 문서를 조회해 매퍼로 변환한 뒤 저장한다")
-    void handleSync_contentExists_savesMappedDocument() {
+    @DisplayName("ES에 문서가 아직 없으면 새 문서로 저장한다")
+    void handleSync_documentNotYetIndexed_savesNewDocument() {
         Content content = content();
-        ContentDocument existing = ContentDocument.builder().id(CONTENT_ID.toString()).build();
-        ContentDocument mapped = ContentDocument.builder().id(CONTENT_ID.toString()).watcherCount(3).build();
+        ContentDocument newDocument = ContentDocument.builder().id(CONTENT_ID.toString()).watcherCount(0).build();
         when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(content));
-        when(contentSearchRepository.findById(CONTENT_ID.toString())).thenReturn(Optional.of(existing));
-        when(contentDocumentMapper.toDocument(content, existing)).thenReturn(mapped);
+        when(contentSearchRepository.existsById(CONTENT_ID.toString())).thenReturn(false);
+        when(contentDocumentMapper.toNewDocument(content)).thenReturn(newDocument);
 
         listener.handleSync(new ContentSearchSyncEvent(CONTENT_ID));
 
-        verify(contentSearchRepository).save(mapped);
+        verify(contentSearchRepository).save(newDocument);
+        verifyNoInteractions(elasticsearchOperations);
     }
 
     @Test
-    @DisplayName("콘텐츠가 존재하지 않으면 검색 저장소와 매퍼를 전혀 호출하지 않는다")
-    void handleSync_contentNotFound_doesNotTouchSearchRepositoryOrMapper() {
+    @DisplayName("ES에 문서가 이미 있으면 watcherCount를 제외한 필드만 부분 업데이트한다")
+    void handleSync_documentAlreadyIndexed_partiallyUpdatesFields() {
+        Content content = content();
+        Map<String, Object> updateFields = Map.of("title", "제목");
+        when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(content));
+        when(contentSearchRepository.existsById(CONTENT_ID.toString())).thenReturn(true);
+        when(contentDocumentMapper.toUpdateFields(content)).thenReturn(updateFields);
+
+        listener.handleSync(new ContentSearchSyncEvent(CONTENT_ID));
+
+        verify(elasticsearchOperations).update(any(UpdateQuery.class), any(IndexCoordinates.class));
+        verify(contentSearchRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("콘텐츠가 존재하지 않으면 검색 저장소·매퍼·ES 무엇도 호출하지 않는다")
+    void handleSync_contentNotFound_doesNotTouchSearchRepositoryMapperOrEs() {
         when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.empty());
 
         listener.handleSync(new ContentSearchSyncEvent(CONTENT_ID));
 
         verifyNoInteractions(contentSearchRepository);
         verifyNoInteractions(contentDocumentMapper);
+        verifyNoInteractions(elasticsearchOperations);
     }
 
     @Test
-    @DisplayName("save()가 예외를 던져도 handleSync 호출 자체는 예외 없이 끝난다")
-    void handleSync_saveThrows_doesNotPropagateException() {
+    @DisplayName("부분 업데이트가 예외를 던져도 handleSync 호출 자체는 예외 없이 끝난다")
+    void handleSync_updateThrows_doesNotPropagateException() {
         Content content = content();
         when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(content));
-        when(contentSearchRepository.findById(CONTENT_ID.toString())).thenReturn(Optional.empty());
-        when(contentDocumentMapper.toDocument(any(), any()))
-                .thenReturn(ContentDocument.builder().id(CONTENT_ID.toString()).build());
-        when(contentSearchRepository.save(any())).thenThrow(new RuntimeException("ES 연결 끊김"));
+        when(contentSearchRepository.existsById(CONTENT_ID.toString())).thenReturn(true);
+        when(contentDocumentMapper.toUpdateFields(content)).thenReturn(Map.of("title", "제목"));
+        when(elasticsearchOperations.update(any(UpdateQuery.class), any(IndexCoordinates.class)))
+                .thenThrow(new RuntimeException("ES 연결 끊김"));
 
         assertThatCode(() -> listener.handleSync(new ContentSearchSyncEvent(CONTENT_ID)))
                 .doesNotThrowAnyException();

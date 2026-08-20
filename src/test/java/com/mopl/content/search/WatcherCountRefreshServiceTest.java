@@ -6,15 +6,21 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mopl.watchingsession.repository.ContentWatcherCountView;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
+import org.springframework.data.elasticsearch.core.mapping.IndexCoordinates;
+import org.springframework.data.elasticsearch.core.query.UpdateQuery;
+import org.springframework.test.util.ReflectionTestUtils;
 
 class WatcherCountRefreshServiceTest {
 
@@ -25,13 +31,14 @@ class WatcherCountRefreshServiceTest {
     private final WatchingSessionSnapshotRepository watchingSessionSnapshotRepository =
             mock(WatchingSessionSnapshotRepository.class);
     private final ContentSearchRepository contentSearchRepository = mock(ContentSearchRepository.class);
+    private final ElasticsearchOperations elasticsearchOperations = mock(ElasticsearchOperations.class);
 
-    private final WatcherCountRefreshService service =
-            new WatcherCountRefreshService(watchingSessionSnapshotRepository, contentSearchRepository);
+    private final WatcherCountRefreshService service = new WatcherCountRefreshService(
+            watchingSessionSnapshotRepository, contentSearchRepository, elasticsearchOperations);
 
     @Test
-    @DisplayName("실시간 집계와 달라진 문서만 saveAll로 저장한다 (변화 없는 문서는 제외, 집계에 없는 문서는 0으로 리셋)")
-    void refresh_savesOnlyChangedDocuments() {
+    @DisplayName("실시간 집계와 달라진 문서만 부분 업데이트한다 (변화 없는 문서는 제외, 집계에 없는 문서는 0으로 리셋)")
+    void refresh_updatesOnlyChangedDocuments() {
         ContentWatcherCountView viewA = watcherCountView(CONTENT_A, 5L);
         ContentWatcherCountView viewB = watcherCountView(CONTENT_B, 3L);
         when(watchingSessionSnapshotRepository.countActiveWatchersGroupedByContent(any()))
@@ -44,20 +51,16 @@ class WatcherCountRefreshServiceTest {
         service.refresh();
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<Iterable<ContentDocument>> captor = ArgumentCaptor.forClass(Iterable.class);
-        verify(contentSearchRepository).saveAll(captor.capture());
-        List<ContentDocument> saved = toList(captor.getValue());
-        assertThat(saved).extracting(ContentDocument::getId)
+        ArgumentCaptor<List<UpdateQuery>> captor = ArgumentCaptor.forClass(List.class);
+        verify(elasticsearchOperations).bulkUpdate(captor.capture(), any(IndexCoordinates.class));
+        List<UpdateQuery> queries = captor.getValue();
+        assertThat(queries).extracting(UpdateQuery::getId)
                 .containsExactlyInAnyOrder(CONTENT_A.toString(), CONTENT_C.toString());
-        assertThat(saved).filteredOn(doc -> doc.getId().equals(CONTENT_A.toString()))
-                .extracting(ContentDocument::getWatcherCount).containsExactly(5);
-        assertThat(saved).filteredOn(doc -> doc.getId().equals(CONTENT_C.toString()))
-                .extracting(ContentDocument::getWatcherCount).containsExactly(0);
     }
 
     @Test
-    @DisplayName("변경된 문서가 없으면 saveAll을 호출하지 않는다")
-    void refresh_noChanges_doesNotCallSaveAll() {
+    @DisplayName("변경된 문서가 없으면 bulkUpdate를 호출하지 않는다")
+    void refresh_noChanges_doesNotCallBulkUpdate() {
         ContentWatcherCountView viewA = watcherCountView(CONTENT_A, 5L);
         when(watchingSessionSnapshotRepository.countActiveWatchersGroupedByContent(any()))
                 .thenReturn(List.of(viewA));
@@ -66,23 +69,23 @@ class WatcherCountRefreshServiceTest {
 
         service.refresh();
 
-        verify(contentSearchRepository, never()).saveAll(any());
+        verify(elasticsearchOperations, never()).bulkUpdate(any(), any(IndexCoordinates.class));
     }
 
     @Test
-    @DisplayName("집계 조회가 예외를 던져도 refresh() 호출 자체는 예외 없이 끝나고 saveAll은 호출되지 않는다")
-    void refresh_countQueryThrows_doesNotPropagateAndDoesNotSave() {
+    @DisplayName("집계 조회가 예외를 던져도 refresh() 호출 자체는 예외 없이 끝나고 bulkUpdate는 호출되지 않는다")
+    void refresh_countQueryThrows_doesNotPropagateAndDoesNotUpdate() {
         when(watchingSessionSnapshotRepository.countActiveWatchersGroupedByContent(any()))
                 .thenThrow(new RuntimeException("DB 연결 끊김"));
 
         assertThatCode(service::refresh).doesNotThrowAnyException();
 
-        verify(contentSearchRepository, never()).saveAll(any());
+        verify(elasticsearchOperations, never()).bulkUpdate(any(), any(IndexCoordinates.class));
     }
 
     @Test
-    @DisplayName("ES 전체 조회가 예외를 던져도 refresh() 호출 자체는 예외 없이 끝나고 saveAll은 호출되지 않는다")
-    void refresh_findAllThrows_doesNotPropagateAndDoesNotSave() {
+    @DisplayName("ES 전체 조회가 예외를 던져도 refresh() 호출 자체는 예외 없이 끝나고 bulkUpdate는 호출되지 않는다")
+    void refresh_findAllThrows_doesNotPropagateAndDoesNotUpdate() {
         ContentWatcherCountView viewA = watcherCountView(CONTENT_A, 5L);
         when(watchingSessionSnapshotRepository.countActiveWatchersGroupedByContent(any()))
                 .thenReturn(List.of(viewA));
@@ -90,7 +93,19 @@ class WatcherCountRefreshServiceTest {
 
         assertThatCode(service::refresh).doesNotThrowAnyException();
 
-        verify(contentSearchRepository, never()).saveAll(any());
+        verify(elasticsearchOperations, never()).bulkUpdate(any(), any(IndexCoordinates.class));
+    }
+
+    @Test
+    @DisplayName("이미 리프레시가 진행 중이면 이번 호출은 아무 것도 하지 않고 건너뛴다")
+    void refresh_alreadyRunning_skipsWithoutTouchingDependencies() {
+        ReflectionTestUtils.setField(service, "isRefreshing", new AtomicBoolean(true));
+
+        assertThatCode(service::refresh).doesNotThrowAnyException();
+
+        verifyNoInteractions(watchingSessionSnapshotRepository);
+        verifyNoInteractions(contentSearchRepository);
+        verifyNoInteractions(elasticsearchOperations);
     }
 
     private ContentWatcherCountView watcherCountView(UUID contentId, long watcherCount) {
@@ -98,9 +113,5 @@ class WatcherCountRefreshServiceTest {
         when(view.getContentId()).thenReturn(contentId);
         when(view.getWatcherCount()).thenReturn(watcherCount);
         return view;
-    }
-
-    private List<ContentDocument> toList(Iterable<ContentDocument> iterable) {
-        return java.util.stream.StreamSupport.stream(iterable.spliterator(), false).toList();
     }
 }

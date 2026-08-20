@@ -8,6 +8,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,40 +18,22 @@ class ContentDocumentMapperTest {
 
     private final ContentDocumentMapper mapper = new ContentDocumentMapper();
 
-    @Test
-    @DisplayName("existing 문서가 없으면 watcherCount는 0으로 채워진다")
-    void toDocument_withoutExisting_defaultsWatcherCountToZero() {
-        Content content = content();
+    // ── toNewDocument ────────────────────────────────────────────────────────
 
-        ContentDocument document = mapper.toDocument(content, null);
+    @Test
+    @DisplayName("toNewDocument()는 watcherCount를 0으로 채운다")
+    void toNewDocument_defaultsWatcherCountToZero() {
+        ContentDocument document = mapper.toNewDocument(content());
 
         assertThat(document.getWatcherCount()).isZero();
     }
 
     @Test
-    @DisplayName("existing 문서가 있으면 watcherCount는 그대로 보존하고 나머지 필드는 content 기준으로 갱신한다")
-    void toDocument_withExisting_preservesWatcherCountAndUpdatesOtherFields() {
-        Content content = content();
-        ContentDocument existing = ContentDocument.builder()
-                .id(content.getId().toString())
-                .title("이전 제목")
-                .description("이전 설명")
-                .watcherCount(42)
-                .build();
-
-        ContentDocument document = mapper.toDocument(content, existing);
-
-        assertThat(document.getWatcherCount()).isEqualTo(42);
-        assertThat(document.getTitle()).isEqualTo("제목");
-        assertThat(document.getDescription()).isEqualTo("설명");
-    }
-
-    @Test
-    @DisplayName("Content 엔티티의 필드가 ContentDocument에 정확히 매핑된다")
-    void toDocument_mapsAllFieldsFromContent() {
+    @DisplayName("toNewDocument()는 Content 엔티티의 필드를 ContentDocument에 정확히 매핑한다")
+    void toNewDocument_mapsAllFieldsFromContent() {
         Content content = content();
 
-        ContentDocument document = mapper.toDocument(content, null);
+        ContentDocument document = mapper.toNewDocument(content);
 
         assertThat(document.getId()).isEqualTo(content.getId().toString());
         assertThat(document.getTitle()).isEqualTo(content.getTitle());
@@ -60,6 +43,45 @@ class ContentDocumentMapperTest {
         assertThat(document.getAverageRating()).isEqualTo(content.getAverageRating().doubleValue());
         assertThat(document.getCreatedAt())
                 .isEqualTo(LocalDateTime.ofInstant(content.getCreatedAt(), ZoneId.systemDefault()));
+    }
+
+    // ── toUpdateFields ───────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("toUpdateFields()는 watcherCount 키를 절대 포함하지 않는다")
+    void toUpdateFields_neverIncludesWatcherCount() {
+        Map<String, Object> fields = mapper.toUpdateFields(content());
+
+        assertThat(fields).doesNotContainKey("watcherCount");
+    }
+
+    @Test
+    @DisplayName("toUpdateFields()는 watcherCount를 제외한 나머지 필드를 정확히 담는다")
+    void toUpdateFields_mapsRemainingFieldsFromContent() {
+        Content content = content();
+
+        Map<String, Object> fields = mapper.toUpdateFields(content);
+
+        assertThat(fields.get("title")).isEqualTo(content.getTitle());
+        assertThat(fields.get("description")).isEqualTo(content.getDescription());
+        assertThat(fields.get("type")).isEqualTo(content.getType().name());
+        @SuppressWarnings("unchecked")
+        java.util.List<String> tags = (java.util.List<String>) fields.get("tags");
+        assertThat(tags).containsExactlyInAnyOrderElementsOf(content.getTags());
+        assertThat(fields.get("averageRating")).isEqualTo(content.getAverageRating().doubleValue());
+    }
+
+    @Test
+    @DisplayName("toUpdateFields()의 createdAt은 인덱스 매핑 포맷(date_hour_minute_second_millis)과 같은 문자열이다")
+    void toUpdateFields_createdAtMatchesConfiguredDateFormat() {
+        Content content = content();
+
+        Map<String, Object> fields = mapper.toUpdateFields(content);
+
+        LocalDateTime expected = LocalDateTime.ofInstant(content.getCreatedAt(), ZoneId.systemDefault());
+        String expectedText = java.time.format.DateTimeFormatter
+                .ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS").format(expected);
+        assertThat(fields.get("createdAt")).isEqualTo(expectedText);
     }
 
     private Content content() {
