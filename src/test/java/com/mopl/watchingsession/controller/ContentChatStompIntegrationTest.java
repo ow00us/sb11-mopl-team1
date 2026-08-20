@@ -305,4 +305,24 @@ public class ContentChatStompIntegrationTest {
         String errorPayload = errorReceived.get(5, TimeUnit.SECONDS);
         assertThat(errorPayload).contains(ErrorCode.FORBIDDEN.getCode());
     }
+
+    @Test
+    @DisplayName("presence는 유효하지만 콘텐츠가 존재하지 않으면 404 CONTENT_NOT_FOUND STOMP ERROR 프레임을 반환")
+    void sendChat_presenceValidButContentDeleted_returnsContentNotFoundErrorFrame() throws Exception {
+        // given: 논리 삭제 등으로 DB엔 없지만 presence는 아직 이 콘텐츠를 가리키는 상황을 재현
+        UUID deletedContentId = UUID.randomUUID();
+        Instant now = Instant.now();
+        presenceWriter.swap(senderId, UUID.randomUUID(), deletedContentId, "seed-session-2", "seed-sub-2",
+            now, now, Duration.ofHours(1));
+
+        CompletableFuture<String> errorReceived = new CompletableFuture<>();
+        session = connectAs(senderId, errorReceived);
+
+        // when
+        session.send("/pub/contents/" + deletedContentId + "/chat", Map.of("content", "안녕하세요"));
+
+        // then: presence 검증은 통과했지만 콘텐츠 존재 검증에서 차단됨
+        String errorPayload = errorReceived.get(5, TimeUnit.SECONDS);
+        assertThat(errorPayload).contains(ErrorCode.CONTENT_NOT_FOUND.getCode());
+    }
 }
