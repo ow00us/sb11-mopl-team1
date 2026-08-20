@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -64,7 +65,8 @@ class OutboxClaimerIntegrationTest {
         return new OutboxEvent(
             UUID.randomUUID(), "follow.created", 1, UUID.randomUUID(), nextAttemptAt,
             "{\"followerId\":\"a\"}", partitionKey, "NONE",
-            "follow.created:" + partitionKey, nextAttemptAt);
+            // 같은 키로 여러 건을 만드는 케이스가 있어 사건 식별자를 따로 둡니다.
+            "follow.created:" + UUID.randomUUID(), nextAttemptAt);
     }
 
     private List<OutboxEvent> savePending(int count, Instant nextAttemptAt) {
@@ -214,5 +216,145 @@ class OutboxClaimerIntegrationTest {
     void claim_rejectsNonPositiveBatchSize() {
         assertThatThrownBy(() -> outboxClaimer.claim(OWNER, 0, BASE))
             .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // 순서 게이트 (계약 §9)
+
+    /** 같은 키에 순서를 선언한 이벤트를 발생 순으로 만듭니다. */
+    private List<OutboxEvent> saveOrderedPair(String partitionKey) {
+        OutboxEvent first = ordered(partitionKey, BASE, "first");
+        OutboxEvent second = ordered(partitionKey, BASE.plusSeconds(1), "second");
+        return outboxEventRepository.saveAllAndFlush(List.of(first, second));
+    }
+
+    private OutboxEvent ordered(String partitionKey, Instant occurredAt, String suffix) {
+        return new OutboxEvent(
+            UUID.randomUUID(), "premiere.upcoming", 1, UUID.randomUUID(), occurredAt,
+            "{}", partitionKey, "AGGREGATE",
+            "premiere.upcoming:" + partitionKey + ":" + suffix, occurredAt);
+    }
+
+    private void setStatus(OutboxEvent event, String status) {
+        jdbcTemplate.update(
+            "UPDATE outbox_events SET status = ? WHERE id = ?", status, event.getId());
+    }
+
+    /**
+     * 앞선 이벤트가 아직 나가지 않았으면 뒤 이벤트를 선점하지 않습니다.
+     *
+     * <p>이 조건이 없으면 앞선 이벤트가 실패해 재시도 대기로 밀릴 때 뒤 이벤트가 먼저
+     * 나갑니다. {@code AGGREGATE} 인 이벤트에는 그 순서가 계약입니다.
+     */
+    @Test
+    @DisplayName("같은 키에 앞선 발행 대기 이벤트가 있으면 뒤 이벤트를 선점하지 않는다")
+    void claim_gatesOnEarlierPendingInSameKey() {
+        List<OutboxEvent> pair = saveOrderedPair("agg-1");
+
+        List<OutboxEvent> claimed = outboxClaimer.claim(OWNER, 10, BASE.plusSeconds(60));
+
+        assertThat(claimed).extracting(OutboxEvent::getId).containsExactly(pair.get(0).getId());
+    }
+
+    @Test
+    @DisplayName("앞선 이벤트가 발행을 마치면 뒤 이벤트를 선점한다")
+    void claim_releasesGateWhenEarlierPublished() {
+        List<OutboxEvent> pair = saveOrderedPair("agg-1");
+        setStatus(pair.get(0), "PUBLISHED");
+
+        List<OutboxEvent> claimed = outboxClaimer.claim(OWNER, 10, BASE.plusSeconds(60));
+
+        assertThat(claimed).extracting(OutboxEvent::getId).containsExactly(pair.get(1).getId());
+    }
+
+    /**
+     * 계약은 최종 실패가 후속을 계속 차단하도록 정합니다. 사람이 재처리하거나 전달 시한을
+     * 넘긴 것으로 넘겨야 뒤 이벤트가 진행합니다.
+     */
+    @Test
+    @DisplayName("앞선 이벤트가 최종 실패면 뒤 이벤트를 계속 막는다")
+    void claim_keepsGateWhenEarlierFailed() {
+        List<OutboxEvent> pair = saveOrderedPair("agg-1");
+        setStatus(pair.get(0), "FAILED");
+
+        List<OutboxEvent> claimed = outboxClaimer.claim(OWNER, 10, BASE.plusSeconds(60));
+
+        assertThat(claimed).isEmpty();
+    }
+
+    @Test
+    @DisplayName("앞선 이벤트가 전달 시한을 넘긴 상태면 뒤 이벤트를 선점한다")
+    void claim_releasesGateWhenEarlierExpired() {
+        List<OutboxEvent> pair = saveOrderedPair("agg-1");
+        setStatus(pair.get(0), "EXPIRED");
+
+        List<OutboxEvent> claimed = outboxClaimer.claim(OWNER, 10, BASE.plusSeconds(60));
+
+        assertThat(claimed).extracting(OutboxEvent::getId).containsExactly(pair.get(1).getId());
+    }
+
+    /**
+     * 계약은 {@code NONE} 에 선행 이벤트 게이트를 적용하지 않습니다. 선후 관계가 없다고 선언한
+     * 이벤트를 같은 키를 쓴다는 이유로 세우면 처리량만 떨어집니다.
+     */
+    @Test
+    @DisplayName("orderingScope가 NONE이면 같은 키라도 함께 선점한다")
+    void claim_doesNotGateNoneScope() {
+        outboxEventRepository.saveAllAndFlush(List.of(
+            pending("shared-key", BASE), pending("shared-key", BASE.plusSeconds(1))));
+
+        List<OutboxEvent> claimed = outboxClaimer.claim(OWNER, 10, BASE.plusSeconds(60));
+
+        assertThat(claimed).hasSize(2);
+    }
+
+    /**
+     * 막는 쪽도 {@code NONE} 은 제외합니다. 순서를 선언하지 않은 이벤트가 같은 키를 쓴다는
+     * 이유로 다른 이벤트를 세울 수는 없습니다.
+     */
+    @Test
+    @DisplayName("앞선 이벤트가 NONE이면 뒤의 순서 이벤트를 막지 않는다")
+    void claim_noneScopeDoesNotBlockOthers() {
+        outboxEventRepository.saveAndFlush(pending("agg-1", BASE));
+        OutboxEvent later = outboxEventRepository.saveAndFlush(
+            ordered("agg-1", BASE.plusSeconds(1), "later"));
+
+        List<OutboxEvent> claimed = outboxClaimer.claim(OWNER, 10, BASE.plusSeconds(60));
+
+        assertThat(claimed).extracting(OutboxEvent::getId).contains(later.getId());
+    }
+
+    @Test
+    @DisplayName("다른 키의 이벤트는 서로 막지 않는다")
+    void claim_gatesPerPartitionKey() {
+        saveOrderedPair("agg-1");
+        saveOrderedPair("agg-2");
+
+        List<OutboxEvent> claimed = outboxClaimer.claim(OWNER, 10, BASE.plusSeconds(60));
+
+        assertThat(claimed).hasSize(2);
+        assertThat(claimed).extracting(OutboxEvent::getPartitionKey)
+            .containsExactlyInAnyOrder("agg-1", "agg-2");
+    }
+
+    /**
+     * 발생 시각이 같으면 id 가 순서를 가릅니다. 시각만 비교하면 두 건이 서로를 막지 않아 둘 다
+     * 나가고, 그때 순서는 정해지지 않습니다.
+     *
+     * <p>기대값을 {@code UUID#compareTo} 로 고르지 않습니다. 그 비교는 상위 64비트를 부호 있는
+     * long 으로 보는데, PostgreSQL 의 uuid 비교는 16바이트를 부호 없이 봅니다. 최상위 비트가
+     * 선 값이 섞이면 두 순서가 갈립니다. 표준 표기 문자열 비교가 데이터베이스 쪽과 같습니다.
+     */
+    @Test
+    @DisplayName("발생 시각이 같으면 id 순으로 하나만 선점한다")
+    void claim_gatesOnIdWhenOccurredAtTies() {
+        List<OutboxEvent> saved = outboxEventRepository.saveAllAndFlush(List.of(
+            ordered("agg-1", BASE, "a"), ordered("agg-1", BASE, "b")));
+
+        List<OutboxEvent> claimed = outboxClaimer.claim(OWNER, 10, BASE.plusSeconds(60));
+
+        assertThat(claimed).hasSize(1);
+        UUID expected = saved.stream().map(OutboxEvent::getId)
+            .min(Comparator.comparing(UUID::toString)).orElseThrow();
+        assertThat(claimed.get(0).getId()).isEqualTo(expected);
     }
 }

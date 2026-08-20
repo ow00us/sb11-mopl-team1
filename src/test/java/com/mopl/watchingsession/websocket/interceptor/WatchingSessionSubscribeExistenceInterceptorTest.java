@@ -136,4 +136,41 @@ class WatchingSessionSubscribeExistenceInterceptorTest {
             eq(Map.of())
         );
     }
+
+    @Test
+    @DisplayName("존재하는 콘텐츠의 chat 토픽 구독 통과")
+    void preSend_passesThrough_whenChatContentExists() {
+        // given
+        UUID contentId = UUID.randomUUID();
+        when(contentRepository.existsById(contentId)).thenReturn(true);
+        Message<?> message = subscribeMessage("/sub/contents/" + contentId + "/chat");
+
+        // when
+        Message<?> result = interceptor.preSend(message, null);
+
+        // then
+        assertThat(result).isSameAs(message);
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 콘텐츠의 chat 토픽 구독은 null을 반환해 브로커 전달을 막고 에러프레임 직접 전송")
+    void preSend_blocksMessageAndSendsErrorFrame_whenChatContentDoesNotExist() {
+        // given
+        UUID contentId = UUID.randomUUID();
+        when(contentRepository.existsById(contentId)).thenReturn(false);
+        Message<?> message = subscribeMessage("/sub/contents/" + contentId + "/chat");
+
+        // when
+        Message<?> result = interceptor.preSend(message, null);
+
+        // then
+        assertThat(result).isNull();
+        verify(errorFrameSender).send(
+            eq(message),
+            eq("BusinessException"),
+            eq(ErrorCode.CONTENT_NOT_FOUND),
+            eq(ErrorCode.CONTENT_NOT_FOUND.getMessage()),
+            eq(Map.of())
+        );
+    }
 }
