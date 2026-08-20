@@ -14,12 +14,11 @@ import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.ContentChatDto;
-import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
-import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
+import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -50,9 +49,11 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
 /**
  * 콘텐츠 실시간 채팅 STOMP 파이프라인 통합 테스트
@@ -77,6 +78,11 @@ public class ContentChatStompIntegrationTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
 
+    @Container
+    @ServiceConnection(name = "redis")
+    static GenericContainer<?> redis = new GenericContainer<>(DockerImageName.parse("redis:7"))
+        .withExposedPorts(6379);
+
     private static final long[] CLIENT_HEARTBEAT = {4000, 4000};
     private static final long SUBSCRIBE_SETTLE_MILLIS = 300;
 
@@ -93,7 +99,7 @@ public class ContentChatStompIntegrationTest {
     private UserRepository userRepository;
 
     @Autowired
-    private WatchingSessionSnapshotRepository snapshotRepository;
+    private WatchingSessionPresenceWriter presenceWriter;
 
     private WebSocketStompClient stompClient;
     private ThreadPoolTaskScheduler taskScheduler;
@@ -123,11 +129,9 @@ public class ContentChatStompIntegrationTest {
             .build());
         contentId = content.getId();
 
-        snapshotRepository.save(WatchingSessionSnapshot.builder()
-            .watcherId(senderId)
-            .contentId(contentId)
-            .expiresAt(Instant.now().plus(1, ChronoUnit.HOURS))
-            .build());
+        Instant now = Instant.now();
+        presenceWriter.swap(senderId, UUID.randomUUID(), contentId, "seed-session", "seed-sub",
+            now, now, Duration.ofHours(1));
     }
 
     @AfterEach
@@ -135,7 +139,6 @@ public class ContentChatStompIntegrationTest {
         try {
             StompTestCleanup.closeAll(stompClient, taskScheduler, session);
         } finally {
-            snapshotRepository.deleteAll();
             contentRepository.deleteAll();
             userRepository.deleteAll();
         }
@@ -235,24 +238,6 @@ public class ContentChatStompIntegrationTest {
     }
 
     @Test
-    @DisplayName("존재하지 않는 콘텐츠 ID로 SEND 시 404 CONTENT_NOT_FOUND STOMP ERROR 프레임을 반환")
-    void sendChat_invalidContentId_returnsErrorFrame() throws Exception {
-        // given
-        CompletableFuture<String> errorReceived = new CompletableFuture<>();
-        session = connectAs(senderId, errorReceived);
-
-        // UUID 형식은 맞지만 DB에 없는 임의의 콘텐츠 ID
-        UUID nonExistentContentId = UUID.randomUUID();
-
-        // when (구독 없이 바로 송신)
-        session.send("/pub/contents/" + nonExistentContentId + "/chat", Map.of("content", "도배 시도"));
-
-        // then: 에러 프레임이 수신되었는지 확인 (서비스 로직의 CONTENT_NOT_FOUND)
-        String errorPayload = errorReceived.get(5, TimeUnit.SECONDS);
-        assertThat(errorPayload).contains(ErrorCode.CONTENT_NOT_FOUND.getCode());
-    }
-
-    @Test
     @DisplayName("content가 500자를 초과하면 @Valid에 걸려 400 INVALID_INPUT STOMP ERROR 프레임을 반환하고 구독자에게 브로드캐스트되지 않는다")
     void sendChat_contentOver500Chars_doesNotBroadcast() throws Exception {
         // given
@@ -299,41 +284,45 @@ public class ContentChatStompIntegrationTest {
     }
 
     @Test
-    @DisplayName("잘못된 contentId로 SEND 시 ERROR 프레임은 발신자 세션에만 전달되고 다른 세션에는 전달되지 않음")
-    void sendChat_invalidContentId_errorFrameIsolatedToSenderSession() throws Exception {
-        // given: 발신자 세션과 아무 요청도 보내지 않는 관찰자 세션을 별도로 연결
-        CompletableFuture<String> senderErrorReceived = new CompletableFuture<>();
-        session = connectAs(senderId, senderErrorReceived);
+    @DisplayName("시청 중이 아닌 상태로 SEND 시 403 FORBIDDEN STOMP ERROR 프레임을 반환")
+    void sendChat_notWatching_returnsForbiddenErrorFrame() throws Exception {
+        // given
+        CompletableFuture<String> errorReceived = new CompletableFuture<>();
+        session = connectAs(senderId, errorReceived);
 
-        User observer = userRepository.save(User.builder()
-            .email("chat-observer-" + UUID.randomUUID() + "@test.com")
-            .passwordHash("hash")
-            .name("관찰자")
-            .role(UserRole.USER)
-            .locked(false)
+        // setUp()이 심어둔 presence는 contentId 전용이므로, 시청하지 않는 상태를 재현하려면
+        // presence가 없는 별도 콘텐츠를 써야 한다.
+        Content otherContent = contentRepository.save(Content.builder()
+            .type(ContentType.MOVIE)
+            .title("시청 안 함 검증용 콘텐츠")
+            .description("설명")
             .build());
-        CompletableFuture<String> observerErrorReceived = new CompletableFuture<>();
-        StompSession observerSession = connectAs(observer.getId(), observerErrorReceived);
 
-        UUID nonExistentContentId = UUID.randomUUID();
+        // when
+        session.send("/pub/contents/" + otherContent.getId() + "/chat", Map.of("content", "도배 시도"));
 
-        try {
-            // when: 발신자만 잘못된 contentId로 SEND
-            session.send("/pub/contents/" + nonExistentContentId + "/chat", Map.of("content", "도배 시도"));
+        // then
+        String errorPayload = errorReceived.get(5, TimeUnit.SECONDS);
+        assertThat(errorPayload).contains(ErrorCode.FORBIDDEN.getCode());
+    }
 
-            // then: 발신자 세션에는 ERROR 프레임이 도착
-            String senderPayload = senderErrorReceived.get(5, TimeUnit.SECONDS);
-            assertThat(senderPayload).contains(ErrorCode.CONTENT_NOT_FOUND.getCode());
+    @Test
+    @DisplayName("presence는 유효하지만 콘텐츠가 존재하지 않으면 404 CONTENT_NOT_FOUND STOMP ERROR 프레임을 반환")
+    void sendChat_presenceValidButContentDeleted_returnsContentNotFoundErrorFrame() throws Exception {
+        // given: 논리 삭제 등으로 DB엔 없지만 presence는 아직 이 콘텐츠를 가리키는 상황을 재현
+        UUID deletedContentId = UUID.randomUUID();
+        Instant now = Instant.now();
+        presenceWriter.swap(senderId, UUID.randomUUID(), deletedContentId, "seed-session-2", "seed-sub-2",
+            now, now, Duration.ofHours(1));
 
-            // then: 관찰자 세션에는 아무것도 도착하지 않아야 함
-            assertThatThrownBy(() -> observerErrorReceived.get(2, TimeUnit.SECONDS))
-                .isInstanceOf(TimeoutException.class);
-        } finally {
-            /*
-             * 테스트 도중 서버가 observer 세션을 먼저 종료했더라도
-             * 정리 과정이 본래의 테스트 결과를 덮어쓰지 않도록 안전하게 종료한다.
-             */
-            StompTestCleanup.disconnectQuietly(observerSession);
-        }
+        CompletableFuture<String> errorReceived = new CompletableFuture<>();
+        session = connectAs(senderId, errorReceived);
+
+        // when
+        session.send("/pub/contents/" + deletedContentId + "/chat", Map.of("content", "안녕하세요"));
+
+        // then: presence 검증은 통과했지만 콘텐츠 존재 검증에서 차단됨
+        String errorPayload = errorReceived.get(5, TimeUnit.SECONDS);
+        assertThat(errorPayload).contains(ErrorCode.CONTENT_NOT_FOUND.getCode());
     }
 }
