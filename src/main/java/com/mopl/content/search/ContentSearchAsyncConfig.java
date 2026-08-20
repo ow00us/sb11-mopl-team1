@@ -17,6 +17,8 @@ public class ContentSearchAsyncConfig {
     private static final int SYNC_LANE_COUNT = 4;
 
     // watcherCount 리프레시 배치 전용. 콘텐츠 단위 순서 보장이 필요 없어 기존 방식 그대로 둔다.
+    // 재시도 인프라가 없으니 큐가 가득 차면 조용히 버리고 로그만 남긴다 — 다음 60초 주기에
+    // 전체를 다시 계산하므로 자연히 복구된다.
     @Bean
     public Executor contentSearchSyncExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
@@ -45,9 +47,9 @@ public class ContentSearchAsyncConfig {
             lane.setCorePoolSize(1);
             lane.setMaxPoolSize(1);
             lane.setQueueCapacity(500);
-            lane.setRejectedExecutionHandler((task, exec) ->
-                    log.warn("콘텐츠 검색 동기화 레인 큐가 가득 차 이번 작업을 버립니다. queueSize={}, activeCount={}",
-                            exec.getQueue().size(), exec.getActiveCount()));
+            // 기본 정책(AbortPolicy)을 그대로 둔다. 큐가 가득 차면 예외를 던져야
+            // ContentSearchSyncListener가 그 예외를 잡아 재시도 대기열(ContentSearchRetry)에
+            // 기록할 수 있다. 여기서 조용히 버리면 이벤트가 영구 유실된다.
             lane.initialize();
             lanes.add(lane);
         }

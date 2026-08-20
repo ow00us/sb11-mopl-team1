@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 // ContentSearchSyncListener가 레인에 위임한 실제 동기화 작업을 수행한다.
 // 레인 스레드에서 실행되므로, 원래 트랜잭션과 무관하게 여기서 새로 트랜잭션을 연다.
+// 반환값은 재시도(ContentSearchRetryService) 판정에 쓰인다 — true면 성공, false면 실패.
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -29,17 +30,17 @@ public class ContentSearchSyncWorker {
     private final ElasticsearchOperations elasticsearchOperations;
 
     @Transactional(readOnly = true, propagation = Propagation.REQUIRES_NEW)
-    public void sync(UUID contentId) {
+    public boolean sync(UUID contentId) {
         try {
             Content content = contentRepository.findById(contentId).orElse(null);
             if (content == null) {
-                return;
+                return true;
             }
 
             String id = content.getId().toString();
             if (!contentSearchRepository.existsById(id)) {
                 contentSearchRepository.save(contentDocumentMapper.toNewDocument(content));
-                return;
+                return true;
             }
 
             Map<String, Object> updateFields = contentDocumentMapper.toUpdateFields(content);
@@ -47,16 +48,20 @@ public class ContentSearchSyncWorker {
                     .withDocument(Document.from(updateFields))
                     .build();
             elasticsearchOperations.update(updateQuery, CONTENTS_INDEX);
+            return true;
         } catch (Exception e) {
             log.warn("콘텐츠 검색 색인 동기화 실패. contentId={}", contentId, e);
+            return false;
         }
     }
 
-    public void delete(UUID contentId) {
+    public boolean delete(UUID contentId) {
         try {
             contentSearchRepository.deleteById(contentId.toString());
+            return true;
         } catch (Exception e) {
             log.warn("콘텐츠 검색 색인 삭제 실패. contentId={}", contentId, e);
+            return false;
         }
     }
 }

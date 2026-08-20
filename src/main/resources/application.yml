@@ -91,6 +91,9 @@ sportsdb:
 
 content-search:
   watcher-count-refresh-interval-millis: 60000
+  retry:
+    interval-millis: 60000
+    max-attempts: 5
 
 external-content-batch:
   tmdb-max-pages: 5
