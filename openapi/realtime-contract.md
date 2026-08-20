@@ -14,7 +14,7 @@
 | 명령 | 허용 목적지 | 추가 도메인 검증 |
 |---|---|---|
 | `SUBSCRIBE` | `/sub/contents/{contentId}/watch` | 인증 사용자 여부 |
-| `SUBSCRIBE` | `/sub/contents/{contentId}/chat` | 콘텐츠 채팅 정책 |
+| `SUBSCRIBE` | `/sub/contents/{contentId}/chat` | 콘텐츠 존재 여부만 확인, 시청 여부는 확인하지 않음 |
 | `SEND` | `/pub/contents/{contentId}/chat` | 콘텐츠 존재와 채팅 요청 검증 |
 | `SUBSCRIBE` | `/sub/conversations/{conversationId}/direct-messages` | 대화 참여자 여부 |
 | `SEND` | `/pub/conversations/{conversationId}/direct-messages` | 대화 참여자와 요청 검증 |

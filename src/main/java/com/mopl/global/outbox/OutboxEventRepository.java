@@ -55,12 +55,8 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
      * <p>재시도 대기 중인 건이 뒤로 밀리는 것도 이 정렬이 의도하는 동작입니다. 최초 기록은
      * {@code nextAttemptAt} 이 발생 시각과 같으므로 신규 건 사이의 순서는 발생 순과 같습니다.
      *
-     * <p>같은 partition key 안에서 앞선 이벤트가 끝나기 전에 뒤 이벤트를 발행하지 않는 규칙은
-     * 아직 어디에도 없습니다. relay 는 이 정렬대로 발행하므로, 앞선 이벤트가 실패해 재시도
-     * 대기로 밀리면 뒤 이벤트가 먼저 나갑니다. {@code orderingScope} 가 {@code AGGREGATE} 인
-     * 이벤트에는 이 순서가 계약이므로, 선점 조건에 같은 키의 앞선 대기 건이 없어야 한다는
-     * 조건을 더해야 합니다. {@code idx_outbox_events_partition_order} 가 그 검사를 위한
-     * 인덱스입니다.
+     * <p>이 조회는 순서 게이트를 적용하지 않습니다. 상태와 시도 시각만 봅니다. 같은 partition
+     * key 안의 순서는 선점 조회인 {@link #findClaimableIds(Instant, int)} 가 다룹니다.
      */
     List<OutboxEvent> findByStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscIdAsc(
         OutboxStatus status, Instant now, Limit limit);
@@ -79,15 +75,49 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
      * <p>이 조회로 잠근 행은 호출 트랜잭션이 끝날 때까지 유지되므로, 이어지는
      * {@link #claimByIds(String, Instant, Instant, List)} 사이에 다른 인스턴스가 끼어들 수
      * 없습니다.
+     *
+     * <h2>순서 게이트</h2>
+     *
+     * <p>계약 §9 는 순서가 필요한 이벤트를 같은 partition key 안에서 발생 순으로 발행하도록
+     * 정합니다. 그래서 같은 키에 아직 끝나지 않은 앞선 이벤트가 있으면 선점하지 않습니다.
+     * 이 조건이 없으면 앞선 이벤트가 실패해 재시도 대기로 밀릴 때 뒤 이벤트가 먼저 나갑니다.
+     *
+     * <ul>
+     *   <li>{@code orderingScope} 가 {@code NONE} 인 이벤트에는 적용하지 않습니다. 계약이
+     *       선후 관계가 없다고 선언한 이벤트입니다.</li>
+     *   <li>막는 쪽도 {@code NONE} 은 제외합니다. 순서를 선언하지 않은 이벤트가 같은 키를 쓴다는
+     *       이유로 다른 이벤트를 세울 수는 없습니다.</li>
+     *   <li>{@code PENDING} 과 {@code FAILED} 가 막습니다. {@code PENDING} 은 아직 나가지 않은
+     *       것이고, {@code FAILED} 는 계약이 후속을 계속 차단하도록 정한 상태입니다. 사람이
+     *       재처리하거나 {@code EXPIRED} 로 넘겨야 뒤 이벤트가 진행합니다.</li>
+     *   <li>{@code PUBLISHED} 와 {@code EXPIRED} 는 통과시킵니다.</li>
+     *   <li>선후 비교는 {@code (occurred_at, id)} 로 합니다. 같은 시각이면 id 가 가릅니다.</li>
+     * </ul>
+     *
+     * <p>{@code FOR UPDATE} 에 대상 테이블을 명시합니다. 지정하지 않으면 게이트 확인용으로 읽는
+     * 앞선 행까지 잠글 수 있는데, 그 행은 다른 인스턴스가 발행 중일 수 있습니다.
+     *
+     * <p>게이트 확인은 {@code idx_outbox_events_partition_gate} 를 씁니다. 상태를 가리지 않는
+     * 인덱스면 발행을 마친 행까지 훑어, 한 키에 이벤트가 쌓일수록 확인 비용이 커집니다.
      */
     @Query(value = """
-        SELECT id FROM outbox_events
-        WHERE status = 'PENDING'
-          AND next_attempt_at <= :now
-          AND (claim_owner IS NULL OR claim_expires_at <= :now)
-        ORDER BY next_attempt_at, id
+        SELECT e.id FROM outbox_events e
+        WHERE e.status = 'PENDING'
+          AND e.next_attempt_at <= :now
+          AND (e.claim_owner IS NULL OR e.claim_expires_at <= :now)
+          AND (
+            e.ordering_scope = 'NONE'
+            OR NOT EXISTS (
+              SELECT 1 FROM outbox_events earlier
+              WHERE earlier.partition_key = e.partition_key
+                AND earlier.ordering_scope <> 'NONE'
+                AND earlier.status IN ('PENDING', 'FAILED')
+                AND (earlier.occurred_at, earlier.id) < (e.occurred_at, e.id)
+            )
+          )
+        ORDER BY e.next_attempt_at, e.id
         LIMIT :batchSize
-        FOR UPDATE SKIP LOCKED
+        FOR UPDATE OF e SKIP LOCKED
         """, nativeQuery = true)
     List<UUID> findClaimableIds(@Param("now") Instant now, @Param("batchSize") int batchSize);
 

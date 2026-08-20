@@ -338,7 +338,7 @@ public class WatchingSessionPresenceWriter {
     }
 
     private String key(UUID watcherId) {
-        return KEY_TEMPLATE.formatted(watcherId);
+        return WatchingSessionPresenceKey.of(watcherId);
     }
 
     @SuppressWarnings("ConstantConditions")
