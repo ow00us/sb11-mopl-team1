@@ -36,9 +36,24 @@
 - 2xx 성공 상태 코드
 - 204 응답에 본문이 문서화되지 않는지 여부
 - Bearer JWT와 CSRF 보안 요구
+- 계약에 있는 API가 실제로 구현되어 있는지
 
-정적 계약에만 있고 아직 구현되지 않은 API는 실패시키지 않습니다. 운영 REST
-Controller 목록과 `OpenApiRuntimeContractTest`의 `@WebMvcTest` 대상은 테스트가
+계약에만 있고 구현이 없는 API는 실패로 잡습니다. 프론트엔드는 계약을 보고
+호출하므로, 그 상태가 남아 있으면 없는 API를 부르는 코드가 배포됩니다.
+
+아직 구현하지 않은 API를 계약에 먼저 두어야 한다면 해당 operation에
+`x-implementation-status: planned`를 붙입니다. 구현이 생기면 이 표시를 지워야 하며,
+지우지 않으면 테스트가 알려 줍니다. `planned` 외의 값은 오타로 보고 구현 대상으로
+다룹니다. 값이 틀렸을 때 조용히 제외되지 않아야 합니다.
+
+```yaml
+  /api/example:
+    get:
+      x-implementation-status: planned
+      summary: 아직 구현 전
+```
+
+운영 REST Controller 목록과 `OpenApiRuntimeContractTest`의 `@WebMvcTest` 대상은 테스트가
 자동으로 대조합니다. 새 Controller가 누락되면 테스트가 실패하며, 해당 Controller와
 Mock 의존성을 등록해야 합니다. 구현 API를 추가하거나 제거할 때는
 `EXPECTED_IMPLEMENTED_OPERATIONS`도 함께 갱신해 변경이 명시적으로 검토되도록

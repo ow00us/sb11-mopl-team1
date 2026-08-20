@@ -29,6 +29,7 @@ public final class EventTopicResolver {
             case "follow" -> MoplTopics.FOLLOW_EVENTS;
             case "playlist" -> MoplTopics.PLAYLIST_EVENTS;
             case "premiere" -> MoplTopics.PREMIERE_EVENTS;
+            case "direct-message" -> MoplTopics.DIRECT_MESSAGE_EVENTS;
             default -> throw new EventContractViolationException(
                 "발행 토픽이 정해지지 않은 이벤트 type 입니다: " + type);
         };
