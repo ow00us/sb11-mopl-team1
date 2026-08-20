@@ -56,6 +56,7 @@ public class SecurityConfig {
     private static final String[] PUBLIC_POST_PATHS = {
             "/api/users",
             "/api/auth/sign-in",
+            "/api/auth/reset-password",
             "/api/auth/refresh"
     };
 

@@ -17,6 +17,9 @@ public final class MoplTopics {
     /** 플레이리스트·구독 생산 영역. playlist.subscription.created */
     public static final String PLAYLIST_EVENTS = "mopl.playlist.events";
 
+    /** DM 생산 영역. direct-message.created */
+    public static final String DIRECT_MESSAGE_EVENTS = "mopl.direct-message.events";
+
     /**
      * 프리미어 생산 영역. premiere.upcoming, premiere.started
      *
@@ -34,11 +37,39 @@ public final class MoplTopics {
 
     /** 선언적으로 생성·검증할 도메인 이벤트 토픽 목록입니다. */
     public static List<String> eventTopics() {
-        return List.of(FOLLOW_EVENTS, PLAYLIST_EVENTS, PREMIERE_EVENTS);
+        return List.of(FOLLOW_EVENTS, PLAYLIST_EVENTS, DIRECT_MESSAGE_EVENTS, PREMIERE_EVENTS);
     }
 
     /** 원본 토픽에 대응하는 DLT 이름을 만듭니다. */
     public static String deadLetterTopicOf(String topic) {
         return topic + DLT_SUFFIX;
+    }
+
+    /**
+     * DLT 이름에 대응하는 원본 토픽을 돌려줍니다.
+     *
+     * <p>공통 계약의 DLT 가 아니면 거부합니다. 운영 도구가 임의 토픽을 읽거나 그쪽으로
+     * 발행하는 것을 이 검사로 막습니다.
+     */
+    public static String originalTopicOf(String deadLetterTopic) {
+        requireDeadLetterTopic(deadLetterTopic);
+        return deadLetterTopic.substring(0, deadLetterTopic.length() - DLT_SUFFIX.length());
+    }
+
+    /** 공통 계약의 DLT 인지 확인합니다. */
+    public static void requireDeadLetterTopic(String topic) {
+        if (topic == null || !topic.endsWith(DLT_SUFFIX)) {
+            throw new EventContractViolationException("DLT 이름이 아닙니다: " + topic);
+        }
+
+        String original = topic.substring(0, topic.length() - DLT_SUFFIX.length());
+        requireEventTopic(original);
+    }
+
+    /** 공통 계약의 도메인 이벤트 토픽인지 확인합니다. */
+    public static void requireEventTopic(String topic) {
+        if (!eventTopics().contains(topic)) {
+            throw new EventContractViolationException("공통 계약에 없는 토픽입니다: " + topic);
+        }
     }
 }

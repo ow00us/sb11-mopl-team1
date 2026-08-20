@@ -21,6 +21,41 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
     @Transactional
     void deleteByWatcherId(UUID watcherId);
 
+    // 조건부 삭제 (다중 인스턴스 세대 레이스 방지용) - 다른 인스턴스가 만든 새 세대는 건드리지 않음
+    // expectedUpdatedAt이 null이면(구버전 presence 폴백) 세대 비교를 건너뜀
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            DELETE FROM WatchingSessionSnapshot s
+            WHERE s.watcherId = :watcherId AND s.id = :snapshotId
+            AND (cast(:expectedUpdatedAt as timestamp) IS NULL OR s.updatedAt = :expectedUpdatedAt)
+          """)
+    int deleteByWatcherIdAndId(
+        @Param("watcherId") UUID watcherId,
+        @Param("snapshotId") UUID snapshotId,
+        @Param("expectedUpdatedAt") Instant expectedUpdatedAt);
+
+    // expiresAt, id 기준 안정 정렬 + 키셋 커서. cursorExpiresAt가 null이면 처음부터 조회한다.
+    // (기존 findByContentIdAfterAsc와 동일한 커서 관례를 따름)
+    @Query("""
+        SELECT s FROM WatchingSessionSnapshot s
+        WHERE s.expiresAt < :before
+          AND (cast(:cursorExpiresAt as timestamp) IS NULL
+            OR s.expiresAt > :cursorExpiresAt
+            OR (s.expiresAt = :cursorExpiresAt AND s.id > :cursorId))
+        ORDER BY s.expiresAt ASC, s.id ASC
+        """)
+    List<WatchingSessionSnapshot> findExpiredCandidatesAfterCursor(
+        @Param("before") Instant before,
+        @Param("cursorExpiresAt") Instant cursorExpiresAt,
+        @Param("cursorId") UUID cursorId,
+        Pageable pageable);
+
+    // 만료된 지 오래된 스냅샷을 일괄 삭제하는 메서드
+    // 스위퍼가 presence 미존재를 확인한 id 집합만 대상
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("DELETE FROM WatchingSessionSnapshot s WHERE s.id IN :ids AND s.expiresAt < :before")
+    int deleteAllByIdInAndExpiresAtBefore(@Param("ids") Collection<UUID> ids, @Param("before") Instant before);
+
     // 콘텐츠 기준 시청 세션 목록 - 첫 페이지, 최신순(내림차순)
     @Query("""
       SELECT s FROM WatchingSessionSnapshot s
@@ -107,16 +142,13 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
         @Param("now") Instant now
     );
 
-    // 아직 만료되지 않은 활성 세션의 expiresAt만 연장 (heartbeat 갱신용)
-    // 벌크 업데이트라 JPA auditing을 거치지 않아 updatedAt은 변경되지 않음 (마지막 heartbeat 시각으로 오염되지 않는 편이 스냅샷에 맞음)
-    // 리턴값: 갱신된 행 수 (0이면 활성 세션 없음 -> heartbeat 무효)
+    // heartbeat 갱신용 - expiresAt이 지났어도 갱신한다
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE WatchingSessionSnapshot s SET s.expiresAt = :newExpiresAt "
-    + "WHERE s.watcherId = :watcherId AND s.contentId = :contentId AND s.expiresAt > :now")
+    + "WHERE s.watcherId = :watcherId AND s.contentId = :contentId")
     int renewExpiresAt(
         @Param("watcherId") UUID watcherId,
         @Param("contentId") UUID contentId,
-        @Param("now") Instant now,
         @Param("newExpiresAt") Instant newExpiresAt
     );
 

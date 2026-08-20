@@ -62,6 +62,7 @@ class OutboxEventRepositoryIntegrationTest {
             payload,
             partitionKey,
             "NONE",
+            "follow.created:" + partitionKey,
             occurredAt);
     }
 
@@ -80,7 +81,7 @@ class OutboxEventRepositoryIntegrationTest {
         OutboxEvent saved = outboxEventRepository.saveAndFlush(new OutboxEvent(
             eventId, "premiere.upcoming", 2, aggregateId, occurredAt,
             "{\"contentId\":\"c1\",\"startsAt\":\"2026-08-14T04:00:00Z\"}",
-            "content-1", "contentId", occurredAt));
+            "content-1", "contentId", "premiere.upcoming:" + aggregateId, occurredAt));
 
         OutboxEvent found = outboxEventRepository.findByEventId(eventId).orElseThrow();
 
@@ -117,7 +118,7 @@ class OutboxEventRepositoryIntegrationTest {
         outboxEventRepository.saveAndFlush(new OutboxEvent(
             eventId, "premiere.upcoming", 1, UUID.randomUUID(),
             Instant.parse("2026-08-14T03:00:00Z"), payload,
-            "content-1", "contentId",
+            "content-1", "contentId", "premiere.upcoming:" + eventId,
             Instant.parse("2026-08-14T03:00:00Z")));
 
         String stored = outboxEventRepository.findByEventId(eventId).orElseThrow().getPayload();
@@ -140,7 +141,7 @@ class OutboxEventRepositoryIntegrationTest {
         outboxEventRepository.saveAndFlush(new OutboxEvent(
             eventId, "premiere.upcoming", 1, UUID.randomUUID(), occurredAt,
             "{\"contentId\":\"c1\",\"nested\":{\"depth\":2}}",
-            "content-1", "contentId", occurredAt));
+            "content-1", "contentId", "premiere.upcoming:" + eventId, occurredAt));
 
         // jsonb 를 택한 이유가 운영 조회와 replay 도구의 내용 확인입니다. 값이 JSON 문자열로
         // 이중 인코딩되면 이 연산자가 동작하지 않으므로, 타입 매핑을 여기서 고정합니다.
@@ -163,11 +164,11 @@ class OutboxEventRepositoryIntegrationTest {
 
         outboxEventRepository.saveAndFlush(new OutboxEvent(
             eventId, "follow.created", 1, UUID.randomUUID(), occurredAt,
-            "{}", "k1", "NONE", occurredAt));
+            "{}", "k1", "NONE", "follow.created:k1", occurredAt));
 
         assertThatThrownBy(() -> outboxEventRepository.saveAndFlush(new OutboxEvent(
             eventId, "follow.created", 1, UUID.randomUUID(), occurredAt,
-            "{}", "k2", "NONE", occurredAt)))
+            "{}", "k2", "NONE", "follow.created:k2", occurredAt)))
             .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -245,6 +246,54 @@ class OutboxEventRepositoryIntegrationTest {
         assertThat(plan).doesNotContain("Sort");
     }
 
+    /**
+     * 순서 게이트가 상태별 부분 인덱스를 쓰는지 고정합니다.
+     *
+     * <p>게이트는 후보마다 같은 키의 앞선 미완료 건을 찾습니다. 상태를 가리지 않는 인덱스를
+     * 쓰면 발행을 마친 행까지 훑어, 한 키에 이벤트가 쌓일수록 선점 비용이 커집니다.
+     *
+     * <p>테스트 데이터가 적어 계획이 seq scan 으로 기울기 때문에 인덱스를 쓰도록 강제합니다.
+     * 그 상태에서도 이 인덱스가 나오지 않으면 조건이 인덱스와 맞지 않는다는 뜻입니다.
+     */
+    @Test
+    @DisplayName("순서 게이트 조회가 상태별 부분 인덱스를 사용한다")
+    void orderingGate_usesPartitionGateIndex() {
+        outboxEventRepository.saveAndFlush(pendingEvent("gate-key"));
+
+        String plan = jdbcTemplate.execute((org.springframework.jdbc.core.ConnectionCallback<String>) connection -> {
+            try (var statement = connection.createStatement()) {
+                statement.execute("SET enable_seqscan = off");
+                StringBuilder lines = new StringBuilder();
+                try (var rows = statement.executeQuery("""
+                    EXPLAIN SELECT e.id FROM outbox_events e
+                    WHERE e.status = 'PENDING'
+                      AND e.next_attempt_at <= '2026-08-14T04:00:00Z'::timestamptz
+                      AND (e.claim_owner IS NULL OR e.claim_expires_at <= '2026-08-14T04:00:00Z'::timestamptz)
+                      AND (
+                        e.ordering_scope = 'NONE'
+                        OR NOT EXISTS (
+                          SELECT 1 FROM outbox_events earlier
+                          WHERE earlier.partition_key = e.partition_key
+                            AND earlier.ordering_scope <> 'NONE'
+                            AND earlier.status IN ('PENDING', 'FAILED')
+                            AND (earlier.occurred_at, earlier.id) < (e.occurred_at, e.id)
+                        )
+                      )
+                    ORDER BY e.next_attempt_at, e.id
+                    LIMIT 10
+                    """)) {
+                    while (rows.next()) {
+                        lines.append(rows.getString(1)).append(System.lineSeparator());
+                    }
+                }
+                statement.execute("SET enable_seqscan = on");
+                return lines.toString();
+            }
+        });
+
+        assertThat(plan).contains("idx_outbox_events_partition_gate");
+    }
+
     @Test
     @DisplayName("정의되지 않은 상태 값은 체크 제약이 거부한다")
     void unknownStatus_isRejectedByCheckConstraint() {
@@ -264,7 +313,7 @@ class OutboxEventRepositoryIntegrationTest {
         assertThat(indexes).contains(
             "idx_outbox_events_pending",
             "idx_outbox_events_claim_expires_at",
-            "idx_outbox_events_partition_order",
+            "idx_outbox_events_partition_gate",
             "uk_outbox_events_event_id");
     }
 }

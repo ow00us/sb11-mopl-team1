@@ -16,7 +16,7 @@ import org.springframework.test.context.ActiveProfiles;
 /**
  * application-test.yml의 watching-session TTL 오버라이드가 실제로 바인딩되는지 확인한다.
  *
- * 이 값이 잘못 바인딩되면(프로퍼티 키 오타 등) 운영 기본값(60s/30m)이 그대로 적용되어
+ * 이 값이 잘못 바인딩되면(프로퍼티 키 오타 등) 운영 기본값(90s/120s)이 그대로 적용되어
  * heartbeat E2E 3종이 전부 5초 타임아웃으로 실패한다. 그 원인을 즉시 짚어주기 위한 테스트.
  */
 @SpringBootTest(classes = WatchingSessionPropertiesBindingTest.TestConfig.class)

@@ -1,5 +1,7 @@
 package com.mopl.global.event;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -23,10 +25,12 @@ import org.springframework.kafka.listener.ConsumerRecordRecoverer;
 public class CountingDeadLetterRecoverer implements ConsumerRecordRecoverer {
 
     private final ConsumerRecordRecoverer delegate;
+    private final MeterRegistry meterRegistry;
     private final Map<String, Integer> consecutiveFailures = new ConcurrentHashMap<>();
 
-    public CountingDeadLetterRecoverer(ConsumerRecordRecoverer delegate) {
+    public CountingDeadLetterRecoverer(ConsumerRecordRecoverer delegate, MeterRegistry meterRegistry) {
         this.delegate = delegate;
+        this.meterRegistry = meterRegistry;
     }
 
     @Override
@@ -34,6 +38,7 @@ public class CountingDeadLetterRecoverer implements ConsumerRecordRecoverer {
         try {
             delegate.accept(record, exception);
             consecutiveFailures.remove(recordKey(record));
+            countDeadLetter(record);
         } catch (RuntimeException dltFailure) {
             consecutiveFailures.merge(recordKey(record), 1, Integer::sum);
             throw dltFailure;
@@ -48,6 +53,20 @@ public class CountingDeadLetterRecoverer implements ConsumerRecordRecoverer {
     /** 더 이상 추적하지 않을 레코드의 카운트를 제거합니다. */
     public void forget(ConsumerRecord<?, ?> record) {
         consecutiveFailures.remove(recordKey(record));
+    }
+
+    /**
+     * DLT 로 옮긴 건수를 셉니다.
+     *
+     * <p>태그는 원본 토픽까지만 둡니다. 이벤트 타입은 값에서 읽어야 하는데, DLT 로 오는
+     * 이유 중 하나가 값을 역직렬화하지 못한 경우라 항상 읽을 수 있는 값이 아닙니다.
+     */
+    private void countDeadLetter(ConsumerRecord<?, ?> record) {
+        Counter.builder("mopl.kafka.dlt.records")
+            .tag("topic", record.topic())
+            .description("DLT 로 옮긴 레코드 수")
+            .register(meterRegistry)
+            .increment();
     }
 
     static String recordKey(ConsumerRecord<?, ?> record) {

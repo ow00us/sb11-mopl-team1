@@ -17,6 +17,18 @@ services:
     ports:
       - "6379:6379"
 
+  mailpit:
+    # 팀원마다 동일한 버전의 로컬 SMTP 서버를 사용하도록 버전을 고정
+    image: axllent/mailpit:v1.30.0
+    container_name: mopl-mailpit
+
+    ports:
+      # Spring Boot가 비밀번호 초기화 메일을 전달하는 SMTP 포트
+      - "1025:1025"
+
+      # 브라우저에서 발송된 테스트 메일을 확인하는 Mailpit 웹 UI 포트
+      - "8025:8025"
+
   kafka:
     image: apache/kafka:3.8.0
     container_name: mopl-kafka
@@ -25,11 +37,15 @@ services:
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      # 컨테이너에서 붙는 INTERNAL 과 호스트에서 붙는 EXTERNAL 을 나눕니다.
+      # 하나로 두고 localhost 를 광고하면, 다른 컨테이너가 메타데이터를 받은 뒤
+      # 자기 자신의 localhost 로 접속을 시도해 발행과 소비가 모두 실패합니다.
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1

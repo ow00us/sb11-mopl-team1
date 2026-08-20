@@ -6,6 +6,7 @@ import com.mopl.global.event.DltFailureStoppingErrorHandler;
 import com.mopl.global.event.EventContractViolationException;
 import com.mopl.global.event.EventEnvelope;
 import com.mopl.global.event.MoplTopics;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.HashMap;
 import java.util.Map;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -115,7 +116,8 @@ public class KafkaConsumerConfig {
      */
     @Bean
     public DefaultErrorHandler eventErrorHandler(
-        @Qualifier("deadLetterKafkaTemplate") KafkaTemplate<String, Object> deadLetterKafkaTemplate
+        @Qualifier("deadLetterKafkaTemplate") KafkaTemplate<String, Object> deadLetterKafkaTemplate,
+        MeterRegistry meterRegistry
     ) {
         DeadLetterPublishingRecoverer publisher = new DeadLetterPublishingRecoverer(
             deadLetterKafkaTemplate,
@@ -134,7 +136,7 @@ public class KafkaConsumerConfig {
         backOff.setMultiplier(2.0);
 
         DefaultErrorHandler errorHandler = new DltFailureStoppingErrorHandler(
-            new CountingDeadLetterRecoverer(publisher), backOff, MAX_CONSECUTIVE_DLT_FAILURES);
+            new CountingDeadLetterRecoverer(publisher, meterRegistry), backOff, MAX_CONSECUTIVE_DLT_FAILURES);
         errorHandler.addNotRetryableExceptions(
             DeserializationException.class,
             MessageConversionException.class,

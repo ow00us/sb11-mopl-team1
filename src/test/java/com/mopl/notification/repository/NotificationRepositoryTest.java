@@ -507,6 +507,158 @@ class NotificationRepositoryTest {
             );
     }
 
+    @Test
+    @DisplayName("같은 이벤트와 수신자의 알림은 한 번만 저장")
+    void insertIfAbsent_duplicateEventAndReceiver_insertsOnce() {
+        // given
+        UUID sourceEventId = UUID.fromString(
+            "33333333-3333-3333-3333-333333333333"
+        );
+
+        UUID resourceId = UUID.fromString(
+            "44444444-4444-4444-4444-444444444444"
+        );
+
+        UUID sourceEntityId = UUID.fromString(
+            "55555555-5555-5555-5555-555555555555"
+        );
+
+        Instant firstCreatedAt =
+            Instant.parse("2026-08-14T01:00:00Z");
+
+        Instant secondCreatedAt =
+            Instant.parse("2026-08-14T02:00:00Z");
+
+        // when
+        int firstInsertedCount =
+            notificationRepository.insertIfAbsent(
+                NOTIFICATION_ID_1,
+                firstCreatedAt,
+                RECEIVER_ID,
+                sourceEventId,
+                "DIRECT_MESSAGE",
+                resourceId,
+                sourceEntityId,
+                "[DM] 발신자",
+                "첫 번째 알림",
+                "INFO"
+            );
+
+        int secondInsertedCount =
+            notificationRepository.insertIfAbsent(
+                NOTIFICATION_ID_2,
+                secondCreatedAt,
+                RECEIVER_ID,
+                sourceEventId,
+                "DIRECT_MESSAGE",
+                resourceId,
+                sourceEntityId,
+                "[DM] 발신자",
+                "중복 알림",
+                "INFO"
+            );
+
+        // then
+        assertThat(firstInsertedCount)
+            .isEqualTo(1);
+
+        assertThat(secondInsertedCount)
+            .isZero();
+
+        assertThat(
+            notificationRepository.findById(
+                NOTIFICATION_ID_1
+            )
+        ).isPresent();
+
+        assertThat(
+            notificationRepository.findById(
+                NOTIFICATION_ID_2
+            )
+        ).isEmpty();
+
+        Integer savedCount =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM notifications
+                WHERE source_event_id = ?
+                    AND receiver_id = ?
+                """,
+                Integer.class,
+                sourceEventId,
+                RECEIVER_ID
+            );
+
+        assertThat(savedCount)
+            .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("수신자가 없으면 알림을 저장하지 않음")
+    void insertIfAbsent_receiverMissing_skips() {
+        // given
+        UUID missingReceiverId = UUID.fromString(
+            "99999999-9999-9999-9999-999999999999"
+        );
+
+        UUID sourceEventId = UUID.fromString(
+            "33333333-3333-3333-3333-333333333333"
+        );
+
+        UUID resourceId = UUID.fromString(
+            "44444444-4444-4444-4444-444444444444"
+        );
+
+        UUID sourceEntityId = UUID.fromString(
+            "55555555-5555-5555-5555-555555555555"
+        );
+
+        Instant createdAt =
+            Instant.parse("2026-08-14T01:00:00Z");
+
+        // when
+        int insertedCount =
+            notificationRepository.insertIfAbsent(
+                NOTIFICATION_ID_1,
+                createdAt,
+                missingReceiverId,
+                sourceEventId,
+                "DIRECT_MESSAGE",
+                resourceId,
+                sourceEntityId,
+                "[DM] 발신자",
+                "안녕하세요",
+                "INFO"
+            );
+
+        // then
+        assertThat(insertedCount)
+            .isZero();
+
+        assertThat(
+            notificationRepository.findById(
+                NOTIFICATION_ID_1
+            )
+        ).isEmpty();
+
+        Integer savedCount =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM notifications
+                WHERE source_event_id = ?
+                    AND receiver_id = ?
+                """,
+                Integer.class,
+                sourceEventId,
+                missingReceiverId
+            );
+
+        assertThat(savedCount)
+            .isZero();
+    }
+
     private PageRequest firstPage(Sort.Direction direction) {
         Sort sort = Sort.by(direction, "createdAt")
             .and(Sort.by(direction, "id"));

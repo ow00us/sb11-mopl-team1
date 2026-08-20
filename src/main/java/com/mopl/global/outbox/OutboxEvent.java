@@ -20,8 +20,8 @@ import org.hibernate.type.SqlTypes;
  * <p>도메인 상태 변경과 같은 트랜잭션에서 기록해, 상태는 바뀌었는데 이벤트만 유실되는
  * 경우를 없앱니다. 커밋된 행을 relay 가 읽어 Kafka 에 발행합니다.
  *
- * <p>이 클래스는 저장 모델입니다. 기록 포트, claim·lease, 발행은 후속 이슈에서 붙습니다.
- * 상태 전이 메서드도 그때 함께 정의합니다.
+ * <p>상태 전이는 이 클래스가 소유합니다. 언제 다시 시도할지와 언제 그만둘지는
+ * {@link OutboxRetryPolicy} 가 정하고, 이 클래스는 그 결과를 반영만 합니다.
  */
 @Getter
 @Entity
@@ -70,6 +70,19 @@ public class OutboxEvent extends BaseEntity {
     @Column(name = "ordering_scope", updatable = false, nullable = false, length = 50)
     private String orderingScope;
 
+    /**
+     * 도메인 사건을 한 번만 식별하는 키입니다.
+     *
+     * <p>{@code eventId} 는 envelope 를 식별합니다. 도메인 연산이 두 번 실행되어 envelope 를
+     * 각각 새로 만들면 {@code eventId} 가 서로 달라 두 행이 모두 저장되고 이벤트가 두 번
+     * 발행됩니다. 이 값은 그 경우를 막습니다.
+     *
+     * <p>유니크 제약이 걸려 있습니다. 같은 키의 두 번째 기록은 저장되지 않고, 기록이 도메인
+     * 트랜잭션 안에서 일어나므로 도메인 변경도 함께 롤백됩니다.
+     */
+    @Column(name = "deduplication_key", updatable = false, nullable = false, length = 200)
+    private String deduplicationKey;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private OutboxStatus status;
@@ -102,6 +115,67 @@ public class OutboxEvent extends BaseEntity {
     @Column(name = "last_error", columnDefinition = "text")
     private String lastError;
 
+    /**
+     * broker 발행 확인을 받은 뒤 완료로 표시합니다.
+     *
+     * <p>선점 정보를 비웁니다. 남겨두면 만료된 lease 를 회수하는 조회가 이미 끝난 레코드를
+     * 계속 훑습니다.
+     */
+    public void markPublished(Instant publishedAt) {
+        this.status = OutboxStatus.PUBLISHED;
+        this.publishedAt = publishedAt;
+        this.claimOwner = null;
+        this.claimExpiresAt = null;
+        this.lastError = null;
+    }
+
+    /**
+     * 발행 시도가 실패했고 다시 시도할 것임을 기록합니다.
+     *
+     * <p>상태를 발행 대기로 되돌리고 선점을 풉니다. 다음 시도 시각은 호출부가 재시도 정책으로
+     * 계산해 넘깁니다. 이 값을 미루지 않으면 원인이 지속되는 실패를 주기마다 다시 두드려
+     * 정상 레코드의 발행을 밀어냅니다.
+     */
+    public void markAttemptFailed(String lastError, Instant nextAttemptAt) {
+        this.status = OutboxStatus.PENDING;
+        this.attempts = this.attempts + 1;
+        this.claimOwner = null;
+        this.claimExpiresAt = null;
+        this.lastError = lastError;
+        this.nextAttemptAt = nextAttemptAt;
+    }
+
+    /**
+     * 자동 재시도를 그만두고 최종 실패로 남깁니다.
+     *
+     * <p>삭제하지 않습니다. eventId 와 payload 가 남아 있어야 원인을 고친 뒤 같은 이벤트를
+     * 그대로 다시 발행할 수 있습니다.
+     */
+    public void markFailed(String lastError) {
+        this.status = OutboxStatus.FAILED;
+        this.attempts = this.attempts + 1;
+        this.claimOwner = null;
+        this.claimExpiresAt = null;
+        this.lastError = lastError;
+    }
+
+    /**
+     * 최종 실패한 이벤트를 다시 발행 대기로 돌립니다.
+     *
+     * <p>시도 횟수를 0 으로 되돌립니다. 원인을 고친 뒤 다시 넣는 것이므로, 남은 횟수가 없는
+     * 상태로 두면 한 번 실패하고 바로 최종 실패로 되돌아갑니다.
+     *
+     * <p>{@code lastError} 는 지우지 않습니다. 재처리 후에도 직전 실패 원인이 남아 있어야
+     * 같은 실패가 반복되는지 확인할 수 있습니다. 발행에 성공하면 그때 지워집니다.
+     */
+    public void requeue(Instant now) {
+        this.status = OutboxStatus.PENDING;
+        this.attempts = 0;
+        this.claimOwner = null;
+        this.claimExpiresAt = null;
+        this.nextAttemptAt = now;
+    }
+
     public OutboxEvent(
         UUID eventId,
         String type,
@@ -111,6 +185,7 @@ public class OutboxEvent extends BaseEntity {
         String payload,
         String partitionKey,
         String orderingScope,
+        String deduplicationKey,
         Instant nextAttemptAt
     ) {
         this.eventId = eventId;
@@ -121,6 +196,7 @@ public class OutboxEvent extends BaseEntity {
         this.payload = payload;
         this.partitionKey = partitionKey;
         this.orderingScope = orderingScope;
+        this.deduplicationKey = deduplicationKey;
         this.status = OutboxStatus.PENDING;
         this.attempts = 0;
         this.nextAttemptAt = nextAttemptAt;

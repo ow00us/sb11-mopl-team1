@@ -176,6 +176,67 @@ public class WatchingSessionSnapshotRepositoryTest {
     }
 
     @Test
+    @DisplayName("deleteAllByIdInAndExpiresAtBefore는 대상 id 중 여전히 만료 상태인 행만 삭제한다")
+    void deleteAllByIdInAndExpiresAtBefore_success_deletesOnlyStillExpiredRows() {
+        Instant now = Instant.now();
+        UUID watcherA = insertUser();
+        UUID watcherB = insertUser();
+        UUID contentId = insertContent();
+        WatchingSessionSnapshot stillExpired =
+            persistSnapshot(watcherA, contentId, now.minusSeconds(600), now.minusSeconds(60));
+        // 후보로 뽑힌 뒤 그 사이 heartbeat로 갱신돼 더 이상 만료 상태가 아닌 행을 재현
+        WatchingSessionSnapshot renewedSince =
+            persistSnapshot(watcherB, contentId, now.minusSeconds(600), now.plusSeconds(60));
+        entityManager.clear();
+
+        int deleted = repository.deleteAllByIdInAndExpiresAtBefore(
+            List.of(stillExpired.getId(), renewedSince.getId()), now);
+        entityManager.clear();
+
+        assertThat(deleted).isEqualTo(1);
+        assertThat(repository.findByWatcherId(watcherA)).isEmpty();
+        assertThat(repository.findByWatcherId(watcherB)).isPresent(); // 그 사이 갱신된 행은 보호됨
+    }
+
+    @Test
+    @DisplayName("deleteAllByExpiresAtBefore는 삭제 대상이 없으면 0을 반환한다")
+    void deleteAllByExpiresAtBefore_returnsZero_whenNothingExpired() {
+        // given
+        Instant now = Instant.now();
+        UUID watcherId = insertUser();
+        UUID contentId = insertContent();
+        persistSnapshot(watcherId, contentId, now, now.plusSeconds(60));
+
+        // when
+        int deleted = repository.deleteAllByIdInAndExpiresAtBefore(List.of(), now.minusSeconds(600));
+
+        // then
+        assertThat(deleted).isZero();
+        assertThat(repository.findByWatcherId(watcherId)).isPresent();
+    }
+
+    @Test
+    @DisplayName("findExpiredCandidatesAfterCursor는 커서 이후의 만료 후보만 expiresAt, id 순으로 반환한다")
+    void findExpiredCandidatesAfterCursor_returnsRowsAfterCursor_inStableOrder() {
+        Instant now = Instant.now();
+        UUID contentId = insertContent();
+        WatchingSessionSnapshot first = persistSnapshot(insertUser(), contentId, now.minusSeconds(600), now.minusSeconds(180));
+        WatchingSessionSnapshot second = persistSnapshot(insertUser(), contentId, now.minusSeconds(600), now.minusSeconds(120));
+        WatchingSessionSnapshot third = persistSnapshot(insertUser(), contentId, now.minusSeconds(600), now.minusSeconds(60));
+        entityManager.clear();
+
+        List<WatchingSessionSnapshot> fromStart =
+            repository.findExpiredCandidatesAfterCursor(now, null, null, PageRequest.of(0, 500));
+        assertThat(fromStart).extracting(WatchingSessionSnapshot::getId)
+            .containsExactly(first.getId(), second.getId(), third.getId());
+
+        List<WatchingSessionSnapshot> afterFirst = repository.findExpiredCandidatesAfterCursor(
+            now, first.getExpiresAt(), first.getId(), PageRequest.of(0, 500));
+        assertThat(afterFirst).extracting(WatchingSessionSnapshot::getId)
+            .containsExactly(second.getId(), third.getId());
+    }
+
+    @Test
     @DisplayName("만료된 세션은 목록에서 제외")
     void findByContentIdFirstPageDesc_excludesExpired() {
         // given
@@ -520,7 +581,7 @@ public class WatchingSessionSnapshotRepositoryTest {
         Instant newExpiresAt = now.plus(30, ChronoUnit.MINUTES).truncatedTo(ChronoUnit.MICROS);
 
         // when
-        int updated = repository.renewExpiresAt(watcherId, contentId, now, newExpiresAt);
+        int updated = repository.renewExpiresAt(watcherId, contentId, newExpiresAt);
         entityManager.clear();
 
         // then
@@ -530,8 +591,8 @@ public class WatchingSessionSnapshotRepositoryTest {
     }
 
     @Test
-    @DisplayName("renewExpiresAt은 이미 만료된 세션을 부활시키지 않고 0을 반환한다")
-    void renewExpiresAt_returnsZero_whenAlreadyExpired() {
+    @DisplayName("renewExpiresAt은 이미 만료된 세션도 갱신해 부활시킨다")
+    void renewExpiresAt_success_revivesAlreadyExpiredSession() {
         // given
         UUID watcherId = insertUser();
         UUID contentId = insertContent();
@@ -539,15 +600,16 @@ public class WatchingSessionSnapshotRepositoryTest {
         Instant originalExpiresAt = now.minusSeconds(1).truncatedTo(ChronoUnit.MICROS);
         persistSnapshot(watcherId, contentId, now.minusSeconds(60), originalExpiresAt);
 
+        Instant newExpiresAt = now.plus(30, ChronoUnit.MINUTES).truncatedTo(ChronoUnit.MICROS);
+
         // when
-        int updated = repository.renewExpiresAt(
-            watcherId, contentId, now, now.plus(30, ChronoUnit.MINUTES));
+        int updated = repository.renewExpiresAt(watcherId, contentId, newExpiresAt);
         entityManager.clear();
 
-        // then
-        assertThat(updated).isZero();
-        WatchingSessionSnapshot untouched = repository.findByWatcherId(watcherId).orElseThrow();
-        assertThat(untouched.getExpiresAt()).isEqualTo(originalExpiresAt);
+        // then:  DB 갱신이 연속 실패해 expiresAt이 과거로 굳어도, 다음 heartbeat가 정상 도착하면 그대로 부활한다 — 영구 고착 회귀 방지
+        assertThat(updated).isEqualTo(1);
+        WatchingSessionSnapshot revived = repository.findByWatcherId(watcherId).orElseThrow();
+        assertThat(revived.getExpiresAt()).isEqualTo(newExpiresAt);
     }
 
     @Test
@@ -562,7 +624,7 @@ public class WatchingSessionSnapshotRepositoryTest {
 
         // when
         int updated = repository.renewExpiresAt(
-            watcherId, staleContentId, now, now.plus(30, ChronoUnit.MINUTES));
+            watcherId, staleContentId, now.plus(30, ChronoUnit.MINUTES));
 
         // then
         assertThat(updated).isZero();
@@ -573,7 +635,7 @@ public class WatchingSessionSnapshotRepositoryTest {
     void renewExpiresAt_returnsZero_whenNoActiveSession() {
         // when
         int updated = repository.renewExpiresAt(
-            UUID.randomUUID(), UUID.randomUUID(), Instant.now(), Instant.now().plusSeconds(60));
+            UUID.randomUUID(), UUID.randomUUID(), Instant.now().plusSeconds(60));
 
         // then
         assertThat(updated).isZero();
@@ -591,7 +653,7 @@ public class WatchingSessionSnapshotRepositoryTest {
         entityManager.clear();
 
         // when
-        repository.renewExpiresAt(watcherId, contentId, now, now.plus(30, ChronoUnit.MINUTES));
+        repository.renewExpiresAt(watcherId, contentId, now.plus(30, ChronoUnit.MINUTES));
         entityManager.clear();
 
         // then
