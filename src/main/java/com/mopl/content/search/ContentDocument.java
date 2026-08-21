@@ -46,6 +46,10 @@ public class ContentDocument {
     @Field(type = FieldType.Integer)
     private Integer reviewCount;
 
+    // 검색/필터 대상이 아니라 표시용이라 색인하지 않는다.
+    @Field(type = FieldType.Keyword, index = false)
+    private String thumbnailUrl;
+
     @Field(type = FieldType.Date, format = DateFormat.date_hour_minute_second_millis)
     private LocalDateTime createdAt;
 

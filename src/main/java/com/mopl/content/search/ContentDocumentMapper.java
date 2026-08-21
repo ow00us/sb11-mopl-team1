@@ -31,6 +31,7 @@ public class ContentDocumentMapper {
                 .tags(new ArrayList<>(content.getTags()))
                 .averageRating(content.getAverageRating().doubleValue())
                 .reviewCount(content.getReviewCount().intValue())
+                .thumbnailUrl(content.getThumbnailUrl())
                 .createdAt(LocalDateTime.ofInstant(content.getCreatedAt(), ZoneOffset.UTC))
                 .watcherCount(0)
                 .build();
@@ -46,6 +47,7 @@ public class ContentDocumentMapper {
         fields.put("tags", new ArrayList<>(content.getTags()));
         fields.put("averageRating", content.getAverageRating().doubleValue());
         fields.put("reviewCount", content.getReviewCount().intValue());
+        fields.put("thumbnailUrl", content.getThumbnailUrl());
         LocalDateTime createdAt = LocalDateTime.ofInstant(content.getCreatedAt(), ZoneOffset.UTC);
         fields.put("createdAt", CREATED_AT_FORMAT.format(createdAt));
         return fields;
