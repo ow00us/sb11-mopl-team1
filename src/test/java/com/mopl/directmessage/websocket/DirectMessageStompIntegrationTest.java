@@ -105,6 +105,9 @@ class DirectMessageStompIntegrationTest {
     @MockitoSpyBean
     private DirectMessageBroadcaster broadcaster;
 
+    @MockitoBean
+    private DirectMessageRelayPublisher relayPublisher;
+
     @Autowired
     private DirectMessageWebSocketController controller;
 
@@ -458,6 +461,45 @@ class DirectMessageStompIntegrationTest {
         // 아직 수신자가 읽음 처리하지 않았으므로 null이다.
         assertThat(savedMessages.get(0).getReadAt())
             .isNull();
+    }
+
+    @Test
+    @DisplayName("Redis 중계 발행에 실패해도 저장된 DM은 유지")
+    void send_relayFailure_preservesSavedMessage() {
+        // given
+        DirectMessageSendRequest request =
+            new DirectMessageSendRequest(
+                "Redis 중계 실패 메시지"
+            );
+
+        Principal principal =
+            () -> senderId.toString();
+
+        when(
+            relayPublisher.publish(
+                eq(conversationId),
+                any(DirectMessageDto.class)
+            )
+        ).thenReturn(false);
+
+        // when
+        controller.send(
+            conversationId,
+            request,
+            principal
+        );
+
+        // then
+        List<DirectMessage> savedMessages =
+            directMessageRepository.findAll();
+
+        assertThat(savedMessages)
+            .hasSize(1);
+
+        assertThat(savedMessages.get(0).getContent())
+            .isEqualTo(
+                "Redis 중계 실패 메시지"
+            );
     }
 
     @Test
