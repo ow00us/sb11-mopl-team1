@@ -251,6 +251,14 @@ spring:
   config:
     activate:
       on-profile: prod
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            # 운영에서는 프록시 내부 주소가 아니라 Google Console에 등록한
+            # 외부 HTTPS Callback URI를 명시적으로 사용
+            redirect-uri: ${GOOGLE_OAUTH_REDIRECT_URI}
   data:
     redis:
       host: ${SPRING_DATA_REDIS_HOST}
