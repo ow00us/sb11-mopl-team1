@@ -1,5 +1,6 @@
 package com.mopl.global.event;
 
+import java.time.Instant;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -29,4 +30,30 @@ public interface ProcessedEventRepository extends JpaRepository<ProcessedEvent, 
         @Param("eventId") UUID eventId,
         @Param("eventType") String eventType
     );
+
+    /**
+     * 보관 기간을 지난 처리 기록을 상한만큼 지웁니다.
+     *
+     * <p>지울 대상을 하위 조회로 먼저 고르고 {@code FOR UPDATE SKIP LOCKED} 로 잠급니다.
+     * 여러 인스턴스가 동시에 실행해도 이미 잠긴 행은 기다리지 않고 건너뛰므로, 같은 행을 두
+     * 번 지우려 하거나 서로 잠금을 기다리는 일이 없습니다.
+     *
+     * <p>상한을 두는 이유는 한 번의 실행이 오래 걸리면 그동안 잠금과 트랜잭션이 유지되어
+     * 소비 경로의 기록 선점이 함께 느려지기 때문입니다. 남은 것은 다음 실행으로 넘깁니다.
+     *
+     * @return 지운 건수
+     */
+    @Modifying
+    @Query(value = """
+        DELETE FROM processed_events
+        WHERE id IN (
+          SELECT id FROM processed_events
+          WHERE created_at <= :threshold
+          ORDER BY created_at, id
+          LIMIT :batchSize
+          FOR UPDATE SKIP LOCKED
+        )
+        """, nativeQuery = true)
+    int deleteRecordedBefore(
+        @Param("threshold") Instant threshold, @Param("batchSize") int batchSize);
 }
