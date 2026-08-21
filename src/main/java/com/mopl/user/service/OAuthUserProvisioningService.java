@@ -6,6 +6,7 @@ import com.mopl.user.entity.User;
 import com.mopl.user.repository.OAuthAccountRepository;
 import com.mopl.user.repository.UserRepository;
 import java.util.Locale;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
@@ -99,7 +100,10 @@ public class OAuthUserProvisioningService {
         String profileImageUrl
     ) {
         String normalizedEmail =
-            normalizeAndValidateEmail(email);
+            resolveEmail(
+                provider,
+                email
+            );
 
         String validatedName =
             validateName(name);
@@ -228,15 +232,28 @@ public class OAuthUserProvisioningService {
         }
     }
 
-    private String normalizeAndValidateEmail(
+    /**
+     * Provider가 전달한 이메일을 정규화하거나 내부 식별 이메일을 생성
+     *
+     * <p>Google처럼 검증된 이메일을 필수로 요구하는 Provider는
+     * Provider별 UserService에서 이메일 누락을 먼저 거부합니다.</p>
+     *
+     * <p>Kakao처럼 이메일 제공이 보장되지 않는 Provider는 users 테이블의
+     * NOT NULL 이메일 계약을 유지하기 위해 발송 불가능한 예약 도메인의
+     * 내부 식별 이메일을 사용합니다. Provider 사용자 ID를 직접 포함하지
+     * 않고 무작위 UUID를 사용해 외부 식별자가 노출되지 않도록 합니다.</p>
+     */
+    private String resolveEmail(
+        OAuthProvider provider,
         String email
     ) {
         if (email == null || email.isBlank()) {
-            throw authenticationException(
-                "oauth_email_required",
-                "신규 OAuth 사용자 생성에 이메일이 필요합니다.",
-                null
-            );
+            return provider
+                .name()
+                .toLowerCase(Locale.ROOT)
+                + "-"
+                + UUID.randomUUID()
+                + "@oauth.invalid";
         }
 
         String normalizedEmail =
