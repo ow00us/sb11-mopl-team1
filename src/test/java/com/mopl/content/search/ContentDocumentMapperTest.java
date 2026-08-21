@@ -7,7 +7,7 @@ import com.mopl.content.entity.ContentType;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -42,7 +42,7 @@ class ContentDocumentMapperTest {
         assertThat(document.getTags()).containsExactlyInAnyOrderElementsOf(content.getTags());
         assertThat(document.getAverageRating()).isEqualTo(content.getAverageRating().doubleValue());
         assertThat(document.getCreatedAt())
-                .isEqualTo(LocalDateTime.ofInstant(content.getCreatedAt(), ZoneId.systemDefault()));
+                .isEqualTo(LocalDateTime.ofInstant(content.getCreatedAt(), ZoneOffset.UTC));
     }
 
     // ── toUpdateFields ───────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ class ContentDocumentMapperTest {
 
         Map<String, Object> fields = mapper.toUpdateFields(content);
 
-        LocalDateTime expected = LocalDateTime.ofInstant(content.getCreatedAt(), ZoneId.systemDefault());
+        LocalDateTime expected = LocalDateTime.ofInstant(content.getCreatedAt(), ZoneOffset.UTC);
         String expectedText = java.time.format.DateTimeFormatter
                 .ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS").format(expected);
         assertThat(fields.get("createdAt")).isEqualTo(expectedText);

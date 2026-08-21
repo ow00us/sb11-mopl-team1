@@ -2,7 +2,7 @@ package com.mopl.content.search;
 
 import com.mopl.content.entity.Content;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -24,12 +24,14 @@ public class ContentDocumentMapper {
     public ContentDocument toNewDocument(Content content) {
         return ContentDocument.builder()
                 .id(content.getId().toString())
+                .contentId(content.getId().toString())
                 .title(content.getTitle())
                 .description(content.getDescription())
                 .type(content.getType().name())
                 .tags(new ArrayList<>(content.getTags()))
                 .averageRating(content.getAverageRating().doubleValue())
-                .createdAt(LocalDateTime.ofInstant(content.getCreatedAt(), ZoneId.systemDefault()))
+                .reviewCount(content.getReviewCount().intValue())
+                .createdAt(LocalDateTime.ofInstant(content.getCreatedAt(), ZoneOffset.UTC))
                 .watcherCount(0)
                 .build();
     }
@@ -43,7 +45,8 @@ public class ContentDocumentMapper {
         fields.put("type", content.getType().name());
         fields.put("tags", new ArrayList<>(content.getTags()));
         fields.put("averageRating", content.getAverageRating().doubleValue());
-        LocalDateTime createdAt = LocalDateTime.ofInstant(content.getCreatedAt(), ZoneId.systemDefault());
+        fields.put("reviewCount", content.getReviewCount().intValue());
+        LocalDateTime createdAt = LocalDateTime.ofInstant(content.getCreatedAt(), ZoneOffset.UTC);
         fields.put("createdAt", CREATED_AT_FORMAT.format(createdAt));
         return fields;
     }

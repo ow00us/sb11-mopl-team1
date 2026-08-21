@@ -43,6 +43,14 @@ public class ContentDocument {
     @Field(type = FieldType.Integer)
     private Integer watcherCount;
 
+    @Field(type = FieldType.Integer)
+    private Integer reviewCount;
+
     @Field(type = FieldType.Date, format = DateFormat.date_hour_minute_second_millis)
     private LocalDateTime createdAt;
+
+    // _id 필드는 ES 7+에서 fielddata가 기본 비활성화라 정렬/search_after에 못 쓴다.
+    // search_after로 id를 tie-breaker 정렬에 쓰기 위한 별도 keyword 필드.
+    @Field(type = FieldType.Keyword)
+    private String contentId;
 }
