@@ -168,6 +168,16 @@ mopl:
       # 간격 상한입니다. 없으면 몇 번 실패한 뒤 다음 시도가 며칠 뒤로 밀립니다.
       max-backoff: ${OUTBOX_RETRY_MAX_BACKOFF:10m}
       multiplier: ${OUTBOX_RETRY_MULTIPLIER:2.0}
+    cleanup:
+      # 발행 완료 레코드 정리 여부입니다.
+      enabled: ${OUTBOX_CLEANUP_ENABLED:true}
+      # 이전 실행이 끝난 뒤부터 이 간격만큼 쉬고 다시 돕니다.
+      interval: ${OUTBOX_CLEANUP_INTERVAL:3600000}
+      # 발행을 마친 뒤 이 기간이 지나야 지웁니다. 소비 지연과 재처리 요청이 들어오는
+      # 기간만큼은 남겨야 합니다.
+      retention: ${OUTBOX_CLEANUP_RETENTION:7d}
+      # 한 번의 실행이 지울 최대 건수입니다.
+      batch-size: ${OUTBOX_CLEANUP_BATCH_SIZE:1000}
     metrics:
       enabled: ${OUTBOX_METRICS_ENABLED:true}
       # gauge 값을 다시 집계하는 간격입니다. 짧으면 집계 질의가 그만큼 자주 돕니다.
