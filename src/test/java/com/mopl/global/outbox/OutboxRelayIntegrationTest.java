@@ -547,7 +547,8 @@ class OutboxRelayIntegrationTest {
         // 원인을 고친 뒤 다시 넣는 상황입니다.
         flakyKafkaTemplate.failNext(0);
         Instant requeuedAt = NOW.plusSeconds(10);
-        assertThat(outboxFailureService.requeue(saved.getEventId(), requeuedAt)).isTrue();
+        assertThat(outboxFailureService.requeue(saved.getEventId(), requeuedAt))
+            .isEqualTo(OutboxRequeueOutcome.REQUEUED);
 
         OutboxEvent requeued = reload(saved);
         assertThat(requeued.getStatus()).isEqualTo(OutboxStatus.PENDING);

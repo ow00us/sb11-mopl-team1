@@ -216,6 +216,11 @@ app:
       # OAuth 인증 실패 후 이동할 프론트엔드 로그인 화면
       failure-uri: ${OAUTH2_FAILURE_REDIRECT_URI:http://localhost:5173/sign-in}
 
+logging:
+  level:
+    # 감사 로그는 이름을 따로 둡니다. 루트 레벨을 올리더라도 누가 무엇을 했는지는
+    # 계속 남아야 합니다.
+    mopl.audit: info
 ---
 spring:
   config:
