@@ -1,6 +1,21 @@
 spring:
   application:
     name: mopl
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_OAUTH_CLIENT_ID}
+            client-secret: ${GOOGLE_OAUTH_CLIENT_SECRET}
+            client-authentication-method: client_secret_basic
+            authorization-grant-type: authorization_code
+            redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
+            scope:
+              - openid
+              - profile
+              - email
+            client-name: Google
   mail:
     # 로컬에서는 MailHog 또는 Mailpit SMTP 포트인 1025를 기본값으로 사용
     host: ${MAIL_HOST:localhost}

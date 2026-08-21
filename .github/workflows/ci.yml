@@ -225,6 +225,8 @@ jobs:
             --env WS_ALLOWED_ORIGINS=http://localhost:5173 \
             --env OAUTH2_SUCCESS_REDIRECT_URI=http://localhost:5173/oauth/callback \
             --env OAUTH2_FAILURE_REDIRECT_URI=http://localhost:5173/sign-in \
+            --env GOOGLE_OAUTH_CLIENT_ID=mopl-ci-google-client-id \
+            --env GOOGLE_OAUTH_CLIENT_SECRET=mopl-ci-google-client-secret \
             --env KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092 \
             --env KAFKA_TOPIC_VERIFY=true \
             mopl:ci
