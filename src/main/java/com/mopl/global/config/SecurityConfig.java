@@ -164,13 +164,11 @@ public class SecurityConfig {
                 .addFilterBefore(new JwtAuthenticationFilter(jwtProvider), UsernamePasswordAuthenticationFilter.class);
 
         /*
-         * Provider별 ClientRegistration이 등록된 경우에만
-         * OAuth2 Login 필터를 SecurityFilterChain에 연결
+         * OAuth ClientRegistration과 공통 성공·실패 Handler가
+         * 모두 등록된 환경에서만 OAuth2 Login 필터를 연결한다.
          *
-         * 현재 공통 기반 PR에는 Google, Kakao, Naver의 실제 Client ID와
-         * Client Secret이 아직 없으므로 무조건 oauth2Login()을 적용하면
-         * ClientRegistrationRepository가 생성되지 않은 테스트와 로컬 환경에서
-         * ApplicationContext 시작이 실패할 수 있다.
+         * ObjectProvider를 사용하면 OAuth 설정을 로드하지 않는 슬라이스 테스트나
+         * 일부 제한된 실행 환경에서도 SecurityFilterChain을 구성할 수 있다.
          */
         ClientRegistrationRepository clientRegistrationRepository =
             clientRegistrationRepositoryProvider.getIfAvailable();
