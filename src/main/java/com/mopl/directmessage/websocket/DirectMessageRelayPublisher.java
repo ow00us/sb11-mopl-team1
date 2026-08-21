@@ -1,19 +1,19 @@
 package com.mopl.directmessage.websocket;
 
 import com.mopl.directmessage.dto.DirectMessageDto;
+import com.mopl.global.realtime.RealtimeRelayPublisher;
 import lombok.RequiredArgsConstructor;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
-public class DirectMessageBroadcaster {
+public class DirectMessageRelayPublisher {
 
-    private final SimpMessagingTemplate messagingTemplate;
+    private final RealtimeRelayPublisher relayPublisher;
 
-    public void broadcast(
+    public boolean publish(
         UUID conversationId,
         DirectMessageDto message
     ) {
@@ -22,17 +22,8 @@ public class DirectMessageBroadcaster {
                 conversationId
             );
 
-        broadcast(
-            destination,
-            message
-        );
-    }
-
-    void broadcast(
-        String destination,
-        DirectMessageDto message
-    ) {
-        messagingTemplate.convertAndSend(
+        return relayPublisher.publish(
+            DirectMessageRealtimeContract.EVENT_TYPE,
             destination,
             message
         );
