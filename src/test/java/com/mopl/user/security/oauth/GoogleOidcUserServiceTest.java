@@ -308,6 +308,51 @@ class GoogleOidcUserServiceTest {
     }
 
     @Test
+    @DisplayName("Google 이메일이 없으면 사용자 생성 전에 인증에 실패한다")
+    void loadUser_fail_whenEmailIsMissing() {
+        // given
+        stubGoogleRequest();
+
+        when(delegate.loadUser(userRequest))
+            .thenReturn(googleUser);
+
+        when(googleUser.getSubject())
+            .thenReturn("google-sub-123");
+
+        when(googleUser.getEmail())
+            .thenReturn(" ");
+
+        // when & then
+        assertThatThrownBy(() ->
+            googleOidcUserService.loadUser(
+                userRequest
+            )
+        )
+            .isInstanceOf(
+                OAuth2AuthenticationException.class
+            )
+            .satisfies(exception -> {
+                OAuth2AuthenticationException oauthException =
+                    (OAuth2AuthenticationException) exception;
+
+                assertThat(
+                    oauthException
+                        .getError()
+                        .getErrorCode()
+                ).isEqualTo(
+                    GoogleOidcUserService
+                        .GOOGLE_EMAIL_REQUIRED
+                );
+            });
+
+        /*
+         * Google 이메일 검증에 실패했으므로
+         * MOPL 사용자 조회·생성은 실행되지 않아야 한다.
+         */
+        verifyNoInteractions(provisioningService);
+    }
+
+    @Test
     @DisplayName("잠긴 MOPL 사용자는 Google 인증에도 성공할 수 없다")
     void loadUser_fail_whenAccountIsLocked() {
         // given
