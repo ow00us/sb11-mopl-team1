@@ -66,6 +66,9 @@ watching-session:
   session-ttl: 3s
   heartbeat-interval: 500ms
   sweep-interval: 10m
+  chat-send-min-interval: 100ms
+  watch-subscribe-min-interval: 200ms
+  chat-subscription-limit: 3
 
 tmdb:
   access-token: test-dummy-token
