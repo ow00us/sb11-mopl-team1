@@ -7,6 +7,7 @@ import com.mopl.global.security.csrf.RotatingCookieCsrfTokenRepository;
 import com.mopl.global.security.handler.RestAccessDeniedHandler;
 import com.mopl.global.security.handler.RestAuthenticationEntryPoint;
 import com.mopl.global.security.handler.SecurityErrorResponseWriter;
+import com.mopl.user.security.oauth.GoogleOidcUserService;
 import com.mopl.user.security.oauth.handler.OAuth2AuthenticationFailureHandler;
 import com.mopl.user.security.oauth.handler.OAuth2AuthenticationSuccessHandler;
 import java.util.Arrays;
@@ -138,7 +139,9 @@ public class SecurityConfig {
         ObjectProvider<OAuth2AuthenticationSuccessHandler>
             successHandlerProvider,
         ObjectProvider<OAuth2AuthenticationFailureHandler>
-            failureHandlerProvider
+            failureHandlerProvider,
+        ObjectProvider<GoogleOidcUserService>
+            googleOidcUserServiceProvider
     ) throws Exception {
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource))
@@ -178,13 +181,29 @@ public class SecurityConfig {
         OAuth2AuthenticationFailureHandler failureHandler =
             failureHandlerProvider.getIfAvailable();
 
+        GoogleOidcUserService googleOidcUserService =
+            googleOidcUserServiceProvider.getIfAvailable();
+
         if (clientRegistrationRepository != null
             && successHandler != null
             && failureHandler != null) {
-            http.oauth2Login(oauth2 -> oauth2
-                .successHandler(successHandler)
-                .failureHandler(failureHandler)
-            );
+            http.oauth2Login(oauth2 -> {
+                oauth2
+                    .successHandler(successHandler)
+                    .failureHandler(failureHandler);
+
+                /*
+                 * Google은 openid scope를 사용하는 OIDC Provider이므로
+                 * 일반 OAuth2UserService가 아닌 전용 OIDC 사용자 서비스를 연결
+                 */
+                if (googleOidcUserService != null) {
+                    oauth2.userInfoEndpoint(userInfo ->
+                        userInfo.oidcUserService(
+                            googleOidcUserService
+                        )
+                    );
+                }
+            });
         }
 
         return http.build();
