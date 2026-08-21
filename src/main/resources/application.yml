@@ -67,6 +67,15 @@ management:
     web:
       exposure:
         include: health, info, metrics, prometheus
+  endpoint:
+    health:
+      # liveness·readiness group 을 켭니다. Kubernetes 밖에서는 기본으로 꺼져 있습니다.
+      probes:
+        enabled: true
+      # 상세에는 Consumer Group, 토픽과 중지 사유가 들어갑니다. /actuator/health 는 인증
+      # 없이 열려 있으므로 상태만 보이게 하고, 상세는 관리자에게만 보여줍니다.
+      show-details: when-authorized
+      roles: ADMIN
 
 springdoc:
   api-docs:
