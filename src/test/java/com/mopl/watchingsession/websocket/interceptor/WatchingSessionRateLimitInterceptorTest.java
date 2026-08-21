@@ -1,15 +1,23 @@
 package com.mopl.watchingsession.websocket.interceptor;
 
+import static java.util.concurrent.Executors.newFixedThreadPool;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mopl.watchingsession.config.WatchingSessionProperties;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -177,6 +185,80 @@ public class WatchingSessionRateLimitInterceptorTest {
 
         Message<?> third = message(StompCommand.SUBSCRIBE, CHAT_SUB_DEST, "sub-3", sessionAttributes);
         assertThat(interceptor.preSend(third, null)).isNotNull();
+    }
+
+    @Test
+    @DisplayName("chat 구독 예약 후 체인 뒤쪽에서 최종 실패하면(sent=false) 예약이 해제되어 상한을 소모하지 않는다")
+    void chatSubscribe_reservationReleased_whenLaterInterceptorRejects() {
+        Map<String, Object> sessionAttributes = new HashMap<>();
+        Message<?> msg = message(StompCommand.SUBSCRIBE, CHAT_SUB_DEST, "sub-1", sessionAttributes);
+
+        // preSend는 통과(예약됨)
+        assertThat(interceptor.preSend(msg, null)).isNotNull();
+
+        // 존재하지 않는 콘텐츠 등으로 체인 뒤쪽이 최종 실패시킨 상황을 재현
+        interceptor.afterSendCompletion(msg, null, false, null);
+
+        // then: 상한(2)만큼 새로운 구독 2개가 모두 통과해야 한다 (예약이 풀렸으므로)
+        Message<?> retry1 = message(StompCommand.SUBSCRIBE, CHAT_SUB_DEST, "sub-2", sessionAttributes);
+        Message<?> retry2 = message(StompCommand.SUBSCRIBE, CHAT_SUB_DEST, "sub-3", sessionAttributes);
+        assertThat(interceptor.preSend(retry1, null)).isNotNull();
+        assertThat(interceptor.preSend(retry2, null)).isNotNull();
+    }
+
+    @Test
+    @DisplayName("sent=true(정상 전송 완료)면 예약을 해제하지 않는다")
+    void chatSubscribe_reservationKept_whenSentSuccessfully() {
+        Map<String, Object> sessionAttributes = new HashMap<>();
+        Message<?> msg = message(StompCommand.SUBSCRIBE, CHAT_SUB_DEST, "sub-1", sessionAttributes);
+        interceptor.preSend(msg, null);
+
+        interceptor.afterSendCompletion(msg, null, true, null);
+
+        // 상한(2) 중 1개가 여전히 점유 중이어야 하므로, 새 구독은 1개만 더 통과한다
+        Message<?> second = message(StompCommand.SUBSCRIBE, CHAT_SUB_DEST, "sub-2", sessionAttributes);
+        Message<?> third = message(StompCommand.SUBSCRIBE, CHAT_SUB_DEST, "sub-3", sessionAttributes);
+        assertThat(interceptor.preSend(second, null)).isNotNull();
+        assertThat(interceptor.preSend(third, null)).isNull(); // sub-1이 여전히 점유 중이라 상한 초과
+    }
+
+    @Test
+    @DisplayName("같은 세션에 동시에 도착한 SUBSCRIBE는 상한(2)만큼만 통과하고 나머지는 드롭되며, "
+        + "드롭 지표도 초과 횟수와 정확히 일치한다")
+    void chatSubscribe_concurrentSubscribes_onlyLimitPasses() throws Exception {
+        Map<String, Object> sessionAttributes = new HashMap<>();
+        int attemptCount = 10; // 상한(2)보다 충분히 많은 동시 시도
+        int limit = 2;
+
+        ExecutorService executor = newFixedThreadPool(attemptCount);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        List<Future<Boolean>> results = new ArrayList<>();
+
+        try {
+            for (int i = 0; i < attemptCount; i++) {
+                String subscriptionId = "sub-" + i;
+                results.add(executor.submit(() -> {
+                    startLatch.await();
+                    Message<?> msg = message(StompCommand.SUBSCRIBE, CHAT_SUB_DEST, subscriptionId, sessionAttributes);
+                    return interceptor.preSend(msg, null) != null;
+                }));
+            }
+
+            startLatch.countDown(); // 모든 스레드를 동시에 풀어준다
+
+            long passedCount = 0;
+            for (Future<Boolean> result : results) {
+                if (result.get(3, TimeUnit.SECONDS)) {
+                    passedCount++;
+                }
+            }
+
+            assertThat(passedCount).isEqualTo(limit);
+            verify(metrics, times(attemptCount - limit))
+                .recordChatSubscribeDropped();
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     // fail-open

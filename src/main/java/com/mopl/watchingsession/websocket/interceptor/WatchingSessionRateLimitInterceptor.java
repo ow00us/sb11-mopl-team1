@@ -56,7 +56,7 @@ public class WatchingSessionRateLimitInterceptor implements ChannelInterceptor {
 
         if (command == StompCommand.SEND && destination != null) {
             if (HEARTBEAT_SEND.matcher(destination).matches()) {
-                long minIntervalMillis = watchingSessionProperties.getHeartbeatInterval().toMillis() / 2;
+                long minIntervalMillis = Math.max(1L, watchingSessionProperties.getHeartbeatInterval().toMillis() / 2);
                 return applyMinInterval(message, accessor,
                     RateLimitAttributes::tryConsumeHeartbeatSend, minIntervalMillis,
                     metrics::recordHeartbeatDropped, destination);
@@ -95,6 +95,26 @@ public class WatchingSessionRateLimitInterceptor implements ChannelInterceptor {
         }
 
         return message;
+    }
+
+    @Override
+    public void afterSendCompletion(
+        Message<?> message, MessageChannel channel, boolean sent, Exception ex
+    ) {
+        if (sent) {
+            return;
+        }
+        // preSend 체인 뒤쪽(SubscribeExistenceInterceptor 등)이 null을 반환해 최종적으로
+        // 전송되지 않은 경우. 이 인터셉터가 먼저 예약해둔 chat 구독 자리를 되돌리지 않으면
+        // 존재하지 않는 콘텐츠에 반복 구독 시도만으로 상한이 소진되어, 이후 유효한 채팅 구독까지 차단당한다.
+        StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
+        if (accessor == null || accessor.getCommand() != StompCommand.SUBSCRIBE) {
+            return;
+        }
+        String destination = accessor.getDestination();
+        if (destination != null && CHAT_SUBSCRIBE.matcher(destination).matches()) {
+            RateLimitAttributes.releaseChatSubscription(accessor);
+        }
     }
 
     @FunctionalInterface

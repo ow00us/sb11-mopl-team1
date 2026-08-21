@@ -94,5 +94,7 @@ external-content-batch:
 
 logging:
   level:
+    org.springframework.messaging: DEBUG
+    org.springframework.web.socket: DEBUG
     root: warn
     com.mopl: info

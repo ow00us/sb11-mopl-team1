@@ -5,6 +5,7 @@ import jakarta.validation.constraints.Positive;
 import java.time.Duration;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.validator.constraints.time.DurationMin;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 import org.springframework.validation.annotation.Validated;
@@ -49,6 +50,7 @@ public class WatchingSessionProperties {
      * (주기 결정은 클라이언트 책임), openapi 계약 문서와의 정합 확인용으로 보관한다.
      */
     @NotNull
+    @DurationMin(millis = 2)
     private Duration heartbeatInterval;
 
     /**
@@ -62,6 +64,7 @@ public class WatchingSessionProperties {
      * 콘텐츠 채팅 SEND의 최소 허용 간격. 이보다 빠른 전송은 조용히 무시된다.
      */
     @NotNull
+    @DurationMin(millis = 1)
     private Duration chatSendMinInterval;
 
     /**
@@ -69,6 +72,7 @@ public class WatchingSessionProperties {
      * 정상 흐름(페이지 진입, 재연결)은 이 값에 절대 닿지 않아야 한다.
      */
     @NotNull
+    @DurationMin(millis = 1)
     private Duration watchSubscribeMinInterval;
 
     /**
