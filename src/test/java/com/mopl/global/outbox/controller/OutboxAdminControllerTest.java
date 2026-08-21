@@ -2,6 +2,7 @@ package com.mopl.global.outbox.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -16,6 +17,7 @@ import com.mopl.global.config.SecurityConfig;
 import com.mopl.global.outbox.OutboxEvent;
 import com.mopl.global.outbox.OutboxFailureService;
 import com.mopl.global.outbox.OutboxRequeueOutcome;
+import com.mopl.global.outbox.OutboxSkipOutcome;
 import com.mopl.global.security.JwtProvider;
 import java.time.Instant;
 import java.util.List;
@@ -26,6 +28,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
@@ -219,6 +222,109 @@ class OutboxAdminControllerTest {
 
         mockMvc.perform(post(FAILURES_PATH + "/" + EVENT_ID + "/requeue")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + USER_TOKEN)
+                .with(csrf()))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.errorCode").value("COMMON_403_1"));
+
+        verifyNoInteractions(outboxFailureService);
+    }
+
+    @Test
+    @DisplayName("관리자가 건너뛰면 204를 반환한다")
+    void skip_admin_returnsNoContent() throws Exception {
+        authenticate(ADMIN_TOKEN, "ADMIN");
+        when(outboxFailureService.skip(any(), any(), any(), any()))
+            .thenReturn(OutboxSkipOutcome.SKIPPED);
+
+        mockMvc.perform(post(FAILURES_PATH + "/" + EVENT_ID + "/skip")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ADMIN_TOKEN)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reason\":\"업무 영향 확인함\"}")
+                .with(csrf()))
+            .andExpect(status().isNoContent());
+
+        verify(outboxFailureService).skip(eq(EVENT_ID), eq(ACTOR_ID), eq("업무 영향 확인함"), any());
+    }
+
+    /**
+     * 응답을 못 본 운영자가 같은 요청을 다시 보내는 상황입니다. 결과는 "그 이벤트는 건너뛴
+     * 상태다"로 같으므로 거절하지 않습니다.
+     */
+    @Test
+    @DisplayName("이미 건너뛴 이벤트를 다시 건너뛰어도 204를 반환한다")
+    void skip_alreadySkipped_returnsNoContent() throws Exception {
+        authenticate(ADMIN_TOKEN, "ADMIN");
+        when(outboxFailureService.skip(any(), any(), any(), any()))
+            .thenReturn(OutboxSkipOutcome.ALREADY_SKIPPED);
+
+        mockMvc.perform(post(FAILURES_PATH + "/" + EVENT_ID + "/skip")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ADMIN_TOKEN)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reason\":\"업무 영향 확인함\"}")
+                .with(csrf()))
+            .andExpect(status().isNoContent());
+    }
+
+    /**
+     * 사유는 이 전환의 내용 그 자체입니다. 비어 있으면 나중에 그 행을 보고 무슨 일이 있었는지
+     * 알 수 없어 단순히 지운 것과 다르지 않습니다.
+     */
+    @Test
+    @DisplayName("사유가 비어 있으면 400을 반환하고 상태를 바꾸지 않는다")
+    void skip_blankReason_returnsBadRequest() throws Exception {
+        authenticate(ADMIN_TOKEN, "ADMIN");
+
+        mockMvc.perform(post(FAILURES_PATH + "/" + EVENT_ID + "/skip")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ADMIN_TOKEN)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reason\":\"   \"}")
+                .with(csrf()))
+            .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(outboxFailureService);
+    }
+
+    @Test
+    @DisplayName("최종 실패 상태가 아닌 이벤트를 건너뛰면 409를 반환한다")
+    void skip_notFailedEvent_returnsConflict() throws Exception {
+        authenticate(ADMIN_TOKEN, "ADMIN");
+        when(outboxFailureService.skip(any(), any(), any(), any()))
+            .thenReturn(OutboxSkipOutcome.NOT_FAILED);
+
+        mockMvc.perform(post(FAILURES_PATH + "/" + EVENT_ID + "/skip")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ADMIN_TOKEN)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reason\":\"업무 영향 확인함\"}")
+                .with(csrf()))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.errorCode").value("OUTBOX_409_1"));
+    }
+
+    @Test
+    @DisplayName("없는 eventId를 건너뛰면 404를 반환한다")
+    void skip_unknownEvent_returnsNotFound() throws Exception {
+        authenticate(ADMIN_TOKEN, "ADMIN");
+        when(outboxFailureService.skip(any(), any(), any(), any()))
+            .thenReturn(OutboxSkipOutcome.NOT_FOUND);
+
+        mockMvc.perform(post(FAILURES_PATH + "/" + EVENT_ID + "/skip")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ADMIN_TOKEN)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reason\":\"업무 영향 확인함\"}")
+                .with(csrf()))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.errorCode").value("OUTBOX_404_1"));
+    }
+
+    @Test
+    @DisplayName("일반 사용자가 건너뛰면 403을 반환하고 상태를 바꾸지 않는다")
+    void skip_user_returnsForbidden() throws Exception {
+        authenticate(USER_TOKEN, "USER");
+
+        mockMvc.perform(post(FAILURES_PATH + "/" + EVENT_ID + "/skip")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + USER_TOKEN)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reason\":\"업무 영향 확인함\"}")
                 .with(csrf()))
             .andExpect(status().isForbidden())
             .andExpect(jsonPath("$.errorCode").value("COMMON_403_1"));
