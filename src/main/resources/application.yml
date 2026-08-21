@@ -109,6 +109,9 @@ watching-session:
   session-ttl: ${WATCHING_SESSION_SESSION_TTL:120s}
   heartbeat-interval: ${WATCHING_SESSION_HEARTBEAT_INTERVAL:20s}
   sweep-interval: ${WATCHING_SESSION_SWEEP_INTERVAL:5m}
+  chat-send-min-interval: ${WATCHING_SESSION_CHAT_SEND_MIN_INTERVAL:500ms}
+  watch-subscribe-min-interval: ${WATCHING_SESSION_WATCH_SUBSCRIBE_MIN_INTERVAL:2s}
+  chat-subscription-limit: ${WATCHING_SESSION_CHAT_SUBSCRIPTION_LIMIT:20}
 
 tmdb:
   base-url: https://api.themoviedb.org/3
