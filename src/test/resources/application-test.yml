@@ -1,4 +1,9 @@
 spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.elasticsearch.ElasticsearchClientAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.elasticsearch.ElasticsearchDataAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.elasticsearch.ElasticsearchRepositoriesAutoConfiguration
   jpa:
     hibernate:
       ddl-auto: validate
@@ -24,6 +29,13 @@ mopl:
       auto-create: false
     listener:
       auto-startup: false
+    processed-event:
+      cleanup:
+        # 주기 실행이 테스트 데이터를 먼저 지우면 검증이 흔들립니다. 정리 통합 테스트는
+        # 호출 시점을 직접 정합니다.
+        enabled: false
+        retention: 30d
+        batch-size: 1000
   outbox:
     # lease 만료 회수를 기다리지 않고 검증하기 위해 짧게 둡니다.
     lease-duration: 2s
@@ -37,6 +49,12 @@ mopl:
       initial-backoff: 1s
       max-backoff: 4s
       multiplier: 2.0
+    cleanup:
+      # 주기 실행이 테스트 데이터를 먼저 지우면 검증이 흔들립니다. 정리 통합 테스트는
+      # 컴포넌트를 직접 만들어 호출합니다.
+      enabled: false
+      retention: 7d
+      batch-size: 1000
     metrics:
       # 갱신 시점을 테스트가 정할 수 있어야 gauge 값을 확정적으로 확인할 수 있습니다.
       enabled: false

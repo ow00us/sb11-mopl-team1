@@ -1,11 +1,13 @@
 package com.mopl.global.outbox;
 
+import jakarta.persistence.LockModeType;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -19,6 +21,17 @@ import org.springframework.data.repository.query.Param;
 public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> {
 
     Optional<OutboxEvent> findByEventId(UUID eventId);
+
+    /**
+     * 상태를 바꿀 목적으로 한 건을 잠그고 읽습니다.
+     *
+     * <p>운영자 두 명이 같은 이벤트를 동시에 되돌리면, 잠금 없이는 둘 다 최종 실패 상태를
+     * 읽고 둘 다 성공으로 응답합니다. 실제로 일어난 전이는 한 번인데 기록은 두 번 남습니다.
+     * 잠금을 걸면 뒤에 온 쪽이 앞선 전이가 커밋된 뒤의 상태를 읽어 거절됩니다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT e FROM OutboxEvent e WHERE e.eventId = :eventId")
+    Optional<OutboxEvent> findByEventIdForUpdate(@Param("eventId") UUID eventId);
 
     boolean existsByEventId(UUID eventId);
 
@@ -143,4 +156,39 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> 
     );
 
     List<OutboxEvent> findByIdInOrderByNextAttemptAtAscIdAsc(List<UUID> ids);
+
+    /**
+     * 보관 기간을 지난 발행 완료 레코드를 상한만큼 지웁니다.
+     *
+     * <p>발행 완료 레코드만 지웁니다. 발행 대기와 최종 실패는 보관 기간과 무관하게 남습니다.
+     * 아직 나가지 않았거나 사람이 처리해야 할 이벤트입니다.
+     *
+     * <p>지울 대상을 하위 조회로 먼저 고르고 {@code FOR UPDATE SKIP LOCKED} 로 잠급니다.
+     * 여러 인스턴스가 동시에 실행해도 이미 잠긴 행은 기다리지 않고 건너뛰므로, 같은 행을 두
+     * 번 지우려 하거나 서로 잠금을 기다리는 일이 없습니다.
+     *
+     * <p>상한을 두는 이유는 한 번의 실행이 오래 걸리면 그동안 잠금과 트랜잭션이 유지되어
+     * relay 의 선점과 도메인 트랜잭션이 함께 느려지기 때문입니다. 남은 것은 다음 실행으로
+     * 넘깁니다.
+     *
+     * <p>{@code published_at} 이 비어 있는 행은 대상이 아닙니다. 발행 완료 상태라면 값이
+     * 있어야 하지만, 비교 자체가 성립하지 않는 값을 지우는 쪽으로 두지 않습니다.
+     *
+     * @return 지운 건수
+     */
+    @Modifying
+    @Query(value = """
+        DELETE FROM outbox_events
+        WHERE id IN (
+          SELECT id FROM outbox_events
+          WHERE status = 'PUBLISHED'
+            AND published_at IS NOT NULL
+            AND published_at <= :threshold
+          ORDER BY published_at, id
+          LIMIT :batchSize
+          FOR UPDATE SKIP LOCKED
+        )
+        """, nativeQuery = true)
+    int deletePublishedBefore(
+        @Param("threshold") Instant threshold, @Param("batchSize") int batchSize);
 }

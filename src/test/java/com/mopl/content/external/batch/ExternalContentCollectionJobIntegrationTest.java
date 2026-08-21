@@ -20,6 +20,7 @@ import com.mopl.content.external.tmdb.dto.TmdbTvSummary;
 import com.mopl.content.repository.ContentRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -87,6 +88,9 @@ class ExternalContentCollectionJobIntegrationTest {
     @Autowired
     ContentRepository contentRepository;
 
+    @Autowired
+    ExternalContentBatchProperties batchProperties;
+
     @MockitoBean
     TmdbApiClient tmdbApiClient;
 
@@ -95,6 +99,16 @@ class ExternalContentCollectionJobIntegrationTest {
 
     @MockitoSpyBean
     ContentUpsertService contentUpsertService;
+
+    /**
+     * 프로덕션(ExternalContentBatchConfig.buildDateRange())과 같은 존(external-content-batch.zone)
+     * 기준으로 "오늘"을 계산한다. JVM 기본 타임존의 LocalDate.now()를 쓰면 CI(UTC)에서
+     * 한국 시간 00:00~08:59 사이에 프로덕션이 계산하는 날짜와 하루 어긋나 Sports DB mock이
+     * 매칭되지 않는다.
+     */
+    private LocalDate today() {
+        return LocalDate.now(ZoneId.of(batchProperties.zone()));
+    }
 
     @Test
     @DisplayName("Job을 실행하면 TMDB·Sports DB 콘텐츠가 수집되어 DB에 저장된다")
@@ -106,8 +120,8 @@ class ExternalContentCollectionJobIntegrationTest {
         when(tmdbApiClient.getPopularTvShows(1)).thenReturn(new TmdbPopularTvResponse(1, List.of(tv), 1));
 
         SportsDbEventSummary event = new SportsDbEventSummary(
-                "9003", "Test Match", "Test League", "Soccer", LocalDate.now().toString(), "https://thumb.jpg", "Test Filename");
-        when(sportsDbApiClient.getEventsByDay(LocalDate.now(), 4569)).thenReturn(List.of(event));
+                "9003", "Test Match", "Test League", "Soccer", today().toString(), "https://thumb.jpg", "Test Filename");
+        when(sportsDbApiClient.getEventsByDay(today(), 4569)).thenReturn(List.of(event));
 
         JobParameters jobParameters = new JobParametersBuilder()
                 .addLocalDateTime("runDateTime", LocalDateTime.now())
@@ -128,7 +142,7 @@ class ExternalContentCollectionJobIntegrationTest {
         TmdbMovieSummary movie = new TmdbMovieSummary(9011L, "Test Movie", "movie overview", "/m.jpg", List.of(28));
         when(tmdbApiClient.getPopularMovies(1)).thenReturn(new TmdbPopularMoviesResponse(1, List.of(movie), 1));
         when(tmdbApiClient.getPopularTvShows(1)).thenReturn(new TmdbPopularTvResponse(1, List.of(), 0));
-        when(sportsDbApiClient.getEventsByDay(LocalDate.now(), 4569)).thenReturn(List.of());
+        when(sportsDbApiClient.getEventsByDay(today(), 4569)).thenReturn(List.of());
 
         jobLauncherTestUtils.launchJob(new JobParametersBuilder()
                 .addLocalDateTime("runDateTime", LocalDateTime.now())
@@ -161,7 +175,7 @@ class ExternalContentCollectionJobIntegrationTest {
         TmdbMovieSummary recollected = new TmdbMovieSummary(9201L, "재수집된 제목", "재수집된 설명", "/m.jpg", List.of(28));
         when(tmdbApiClient.getPopularMovies(1)).thenReturn(new TmdbPopularMoviesResponse(1, List.of(recollected), 1));
         when(tmdbApiClient.getPopularTvShows(1)).thenReturn(new TmdbPopularTvResponse(1, List.of(), 0));
-        when(sportsDbApiClient.getEventsByDay(LocalDate.now(), 4569)).thenReturn(List.of());
+        when(sportsDbApiClient.getEventsByDay(today(), 4569)).thenReturn(List.of());
 
         JobExecution jobExecution = jobLauncherTestUtils.launchJob(new JobParametersBuilder()
                 .addLocalDateTime("runDateTime", LocalDateTime.now())
@@ -197,7 +211,7 @@ class ExternalContentCollectionJobIntegrationTest {
         when(tmdbApiClient.getPopularMovies(1))
                 .thenReturn(new TmdbPopularMoviesResponse(1, List.of(okMovie, failMovie), 1));
         when(tmdbApiClient.getPopularTvShows(1)).thenReturn(new TmdbPopularTvResponse(1, List.of(), 0));
-        when(sportsDbApiClient.getEventsByDay(LocalDate.now(), 4569)).thenReturn(List.of());
+        when(sportsDbApiClient.getEventsByDay(today(), 4569)).thenReturn(List.of());
 
         // externalId가 "9102"인 draft만 강제로 실패시키고, 나머지는 실제 로직을 그대로 실행한다
         doAnswer(invocation -> {
@@ -237,7 +251,7 @@ class ExternalContentCollectionJobIntegrationTest {
         }
         when(tmdbApiClient.getPopularMovies(1)).thenReturn(new TmdbPopularMoviesResponse(1, movies, 1));
         when(tmdbApiClient.getPopularTvShows(1)).thenReturn(new TmdbPopularTvResponse(1, List.of(), 0));
-        when(sportsDbApiClient.getEventsByDay(LocalDate.now(), 4569)).thenReturn(List.of());
+        when(sportsDbApiClient.getEventsByDay(today(), 4569)).thenReturn(List.of());
 
         // 25개 중 externalId가 9305 이상인 21개를 실패시킨다 (skipLimit 20을 초과)
         doAnswer(invocation -> {

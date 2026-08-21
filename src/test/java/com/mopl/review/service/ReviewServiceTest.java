@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentType;
 import com.mopl.content.repository.ContentRepository;
+import com.mopl.content.search.ContentSearchSyncEvent;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
@@ -38,6 +39,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -53,6 +55,9 @@ class ReviewServiceTest {
 
     @Mock
     UserRepository userRepository;
+
+    @Mock
+    ApplicationEventPublisher eventPublisher;
 
     @InjectMocks
     ReviewServiceImpl reviewService;
@@ -81,6 +86,7 @@ class ReviewServiceTest {
         assertThat(result.author().userId()).isEqualTo(AUTHOR_ID);
         verify(reviewRepository).saveAndFlush(any(Review.class));
         verify(contentRepository).refreshReviewAggregate(CONTENT_ID);
+        verify(eventPublisher).publishEvent(new ContentSearchSyncEvent(CONTENT_ID));
     }
 
     @Test
@@ -126,6 +132,7 @@ class ReviewServiceTest {
                 .extracting("errorCode").isEqualTo(ErrorCode.REVIEW_DUPLICATE);
 
         verify(contentRepository, never()).refreshReviewAggregate(any());
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
@@ -186,6 +193,7 @@ class ReviewServiceTest {
         assertThat(result.rating()).isEqualByComparingTo("4.0");
         verify(reviewRepository).saveAndFlush(review);
         verify(contentRepository).refreshReviewAggregate(CONTENT_ID);
+        verify(eventPublisher).publishEvent(new ContentSearchSyncEvent(CONTENT_ID));
     }
 
     @Test
@@ -227,6 +235,7 @@ class ReviewServiceTest {
         verify(reviewRepository).delete(review);
         verify(reviewRepository).flush();
         verify(contentRepository).refreshReviewAggregate(CONTENT_ID);
+        verify(eventPublisher).publishEvent(new ContentSearchSyncEvent(CONTENT_ID));
     }
 
     @Test

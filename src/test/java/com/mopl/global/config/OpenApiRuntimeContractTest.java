@@ -17,6 +17,8 @@ import com.mopl.directmessage.service.ConversationService;
 import com.mopl.directmessage.service.DirectMessageService;
 import com.mopl.follow.controller.FollowController;
 import com.mopl.follow.service.FollowService;
+import com.mopl.global.outbox.OutboxFailureService;
+import com.mopl.global.outbox.controller.OutboxAdminController;
 import com.mopl.global.security.controller.CsrfTokenController;
 import com.mopl.notification.controller.NotificationController;
 import com.mopl.notification.service.NotificationService;
@@ -78,6 +80,7 @@ import org.yaml.snakeyaml.Yaml;
     DirectMessageController.class,
     FollowController.class,
     NotificationController.class,
+    OutboxAdminController.class,
     SseController.class,
     PlaylistController.class,
     ReviewController.class,
@@ -110,6 +113,7 @@ class OpenApiRuntimeContractTest {
         "DELETE /api/playlists/{playlistId}/contents/{contentId}",
         "DELETE /api/playlists/{playlistId}/subscription",
         "DELETE /api/reviews/{reviewId}",
+        "GET /api/admin/outbox/failures",
         "GET /api/auth/csrf-token",
         "GET /api/contents",
         "GET /api/contents/{contentId}",
@@ -141,6 +145,8 @@ class OpenApiRuntimeContractTest {
         "PATCH /api/users/{userId}/locked",
         "PATCH /api/users/{userId}/password",
         "PATCH /api/users/{userId}/role",
+        "POST /api/admin/outbox/failures/{eventId}/requeue",
+        "POST /api/admin/outbox/failures/{eventId}/skip",
         "POST /api/auth/sign-in",
         "POST /api/auth/reset-password",
         "POST /api/auth/refresh",
@@ -177,6 +183,9 @@ class OpenApiRuntimeContractTest {
 
     @MockitoBean
     NotificationService notificationService;
+
+    @MockitoBean
+    OutboxFailureService outboxFailureService;
 
     @MockitoBean
     PlaylistService playlistService;
@@ -476,6 +485,87 @@ class OpenApiRuntimeContractTest {
         assertThat(differences).containsExactly(
             "GET /api/example 정적 계약 204 응답에 본문 content가 문서화됨"
         );
+    }
+
+    /** 런타임이 생성한 OpenAPI 문서를 읽습니다. */
+    private Map<String, Object> fetchRuntimeDocument() throws Exception {
+        String runtimeJson = mockMvc.perform(get("/v3/api-docs"))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+        return objectMapper.readValue(runtimeJson, new TypeReference<>() {
+        });
+    }
+
+    /**
+     * 계약에 있는 operation 이 실제로 제공되는지 확인합니다.
+     *
+     * <p>반대 방향만 검사하면 계약에만 있고 구현이 없는 operation 이 그대로 통과합니다.
+     * 프론트엔드는 계약을 보고 호출하므로, 그 상태가 오래 유지되면 없는 API 를 부르는 코드가
+     * 배포됩니다.
+     *
+     * <p>아직 구현하지 않은 operation 은 계약에 {@code x-implementation-status: planned} 를
+     * 붙여 제외합니다. 계약에서 지우지 않고 남겨 두려면 그 사실이 계약 파일에 드러나야 합니다.
+     */
+    @Test
+    void agreedOperationsAreImplemented() throws Exception {
+        Map<String, Object> runtime = fetchRuntimeDocument();
+
+        List<String> differences = compareAgreedOperations(
+            httpOperations(map(runtime, "paths")), map(contract, "paths"));
+
+        assertThat(differences)
+            .withFailMessage(() -> "계약과 구현 불일치:\n- " + String.join("\n- ", differences))
+            .isEmpty();
+    }
+
+    /**
+     * 계약에 있는 operation 이 런타임에 있는지 대조합니다.
+     *
+     * <p>{@code planned} 로 표시한 operation 은 구현이 없어도 통과시키되, 반대로 구현이
+     * 생겼는데 표시가 남아 있으면 알립니다. 그대로 두면 계약의 표시가 실제와 어긋난 채
+     * 굳습니다.
+     */
+    static List<String> compareAgreedOperations(
+        Set<String> runtimeOperations, Map<String, Object> agreedPaths
+    ) {
+        List<String> differences = new ArrayList<>();
+        agreedOperations(agreedPaths).forEach((operation, planned) -> {
+            if (planned) {
+                if (runtimeOperations.contains(operation)) {
+                    differences.add(operation + " 이(가) 구현되었는데 계약에 planned 로 남아 있음");
+                }
+                return;
+            }
+            if (!runtimeOperations.contains(operation)) {
+                differences.add(operation + " 이(가) 계약에만 있고 구현이 없음");
+            }
+        });
+        return differences;
+    }
+
+    /**
+     * 계약의 operation 과 계획 표시 여부입니다.
+     *
+     * <p>{@code x-implementation-status} 는 OpenAPI 확장 필드입니다. {@code planned} 외의 값은
+     * 오타일 가능성이 커서 구현 대상으로 봅니다. 그래야 값이 틀렸을 때 조용히 제외되지 않고
+     * 검사에 걸립니다.
+     */
+    private static Map<String, Boolean> agreedOperations(Map<String, Object> paths) {
+        Map<String, Boolean> operations = new LinkedHashMap<>();
+        paths.forEach((path, pathValue) -> {
+            if (!path.startsWith("/api/")) {
+                return;
+            }
+            Map<String, Object> pathItem = asMap(pathValue);
+            HTTP_METHODS.stream()
+                .filter(pathItem::containsKey)
+                .forEach(method -> operations.put(
+                    method.toUpperCase() + " " + path,
+                    "planned".equals(asMap(pathItem.get(method)).get("x-implementation-status"))));
+        });
+        return operations;
     }
 
     @Test

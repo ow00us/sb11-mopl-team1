@@ -37,6 +37,9 @@ spring:
     redis:
       timeout: 2s
       connect-timeout: 1s
+  elasticsearch:
+    connection-timeout: 3s
+    socket-timeout: 5s
   jpa:
     hibernate:
       ddl-auto: validate
@@ -117,6 +120,12 @@ sportsdb:
   api-key: ${SPORTSDB_API_KEY}
   league-ids: 4569,4328,4335,4331,4332,4334
 
+content-search:
+  watcher-count-refresh-interval-millis: 60000
+  retry:
+    interval-millis: 60000
+    max-attempts: 5
+
 external-content-batch:
   tmdb-max-pages: 5
   sportsdb-past-days: 3
@@ -138,6 +147,18 @@ mopl:
     dlt:
       # DLT replay 발행 확인을 기다리는 한도입니다. 확인 전에 성공으로 기록하지 않습니다.
       replay-ack-timeout: ${KAFKA_DLT_REPLAY_ACK_TIMEOUT:10s}
+    processed-event:
+      cleanup:
+        # 멱등 처리 기록 정리 여부입니다.
+        enabled: ${PROCESSED_EVENT_CLEANUP_ENABLED:true}
+        # 이전 실행이 끝난 뒤부터 이 간격만큼 쉬고 다시 돕니다.
+        interval: ${PROCESSED_EVENT_CLEANUP_INTERVAL:3600000}
+        # 기록한 뒤 이 기간이 지나야 지웁니다. Kafka 원본 토픽 보관 기간과 DLT 수동 replay
+        # 가능 기간보다 길어야 합니다. 짧으면 지운 이벤트가 다시 왔을 때 처음 보는 것으로
+        # 판정되어 도메인 부수 효과가 한 번 더 일어납니다.
+        retention: ${PROCESSED_EVENT_CLEANUP_RETENTION:30d}
+        # 한 번의 실행이 지울 최대 건수입니다.
+        batch-size: ${PROCESSED_EVENT_CLEANUP_BATCH_SIZE:1000}
   outbox:
     # 선점 유효 기간입니다. 짧으면 발행이 끝나기 전에 다른 인스턴스가 회수해 중복 발행이
     # 늘고, 길면 relay 가 죽었을 때 회수가 그만큼 지연됩니다.
@@ -159,6 +180,16 @@ mopl:
       # 간격 상한입니다. 없으면 몇 번 실패한 뒤 다음 시도가 며칠 뒤로 밀립니다.
       max-backoff: ${OUTBOX_RETRY_MAX_BACKOFF:10m}
       multiplier: ${OUTBOX_RETRY_MULTIPLIER:2.0}
+    cleanup:
+      # 발행 완료 레코드 정리 여부입니다.
+      enabled: ${OUTBOX_CLEANUP_ENABLED:true}
+      # 이전 실행이 끝난 뒤부터 이 간격만큼 쉬고 다시 돕니다.
+      interval: ${OUTBOX_CLEANUP_INTERVAL:3600000}
+      # 발행을 마친 뒤 이 기간이 지나야 지웁니다. 소비 지연과 재처리 요청이 들어오는
+      # 기간만큼은 남겨야 합니다.
+      retention: ${OUTBOX_CLEANUP_RETENTION:7d}
+      # 한 번의 실행이 지울 최대 건수입니다.
+      batch-size: ${OUTBOX_CLEANUP_BATCH_SIZE:1000}
     metrics:
       enabled: ${OUTBOX_METRICS_ENABLED:true}
       # gauge 값을 다시 집계하는 간격입니다. 짧으면 집계 질의가 그만큼 자주 돕니다.
@@ -178,7 +209,18 @@ app:
   websocket:
     # 콤마로 구분하면 String[]으로 자동 바인딩
     allowed-origins: ${WS_ALLOWED_ORIGINS:http://localhost:5173}
+  oauth2:
+    redirect:
+      # OAuth 인증 성공 후 Access Token 복원을 처리할 프론트엔드 화면
+      success-uri: ${OAUTH2_SUCCESS_REDIRECT_URI:http://localhost:5173/oauth/callback}
+      # OAuth 인증 실패 후 이동할 프론트엔드 로그인 화면
+      failure-uri: ${OAUTH2_FAILURE_REDIRECT_URI:http://localhost:5173/sign-in}
 
+logging:
+  level:
+    # 감사 로그는 이름을 따로 둡니다. 루트 레벨을 올리더라도 누가 무엇을 했는지는
+    # 계속 남아야 합니다.
+    mopl.audit: info
 ---
 spring:
   config:
@@ -195,6 +237,8 @@ spring:
     redis:
       host: localhost
       port: 6379
+  elasticsearch:
+    uris: http://localhost:9200
   flyway:
     enabled: true
     baseline-on-migrate: true
@@ -213,6 +257,8 @@ spring:
     redis:
       host: ${SPRING_DATA_REDIS_HOST}
       port: ${SPRING_DATA_REDIS_PORT}
+  elasticsearch:
+    uris: ${ELASTICSEARCH_URIS}
   jpa:
     properties:
       hibernate:
@@ -243,6 +289,12 @@ app:
   websocket:
     # prod는 기본값 없이 강제 - 값이 누락되면 애플리케이션 시작 시점에 실패
     allowed-origins: ${WS_ALLOWED_ORIGINS}
+  oauth2:
+    redirect:
+      # 운영 환경에서는 실제 프론트엔드 OAuth Callback URI를 반드시 주입
+      success-uri: ${OAUTH2_SUCCESS_REDIRECT_URI}
+      # 운영 환경에서는 실제 프론트엔드 로그인 실패 URI를 반드시 주입
+      failure-uri: ${OAUTH2_FAILURE_REDIRECT_URI}
 
 refresh-token:
   cookie:

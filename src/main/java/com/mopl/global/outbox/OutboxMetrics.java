@@ -41,6 +41,7 @@ public class OutboxMetrics {
     private final Counter publishedCounter;
     private final Counter retriedCounter;
     private final Counter exhaustedCounter;
+    private final Counter cleanedCounter;
     private final DistributionSummary batchSizeSummary;
     private final Timer relayTimer;
 
@@ -62,6 +63,10 @@ public class OutboxMetrics {
         this.publishedCounter = counter(meterRegistry, "published", "발행 확인까지 마친 건수");
         this.retriedCounter = counter(meterRegistry, "retried", "실패 후 다시 시도하기로 한 건수");
         this.exhaustedCounter = counter(meterRegistry, "exhausted", "최대 시도 횟수를 넘겨 최종 실패로 남긴 건수");
+
+        this.cleanedCounter = Counter.builder("mopl.outbox.cleaned.records")
+            .description("보관 기간을 지나 지운 Outbox 레코드 수")
+            .register(meterRegistry);
 
         this.batchSizeSummary = DistributionSummary.builder("mopl.outbox.relay.batch.size")
             .description("한 주기에 선점한 레코드 수")
@@ -120,6 +125,11 @@ public class OutboxMetrics {
 
     public void recordExhausted() {
         exhaustedCounter.increment();
+    }
+
+    /** 보관 기간을 지나 지운 건수입니다. */
+    public void recordCleaned(int count) {
+        cleanedCounter.increment(count);
     }
 
     public void recordBatch(int claimedSize, Duration elapsed) {

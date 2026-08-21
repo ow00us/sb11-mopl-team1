@@ -94,6 +94,19 @@ jobs:
       - name: Verify non-root runtime user
         run: test "$(docker image inspect --format '{{.Config.User}}' mopl:ci)" = "mopl"
 
+      - name: Build Elasticsearch image
+        run: docker build --tag mopl-es:ci ./docker/elasticsearch
+
+      - name: Start Elasticsearch container
+        run: |
+          docker run --detach \
+            --name mopl-es-ci \
+            --network host \
+            --env discovery.type=single-node \
+            --env xpack.security.enabled=false \
+            --env ES_JAVA_OPTS="-Xms512m -Xmx512m" \
+            mopl-es:ci
+
       # Kafka 는 services 블록이 아니라 step 에서 띄웁니다. KRaft 브로커는 광고 주소와
       # controller quorum 을 함께 맞춰야 하는데, services 블록은 기동 인자를 세밀하게
       # 조정하기 어렵고 준비 여부도 브로커 API 로 확인하는 편이 확실합니다.
@@ -134,6 +147,24 @@ jobs:
 
           echo "Kafka broker did not become ready in time."
           docker logs mopl-ci-kafka
+          exit 1
+
+      - name: Wait for Elasticsearch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:9200/_cluster/health >/dev/null 2>&1; then
+              echo "Elasticsearch is ready."
+              exit 0
+            fi
+            echo "Waiting for Elasticsearch ($attempt/60)"
+            sleep 2
+          done
+
+          echo "Elasticsearch did not become ready in time."
+          docker logs mopl-es-ci || true
           exit 1
 
       # 운영과 같은 순서입니다. 토픽을 먼저 준비하고 애플리케이션은 그것을 확인만 합니다.
@@ -184,6 +215,7 @@ jobs:
             --env SPRING_DATASOURCE_PASSWORD=mopl \
             --env SPRING_DATA_REDIS_HOST=127.0.0.1 \
             --env SPRING_DATA_REDIS_PORT=6379 \
+            --env ELASTICSEARCH_URIS=http://127.0.0.1:9200 \
             --env MAIL_HOST=127.0.0.1 \
             --env MAIL_PORT=1025 \
             --env MAIL_SMTP_AUTH=false \
@@ -191,6 +223,8 @@ jobs:
             --env JWT_SECRET=bW9wbC1jaS1zbW9rZS1qd3Qtc2VjcmV0LWtleS0zMi1ieXRlcy1sb25nISE= \
             --env CORS_ALLOWED_ORIGINS=http://localhost:5173 \
             --env WS_ALLOWED_ORIGINS=http://localhost:5173 \
+            --env OAUTH2_SUCCESS_REDIRECT_URI=http://localhost:5173/oauth/callback \
+            --env OAUTH2_FAILURE_REDIRECT_URI=http://localhost:5173/sign-in \
             --env KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092 \
             --env KAFKA_TOPIC_VERIFY=true \
             mopl:ci
@@ -294,6 +328,10 @@ jobs:
       - name: Remove smoke container
         if: always()
         run: docker rm --force mopl-ci mopl-ci-kafka || true
+
+      - name: Remove Elasticsearch container
+        if: always()
+        run: docker rm --force mopl-es-ci || true
 
   coverage-upload:
     name: Coverage upload
