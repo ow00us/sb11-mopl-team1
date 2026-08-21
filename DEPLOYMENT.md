@@ -131,6 +131,29 @@ gauge 값은 `OUTBOX_METRICS_REFRESH_INTERVAL`(기본 15000밀리초)마다 집�
 - 조회는 그때마다 새 Consumer Group으로 읽고 offset을 커밋하지 않습니다. 도메인 리스너의 소비 위치에 영향을 주지 않습니다.
 
 `KAFKA_DLT_REPLAY_ACK_TIMEOUT`은 선택 값이며 기본값은 `10s`입니다. 이 시간 안에 원본 토픽 발행 확인을 받지 못하면 replay는 실패로 끝나고 DLT 레코드는 그대로 남습니다.
+
+## 멱등 처리 기록 정리
+
+Consumer는 이미 처리한 이벤트를 `processed_events`에 남겨 두고, 같은 `(consumer_name, event_id)`가 다시 오면 걸러냅니다. 이 테이블은 이벤트를 처리할 때마다 한 행이 늘고 갱신되지 않습니다. 지우는 경로가 없으면 테이블과 인덱스가 소비량에 비례해 계속 커집니다. 보관 기간을 지난 기록을 주기적으로 지웁니다.
+
+| 환경 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `PROCESSED_EVENT_CLEANUP_ENABLED` | `true` | 정리 주기 실행 여부 |
+| `PROCESSED_EVENT_CLEANUP_INTERVAL` | `3600000` | 이전 실행이 끝난 뒤 다음 실행까지의 간격(밀리초) |
+| `PROCESSED_EVENT_CLEANUP_RETENTION` | `30d` | 기록한 뒤 이 기간이 지나야 지웁니다 |
+| `PROCESSED_EVENT_CLEANUP_BATCH_SIZE` | `1000` | 한 번의 실행이 지울 최대 건수 |
+
+**보관 기간을 줄일 때는 근거가 필요합니다.** 기록을 지운 이벤트가 다시 들어오면 처음 보는 이벤트로 판정되어 도메인 부수 효과가 한 번 더 일어납니다. 알림이 두 번 가거나 집계가 두 번 오르는 식입니다. 같은 이벤트가 다시 도착할 수 있는 경로는 둘입니다.
+
+- Kafka 원본 토픽의 보관 기간. 그 안에서는 offset을 되돌리면 같은 레코드가 다시 소비됩니다.
+- DLT 수동 replay. `DeadLetterReplayService.replay`는 원본 바이트를 그대로 보내므로 eventId가 유지됩니다. DLT 레코드를 지우지 않으므로 사람이 언제든 다시 보낼 수 있습니다.
+
+보관 기간은 이 둘보다 길어야 합니다. 기본값 `30d`는 Kafka 기본 보관 기간 7일과 DLT를 살펴보고 replay를 결정하기까지의 여유를 함께 감당하는 값입니다. Kafka 토픽 보관 기간을 늘렸다면 이 값도 함께 늘립니다.
+
+삭제 상한을 두는 이유는 한 번의 실행이 오래 걸리면 그동안 잠금과 트랜잭션이 유지되어 소비 경로의 기록 선점이 함께 느려지기 때문입니다. 상한에 걸려 남은 기록은 다음 실행으로 넘어갑니다. 쌓인 양이 많아 한 주기로 따라잡지 못하면 `PROCESSED_EVENT_CLEANUP_INTERVAL`을 줄이거나 상한을 올립니다.
+
+지운 건수는 `mopl_kafka_processed_cleaned_records_total`로 확인합니다.
+
 ## 인스턴스 간 실시간 중계
 
 WebSocket과 SSE 연결은 인스턴스마다 따로 유지됩니다. 인스턴스를 여러 개 띄우면 한 인스턴스가 만든 알림이 다른 인스턴스에 연결된 사용자에게 닿지 않습니다. Redis Pub/Sub 채널 `mopl.realtime.messages`가 그 사이를 잇습니다.
