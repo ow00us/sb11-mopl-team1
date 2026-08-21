@@ -20,6 +20,7 @@ public class DirectMessageWebSocketController {
 
     private final DirectMessageService directMessageService;
     private final DirectMessageBroadcaster broadcaster;
+    private final DirectMessageRelayPublisher relayPublisher;
 
     @MessageMapping("/conversations/{conversationId}/direct-messages")
     public void send(
@@ -37,6 +38,11 @@ public class DirectMessageWebSocketController {
             );
 
         broadcaster.broadcast(
+            conversationId,
+            savedMessage
+        );
+
+        relayPublisher.publish(
             conversationId,
             savedMessage
         );
