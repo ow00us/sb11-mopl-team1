@@ -223,6 +223,8 @@ jobs:
             --env JWT_SECRET=bW9wbC1jaS1zbW9rZS1qd3Qtc2VjcmV0LWtleS0zMi1ieXRlcy1sb25nISE= \
             --env CORS_ALLOWED_ORIGINS=http://localhost:5173 \
             --env WS_ALLOWED_ORIGINS=http://localhost:5173 \
+            --env OAUTH2_SUCCESS_REDIRECT_URI=http://localhost:5173/oauth/callback \
+            --env OAUTH2_FAILURE_REDIRECT_URI=http://localhost:5173/sign-in \
             --env KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092 \
             --env KAFKA_TOPIC_VERIFY=true \
             mopl:ci
