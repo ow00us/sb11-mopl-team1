@@ -8,7 +8,7 @@
 docker build --pull -t mopl:local .
 ```
 
-Dockerfile은 빌드 단계와 실행 단계를 분리합니다. 실행 이미지는 `mopl` 비특권 사용자로 애플리케이션을 실행하며 `/actuator/health`를 Docker healthcheck로 사용합니다.
+Dockerfile은 빌드 단계와 실행 단계를 분리합니다. 실행 이미지는 `mopl` 비특권 사용자로 애플리케이션을 실행하며 `/actuator/health/liveness`를 Docker healthcheck로 사용합니다.
 
 ## 필수 환경 변수
 
@@ -163,6 +163,42 @@ gauge 값은 `OUTBOX_METRICS_REFRESH_INTERVAL`(기본 15000밀리초)마다 집�
 
 `KAFKA_DLT_REPLAY_ACK_TIMEOUT`은 선택 값이며 기본값은 `10s`입니다. 이 시간 안에 원본 토픽 발행 확인을 받지 못하면 replay는 실패로 끝나고 DLT 레코드는 그대로 남습니다.
 
+## 리스너 중지 확인과 재시작
+
+DLT 발행이 같은 레코드에서 세 번 연속 실패하면 공통 오류 처리가 리스너 컨테이너를 멈춥니다. 계약이 DLT 발행 실패 시 원본 offset을 성공 처리하지 못하게 하므로, 멈추지 않으면 같은 레코드를 무한히 다시 소비합니다.
+
+그 뒤로 소비는 멈춰 있지만 프로세스는 살아 있고 REST는 정상 응답합니다. API 지표에도 흔적이 없습니다. 아래 두 가지가 그 상황을 드러냅니다.
+
+| 확인 대상 | 값 |
+| --- | --- |
+| `GET /actuator/health` | 리스너가 비정상 중지되면 전체 상태가 `DOWN`이 됩니다 |
+| `mopl_kafka_listener_containers{state="stopped"}` | 멈춰 있는 컨테이너 수 |
+| `mopl_kafka_listener_stops_total{topic="..."}` | DLT 발행 실패로 중지한 횟수 |
+
+`kafkaListener` health component의 상세에는 Consumer Group, 구독 토픽, 마지막 중지 시각과 사유가 들어갑니다. `/actuator/health`는 인증 없이 열려 있으므로 상세는 `ROLE_ADMIN`으로 인증한 요청에만 보입니다. 인증 없이 호출하면 상태만 보입니다.
+
+### health 정책
+
+리스너 중지는 liveness와 readiness 어느 group에도 넣지 않습니다.
+
+- liveness에 넣으면 오케스트레이터가 프로세스를 재시작합니다. DLT가 아직 복구되지 않았다면 다시 띄운 리스너가 같은 이유로 또 멈춥니다. 원인은 그대로인 채 재시작만 반복됩니다.
+- readiness에 넣으면 로드밸런서가 인스턴스를 뺍니다. REST 요청은 정상 처리할 수 있는 인스턴스인데 Kafka 문제로 처리 용량만 줄어듭니다.
+
+컨테이너 HEALTHCHECK와 ALB health check는 `/actuator/health/liveness`를 씁니다. 전체 `/actuator/health`는 사람이 보거나 알림이 거는 대상입니다.
+
+### 재시작 절차
+
+리스너를 다시 띄우는 경로는 프로세스 재시작뿐입니다. 원인을 확인하지 않고 다시 띄우는 버튼을 두면 같은 중지가 반복되므로 API로 열지 않았습니다.
+
+1. `/actuator/health`의 `kafkaListener` 상세에서 멈춘 Consumer Group과 사유를 확인합니다. `ROLE_ADMIN`으로 인증해야 상세가 보입니다.
+2. 원인을 해소합니다. DLT 발행 실패의 원인은 대개 둘입니다.
+   - 브로커에 닿지 않음. `KAFKA_BOOTSTRAP_SERVERS`와 네트워크를 확인합니다.
+   - DLT 토픽이 없음. 운영 토픽은 애플리케이션이 만들지 않으므로 `<원본 토픽>.DLT`가 준비되어 있어야 합니다. `KAFKA_TOPIC_VERIFY=true`로 두면 기동 시 확인합니다.
+3. 인스턴스를 재시작합니다. 리스너가 다시 붙으면 `/actuator/health`가 `UP`으로 돌아옵니다.
+4. 멈춰 있는 동안 쌓인 lag을 확인합니다. offset은 성공한 지점까지만 전진했으므로 중지 시점의 레코드부터 다시 소비합니다. 소비자 멱등 경계가 중복 처리를 걸러냅니다.
+
+원인을 해소하지 않고 재시작하면 같은 레코드에서 다시 세 번 실패하고 또 멈춥니다. `mopl_kafka_listener_stops_total`이 계속 올라가는 것이 그 신호입니다.
+
 ## 멱등 처리 기록 정리
 
 Consumer는 이미 처리한 이벤트를 `processed_events`에 남겨 두고, 같은 `(consumer_name, event_id)`가 다시 오면 걸러냅니다. 이 테이블은 이벤트를 처리할 때마다 한 행이 늘고 갱신되지 않습니다. 지우는 경로가 없으면 테이블과 인덱스가 소비량에 비례해 계속 커집니다. 보관 기간을 지난 기록을 주기적으로 지웁니다.
@@ -229,7 +265,7 @@ docker run --rm \
 curl --fail http://localhost:8080/actuator/health
 ```
 
-정상 응답은 `{"status":"UP"}`이며, Docker 컨테이너 상태도 `healthy`로 전환되어야 합니다.
+정상 응답은 `{"status":"UP"}`입니다. Docker 컨테이너 상태가 `healthy`로 전환되는 기준은 `/actuator/health/liveness`이므로, 컨테이너가 `healthy`인데 위 응답이 `DOWN`일 수 있습니다. 그때는 어떤 component가 내려가 있는지 확인합니다.
 
 ## CI 컨테이너 smoke 검증
 

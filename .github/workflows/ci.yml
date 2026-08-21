@@ -244,11 +244,17 @@ jobs:
               exit 1
             fi
 
+            # 컨테이너 healthcheck 는 liveness 만 봅니다. 그것이 healthy 가 됐다고 전체
+            # 집계까지 UP 인 것은 아니므로, 여기서 한 번 실패했다고 끝내지 않고 다시 봅니다.
             if [[ "$health_status" == "healthy" ]]; then
-              health_response="$(curl --fail --silent --show-error http://127.0.0.1:8080/actuator/health)"
-              echo "$health_response"
-              grep -q '"status":"UP"' <<< "$health_response"
-              exit 0
+              health_response="$(curl --fail --silent --show-error http://127.0.0.1:8080/actuator/health || true)"
+
+              if grep -q '"status":"UP"' <<< "$health_response"; then
+                echo "$health_response"
+                exit 0
+              fi
+
+              echo "Liveness is healthy but overall health is not UP yet: $health_response"
             fi
 
             echo "Waiting for application health ($attempt/90): $health_status"
