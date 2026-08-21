@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
 
 import com.mopl.user.entity.OAuthAccount;
 import com.mopl.user.entity.OAuthProvider;
@@ -18,7 +19,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -37,6 +37,9 @@ class OAuthUserProvisioningServiceTest {
     @Mock
     UserRepository userRepository;
 
+    @Mock
+    OAuthUserCreationService oauthUserCreationService;
+
     OAuthUserProvisioningService provisioningService;
 
     @BeforeEach
@@ -44,7 +47,8 @@ class OAuthUserProvisioningServiceTest {
         provisioningService =
             new OAuthUserProvisioningService(
                 oauthAccountRepository,
-                userRepository
+                userRepository,
+                oauthUserCreationService
             );
     }
 
@@ -98,14 +102,18 @@ class OAuthUserProvisioningServiceTest {
          */
         verify(userRepository, never())
             .existsByEmail(any());
-        verify(userRepository, never())
-            .save(any());
-        verify(oauthAccountRepository, never())
-            .saveAndFlush(any());
+        verify(oauthUserCreationService, never())
+            .create(
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+            );
     }
 
     @Test
-    @DisplayName("연결되지 않은 OAuth 사용자는 소셜 전용 사용자로 생성한다")
+    @DisplayName("연결되지 않은 OAuth 사용자는 검증된 정보로 생성 서비스를 호출한다")
     void resolveOrCreate_createsOAuthOnlyUser() {
         // given
         when(
@@ -124,18 +132,27 @@ class OAuthUserProvisioningServiceTest {
             )
         ).thenReturn(false);
 
-        when(userRepository.save(any(User.class)))
-            .thenAnswer(invocation ->
-                invocation.getArgument(0)
-            );
+        User createdUser =
+            User.builder()
+                .email("user@example.com")
+                .passwordHash(null)
+                .name("Google 사용자")
+                .profileImageUrl(
+                    "https://example.com/profile.png"
+                )
+                .role(UserRole.USER)
+                .locked(false)
+                .build();
 
         when(
-            oauthAccountRepository.saveAndFlush(
-                any(OAuthAccount.class)
+            oauthUserCreationService.create(
+                OAuthProvider.GOOGLE,
+                "google-sub-123",
+                "user@example.com",
+                "Google 사용자",
+                "https://example.com/profile.png"
             )
-        ).thenAnswer(invocation ->
-            invocation.getArgument(0)
-        );
+        ).thenReturn(createdUser);
 
         // when
         User result =
@@ -148,40 +165,17 @@ class OAuthUserProvisioningServiceTest {
             );
 
         // then
-        assertThat(result.getEmail())
-            .isEqualTo("user@example.com");
-        assertThat(result.getPasswordHash())
-            .isNull();
-        assertThat(result.getName())
-            .isEqualTo("Google 사용자");
-        assertThat(result.getProfileImageUrl())
-            .isEqualTo(
+        assertThat(result)
+            .isSameAs(createdUser);
+
+        verify(oauthUserCreationService)
+            .create(
+                OAuthProvider.GOOGLE,
+                "google-sub-123",
+                "user@example.com",
+                "Google 사용자",
                 "https://example.com/profile.png"
             );
-        assertThat(result.getRole())
-            .isEqualTo(UserRole.USER);
-        assertThat(result.isLocked())
-            .isFalse();
-
-        ArgumentCaptor<OAuthAccount> accountCaptor =
-            ArgumentCaptor.forClass(
-                OAuthAccount.class
-            );
-
-        verify(oauthAccountRepository)
-            .saveAndFlush(
-                accountCaptor.capture()
-            );
-
-        OAuthAccount savedAccount =
-            accountCaptor.getValue();
-
-        assertThat(savedAccount.getUser())
-            .isSameAs(result);
-        assertThat(savedAccount.getProvider())
-            .isEqualTo(OAuthProvider.GOOGLE);
-        assertThat(savedAccount.getProviderUserId())
-            .isEqualTo("google-sub-123");
     }
 
     @Test
@@ -231,25 +225,45 @@ class OAuthUserProvisioningServiceTest {
                 );
             });
 
-        verify(userRepository, never())
-            .save(any());
-        verify(oauthAccountRepository, never())
-            .saveAndFlush(any());
+        verify(oauthUserCreationService, never())
+            .create(
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+            );
     }
 
     @Test
-    @DisplayName("신규 OAuth 사용자 저장 중 유일성 충돌이 발생하면 인증에 실패한다")
-    void resolveOrCreate_rejectsPersistenceConflict() {
+    @DisplayName("동시에 생성된 같은 OAuth 계정은 먼저 생성된 사용자로 수렴한다")
+    void resolveOrCreate_returnsWinnerAfterConcurrentConflict() {
         // given
+        User winner =
+            User.builder()
+                .email("user@example.com")
+                .passwordHash(null)
+                .name("Google 사용자")
+                .role(UserRole.USER)
+                .locked(false)
+                .build();
+
+        OAuthAccount winnerAccount =
+            OAuthAccount.builder()
+                .user(winner)
+                .provider(OAuthProvider.GOOGLE)
+                .providerUserId("google-sub-123")
+                .build();
+
         when(
             oauthAccountRepository
                 .findByProviderAndProviderUserId(
                     OAuthProvider.GOOGLE,
                     "google-sub-123"
                 )
-        ).thenReturn(
-            Optional.empty()
-        );
+        )
+            .thenReturn(Optional.empty())
+            .thenReturn(Optional.of(winnerAccount));
 
         when(
             userRepository.existsByEmail(
@@ -257,20 +271,151 @@ class OAuthUserProvisioningServiceTest {
             )
         ).thenReturn(false);
 
-        when(userRepository.save(any(User.class)))
-            .thenAnswer(invocation ->
-                invocation.getArgument(0)
-            );
-
         when(
-            oauthAccountRepository.saveAndFlush(
-                any(OAuthAccount.class)
+            oauthUserCreationService.create(
+                OAuthProvider.GOOGLE,
+                "google-sub-123",
+                "user@example.com",
+                "Google 사용자",
+                null
             )
         ).thenThrow(
             new DataIntegrityViolationException(
-                "duplicated OAuth account"
+                "concurrent OAuth account"
             )
         );
+
+        // when
+        User result =
+            provisioningService.resolveOrCreate(
+                OAuthProvider.GOOGLE,
+                "google-sub-123",
+                "user@example.com",
+                "Google 사용자",
+                null
+            );
+
+        // then
+        assertThat(result)
+            .isSameAs(winner);
+
+        verify(
+            oauthAccountRepository,
+            times(2)
+        ).findByProviderAndProviderUserId(
+            OAuthProvider.GOOGLE,
+            "google-sub-123"
+        );
+    }
+
+    @Test
+    @DisplayName("생성 충돌 후 동일 이메일만 존재하면 자동 연결하지 않는다")
+    void resolveOrCreate_rejectsEmailConflictAfterCreationRace() {
+        // given
+        when(
+            oauthAccountRepository
+                .findByProviderAndProviderUserId(
+                    OAuthProvider.GOOGLE,
+                    "google-sub-123"
+                )
+        )
+            .thenReturn(Optional.empty())
+            .thenReturn(Optional.empty());
+
+        /*
+         * 최초 검사 시에는 없었지만 생성 경쟁이 발생한 뒤
+         * 같은 이메일 사용자가 저장된 상황을 재현한다.
+         */
+        when(
+            userRepository.existsByEmail(
+                "user@example.com"
+            )
+        )
+            .thenReturn(false)
+            .thenReturn(true);
+
+        DataIntegrityViolationException conflict =
+            new DataIntegrityViolationException(
+                "duplicated email"
+            );
+
+        when(
+            oauthUserCreationService.create(
+                OAuthProvider.GOOGLE,
+                "google-sub-123",
+                "user@example.com",
+                "Google 사용자",
+                null
+            )
+        ).thenThrow(conflict);
+
+        // when & then
+        assertThatThrownBy(() ->
+            provisioningService.resolveOrCreate(
+                OAuthProvider.GOOGLE,
+                "google-sub-123",
+                "user@example.com",
+                "Google 사용자",
+                null
+            )
+        )
+            .isInstanceOf(
+                OAuth2AuthenticationException.class
+            )
+            .satisfies(exception -> {
+                OAuth2AuthenticationException oauthException =
+                    (OAuth2AuthenticationException) exception;
+
+                assertThat(
+                    oauthException
+                        .getError()
+                        .getErrorCode()
+                ).isEqualTo(
+                    OAuthUserProvisioningService
+                        .ACCOUNT_LINK_REQUIRED
+                );
+
+                assertThat(oauthException.getCause())
+                    .isSameAs(conflict);
+            });
+    }
+
+    @Test
+    @DisplayName("생성 충돌 후 사용자와 연결 정보가 모두 없으면 인증에 실패한다")
+    void resolveOrCreate_rejectsUnresolvedCreationConflict() {
+        // given
+        when(
+            oauthAccountRepository
+                .findByProviderAndProviderUserId(
+                    OAuthProvider.GOOGLE,
+                    "google-sub-123"
+                )
+        )
+            .thenReturn(Optional.empty())
+            .thenReturn(Optional.empty());
+
+        when(
+            userRepository.existsByEmail(
+                "user@example.com"
+            )
+        )
+            .thenReturn(false)
+            .thenReturn(false);
+
+        DataIntegrityViolationException conflict =
+            new DataIntegrityViolationException(
+                "unknown persistence conflict"
+            );
+
+        when(
+            oauthUserCreationService.create(
+                OAuthProvider.GOOGLE,
+                "google-sub-123",
+                "user@example.com",
+                "Google 사용자",
+                null
+            )
+        ).thenThrow(conflict);
 
         // when & then
         assertThatThrownBy(() ->
@@ -299,9 +444,7 @@ class OAuthUserProvisioningServiceTest {
                 );
 
                 assertThat(oauthException.getCause())
-                    .isInstanceOf(
-                        DataIntegrityViolationException.class
-                    );
+                    .isSameAs(conflict);
             });
     }
 
@@ -345,8 +488,14 @@ class OAuthUserProvisioningServiceTest {
                 );
             });
 
-        verify(userRepository, never())
-            .save(any());
+        verify(oauthUserCreationService, never())
+            .create(
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+            );
     }
 
     @Test
@@ -382,7 +531,13 @@ class OAuthUserProvisioningServiceTest {
                 any(),
                 any()
             );
-        verify(userRepository, never())
-            .save(any());
+        verify(oauthUserCreationService, never())
+            .create(
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+            );
     }
 }

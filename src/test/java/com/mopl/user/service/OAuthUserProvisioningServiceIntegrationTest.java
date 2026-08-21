@@ -13,6 +13,11 @@ import com.mopl.user.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
@@ -34,6 +39,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @ActiveProfiles("test")
 @Import({
     JpaConfig.class,
+    OAuthUserCreationService.class,
     OAuthUserProvisioningService.class
 })
 @AutoConfigureTestDatabase(
@@ -156,6 +162,130 @@ class OAuthUserProvisioningServiceIntegrationTest {
             .isEqualTo(1);
         assertThat(oauthAccountRepository.count())
             .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("같은 Google 계정의 동시 최초 로그인은 동일한 사용자로 수렴한다")
+    void resolveOrCreate_concurrentGoogleLoginConvergesToSameUser()
+        throws Exception {
+        // given
+        ExecutorService executorService =
+            Executors.newFixedThreadPool(2);
+
+        CountDownLatch ready =
+            new CountDownLatch(2);
+
+        CountDownLatch start =
+            new CountDownLatch(1);
+
+        try {
+            Future<User> firstLogin =
+                executorService.submit(() -> {
+                    ready.countDown();
+
+                    if (!start.await(
+                        5,
+                        TimeUnit.SECONDS
+                    )) {
+                        throw new IllegalStateException(
+                            "동시 로그인 시작 신호를 기다리지 못했습니다."
+                        );
+                    }
+
+                    return provisioningService.resolveOrCreate(
+                        OAuthProvider.GOOGLE,
+                        "concurrent-google-sub",
+                        "concurrent@example.com",
+                        "동시 로그인 사용자",
+                        null
+                    );
+                });
+
+            Future<User> secondLogin =
+                executorService.submit(() -> {
+                    ready.countDown();
+
+                    if (!start.await(
+                        5,
+                        TimeUnit.SECONDS
+                    )) {
+                        throw new IllegalStateException(
+                            "동시 로그인 시작 신호를 기다리지 못했습니다."
+                        );
+                    }
+
+                    return provisioningService.resolveOrCreate(
+                        OAuthProvider.GOOGLE,
+                        "concurrent-google-sub",
+                        "concurrent@example.com",
+                        "동시 로그인 사용자",
+                        null
+                    );
+                });
+
+            /*
+             * 두 작업 스레드가 모두 준비된 이후 동시에
+             * OAuth 사용자 조회·생성을 시작
+             */
+            assertThat(
+                ready.await(
+                    5,
+                    TimeUnit.SECONDS
+                )
+            ).isTrue();
+
+            start.countDown();
+
+            // when
+            User firstResult =
+                firstLogin.get(
+                    15,
+                    TimeUnit.SECONDS
+                );
+
+            User secondResult =
+                secondLogin.get(
+                    15,
+                    TimeUnit.SECONDS
+                );
+
+            // then
+            assertThat(firstResult.getId())
+                .isNotNull();
+
+            assertThat(secondResult.getId())
+                .isEqualTo(firstResult.getId());
+
+            assertThat(userRepository.count())
+                .isEqualTo(1);
+
+            assertThat(oauthAccountRepository.count())
+                .isEqualTo(1);
+
+            OAuthAccount savedAccount =
+                oauthAccountRepository
+                    .findByProviderAndProviderUserId(
+                        OAuthProvider.GOOGLE,
+                        "concurrent-google-sub"
+                    )
+                    .orElseThrow();
+
+            assertThat(savedAccount.getUser().getId())
+                .isEqualTo(firstResult.getId());
+        } finally {
+            /*
+             * 테스트 성공 여부와 관계없이 작업 스레드를 정리
+             */
+            start.countDown();
+            executorService.shutdownNow();
+
+            assertThat(
+                executorService.awaitTermination(
+                    5,
+                    TimeUnit.SECONDS
+                )
+            ).isTrue();
+        }
     }
 
     @Test

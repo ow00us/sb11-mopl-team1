@@ -3,7 +3,6 @@ package com.mopl.user.service;
 import com.mopl.user.entity.OAuthAccount;
 import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.entity.User;
-import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.OAuthAccountRepository;
 import com.mopl.user.repository.UserRepository;
 import java.util.Locale;
@@ -38,6 +37,7 @@ public class OAuthUserProvisioningService {
 
     private final OAuthAccountRepository oauthAccountRepository;
     private final UserRepository userRepository;
+    private final OAuthUserCreationService oauthUserCreationService;
 
     /**
      * Provider 계정에 연결된 사용자를 조회하거나 소셜 전용 사용자를 생성
@@ -50,7 +50,7 @@ public class OAuthUserProvisioningService {
      * 자동 연결하지 않습니다. 두 인증수단의 소유권을 모두 확인하는 명시적인
      * 계정 연결 절차가 필요하므로 인증을 실패시킵니다.</p>
      */
-    @Transactional
+    @Transactional(readOnly = true)
     public User resolveOrCreate(
         OAuthProvider provider,
         String providerUserId,
@@ -86,6 +86,10 @@ public class OAuthUserProvisioningService {
 
     /**
      * 연결 정보가 없는 Provider 사용자의 MOPL 계정과 연결 정보를 생성
+     *
+     * <p>동시에 같은 Provider 계정으로 최초 로그인을 시도하여
+     * 유일성 제약 충돌이 발생하면, 별도 생성 트랜잭션이 롤백된 뒤
+     * 먼저 생성된 OAuth 연결 정보를 다시 조회합니다.</p>
      */
     private User createOAuthUser(
         OAuthProvider provider,
@@ -115,46 +119,72 @@ public class OAuthUserProvisioningService {
             );
         }
 
-        User user = User.builder()
-            .email(normalizedEmail)
-            .passwordHash(null)
-            .name(validatedName)
-            .profileImageUrl(validatedProfileImageUrl)
-            .role(UserRole.USER)
-            .locked(false)
-            .build();
-
         try {
             /*
-             * User와 OAuthAccount를 하나의 트랜잭션에서 저장합니다.
-             * OAuthAccount 저장이 실패하면 User 생성도 함께 롤백
+             * 실제 User와 OAuthAccount INSERT는 별도의 REQUIRES_NEW
+             * 트랜잭션에서 실행
              */
-            User savedUser =
-                userRepository.save(user);
-
-            OAuthAccount oauthAccount =
-                OAuthAccount.builder()
-                    .user(savedUser)
-                    .provider(provider)
-                    .providerUserId(providerUserId)
-                    .build();
-
-            oauthAccountRepository.saveAndFlush(
-                oauthAccount
+            return oauthUserCreationService.create(
+                provider,
+                providerUserId,
+                normalizedEmail,
+                validatedName,
+                validatedProfileImageUrl
             );
-
-            return savedUser;
         } catch (DataIntegrityViolationException exception) {
             /*
-             * 동시에 같은 소셜 계정으로 최초 로그인하거나 같은 이메일로
-             * 가입한 경우 DB 유일성 제약이 최종 방어선이 된다.
+             * 생성 트랜잭션이 완전히 롤백된 뒤 실행되는 경로
+             * 같은 Provider 계정의 동시 요청이 먼저 성공했다면
+             * 해당 연결 정보를 조회해 동일한 사용자로 수렴
              */
-            throw authenticationException(
-                ACCOUNT_CREATION_CONFLICT,
-                "OAuth 사용자 생성 중 데이터 충돌이 발생했습니다.",
+            return resolveAfterCreationConflict(
+                provider,
+                providerUserId,
+                normalizedEmail,
                 exception
             );
         }
+    }
+
+    /**
+     * OAuth 사용자 생성 충돌 이후 최종 저장 상태를 다시 확인
+     *
+     * <p>동일한 Provider 계정의 다른 요청이 먼저 성공했다면
+     * 그 요청이 생성한 사용자를 반환합니다.</p>
+     *
+     * <p>Provider 연결은 없고 동일 이메일 사용자만 존재한다면
+     * 로컬 계정 또는 다른 로그인 경로와의 충돌이므로 자동 연결하지 않고
+     * 명시적인 계정 연결을 요구합니다.</p>
+     */
+    private User resolveAfterCreationConflict(
+        OAuthProvider provider,
+        String providerUserId,
+        String normalizedEmail,
+        DataIntegrityViolationException cause
+    ) {
+        return oauthAccountRepository
+            .findByProviderAndProviderUserId(
+                provider,
+                providerUserId
+            )
+            .map(OAuthAccount::getUser)
+            .orElseThrow(() -> {
+                if (userRepository.existsByEmail(
+                    normalizedEmail
+                )) {
+                    return authenticationException(
+                        ACCOUNT_LINK_REQUIRED,
+                        "동일 이메일의 기존 사용자에게 명시적인 계정 연결이 필요합니다.",
+                        cause
+                    );
+                }
+
+                return authenticationException(
+                    ACCOUNT_CREATION_CONFLICT,
+                    "OAuth 사용자 생성 중 데이터 충돌이 발생했습니다.",
+                    cause
+                );
+            });
     }
 
     private void validateProviderIdentity(
