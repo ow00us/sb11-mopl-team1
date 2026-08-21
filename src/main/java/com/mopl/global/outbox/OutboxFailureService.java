@@ -17,8 +17,9 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>재처리해도 새 레코드를 만들지 않습니다. eventId 와 partitionKey 가 바뀌면 소비자의 멱등
  * 판정과 파티션 내 순서가 함께 깨집니다. 기존 행의 상태만 되돌립니다.
  *
- * <p>노출 방식은 이 이슈 범위가 아닙니다. 관리자 API 나 배치가 필요해지면 이 서비스를
- * 호출하는 형태로 붙입니다.
+ * <p>HTTP 를 알지 못합니다. 관리자 API 는
+ * {@link com.mopl.global.outbox.controller.OutboxAdminController} 가 이 서비스를 호출하는
+ * 형태로 얹혀 있습니다.
  */
 @Slf4j
 @Service
@@ -58,20 +59,25 @@ public class OutboxFailureService {
     /**
      * 최종 실패한 이벤트 한 건을 다시 발행 대기로 돌립니다.
      *
+     * <p>대상을 잠그고 읽습니다. 같은 이벤트에 대한 요청이 동시에 들어와도 전이는 한 번만
+     * 일어나고, 뒤에 온 요청은 최종 실패가 아닌 상태를 보고 거절됩니다.
+     *
      * @param eventId envelope 의 eventId. 로그와 소비자 쪽에서 확인되는 값입니다.
-     * @return 되돌렸으면 {@code true}. 대상이 없거나 최종 실패 상태가 아니면 {@code false}
+     * @return 전이 결과
      */
     @Transactional
-    public boolean requeue(UUID eventId, Instant now) {
-        return outboxEventRepository.findByEventId(eventId)
-            .filter(event -> event.getStatus() == OutboxStatus.FAILED)
+    public OutboxRequeueOutcome requeue(UUID eventId, Instant now) {
+        return outboxEventRepository.findByEventIdForUpdate(eventId)
             .map(event -> {
+                if (event.getStatus() != OutboxStatus.FAILED) {
+                    return OutboxRequeueOutcome.NOT_FAILED;
+                }
                 event.requeue(now);
                 log.info("Outbox 최종 실패 이벤트를 다시 발행 대기로 돌립니다. eventId={}, type={}",
                     event.getEventId(), event.getType());
-                return true;
+                return OutboxRequeueOutcome.REQUEUED;
             })
-            .orElse(false);
+            .orElse(OutboxRequeueOutcome.NOT_FOUND);
     }
 
     /**
