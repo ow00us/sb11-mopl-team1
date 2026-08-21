@@ -29,6 +29,13 @@ mopl:
       auto-create: false
     listener:
       auto-startup: false
+    processed-event:
+      cleanup:
+        # 주기 실행이 테스트 데이터를 먼저 지우면 검증이 흔들립니다. 정리 통합 테스트는
+        # 호출 시점을 직접 정합니다.
+        enabled: false
+        retention: 30d
+        batch-size: 1000
   outbox:
     # lease 만료 회수를 기다리지 않고 검증하기 위해 짧게 둡니다.
     lease-duration: 2s

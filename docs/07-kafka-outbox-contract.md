@@ -289,13 +289,16 @@ sourceEventId: Kafka eventId
 | 상태 | 의미 |
 | --- | --- |
 | `PENDING` | 발행 대기 |
-| `PROCESSING` | relay가 claim하여 발행 중 |
 | `PUBLISHED` | broker의 발행 확인을 받고 완료 |
 | `FAILED` | 자동 재시도를 소진한 장기 실패 |
 | `EXPIRED` | 전달 유효 시한이 지난 이벤트 |
 | `SKIPPED` | 운영자가 업무 영향을 확인하고 명시적으로 건너뜀 |
 
-`SKIPPED`에는 처리자, 처리 시각과 사유를 보존한다.
+relay가 claim한 이벤트는 별도 상태로 두지 않는다. 상태는 `PENDING`으로 두고 `claim_owner`와 `claim_expires_at`으로 표시한다. 상태로 두면 claim한 relay가 비정상 종료했을 때 그 행이 어느 상태에서 멈췄는지를 다시 판정해야 하지만, lease 만료 시각으로 두면 시각 비교 하나로 회수된다.
+
+`SKIPPED`에는 처리자, 처리 시각과 사유를 보존한다. 사유는 비워 둘 수 없다. `SKIPPED`는 발행에 성공했다는 뜻이 아니라 이벤트를 보내지 않아도 된다는 업무 판단과 그 책임을 남기는 종결 상태이므로, 근거가 없으면 행을 지운 것과 구분되지 않는다. 스키마의 `ck_outbox_events_skip_audit` 체크 제약이 상태와 감사 정보를 양방향으로 묶는다.
+
+`FAILED`에서만 `SKIPPED`로 갈 수 있고, `SKIPPED`에서 빠져나가는 전이는 없다. 같은 요청이 다시 들어와도 감사 정보는 처음 전환 때의 값을 유지한다.
 
 ### 중복 Outbox 방지
 
