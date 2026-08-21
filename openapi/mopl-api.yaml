@@ -123,6 +123,72 @@ paths:
             "*/*":
               schema:
                 "$ref": "#/components/schemas/ErrorResponse"
+  "/api/admin/outbox/failures/{eventId}/skip":
+    post:
+      tags:
+        - "운영"
+      summary: "[어드민] 최종 실패 Outbox 이벤트 건너뛰기"
+      description: "최종 실패 이벤트 한 건을 보내지 않기로 하고 종결합니다. 발행 성공으로 표시하거나 행을 지우지 않고, 처리자와 처리 시각, 사유를 함께 보존합니다. 같은 요청이 다시 들어와도 204이며 감사 정보는 처음 전환 때의 값을 유지합니다."
+      operationId: "skipOutboxFailure"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      parameters:
+        -
+          name: "eventId"
+          in: "path"
+          description: "건너뛸 이벤트의 eventId"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            description: "건너뛸 이벤트의 eventId"
+      requestBody:
+        content:
+          "application/json":
+            schema:
+              "$ref": "#/components/schemas/OutboxSkipRequest"
+        required: true
+      responses:
+        "204":
+          description: "건너뛰기로 종결"
+        "400":
+          description: "사유가 비어 있음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "관리자 권한 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "해당 eventId의 이벤트가 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "409":
+          description: "최종 실패 상태가 아니어서 건너뛸 수 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
   "/api/users":
     get:
       tags:
@@ -3111,6 +3177,16 @@ paths:
                 "$ref": "#/components/schemas/ErrorResponse"
 components:
   schemas:
+    OutboxSkipRequest:
+      type: "object"
+      properties:
+        reason:
+          type: "string"
+          description: "건너뛴 사유. 비워 둘 수 없습니다"
+          maxLength: 1000
+          minLength: 1
+      required:
+        - "reason"
     OutboxFailureDto:
       type: "object"
       description: "최종 실패한 Outbox 이벤트 한 건. 이벤트 payload는 담지 않습니다."

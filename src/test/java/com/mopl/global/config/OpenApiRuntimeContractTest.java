@@ -146,6 +146,7 @@ class OpenApiRuntimeContractTest {
         "PATCH /api/users/{userId}/password",
         "PATCH /api/users/{userId}/role",
         "POST /api/admin/outbox/failures/{eventId}/requeue",
+        "POST /api/admin/outbox/failures/{eventId}/skip",
         "POST /api/auth/sign-in",
         "POST /api/auth/reset-password",
         "POST /api/auth/refresh",
