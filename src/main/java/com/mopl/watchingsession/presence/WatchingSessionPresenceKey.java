@@ -8,9 +8,15 @@ import java.util.UUID;
 public class WatchingSessionPresenceKey {
 
     private static final String KEY_TEMPLATE = "mopl:presence:watcher:%s";
+    private static final String CONTENT_KEY_TEMPLATE = "mopl:presence:content:%s";
+
 
     static String of(UUID watcherId) {
         return KEY_TEMPLATE.formatted(watcherId);
+    }
+
+    static String ofContent(UUID contentId) {
+        return CONTENT_KEY_TEMPLATE.formatted(contentId);
     }
 
     private WatchingSessionPresenceKey() {

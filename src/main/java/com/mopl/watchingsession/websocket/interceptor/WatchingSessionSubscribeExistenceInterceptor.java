@@ -1,8 +1,8 @@
 package com.mopl.watchingsession.websocket.interceptor;
 
-import com.mopl.content.repository.ContentRepository;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.security.websocket.StompErrorFrameSender;
+import com.mopl.watchingsession.presence.ContentExistenceCache;
 import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Matcher;
@@ -39,8 +39,8 @@ public class WatchingSessionSubscribeExistenceInterceptor implements ChannelInte
     private static final Pattern CONTENT_SUBSCRIBE_DESTINATION_PATTERN =
         Pattern.compile("^/sub/contents/([^/]+)/(?:watch|chat)$");
 
-    private final ContentRepository contentRepository;
     private final StompErrorFrameSender errorFrameSender;
+    private final ContentExistenceCache contentExistenceCache;
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -62,7 +62,7 @@ public class WatchingSessionSubscribeExistenceInterceptor implements ChannelInte
 
         UUID contentId = parseContentId(matcher.group(1));
 
-        if (contentId != null && contentRepository.existsById(contentId)) {
+        if (contentId != null && contentExistenceCache.exists(contentId)) {
             return message;
         }
 
