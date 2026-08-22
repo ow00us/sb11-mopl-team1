@@ -83,4 +83,13 @@ public class WatchingSessionProperties {
     @Positive
     private Integer chatSubscriptionLimit;
 
+    /**
+     * 콘텐츠 존재 검증 캐시(양성 결과만)의 TTL. 콘텐츠 삭제는 이벤트를 발행하지
+     * 않아 무효화 신호가 없으므로, 삭제된 콘텐츠가 이 시간 동안은 존재하는 것으로
+     * 판정될 수 있다 — 짧게 잡아 그 지연을 허용 범위로 둔다.
+     */
+    @NotNull
+    @DurationMin(millis = 1)
+    private Duration contentExistenceCacheTtl;
+
 }

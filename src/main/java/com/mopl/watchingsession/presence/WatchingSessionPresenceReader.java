@@ -1,5 +1,6 @@
 package com.mopl.watchingsession.presence;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -34,8 +35,16 @@ public class WatchingSessionPresenceReader {
         return 0
         """;
 
+    private static final String COUNT_BY_CONTENT_LUA = """
+        return redis.call('ZCOUNT', KEYS[1], '(' .. ARGV[1], '+inf')
+        """;
+
     private static final RedisScript<Long> IS_WATCHING_SCRIPT =
         new DefaultRedisScript<>(IS_WATCHING_LUA, Long.class);
+
+    private static final RedisScript<Long> COUNT_BY_CONTENT_SCRIPT =
+        new DefaultRedisScript<>(COUNT_BY_CONTENT_LUA, Long.class);
+
 
     private final StringRedisTemplate stringRedisTemplate;
 
@@ -51,4 +60,16 @@ public class WatchingSessionPresenceReader {
         return Long.valueOf(1L).equals(result);
     }
 
+    /**
+     * @return 해당 콘텐츠를 현재 시청 중인 인원 수. presence가 만료된 멤버는
+     *         ZCOUNT 조건에서 자동으로 빠지므로 별도 정리 없이 정확한 값을 반환한다.
+     *         실패는 isWatching과 동일하게 호출자에게 그대로 전파한다.
+     */
+    public long countByContent(UUID contentId) {
+        Long result = stringRedisTemplate.execute(
+            COUNT_BY_CONTENT_SCRIPT,
+            List.of(WatchingSessionPresenceKey.ofContent(contentId)),
+            String.valueOf(Instant.now().toEpochMilli()));
+        return result == null ? 0L : result;
+    }
 }

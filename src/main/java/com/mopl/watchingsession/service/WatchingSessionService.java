@@ -14,6 +14,7 @@ import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.config.WatchingSessionProperties;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
+import com.mopl.watchingsession.presence.ContentExistenceCache;
 import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter.DeletedSnapshot;
@@ -75,6 +76,7 @@ public class WatchingSessionService {
     private final UserRepository userRepository;
     private final WatchingSessionSnapshotWriter watchingSessionSnapshotWriter;
     private final WatchingSessionPresenceWriter watchingSessionPresenceWriter;
+    private final ContentExistenceCache contentExistenceCache;
 
     // Watcher 단위로 독립적인 원자성을 보장하기 위한 락 맵.
     // 값이 참조 카운트를 함께 들고 있어, 아무도 사용하지 않는 순간(refCount == 0) 엔트리가 제거된다.
@@ -242,7 +244,7 @@ public class WatchingSessionService {
 
     // 콘텐츠 존재여부 확인하는 헬퍼 메서드
     private void validateContentExists(UUID contentId) {
-        if (!contentRepository.existsById(contentId)) {
+        if (!contentExistenceCache.exists(contentId)) {
             throw new BusinessException(ErrorCode.CONTENT_NOT_FOUND);
         }
     }

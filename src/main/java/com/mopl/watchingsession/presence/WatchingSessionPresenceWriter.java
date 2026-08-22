@@ -21,28 +21,26 @@ import org.springframework.stereotype.Component;
 
 /**
  * 시청 presence를 Redis에 기록하고, 소유권 판정을 원자적으로 수행하는 컴포넌트입니다.
- *
- * presence 키는 "지금 이 사용자의 시청 세션을 어느 WebSocket 연결·구독이 소유하는가"의 원본입니다.
- * 소유권 비교와 삭제·연장 사이에 다른 요청이 끼어들면 낡은 구독이 현재 세션을 지우는 문제가 재발하므로,
- * 비교와 실행을 Lua 스크립트 하나로 묶어 원자적으로 처리합니다.
- * Redis는 스크립트 실행 도중 다른 클라이언트의 명령을 끼워넣지 않습니다.
- *
- * 값을 Hash로 저장해 Lua가 HGET으로 필드를 직접 읽게 합니다. 배포 직후에는 이전 버전이
- * 남긴 문자열(JSON) 타입 키가 섞여 있을 수 있어, 모든 스크립트가 HGETALL/HGET을 호출하기
- * 전에 TYPE을 먼저 확인합니다. hash가 아니면(레거시 문자열 또는 키 없음) "활성 세션 없음"과
- * 동일하게 처리합니다 — 이전 형식을 굳이 파싱해 되살리지 않고, 다음 start()가 자연스럽게
- * 새 Hash로 덮어씁니다.
- *
- * 인자·필드가 모두 평문 문자열이라 StringRedisTemplate을 사용합니다.
- * JSON 값 직렬화기를 쓰는 RedisTemplate<String, Object>로 ARGV를 넘기면 따옴표가 붙어
- * 문자열 비교가 항상 실패합니다.
+ * <p>
+ * presence 키는 "지금 이 사용자의 시청 세션을 어느 WebSocket 연결·구독이 소유하는가"의 원본입니다. 소유권 비교와 삭제·연장 사이에 다른 요청이 끼어들면 낡은
+ * 구독이 현재 세션을 지우는 문제가 재발하므로, 비교와 실행을 Lua 스크립트 하나로 묶어 원자적으로 처리합니다. Redis는 스크립트 실행 도중 다른 클라이언트의 명령을
+ * 끼워넣지 않습니다.
+ * <p>
+ * 값을 Hash로 저장해 Lua가 HGET으로 필드를 직접 읽게 합니다. 배포 직후에는 이전 버전이 남긴 문자열(JSON) 타입 키가 섞여 있을 수 있어, 모든 스크립트가
+ * HGETALL/HGET을 호출하기 전에 TYPE을 먼저 확인합니다. hash가 아니면(레거시 문자열 또는 키 없음) "활성 세션 없음"과 동일하게 처리합니다 — 이전 형식을
+ * 굳이 파싱해 되살리지 않고, 다음 start()가 자연스럽게 새 Hash로 덮어씁니다.
+ * <p>
+ * 인자·필드가 모두 평문 문자열이라 StringRedisTemplate을 사용합니다. JSON 값 직렬화기를 쓰는 RedisTemplate<String, Object>로
+ * ARGV를 넘기면 따옴표가 붙어 문자열 비교가 항상 실패합니다.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class WatchingSessionPresenceWriter {
 
-    public record DeletedSnapshot(UUID snapshotId, Instant snapshotUpdatedAt) {}
+    public record DeletedSnapshot(UUID snapshotId, Instant snapshotUpdatedAt) {
+
+    }
 
     private static final String KEY_TEMPLATE = "mopl:presence:watcher:%s";
     private static final String FIELD_SNAPSHOT_ID = "snapshotId";
@@ -57,36 +55,52 @@ public class WatchingSessionPresenceWriter {
     // 쓰기 자체는 레거시 키 위에서도 안전하다.
     private static final String SWAP_LUA = """
         local key = KEYS[1]
+        local watcherId = ARGV[8]
+        local newContentId = ARGV[2]
         local previous = {}
         if redis.call('TYPE', key)['ok'] == 'hash' then
           previous = redis.call('HGETALL', key)
         else
           redis.call('DEL', key)
         end
+
+        for i = 1, #previous, 2 do
+            if previous[i] == 'contentId' and previous[i + 1] ~= newContentId then
+                redis.call('ZREM', 'mopl:presence:content:' .. previous[i + 1], watcherId)
+            end
+        end
+
         redis.call('HSET', key,
           'snapshotId', ARGV[1], 'contentId', ARGV[2],
           'sessionId', ARGV[3], 'subscriptionId', ARGV[4], 'startedAt', ARGV[5],
            'snapshotUpdatedAt', ARGV[7])
         redis.call('PEXPIRE', key, ARGV[6])
+
+        redis.call('ZADD', 'mopl:presence:content:' .. newContentId, ARGV[9], watcherId)
+
         return previous
         """;
 
     // 키가 없으면 HGET이 false를 반환해 문자열 비교가 실패
     // 반환: {'1', snapshotId} 삭제됨 / {'0', ''} 소유권 불일치(이상 신호) /
     //       {'-1', ''} 활성 세션 없음(hash 아님 포함, 정상 흐름)
-    private static final String DELETE_IF_OWNER_LUA =  """
-      if redis.call('TYPE', KEYS[1])['ok'] ~= 'hash' then
-        return {'-1', '', ''}
-      end
-      if redis.call('HGET', KEYS[1], 'sessionId') == ARGV[1]
-          and redis.call('HGET', KEYS[1], 'subscriptionId') == ARGV[2] then
-        local snapshotId = redis.call('HGET', KEYS[1], 'snapshotId')
-        local snapshotUpdatedAt = redis.call('HGET', KEYS[1], 'snapshotUpdatedAt')
-        redis.call('DEL', KEYS[1])
-        return {'1', snapshotId, snapshotUpdatedAt or ''}
-      end
-      return {'0', '', ''}
-      """;
+    private static final String DELETE_IF_OWNER_LUA = """
+        if redis.call('TYPE', KEYS[1])['ok'] ~= 'hash' then
+          return {'-1', '', ''}
+        end
+        if redis.call('HGET', KEYS[1], 'sessionId') == ARGV[1]
+            and redis.call('HGET', KEYS[1], 'subscriptionId') == ARGV[2] then
+          local snapshotId = redis.call('HGET', KEYS[1], 'snapshotId')
+          local snapshotUpdatedAt = redis.call('HGET', KEYS[1], 'snapshotUpdatedAt')
+          local contentId = redis.call('HGET', KEYS[1], 'contentId')
+          redis.call('DEL', KEYS[1])
+          if contentId then
+            redis.call('ZREM', 'mopl:presence:content:' .. contentId, ARGV[3])
+          end
+          return {'1', snapshotId, snapshotUpdatedAt or ''}
+        end
+        return {'0', '', ''}
+        """;
 
     // sessionId만 비교. DISCONNECT처럼 subscriptionId를 알 수 없는(연결 자체가 끊긴) 상황에서
     // "이 연결이 지금도 소유자인가"만 판정하면 되는 경우에 사용한다.
@@ -98,7 +112,11 @@ public class WatchingSessionPresenceWriter {
         if redis.call('HGET', KEYS[1], 'sessionId') == ARGV[1] then
           local snapshotId = redis.call('HGET', KEYS[1], 'snapshotId')
           local snapshotUpdatedAt = redis.call('HGET', KEYS[1], 'snapshotUpdatedAt')
+          local contentId = redis.call('HGET', KEYS[1], 'contentId')
           redis.call('DEL', KEYS[1])
+          if contentId then
+              redis.call('ZREM', 'mopl:presence:content:' .. contentId, ARGV[2])
+          end
           return {'1', snapshotId, snapshotUpdatedAt or ''}
         end
         return {'0', '', ''}
@@ -111,6 +129,10 @@ public class WatchingSessionPresenceWriter {
         end
         if redis.call('HGET', KEYS[1], 'sessionId') == ARGV[1]
            and redis.call('HGET', KEYS[1], 'subscriptionId') == ARGV[2] then
+          local contentId = redis.call('HGET', KEYS[1], 'contentId')
+          if contentId then
+            redis.call('ZADD', 'mopl:presence:content:' .. contentId, ARGV[5], ARGV[4])
+          end
           return redis.call('PEXPIRE', KEYS[1], ARGV[3])
         end
         return 0
@@ -148,14 +170,16 @@ public class WatchingSessionPresenceWriter {
 
     /**
      * 새 소유자를 기록하고, 이 호출이 밀어낸 직전 소유자를 반환한다.
-     *
-     * 실패를 격리하지 않고 그대로 전파한다. presence가 소유권의 원본이므로, 기록 실패를 삼키면
-     * 소유자가 없는 상태로 시청이 시작되어 이후 퇴장 처리와 LEAVE 브로드캐스트가 통째로 유실된다.
-     * 호출자(start)가 DB 스냅샷을 보상 삭제하고 클라이언트에 실패를 알려야 한다.
+     * <p>
+     * 실패를 격리하지 않고 그대로 전파한다. presence가 소유권의 원본이므로, 기록 실패를 삼키면 소유자가 없는 상태로 시청이 시작되어 이후 퇴장 처리와 LEAVE
+     * 브로드캐스트가 통째로 유실된다. 호출자(start)가 DB 스냅샷을 보상 삭제하고 클라이언트에 실패를 알려야 한다.
      */
     @SuppressWarnings("unchecked")
     public Optional<WatchingPresence> swap(UUID watcherId, UUID snapshotId, UUID contentId,
-        String sessionId, String subscriptionId, Instant startedAt, Instant snapshotUpdatedAt, Duration ttl) {
+        String sessionId, String subscriptionId, Instant startedAt, Instant snapshotUpdatedAt,
+        Duration ttl) {
+
+        Instant expiresAt = Instant.now().plus(ttl);
 
         List<String> previous = stringRedisTemplate.execute(
             SWAP_SCRIPT,
@@ -166,7 +190,9 @@ public class WatchingSessionPresenceWriter {
             nullSafe(subscriptionId),
             startedAt.toString(),
             String.valueOf(ttl.toMillis()),
-            snapshotUpdatedAt.toString());
+            snapshotUpdatedAt.toString(),
+            watcherId.toString(),
+            String.valueOf(expiresAt.toEpochMilli()));
 
         return toPresence(watcherId, previous);
     }
@@ -174,16 +200,17 @@ public class WatchingSessionPresenceWriter {
     /**
      * 요청자가 현재 소유자일 때만 presence를 삭제한다.
      *
-     * @return 실제로 삭제했다면 그 presence가 가리키던 DB 스냅샷 id. 소유권 불일치·활성 세션
-     *         없음·Redis 실패는 전부 빈 Optional.
+     * @return 실제로 삭제했다면 그 presence가 가리키던 DB 스냅샷 id. 소유권 불일치·활성 세션 없음·Redis 실패는 전부 빈 Optional.
      */
-    public Optional<DeletedSnapshot> deleteIfOwner(UUID watcherId, String sessionId, String subscriptionId) {
+    public Optional<DeletedSnapshot> deleteIfOwner(UUID watcherId, String sessionId,
+        String subscriptionId) {
         try {
             List<String> result = stringRedisTemplate.execute(
                 DELETE_IF_OWNER_SCRIPT,
                 List.of(key(watcherId)),
                 nullSafe(sessionId),
-                nullSafe(subscriptionId));
+                nullSafe(subscriptionId),
+                watcherId.toString());
 
             return parseDeleteResult(watcherId, result);
         } catch (RuntimeException e) {
@@ -194,21 +221,20 @@ public class WatchingSessionPresenceWriter {
 
     /**
      * 요청자의 sessionId가 현재 소유자일 때만 presence를 삭제한다. subscriptionId는 비교하지 않는다.
+     * <p>
+     * WebSocket 연결 자체가 끊기는 DISCONNECT 처리 전용이다. 연결이 죽으면 그 연결에 딸린 모든 구독이 함께 죽으므로, "이 sessionId가 지금도
+     * 소유자인가"만으로 판정이 충분하다. 반대로 구독이 살아있는 상태(재구독, UNSUBSCRIBE)에서는 이 메서드를 쓰면 안 된다 — 같은 연결 안의 낡은 구독이 방금
+     * 갈아치운 새 구독을 지울 수 있다.
      *
-     * WebSocket 연결 자체가 끊기는 DISCONNECT 처리 전용이다. 연결이 죽으면 그 연결에 딸린
-     * 모든 구독이 함께 죽으므로, "이 sessionId가 지금도 소유자인가"만으로 판정이 충분하다.
-     * 반대로 구독이 살아있는 상태(재구독, UNSUBSCRIBE)에서는 이 메서드를 쓰면 안 된다 —
-     * 같은 연결 안의 낡은 구독이 방금 갈아치운 새 구독을 지울 수 있다.
-     *
-     * @return 실제로 삭제했다면 그 presence가 가리키던 DB 스냅샷 id. 소유권 불일치·활성 세션
-     *         없음·Redis 실패는 전부 빈 Optional.
+     * @return 실제로 삭제했다면 그 presence가 가리키던 DB 스냅샷 id. 소유권 불일치·활성 세션 없음·Redis 실패는 전부 빈 Optional.
      */
     public Optional<DeletedSnapshot> deleteIfOwnerSession(UUID watcherId, String sessionId) {
         try {
             List<String> result = stringRedisTemplate.execute(
                 DELETE_IF_OWNER_SESSION_SCRIPT,
                 List.of(key(watcherId)),
-                nullSafe(sessionId));
+                nullSafe(sessionId),
+                watcherId.toString());
 
             return parseDeleteResult(watcherId, result);
         } catch (RuntimeException e) {
@@ -223,14 +249,19 @@ public class WatchingSessionPresenceWriter {
      * @return 실제로 연장했으면 true. 소유권 불일치·키 없음·Redis 실패는 모두 false.
      */
     @SuppressWarnings("ConstantConditions")
-    public boolean renewIfOwner(UUID watcherId, String sessionId, String subscriptionId, Duration ttl) {
+    public boolean renewIfOwner(UUID watcherId, String sessionId, String subscriptionId,
+        Duration ttl) {
         try {
+            Instant expiresAt = Instant.now().plus(ttl);
+
             Long result = stringRedisTemplate.execute(
                 RENEW_IF_OWNER_SCRIPT,
                 List.of(key(watcherId)),
                 nullSafe(sessionId),
                 nullSafe(subscriptionId),
-                String.valueOf(ttl.toMillis()));
+                String.valueOf(ttl.toMillis()),
+                watcherId.toString(),
+                String.valueOf(expiresAt.toEpochMilli()));
 
             if (result == null) {
                 // 파이프라인/트랜잭션 모드 등에서만 나올 수 있는 응답. 예외 경로(아래 catch)와
@@ -268,7 +299,8 @@ public class WatchingSessionPresenceWriter {
 
         // 구버전이 남긴 레코드는 이 필드가 없으므로 null 유지
         String snapshotUpdatedAtRaw = fields.get(FIELD_SNAPSHOT_UPDATED_AT);
-        Instant snapshotUpdatedAt = snapshotUpdatedAtRaw == null ? null : Instant.parse(snapshotUpdatedAtRaw);
+        Instant snapshotUpdatedAt =
+            snapshotUpdatedAtRaw == null ? null : Instant.parse(snapshotUpdatedAtRaw);
 
         return Optional.of(new WatchingPresence(
             UUID.fromString(fields.get(FIELD_SNAPSHOT_ID)),
@@ -281,8 +313,7 @@ public class WatchingSessionPresenceWriter {
     }
 
     /**
-     * 여러 watcherId의 presence 존재 여부를 파이프라인 한 번으로 확인한다.
-     * 스위퍼가 후보마다 개별 EXISTS를 왕복하지 않도록 하는 용도.
+     * 여러 watcherId의 presence 존재 여부를 파이프라인 한 번으로 확인한다. 스위퍼가 후보마다 개별 EXISTS를 왕복하지 않도록 하는 용도.
      */
     public Set<UUID> findExistingWatcherIds(Collection<UUID> watcherIds) {
         if (watcherIds.isEmpty()) {
@@ -290,15 +321,17 @@ public class WatchingSessionPresenceWriter {
         }
         List<UUID> ordered = List.copyOf(watcherIds);
         try {
-            List<Object> results = stringRedisTemplate.executePipelined((RedisCallback<Object>) connection -> {
-                for (UUID watcherId : ordered) {
-                    connection.keyCommands().exists(key(watcherId).getBytes(StandardCharsets.UTF_8));
-                }
-                return null;
-            });
+            List<Object> results = stringRedisTemplate.executePipelined(
+                (RedisCallback<Object>) connection -> {
+                    for (UUID watcherId : ordered) {
+                        connection.keyCommands()
+                            .exists(key(watcherId).getBytes(StandardCharsets.UTF_8));
+                    }
+                    return null;
+                });
 
             Set<UUID> existing = new HashSet<>();
-            for (int i = 0; i < ordered.size() ; i++) {
+            for (int i = 0; i < ordered.size(); i++) {
                 if (Boolean.TRUE.equals(results.get(i))) {
                     existing.add(ordered.get(i));
                 }
@@ -312,8 +345,8 @@ public class WatchingSessionPresenceWriter {
     }
 
     /**
-     * 소유권이 일치할 때만 presence의 snapshotId 필드를 새 값으로 교체한다.
-     * DB 행이 재생성됐을 때(heartbeat 자가 복구) presence가 그 새 세대를 가리키도록 맞추는 용도.
+     * 소유권이 일치할 때만 presence의 snapshotId 필드를 새 값으로 교체한다. DB 행이 재생성됐을 때(heartbeat 자가 복구) presence가 그 새
+     * 세대를 가리키도록 맞추는 용도.
      */
     public boolean updateSnapshotIdIfOwner(UUID watcherId, String sessionId, String subscriptionId,
         UUID newSnapshotId, Instant newSnapshotUpdatedAt) {
@@ -349,7 +382,8 @@ public class WatchingSessionPresenceWriter {
         try {
             UUID snapshotId = UUID.fromString(result.get(1));
             // 구버전 presence(토큰 없이 기록된 레코드)는 빈 문자열 - 세대 미검증 폴백으로 null 유지
-            Instant snapshotUpdatedAt = result.get(2).isEmpty() ? null : Instant.parse(result.get(2));
+            Instant snapshotUpdatedAt =
+                result.get(2).isEmpty() ? null : Instant.parse(result.get(2));
             return Optional.of(new DeletedSnapshot(snapshotId, snapshotUpdatedAt));
         } catch (RuntimeException e) {
             log.warn("Presence 삭제 결과 파싱 실패, 방어적으로 빈 Optional 반환: watcherId={}", watcherId, e);
