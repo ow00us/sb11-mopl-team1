@@ -57,8 +57,8 @@ public class WatchingSessionPresenceWriterTest {
 
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
             eq(SNAPSHOT_ID.toString()), eq(CONTENT_ID.toString()), eq(SESSION_ID), eq(SUBSCRIPTION_ID),
-            eq(newStartedAt.toString()), eq("60000"), eq(newSnapshotUpdatedAt.toString()),
-            eq(WATCHER_ID.toString()), anyString()))
+            eq(newStartedAt.toString()), eq(newSnapshotUpdatedAt.toString()),
+            eq(WATCHER_ID.toString()), anyString()))   // ttlMillis("60000") 삭제
             .thenReturn(previousFields);
 
         Optional<WatchingPresence> result = writer.swap(
@@ -86,7 +86,7 @@ public class WatchingSessionPresenceWriterTest {
         // snapshotUpdatedAt 필드 없음 - 구버전 시나리오
 
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
-            any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(previousFields);
 
         Optional<WatchingPresence> result = writer.swap(
@@ -101,7 +101,7 @@ public class WatchingSessionPresenceWriterTest {
     @DisplayName("swap()은 직전 소유자가 없으면(빈 배열) 빈 Optional을 반환한다")
     void swap_returnsEmpty_whenNoPreviousOwner() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
-            any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(List.of());
 
         Optional<WatchingPresence> result = writer.swap(
@@ -114,7 +114,7 @@ public class WatchingSessionPresenceWriterTest {
     @DisplayName("swap()은 저장된 필드가 불완전하면(스키마 전환 중 옛 형식) 빈 Optional을 반환한다")
     void swap_returnsEmpty_whenFieldsIncomplete() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
-            any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(List.of("sessionId", "old-session"));
 
         Optional<WatchingPresence> result = writer.swap(
@@ -127,7 +127,7 @@ public class WatchingSessionPresenceWriterTest {
     @DisplayName("swap() 도중 Redis 예외가 나면 호출자에게 그대로 전파된다 (소유권 원본이라 격리하지 않음)")
     void swap_propagatesRedisFailure() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
-            any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("Redis 연결 끊김"));
 
         assertThatThrownBy(() -> writer.swap(
@@ -259,7 +259,7 @@ public class WatchingSessionPresenceWriterTest {
     @DisplayName("renewIfOwner()는 스크립트가 1을 반환하면 true")
     void renewIfOwner_returnsTrue_whenScriptReturnsOne() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
-            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq("60000"), eq(WATCHER_ID.toString()), anyString()))
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(WATCHER_ID.toString()), anyString()))
             .thenReturn(1L);
 
         assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60))).isTrue();
@@ -269,7 +269,7 @@ public class WatchingSessionPresenceWriterTest {
     @DisplayName("renewIfOwner()는 소유권 불일치(0)일 때 false")
     void renewIfOwner_returnsFalse_whenOwnerMismatch() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
-            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq("60000"), eq(WATCHER_ID.toString()), anyString()))
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(WATCHER_ID.toString()), anyString()))
             .thenReturn(0L);
 
         assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60))).isFalse();
@@ -279,7 +279,7 @@ public class WatchingSessionPresenceWriterTest {
     @DisplayName("renewIfOwner() 도중 Redis 예외가 나면 격리되어 false를 반환한다 (주기 신호라 연결을 끊지 않음)")
     void renewIfOwner_isolatesRedisFailure() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
-            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq("60000"), eq(WATCHER_ID.toString()), anyString()))
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(WATCHER_ID.toString()), anyString()))
             .thenThrow(new RuntimeException("Redis 연결 끊김"));
 
         assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60))).isFalse();
@@ -289,7 +289,7 @@ public class WatchingSessionPresenceWriterTest {
     @DisplayName("renewIfOwner()는 스크립트가 null을 반환하면 예외 없이 false (unboxing NPE 방지)")
     void renewIfOwner_returnsFalse_whenScriptReturnsNull() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
-            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq("60000"), eq(WATCHER_ID.toString()), anyString()))
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(WATCHER_ID.toString()), anyString()))
             .thenReturn(null);
 
         assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60)))

@@ -55,8 +55,9 @@ public class WatchingSessionPresenceWriter {
     // 쓰기 자체는 레거시 키 위에서도 안전하다.
     private static final String SWAP_LUA = """
         local key = KEYS[1]
-        local watcherId = ARGV[8]
+        local watcherId = ARGV[7]
         local newContentId = ARGV[2]
+        local expiresAt = ARGV[8]
         local previous = {}
         if redis.call('TYPE', key)['ok'] == 'hash' then
           previous = redis.call('HGETALL', key)
@@ -65,18 +66,28 @@ public class WatchingSessionPresenceWriter {
         end
 
         for i = 1, #previous, 2 do
-            if previous[i] == 'contentId' and previous[i + 1] ~= newContentId then
-                redis.call('ZREM', 'mopl:presence:content:' .. previous[i + 1], watcherId)
+          if previous[i] == 'contentId' and previous[i + 1] ~= newContentId then
+            local oldContentKey = 'mopl:presence:content:' .. previous[i + 1]
+            redis.call('ZREM', oldContentKey, watcherId)
+            local oldMax = redis.call('ZREVRANGE', oldContentKey, 0, 0, 'WITHSCORES')
+            if oldMax[2] then
+              redis.call('PEXPIREAT', oldContentKey, oldMax[2])
             end
+          end
         end
 
         redis.call('HSET', key,
           'snapshotId', ARGV[1], 'contentId', ARGV[2],
           'sessionId', ARGV[3], 'subscriptionId', ARGV[4], 'startedAt', ARGV[5],
-           'snapshotUpdatedAt', ARGV[7])
-        redis.call('PEXPIRE', key, ARGV[6])
+           'snapshotUpdatedAt', ARGV[6])
+        redis.call('PEXPIREAT', key, expiresAt)
 
-        redis.call('ZADD', 'mopl:presence:content:' .. newContentId, ARGV[9], watcherId)
+        local contentKey = 'mopl:presence:content:' .. newContentId
+        redis.call('ZADD', contentKey, expiresAt, watcherId)
+        local newMax = redis.call('ZREVRANGE', contentKey, 0, 0, 'WITHSCORES')
+        if newMax[2] then
+          redis.call('PEXPIREAT', contentKey, newMax[2])
+        end
 
         return previous
         """;
@@ -95,7 +106,12 @@ public class WatchingSessionPresenceWriter {
           local contentId = redis.call('HGET', KEYS[1], 'contentId')
           redis.call('DEL', KEYS[1])
           if contentId then
-            redis.call('ZREM', 'mopl:presence:content:' .. contentId, ARGV[3])
+            local contentKey = 'mopl:presence:content:' .. contentId
+            redis.call('ZREM', contentKey, ARGV[3])
+            local maxScore = redis.call('ZREVRANGE', contentKey, 0, 0, 'WITHSCORES')
+            if maxScore[2] then
+              redis.call('PEXPIREAT', contentKey, maxScore[2])
+            end
           end
           return {'1', snapshotId, snapshotUpdatedAt or ''}
         end
@@ -115,7 +131,12 @@ public class WatchingSessionPresenceWriter {
           local contentId = redis.call('HGET', KEYS[1], 'contentId')
           redis.call('DEL', KEYS[1])
           if contentId then
-              redis.call('ZREM', 'mopl:presence:content:' .. contentId, ARGV[2])
+            local contentKey = 'mopl:presence:content:' .. contentId
+            redis.call('ZREM', contentKey, ARGV[2])
+            local maxScore = redis.call('ZREVRANGE', contentKey, 0, 0, 'WITHSCORES')
+            if maxScore[2] then
+              redis.call('PEXPIREAT', contentKey, maxScore[2])
+            end
           end
           return {'1', snapshotId, snapshotUpdatedAt or ''}
         end
@@ -130,10 +151,16 @@ public class WatchingSessionPresenceWriter {
         if redis.call('HGET', KEYS[1], 'sessionId') == ARGV[1]
            and redis.call('HGET', KEYS[1], 'subscriptionId') == ARGV[2] then
           local contentId = redis.call('HGET', KEYS[1], 'contentId')
+          local expiresAt = ARGV[4]
           if contentId then
-            redis.call('ZADD', 'mopl:presence:content:' .. contentId, ARGV[5], ARGV[4])
+            local contentKey = 'mopl:presence:content:' .. contentId
+            redis.call('ZADD', contentKey, expiresAt, ARGV[3])
+            local maxScore = redis.call('ZREVRANGE', contentKey, 0, 0, 'WITHSCORES')
+            if maxScore[2] then
+              redis.call('PEXPIREAT', contentKey, maxScore[2])
+            end
           end
-          return redis.call('PEXPIRE', KEYS[1], ARGV[3])
+          return redis.call('PEXPIREAT', KEYS[1], expiresAt)
         end
         return 0
         """;
@@ -153,18 +180,18 @@ public class WatchingSessionPresenceWriter {
 
     // DefaultRedisScript는 본문의 SHA1을 캐싱해 EVALSHA로 실행되므로 인스턴스를 재사용한다
     @SuppressWarnings("rawtypes")
-    private static final RedisScript<List> SWAP_SCRIPT =
-        new DefaultRedisScript<>(SWAP_LUA, List.class);
+    private static final RedisScript<List> SWAP_SCRIPT = new DefaultRedisScript<>(SWAP_LUA,
+        List.class);
     @SuppressWarnings("rawtypes")
-    private static final RedisScript<List> DELETE_IF_OWNER_SCRIPT =
-        new DefaultRedisScript<>(DELETE_IF_OWNER_LUA, List.class);
+    private static final RedisScript<List> DELETE_IF_OWNER_SCRIPT = new DefaultRedisScript<>(
+        DELETE_IF_OWNER_LUA, List.class);
     @SuppressWarnings("rawtypes")
-    private static final RedisScript<List> DELETE_IF_OWNER_SESSION_SCRIPT =
-        new DefaultRedisScript<>(DELETE_IF_OWNER_SESSION_LUA, List.class);
-    private static final RedisScript<Long> RENEW_IF_OWNER_SCRIPT =
-        new DefaultRedisScript<>(RENEW_IF_OWNER_LUA, Long.class);
-    private static final RedisScript<Long> UPDATE_SNAPSHOT_ID_IF_OWNER_SCRIPT =
-        new DefaultRedisScript<>(UPDATE_SNAPSHOT_ID_IF_OWNER_LUA, Long.class);
+    private static final RedisScript<List> DELETE_IF_OWNER_SESSION_SCRIPT = new DefaultRedisScript<>(
+        DELETE_IF_OWNER_SESSION_LUA, List.class);
+    private static final RedisScript<Long> RENEW_IF_OWNER_SCRIPT = new DefaultRedisScript<>(
+        RENEW_IF_OWNER_LUA, Long.class);
+    private static final RedisScript<Long> UPDATE_SNAPSHOT_ID_IF_OWNER_SCRIPT = new DefaultRedisScript<>(
+        UPDATE_SNAPSHOT_ID_IF_OWNER_LUA, Long.class);
 
     private final StringRedisTemplate stringRedisTemplate;
 
@@ -181,18 +208,10 @@ public class WatchingSessionPresenceWriter {
 
         Instant expiresAt = Instant.now().plus(ttl);
 
-        List<String> previous = stringRedisTemplate.execute(
-            SWAP_SCRIPT,
-            List.of(key(watcherId)),
-            snapshotId.toString(),
-            contentId.toString(),
-            nullSafe(sessionId),
-            nullSafe(subscriptionId),
-            startedAt.toString(),
-            String.valueOf(ttl.toMillis()),
-            snapshotUpdatedAt.toString(),
-            watcherId.toString(),
-            String.valueOf(expiresAt.toEpochMilli()));
+        List<String> previous = stringRedisTemplate.execute(SWAP_SCRIPT, List.of(key(watcherId)),
+            snapshotId.toString(), contentId.toString(), nullSafe(sessionId),
+            nullSafe(subscriptionId), startedAt.toString(), snapshotUpdatedAt.toString(),
+            watcherId.toString(), String.valueOf(expiresAt.toEpochMilli()));
 
         return toPresence(watcherId, previous);
     }
@@ -205,11 +224,8 @@ public class WatchingSessionPresenceWriter {
     public Optional<DeletedSnapshot> deleteIfOwner(UUID watcherId, String sessionId,
         String subscriptionId) {
         try {
-            List<String> result = stringRedisTemplate.execute(
-                DELETE_IF_OWNER_SCRIPT,
-                List.of(key(watcherId)),
-                nullSafe(sessionId),
-                nullSafe(subscriptionId),
+            List<String> result = stringRedisTemplate.execute(DELETE_IF_OWNER_SCRIPT,
+                List.of(key(watcherId)), nullSafe(sessionId), nullSafe(subscriptionId),
                 watcherId.toString());
 
             return parseDeleteResult(watcherId, result);
@@ -230,11 +246,8 @@ public class WatchingSessionPresenceWriter {
      */
     public Optional<DeletedSnapshot> deleteIfOwnerSession(UUID watcherId, String sessionId) {
         try {
-            List<String> result = stringRedisTemplate.execute(
-                DELETE_IF_OWNER_SESSION_SCRIPT,
-                List.of(key(watcherId)),
-                nullSafe(sessionId),
-                watcherId.toString());
+            List<String> result = stringRedisTemplate.execute(DELETE_IF_OWNER_SESSION_SCRIPT,
+                List.of(key(watcherId)), nullSafe(sessionId), watcherId.toString());
 
             return parseDeleteResult(watcherId, result);
         } catch (RuntimeException e) {
@@ -254,18 +267,11 @@ public class WatchingSessionPresenceWriter {
         try {
             Instant expiresAt = Instant.now().plus(ttl);
 
-            Long result = stringRedisTemplate.execute(
-                RENEW_IF_OWNER_SCRIPT,
-                List.of(key(watcherId)),
-                nullSafe(sessionId),
-                nullSafe(subscriptionId),
-                String.valueOf(ttl.toMillis()),
-                watcherId.toString(),
-                String.valueOf(expiresAt.toEpochMilli()));
+            Long result = stringRedisTemplate.execute(RENEW_IF_OWNER_SCRIPT,
+                List.of(key(watcherId)), nullSafe(sessionId), nullSafe(subscriptionId),
+                watcherId.toString(), String.valueOf(expiresAt.toEpochMilli()));
 
             if (result == null) {
-                // 파이프라인/트랜잭션 모드 등에서만 나올 수 있는 응답. 예외 경로(아래 catch)와
-                // 원인이 다르므로 "Redis 실패"로 뭉뚱그리지 않고 별도로 남긴다.
                 log.error("Presence TTL 갱신 스크립트가 예상 못한 null을 반환함: watcherId={}", watcherId);
                 return false;
             }
@@ -291,8 +297,8 @@ public class WatchingSessionPresenceWriter {
             fields.put(flat.get(i), flat.get(i + 1));
         }
 
-        if (!fields.keySet().containsAll(List.of(
-            FIELD_SNAPSHOT_ID, FIELD_CONTENT_ID, FIELD_SESSION_ID, FIELD_STARTED_AT))) {
+        if (!fields.keySet().containsAll(
+            List.of(FIELD_SNAPSHOT_ID, FIELD_CONTENT_ID, FIELD_SESSION_ID, FIELD_STARTED_AT))) {
             log.warn("presence 필드가 불완전해 이전 소유자를 복원하지 못함: watcherId={}", watcherId);
             return Optional.empty();
         }
@@ -302,14 +308,11 @@ public class WatchingSessionPresenceWriter {
         Instant snapshotUpdatedAt =
             snapshotUpdatedAtRaw == null ? null : Instant.parse(snapshotUpdatedAtRaw);
 
-        return Optional.of(new WatchingPresence(
-            UUID.fromString(fields.get(FIELD_SNAPSHOT_ID)),
-            watcherId,
-            UUID.fromString(fields.get(FIELD_CONTENT_ID)),
-            fields.get(FIELD_SESSION_ID),
-            fields.get(FIELD_SUBSCRIPTION_ID),
-            Instant.parse(fields.get(FIELD_STARTED_AT)),
-            snapshotUpdatedAt));
+        return Optional.of(
+            new WatchingPresence(UUID.fromString(fields.get(FIELD_SNAPSHOT_ID)), watcherId,
+                UUID.fromString(fields.get(FIELD_CONTENT_ID)), fields.get(FIELD_SESSION_ID),
+                fields.get(FIELD_SUBSCRIPTION_ID), Instant.parse(fields.get(FIELD_STARTED_AT)),
+                snapshotUpdatedAt));
     }
 
     /**
@@ -351,13 +354,9 @@ public class WatchingSessionPresenceWriter {
     public boolean updateSnapshotIdIfOwner(UUID watcherId, String sessionId, String subscriptionId,
         UUID newSnapshotId, Instant newSnapshotUpdatedAt) {
         try {
-            Long result = stringRedisTemplate.execute(
-                UPDATE_SNAPSHOT_ID_IF_OWNER_SCRIPT,
-                List.of(key(watcherId)),
-                nullSafe(sessionId),
-                nullSafe(subscriptionId),
-                newSnapshotId.toString(),
-                newSnapshotUpdatedAt.toString());
+            Long result = stringRedisTemplate.execute(UPDATE_SNAPSHOT_ID_IF_OWNER_SCRIPT,
+                List.of(key(watcherId)), nullSafe(sessionId), nullSafe(subscriptionId),
+                newSnapshotId.toString(), newSnapshotUpdatedAt.toString());
             return Long.valueOf(1L).equals(result);
         } catch (RuntimeException e) {
             log.error("Presence snapshotId 갱신 실패: watcherId={}", watcherId, e);
