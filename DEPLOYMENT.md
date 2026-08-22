@@ -236,6 +236,30 @@ WebSocket과 SSE 연결은 인스턴스마다 따로 유지됩니다. 인스턴�
 - 발행 실패도 호출부로 전파하지 않습니다. Redis 연결이 끊겼다는 이유로 이미 성공한 도메인 변경이 롤백되면 안 됩니다. 실패는 경고 로그로 남습니다.
 - 인스턴스 식별자는 프로세스마다 새로 만듭니다. 자기가 발행한 메시지를 되받아 다시 전달하는 것을 이 값으로 막습니다.
 
+### 중계 상태 확인
+
+구독 실패와 발행 실패는 어느 쪽도 호출부로 전파되지 않습니다. 도메인 요청은 정상 응답하고 커밋까지 끝나므로 API 지표에는 흔적이 없고, 다른 인스턴스에 연결된 사용자만 조용히 메시지를 받지 못합니다. 아래가 그 상황을 드러내는 신호입니다.
+
+| 지표 | 종류 | 의미 |
+| --- | --- | --- |
+| `mopl_realtime_relay_subscribed` | gauge | 채널을 실제로 구독 중이면 1 |
+| `mopl_realtime_relay_last_received_age_seconds` | gauge | 마지막으로 다른 인스턴스 메시지를 전달한 뒤 지난 시간. 아직 없으면 -1 |
+| `mopl_realtime_relay_published_messages_total{outcome="succeeded"}` | counter | 내보낸 메시지 수 |
+| `mopl_realtime_relay_published_messages_total{outcome="failed"}` | counter | 내보내지 못하고 건너뛴 메시지 수 |
+| `mopl_realtime_relay_delivered_messages_total` | counter | 받아서 목적지 handler로 넘긴 메시지 수 |
+| `mopl_realtime_relay_discarded_messages_total{reason="..."}` | counter | 받았지만 전달하지 않고 버린 메시지 수 |
+| `mopl_realtime_relay_handler_failures_total{handler="..."}` | counter | 목적지 handler가 전달에 실패한 수 |
+
+판정 기준은 다음과 같습니다.
+
+- `mopl_realtime_relay_subscribed`가 0이면 그 인스턴스는 다른 인스턴스의 메시지를 받지 못합니다. 구독이 붙을 때까지 자동으로 다시 시도하므로 짧게 0이었다가 돌아오는 것은 정상입니다. 계속 0으로 남으면 Redis 연결을 확인합니다.
+- `mopl_realtime_relay_published_messages_total{outcome="failed"}`가 올라가면 Redis에 내보내지 못한 것입니다. 그동안의 알림은 다른 인스턴스에 닿지 않았고, 되돌릴 경로는 없습니다.
+- 폐기 이유는 둘로 나눠 봅니다. `self`와 `duplicate`는 설계대로 동작하고 있다는 뜻이라 늘 올라갑니다. `malformed`와 `incomplete`는 발행 쪽이나 채널을 지나는 계약이 깨졌다는 뜻이라 0이어야 합니다.
+- `mopl_realtime_relay_handler_failures_total`은 중계는 정상인데 목적지 전달이 막혔다는 뜻입니다. `handler` 태그가 어느 도메인인지 알려줍니다.
+- 구독은 정상인데 `mopl_realtime_relay_last_received_age_seconds`만 계속 커지면 상대 인스턴스가 발행을 멈췄거나 채널이 갈린 것입니다. 인스턴스가 하나뿐인 환경에서는 받을 메시지가 없으므로 이 값이 커지는 것이 정상입니다.
+
+`/actuator/health`의 `realtimeRelay` component가 같은 상태를 보여줍니다. 구독이 붙지 않으면 `DOWN`이고, 상세에 채널, 인스턴스 식별자와 재시도 중인지가 들어갑니다. Kafka 리스너와 같은 이유로 liveness와 readiness 어느 group에도 넣지 않습니다. Redis가 복구되지 않은 채 재시작만 반복되거나, REST를 처리할 수 있는 인스턴스가 로드밸런서에서 빠지는 것을 피하기 위해서입니다.
+
 ## 실행 예시
 
 PostgreSQL과 Redis가 같은 Docker 네트워크에서 각각 `mopl-postgres`, `mopl-redis`라는 이름으로 실행 중인 경우 다음과 같이 기동할 수 있습니다.

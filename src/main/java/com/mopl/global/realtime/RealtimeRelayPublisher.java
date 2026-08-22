@@ -27,15 +27,18 @@ public class RealtimeRelayPublisher {
     private final StringRedisTemplate stringRedisTemplate;
     private final ObjectMapper objectMapper;
     private final RealtimeInstanceId instanceId;
+    private final RealtimeRelayMetrics metrics;
 
     public RealtimeRelayPublisher(
         StringRedisTemplate stringRedisTemplate,
         ObjectMapper objectMapper,
-        RealtimeInstanceId instanceId
+        RealtimeInstanceId instanceId,
+        RealtimeRelayMetrics metrics
     ) {
         this.stringRedisTemplate = stringRedisTemplate;
         this.objectMapper = objectMapper;
         this.instanceId = instanceId;
+        this.metrics = metrics;
     }
 
     /**
@@ -64,8 +67,10 @@ public class RealtimeRelayPublisher {
         try {
             stringRedisTemplate.convertAndSend(
                 RealtimeChannels.MESSAGES, objectMapper.writeValueAsString(message));
+            metrics.recordPublishSucceeded();
             return true;
         } catch (Exception e) {
+            metrics.recordPublishFailed();
             log.warn("실시간 메시지 중계 발행에 실패했습니다. eventType={}, destination={}",
                 eventType, destination, e);
             return false;

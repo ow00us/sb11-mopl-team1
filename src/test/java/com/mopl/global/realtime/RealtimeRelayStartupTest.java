@@ -2,6 +2,8 @@ package com.mopl.global.realtime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +23,9 @@ import org.springframework.test.context.TestPropertySource;
     RealtimeRelayConfig.class,
     RealtimeRelayPublisher.class,
     RealtimeInstanceId.class,
+    RealtimeRelayMetrics.class,
+    RealtimeRelayStateMetrics.class,
+    SimpleMeterRegistry.class,
     JacksonAutoConfiguration.class,
     RedisAutoConfiguration.class
 })
@@ -38,6 +43,9 @@ class RealtimeRelayStartupTest {
     @Autowired
     RealtimeRelayListenerContainer container;
 
+    @Autowired
+    MeterRegistry meterRegistry;
+
     @Test
     @DisplayName("Redis에 연결하지 못해도 컨텍스트가 기동한다")
     void contextStartsWithoutRedis() {
@@ -52,5 +60,17 @@ class RealtimeRelayStartupTest {
     @DisplayName("구독을 시작하지 못하면 실행 중이 아닌 상태로 남는다")
     void failedSubscriptionIsNotRunning() {
         assertThat(container.isRunning()).isFalse();
+        assertThat(container.isSubscribed()).isFalse();
+    }
+
+    /**
+     * 구독하지 못한 채 기동한 인스턴스는 다른 인스턴스의 메시지를 받지 못합니다. 기동에
+     * 성공했다는 이유로 그 사실이 가려지면 안 됩니다.
+     */
+    @Test
+    @DisplayName("구독하지 못한 상태를 지표가 0으로 드러낸다")
+    void failedSubscriptionIsVisibleInMetrics() {
+        assertThat(meterRegistry.get("mopl.realtime.relay.subscribed").gauge().value())
+            .isZero();
     }
 }
