@@ -3,10 +3,10 @@ package com.mopl.user.security.oauth;
 import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.entity.User;
 import com.mopl.user.service.OAuthUserProvisioningService;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserService;
 import org.springframework.security.authentication.LockedException;
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserRequest;
-import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserService;
 import org.springframework.security.oauth2.client.userinfo.OAuth2UserService;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
@@ -53,26 +53,14 @@ public class GoogleOidcUserService
         delegate;
 
     /**
-     * 운영 환경에서 사용하는 생성자
+     * 제한 시간이 적용된 Google OIDC delegate를 주입받아 사용
      *
-     * <p>Google ID Token과 UserInfo 처리는 Spring Security의
-     * 표준 OIDC 구현체에 위임합니다.</p>
+     * <p>Google UserInfo 외부 호출용 HTTP Client 생성 책임을 설정 클래스로
+     * 분리하여 운영 코드에서 기본 무제한 클라이언트를 직접 생성하지 않습니다.</p>
      */
-    @Autowired
     public GoogleOidcUserService(
-        OAuthUserProvisioningService provisioningService
-    ) {
-        this(
-            provisioningService,
-            new OidcUserService()
-        );
-    }
-
-    /**
-     * 테스트에서 외부 Google 요청을 대체할 delegate를 주입
-     */
-    GoogleOidcUserService(
         OAuthUserProvisioningService provisioningService,
+        @Qualifier("googleOidcUserDelegate")
         OAuth2UserService<OidcUserRequest, OidcUser> delegate
     ) {
         this.provisioningService =

@@ -213,6 +213,9 @@ app:
     # 콤마로 구분하면 String[]으로 자동 바인딩
     allowed-origins: ${WS_ALLOWED_ORIGINS:http://localhost:5173}
   oauth2:
+    user-info:
+      connect-timeout: ${OAUTH2_USER_INFO_CONNECT_TIMEOUT:3s}
+      read-timeout: ${OAUTH2_USER_INFO_READ_TIMEOUT:5s}
     redirect:
       # OAuth 인증 성공 후 Access Token 복원을 처리할 프론트엔드 화면
       success-uri: ${OAUTH2_SUCCESS_REDIRECT_URI:http://localhost:5173/oauth/callback}
