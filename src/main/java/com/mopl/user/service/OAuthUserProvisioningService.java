@@ -12,6 +12,7 @@ import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 /**
  * 외부 OAuth 계정을 모두의 플리 사용자와 연결하거나 신규 사용자를 생성
@@ -22,7 +23,6 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 @RequiredArgsConstructor
-@Transactional(readOnly = true)
 public class OAuthUserProvisioningService {
 
     public static final String ACCOUNT_LINK_REQUIRED =
@@ -50,7 +50,7 @@ public class OAuthUserProvisioningService {
      * 자동 연결하지 않습니다. 두 인증수단의 소유권을 모두 확인하는 명시적인
      * 계정 연결 절차가 필요하므로 인증을 실패시킵니다.</p>
      */
-    @Transactional(readOnly = true)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public User resolveOrCreate(
         OAuthProvider provider,
         String providerUserId,

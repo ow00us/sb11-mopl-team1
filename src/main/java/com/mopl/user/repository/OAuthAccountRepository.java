@@ -7,6 +7,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * OAuth 계정 연결 정보를 저장하고 조회하는 Repository
@@ -24,6 +25,7 @@ public interface OAuthAccountRepository
      * @param providerUserId Provider가 발급한 사용자 고유 식별자
      * @return 연결된 OAuth 계정, 존재하지 않으면 빈 Optional
      */
+    @Transactional(readOnly = true)
     @EntityGraph(attributePaths = "user")
     Optional<OAuthAccount> findByProviderAndProviderUserId(
         OAuthProvider provider,
