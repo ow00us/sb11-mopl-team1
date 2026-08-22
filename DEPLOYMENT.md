@@ -260,6 +260,37 @@ WebSocket과 SSE 연결은 인스턴스마다 따로 유지됩니다. 인스턴�
 
 `/actuator/health`의 `realtimeRelay` component가 같은 상태를 보여줍니다. 구독이 붙지 않으면 `DOWN`이고, 상세에 채널, 인스턴스 식별자와 재시도 중인지가 들어갑니다. Kafka 리스너와 같은 이유로 liveness와 readiness 어느 group에도 넣지 않습니다. Redis가 복구되지 않은 채 재시작만 반복되거나, REST를 처리할 수 있는 인스턴스가 로드밸런서에서 빠지는 것을 피하기 위해서입니다.
 
+### 두 인스턴스 중계 smoke
+
+인스턴스가 하나면 중계가 깨져도 아무도 알아차리지 못합니다. 자기 연결로 보내는 경로는 중계를 지나지 않기 때문입니다. 실제 애플리케이션 두 개를 같은 Redis로 띄워 중계가 프로세스 사이에서 동작하는지 확인합니다.
+
+CI의 `Container smoke` job이 운영 이미지로 두 번째 인스턴스 `mopl-ci-b`를 8081 포트에 띄우고 다음을 확인합니다.
+
+- 두 인스턴스가 같은 채널 `mopl.realtime.messages`를 구독한다 (`PUBSUB NUMSUB`가 2)
+- 각 인스턴스의 `mopl_realtime_relay_subscribed`가 1이다
+- 채널에 들어온 메시지를 두 인스턴스가 각각 한 번씩 목적지 handler로 넘긴다
+- 같은 `messageId`를 두 번 보내도 전달은 한 번이고 두 번째는 `duplicate`로 버려진다
+- 한 인스턴스를 내려도 남은 인스턴스가 REST와 자기 구독을 유지한다
+- 구독 연결이 끊겨도 다시 붙고 전달이 이어진다
+
+로컬에서 재현하려면 PostgreSQL과 Redis를 띄운 뒤 같은 이미지를 포트만 바꿔 두 번 실행합니다.
+
+```bash
+docker build --tag mopl:local .
+docker run --detach --name mopl-a --network host --env SERVER_PORT=8080 ... mopl:local
+docker run --detach --name mopl-b --network host --env SERVER_PORT=8081 ... mopl:local
+docker run --rm --network host redis:7 redis-cli -h 127.0.0.1 PUBSUB NUMSUB mopl.realtime.messages
+```
+
+`...` 자리에는 아래 실행 예시의 환경 변수를 그대로 넣습니다. 두 인스턴스가 host 네트워크를 공유하므로 `SERVER_PORT`만 다르면 됩니다.
+
+알아둘 점이 있습니다.
+
+- Pub/Sub은 메시지를 보관하지 않습니다. 구독이 붙기 전에 발행하면 그 메시지는 사라집니다. 확인 절차가 `PUBSUB NUMSUB`를 먼저 기다리는 이유입니다.
+- 지표 경로는 인증이 필요합니다. CI는 공개 회원가입과 로그인 API로 토큰을 얻어 `/actuator/prometheus`를 읽습니다.
+- 이 검증은 채널에서 목적지 handler까지를 봅니다. handler가 실제 SSE·WebSocket 연결로 밀어 넣는 마지막 구간은 도메인별 통합 테스트가 담당합니다.
+- 발행한 인스턴스가 자기 메시지를 되받아 중복 전달하지 않는 성질은 `RealtimeRelayIntegrationTest`가 고정합니다. CI에서는 채널에 직접 넣는 방식이라 발행 인스턴스가 없습니다.
+
 ## 실행 예시
 
 PostgreSQL과 Redis가 같은 Docker 네트워크에서 각각 `mopl-postgres`, `mopl-redis`라는 이름으로 실행 중인 경우 다음과 같이 기동할 수 있습니다.
@@ -303,6 +334,7 @@ CI는 PostgreSQL 16과 Redis 7을 준비하고 다음 항목을 자동으로 확
 - 빈 PostgreSQL에 Flyway 마이그레이션을 적용하고 Redis에 연결한다.
 - prod 프로파일 애플리케이션의 Docker health status가 `healthy`가 된다.
 - `/actuator/health`가 `UP` 상태를 반환한다.
+- 같은 Redis를 쓰는 두 인스턴스 사이에서 실시간 중계가 동작한다. 확인 항목은 위 두 인스턴스 중계 smoke에 정리했습니다.
 
 이 단계에서 사용하는 DB 자격값과 JWT Secret은 격리된 CI 실행에서만 쓰는 테스트
 값입니다. 이미지를 레지스트리에 게시하거나 실제 운영 환경에 배포하지 않습니다.
