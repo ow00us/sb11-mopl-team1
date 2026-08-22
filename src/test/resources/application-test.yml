@@ -25,7 +25,7 @@ mopl:
   direct-message:
     presence:
       ttl: 2s
-      renew-interval: 500ms
+      renew-interval: 10m
 
   kafka:
     # Kafka 를 쓰지 않는 대다수 테스트가 broker 연결을 시도하지 않도록 기본값을 끕니다.
