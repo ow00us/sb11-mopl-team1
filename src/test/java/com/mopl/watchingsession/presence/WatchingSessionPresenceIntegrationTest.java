@@ -46,11 +46,14 @@ public class WatchingSessionPresenceIntegrationTest {
 
     private static final UUID WATCHER_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID CONTENT_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
+    private static final UUID OTHER_CONTENT_ID = UUID.fromString("44444444-4444-4444-4444-444444444444");
     private static final UUID SNAPSHOT_ID = UUID.fromString("33333333-3333-3333-3333-333333333333");
     private static final String SESSION_ID = "session-1";
     private static final String SUBSCRIPTION_ID = "sub-1";
     private static final String KEY = "mopl:presence:watcher:" + WATCHER_ID;
     private static final Duration DEFAULT_TTL = Duration.ofMinutes(30);
+    private static final String CONTENT_ZSET_KEY = "mopl:presence:content:" + CONTENT_ID;
+    private static final String OTHER_CONTENT_ZSET_KEY = "mopl:presence:content:" + OTHER_CONTENT_ID;
 
     @Autowired
     private WatchingSessionPresenceWriter writer;
@@ -61,6 +64,8 @@ public class WatchingSessionPresenceIntegrationTest {
     @BeforeEach
     void clearPresenceKeys() {
         stringRedisTemplate.delete(KEY);
+        stringRedisTemplate.delete(CONTENT_ZSET_KEY);
+        stringRedisTemplate.delete(OTHER_CONTENT_ZSET_KEY);
     }
 
     @Test
@@ -325,5 +330,57 @@ public class WatchingSessionPresenceIntegrationTest {
         Map<Object, Object> entries = stringRedisTemplate.opsForHash().entries(KEY);
         assertThat(entries.get("snapshotId")).isEqualTo(SNAPSHOT_ID.toString());
         assertThat(entries.get("snapshotUpdatedAt")).isEqualTo(originalUpdatedAt.toString());
+    }
+
+    @Test
+    @DisplayName("swap()은 새 콘텐츠의 ZSet에 watcherId를 추가하고, 직전 콘텐츠가 다르면 그 ZSet에서 제거한다")
+    void swap_updatesContentZSet_onContentChange() {
+        Instant now = Instant.now();
+        writer.swap(WATCHER_ID, UUID.randomUUID(), CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, now, now, Duration.ofMinutes(30));
+
+        writer.swap(WATCHER_ID, UUID.randomUUID(), OTHER_CONTENT_ID, "session-2", "sub-2", now, now, Duration.ofMinutes(30));
+
+        assertThat(stringRedisTemplate.opsForZSet().score("mopl:presence:content:" + CONTENT_ID, WATCHER_ID.toString()))
+            .isNull();
+        assertThat(stringRedisTemplate.opsForZSet().score("mopl:presence:content:" + OTHER_CONTENT_ID, WATCHER_ID.toString()))
+            .isNotNull();
+    }
+
+    @Test
+    @DisplayName("같은 콘텐츠로 재구독하면 ZREM 없이 score만 갱신된다")
+    void swap_onSameContent_onlyRefreshesScore() {
+        Instant now = Instant.now();
+        writer.swap(WATCHER_ID, UUID.randomUUID(), CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, now, now, Duration.ofMinutes(1));
+        Double firstScore = stringRedisTemplate.opsForZSet().score("mopl:presence:content:" + CONTENT_ID, WATCHER_ID.toString());
+
+        writer.swap(WATCHER_ID, UUID.randomUUID(), CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, now, now, Duration.ofMinutes(30));
+        Double secondScore = stringRedisTemplate.opsForZSet().score("mopl:presence:content:" + CONTENT_ID, WATCHER_ID.toString());
+
+        assertThat(secondScore).isGreaterThan(firstScore);
+    }
+
+    @Test
+    @DisplayName("deleteIfOwner()는 콘텐츠 ZSet에서도 watcherId를 제거한다")
+    void deleteIfOwner_removesFromContentZSet() {
+        Instant now = Instant.now();
+        writer.swap(WATCHER_ID, UUID.randomUUID(), CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, now, now, Duration.ofMinutes(30));
+
+        writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(stringRedisTemplate.opsForZSet().score("mopl:presence:content:" + CONTENT_ID, WATCHER_ID.toString()))
+            .isNull();
+    }
+
+    @Test
+    @DisplayName("renewIfOwner()는 콘텐츠 ZSet의 score를 함께 연장한다")
+    void renewIfOwner_extendsContentZSetScore() {
+        Instant now = Instant.now();
+        writer.swap(WATCHER_ID, UUID.randomUUID(), CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, now, now, Duration.ofSeconds(1));
+        Double beforeRenew = stringRedisTemplate.opsForZSet().score("mopl:presence:content:" + CONTENT_ID, WATCHER_ID.toString());
+
+        writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofMinutes(30));
+        Double afterRenew = stringRedisTemplate.opsForZSet().score("mopl:presence:content:" + CONTENT_ID, WATCHER_ID.toString());
+
+        assertThat(afterRenew).isGreaterThan(beforeRenew);
     }
 }
