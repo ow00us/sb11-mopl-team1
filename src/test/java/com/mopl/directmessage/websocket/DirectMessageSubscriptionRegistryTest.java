@@ -1,7 +1,9 @@
 package com.mopl.directmessage.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
+import com.mopl.directmessage.presence.DirectMessagePresenceStore;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,8 +20,11 @@ class DirectMessageSubscriptionRegistryTest {
             "22222222-2222-2222-2222-222222222222"
         );
 
+    private final DirectMessagePresenceStore presenceStore =
+        mock(DirectMessagePresenceStore.class);
+
     private final DirectMessageSubscriptionRegistry registry =
-        new DirectMessageSubscriptionRegistry();
+        new DirectMessageSubscriptionRegistry(presenceStore);
 
     @Test
     @DisplayName("대화를 구독하면 활성 대화로 등록된다")
