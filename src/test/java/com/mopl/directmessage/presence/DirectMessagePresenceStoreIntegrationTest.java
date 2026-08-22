@@ -2,8 +2,10 @@ package com.mopl.directmessage.presence;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -32,6 +34,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -321,6 +324,62 @@ class DirectMessagePresenceStoreIntegrationTest {
 
         assertThat(
             presenceStore.isActive(
+                USER_ID,
+                CONVERSATION_ID
+            )
+        ).isTrue();
+    }
+
+    @Test
+    @DisplayName("최초 Redis 등록 실패는 다음 갱신에서 복구되어 다른 서버에서도 조회")
+    void renewPresence_initialRegistrationFailure_recovers() {
+        DirectMessagePresenceStore recoveringStore =
+            spy(presenceStore);
+
+        doThrow(
+            new RedisConnectionFailureException(
+                "Redis 연결 실패"
+            )
+        )
+            .doCallRealMethod()
+            .when(recoveringStore)
+            .register(
+                USER_ID,
+                CONVERSATION_ID,
+                "session-1",
+                "subscription-1"
+            );
+
+        DirectMessageSubscriptionRegistry registry =
+            new DirectMessageSubscriptionRegistry(
+                recoveringStore
+            );
+
+        registry.activate(
+            USER_ID,
+            CONVERSATION_ID,
+            "session-1",
+            "subscription-1"
+        );
+
+        assertThat(
+            presenceStore.isActive(
+                USER_ID,
+                CONVERSATION_ID
+            )
+        ).isFalse();
+
+        registry.renewPresence();
+
+        DirectMessagePresenceStore otherInstanceStore =
+            new DirectMessagePresenceStore(
+                redisTemplate,
+                new RealtimeInstanceId(),
+                properties
+            );
+
+        assertThat(
+            otherInstanceStore.isActive(
                 USER_ID,
                 CONVERSATION_ID
             )

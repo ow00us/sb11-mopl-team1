@@ -2,6 +2,7 @@ package com.mopl.directmessage.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -11,6 +12,12 @@ import static org.mockito.Mockito.when;
 
 import com.mopl.directmessage.presence.DirectMessagePresenceStore;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.RedisConnectionFailureException;
@@ -93,6 +100,134 @@ class DirectMessageSubscriptionRegistryTest {
             "session-1",
             "subscription-1"
         );
+    }
+
+    @Test
+    @DisplayName("동일 세션의 구독 등록과 해제를 Redis 전이 순서대로 처리")
+    void activateAndDeactivate_concurrent_preservesOrder()
+        throws Exception {
+
+        CountDownLatch registerStarted =
+            new CountDownLatch(1);
+
+        CountDownLatch releaseRegister =
+            new CountDownLatch(1);
+
+        CountDownLatch unregisterCalled =
+            new CountDownLatch(1);
+
+        CountDownLatch deactivateStarted =
+            new CountDownLatch(1);
+
+        AtomicBoolean redisActive =
+            new AtomicBoolean(false);
+
+        doAnswer(invocation -> {
+            registerStarted.countDown();
+
+            assertThat(
+                releaseRegister.await(
+                    5,
+                    TimeUnit.SECONDS
+                )
+            ).isTrue();
+
+            redisActive.set(true);
+            return null;
+        })
+            .when(presenceStore)
+            .register(
+                USER_ID,
+                CONVERSATION_ID,
+                "session-1",
+                "subscription-1"
+            );
+
+        doAnswer(invocation -> {
+            redisActive.set(false);
+            unregisterCalled.countDown();
+            return true;
+        })
+            .when(presenceStore)
+            .unregister(
+                USER_ID,
+                CONVERSATION_ID,
+                "session-1",
+                "subscription-1"
+            );
+
+        ExecutorService executor =
+            Executors.newFixedThreadPool(2);
+
+        try {
+            Future<?> activateResult =
+                executor.submit(() ->
+                    registry.activate(
+                        USER_ID,
+                        CONVERSATION_ID,
+                        "session-1",
+                        "subscription-1"
+                    )
+                );
+
+            assertThat(
+                registerStarted.await(
+                    5,
+                    TimeUnit.SECONDS
+                )
+            ).isTrue();
+
+            Future<?> deactivateResult =
+                executor.submit(() -> {
+                    deactivateStarted.countDown();
+
+                    registry.deactivate(
+                        USER_ID,
+                        CONVERSATION_ID,
+                        "session-1",
+                        "subscription-1"
+                    );
+                });
+
+            assertThat(
+                deactivateStarted.await(
+                    5,
+                    TimeUnit.SECONDS
+                )
+            ).isTrue();
+
+            assertThat(
+                unregisterCalled.await(
+                    300,
+                    TimeUnit.MILLISECONDS
+                )
+            ).isFalse();
+
+            releaseRegister.countDown();
+
+            activateResult.get(
+                5,
+                TimeUnit.SECONDS
+            );
+
+            deactivateResult.get(
+                5,
+                TimeUnit.SECONDS
+            );
+
+            assertThat(redisActive.get())
+                .isFalse();
+
+            assertThat(
+                registry.isActive(
+                    USER_ID,
+                    CONVERSATION_ID
+                )
+            ).isFalse();
+        } finally {
+            releaseRegister.countDown();
+            executor.shutdownNow();
+        }
     }
 
     @Test
@@ -266,6 +401,50 @@ class DirectMessageSubscriptionRegistryTest {
         ).renewSession(
             USER_ID,
             "session-1"
+        );
+    }
+
+    @Test
+    @DisplayName("Redis 등록 누락은 다음 TTL 갱신에서 로컬 구독으로 복구")
+    void renewPresence_missingRegistration_restoresPresence() {
+        doThrow(
+            new RedisConnectionFailureException(
+                "Redis 연결 실패"
+            )
+        )
+            .doNothing()
+            .when(presenceStore)
+            .register(
+                USER_ID,
+                CONVERSATION_ID,
+                "session-1",
+                "subscription-1"
+            );
+
+        when(
+            presenceStore.renewSession(
+                USER_ID,
+                "session-1"
+            )
+        ).thenReturn(0L);
+
+        registry.activate(
+            USER_ID,
+            CONVERSATION_ID,
+            "session-1",
+            "subscription-1"
+        );
+
+        registry.renewPresence();
+
+        verify(
+            presenceStore,
+            times(2)
+        ).register(
+            USER_ID,
+            CONVERSATION_ID,
+            "session-1",
+            "subscription-1"
         );
     }
 
