@@ -3,8 +3,8 @@ package com.mopl.watchingsession.websocket.broadcast;
 import com.mopl.watchingsession.dto.ChangeType;
 import com.mopl.watchingsession.dto.WatchingSessionChange;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
+import com.mopl.watchingsession.presence.WatchingSessionPresenceReader;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
-import java.time.Instant;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +24,7 @@ public class WatchingSessionBroadcaster {
 
     private final SimpMessagingTemplate messagingTemplate;
     private final WatchingSessionSnapshotRepository watchingSessionSnapshotRepository;
+    private final WatchingSessionPresenceReader presenceReader;
 
     public void broadcastJoin(WatchingSessionDto watchingSession, UUID contentId) {
         broadcastSafely(ChangeType.JOIN, watchingSession, contentId);
@@ -48,17 +49,13 @@ public class WatchingSessionBroadcaster {
         }
         }
 
-        // 조회가 실패해도 대체 값을 반환해 브로드캐스트 자체는 계속 진행한다
-        // 현재 매 이벤트마다 DB countByContentId 쿼리가 발생함
-        // TODO: Redis 기반 In-memory counter 또는 짧은 TTL 캐싱으로 조회 부하 최소화로 성능 개선
+    // 조회가 실패해도 대체 값을 반환해 브로드캐스트 자체는 계속 진행한다
     private long safeCurrentWatcherCount(UUID contentId) {
         try {
-            return watchingSessionSnapshotRepository.countByContentId(contentId, null, Instant.now());
+            return presenceReader.countByContent(contentId);
         } catch (RuntimeException e) {
             log.error("시청자 수 조회 실패, 대체 값 사용: contentId={}", contentId, e);
             return WATCHER_COUNT_UNAVAILABLE;
         }
     }
-
-
 }
