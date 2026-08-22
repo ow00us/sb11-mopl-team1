@@ -437,7 +437,10 @@ jobs:
             local pattern="$2"
             curl --fail --silent --header "Authorization: Bearer $token" \
               "http://127.0.0.1:$port/actuator/prometheus" \
-              | awk -v pattern="$pattern" '$0 !~ /^#/ && $0 ~ pattern { print $NF; exit }'
+              | awk -v pattern="$pattern" '
+                  $0 !~ /^#/ && $0 ~ pattern { value = $NF }
+                  END { if (value != "") print value }
+                '
           }
 
           # 지표 값은 1 이 아니라 1.0 처럼 나옵니다. 문자열로 비교하면 어긋납니다.
