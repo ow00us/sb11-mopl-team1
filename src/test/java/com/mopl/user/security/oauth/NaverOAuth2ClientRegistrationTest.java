@@ -2,7 +2,6 @@ package com.mopl.user.security.oauth;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -47,8 +46,6 @@ class NaverOAuth2ClientRegistrationTest {
                     + "authorization-grant-type=authorization_code",
                 "spring.security.oauth2.client.registration.naver."
                     + "redirect-uri={baseUrl}/login/oauth2/code/{registrationId}",
-                "spring.security.oauth2.client.registration.naver."
-                    + "scope=nickname,profile_image",
                 "spring.security.oauth2.client.registration.naver."
                     + "client-name=Naver",
                 "spring.security.oauth2.client.registration.naver."
@@ -98,12 +95,7 @@ class NaverOAuth2ClientRegistrationTest {
                     "{baseUrl}/login/oauth2/code/{registrationId}"
                 );
             assertThat(naver.getScopes())
-                .containsExactlyInAnyOrderElementsOf(
-                    Set.of(
-                        "nickname",
-                        "profile_image"
-                    )
-                );
+                .isNullOrEmpty();
 
             assertThat(
                 naver.getProviderDetails()

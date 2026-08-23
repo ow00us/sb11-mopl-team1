@@ -272,10 +272,6 @@ class OAuth2SecurityIntegrationTest {
             .redirectUri(
                 "{baseUrl}/login/oauth2/code/{registrationId}"
             )
-            .scope(
-                "nickname",
-                "profile_image"
-            )
             .authorizationUri(
                 "https://nid.naver.com/oauth2.0/authorize"
             )
