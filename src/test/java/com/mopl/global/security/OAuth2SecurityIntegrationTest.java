@@ -76,6 +76,13 @@ class OAuth2SecurityIntegrationTest {
         ).thenReturn(
             kakaoClientRegistration()
         );
+
+        when(
+            clientRegistrationRepository
+                .findByRegistrationId("naver")
+        ).thenReturn(
+            naverClientRegistration()
+        );
     }
 
     @Test
@@ -114,6 +121,27 @@ class OAuth2SecurityIntegrationTest {
                     HttpHeaders.LOCATION,
                     startsWith(
                         "https://kauth.kakao.com/oauth/authorize"
+                    )
+                )
+            );
+    }
+
+    @Test
+    @DisplayName("Naver OAuth 인증 시작 경로는 Naver 인가 서버로 이동한다")
+    void naverAuthorizationEndpoint_redirectsToProvider()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/oauth2/authorization/naver")
+            )
+            .andExpect(
+                status().is3xxRedirection()
+            )
+            .andExpect(
+                header().string(
+                    HttpHeaders.LOCATION,
+                    startsWith(
+                        "https://nid.naver.com/oauth2.0/authorize"
                     )
                 )
             );
@@ -223,6 +251,42 @@ class OAuth2SecurityIntegrationTest {
             )
             .userNameAttributeName("id")
             .clientName("Kakao")
+            .build();
+    }
+
+    /**
+     * 외부 네트워크 요청 없이 OAuth2 FilterChain 구성을 검증하기 위한
+     * 테스트 전용 Naver ClientRegistration
+     */
+    private ClientRegistration naverClientRegistration() {
+        return ClientRegistration
+            .withRegistrationId("naver")
+            .clientId("test-naver-client-id")
+            .clientSecret("test-naver-client-secret")
+            .clientAuthenticationMethod(
+                ClientAuthenticationMethod.CLIENT_SECRET_POST
+            )
+            .authorizationGrantType(
+                AuthorizationGrantType.AUTHORIZATION_CODE
+            )
+            .redirectUri(
+                "{baseUrl}/login/oauth2/code/{registrationId}"
+            )
+            .scope(
+                "nickname",
+                "profile_image"
+            )
+            .authorizationUri(
+                "https://nid.naver.com/oauth2.0/authorize"
+            )
+            .tokenUri(
+                "https://nid.naver.com/oauth2.0/token"
+            )
+            .userInfoUri(
+                "https://openapi.naver.com/v1/nid/me"
+            )
+            .userNameAttributeName("response")
+            .clientName("Naver")
             .build();
     }
 }
