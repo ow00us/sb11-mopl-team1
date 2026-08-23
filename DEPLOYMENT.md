@@ -31,6 +31,9 @@ Dockerfile은 빌드 단계와 실행 단계를 분리합니다. 실행 이미�
 | `KAKAO_OAUTH_CLIENT_ID` | Kakao Developers에서 발급한 REST API 키 |
 | `KAKAO_OAUTH_CLIENT_SECRET` | Kakao Developers에서 발급하고 활성화한 Client Secret |
 | `KAKAO_OAUTH_REDIRECT_URI` | Kakao Developers에 등록한 운영용 Kakao Callback 절대 URI |
+| `NAVER_OAUTH_CLIENT_ID` | Naver Developers에서 발급한 애플리케이션 Client ID |
+| `NAVER_OAUTH_CLIENT_SECRET` | Naver Developers에서 발급한 Client Secret |
+| `NAVER_OAUTH_REDIRECT_URI` | Naver Developers에 등록한 운영용 Naver Callback 절대 URI |
 | `KAFKA_BOOTSTRAP_SERVERS` | Kafka bootstrap 주소 목록 |
 
 여러 origin은 쉼표로 구분합니다. 실제 비밀 값은 저장소나 이미지에 포함하지 않고 배포 환경의 Secret으로 주입합니다.
@@ -267,6 +270,9 @@ docker run --rm \
   -e KAKAO_OAUTH_CLIENT_ID=<kakao-rest-api-key> \
   -e KAKAO_OAUTH_CLIENT_SECRET=<kakao-client-secret> \
   -e KAKAO_OAUTH_REDIRECT_URI=https://<backend-domain>/login/oauth2/code/kakao \
+  -e NAVER_OAUTH_CLIENT_ID=<naver-client-id> \
+  -e NAVER_OAUTH_CLIENT_SECRET=<naver-client-secret> \
+  -e NAVER_OAUTH_REDIRECT_URI=https://<backend-domain>/login/oauth2/code/naver \
   -e KAFKA_BOOTSTRAP_SERVERS=mopl-kafka:9092 \
   mopl:local
 ```
