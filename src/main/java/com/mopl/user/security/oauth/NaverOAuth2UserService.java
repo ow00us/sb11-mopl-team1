@@ -139,10 +139,11 @@ public class NaverOAuth2UserService
             );
 
         /*
-         * 현재 요청 scope에는 이메일을 포함하지 않는다.
-         * Provider 이메일만으로 기존 로컬 계정을 자동 연결하는 것도
-         * 금지하므로 email에는 null을 전달
+         * Naver 인증 요청에는 별도 scope를 전송하지 않고,
+         * 프로필 제공 항목은 Naver Developers 권한과 사용자 동의로 관리
          *
+         * 현재 MOPL 정책에서는 Provider 이메일을 계정 식별이나
+         * 기존 로컬 계정 자동 연결에 사용하지 않으므로 null을 전달
          * 신규 사용자는 Provisioning Service에서 발송 불가능한
          * 내부 식별 이메일을 생성
          */
