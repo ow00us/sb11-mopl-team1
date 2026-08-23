@@ -18,9 +18,9 @@ import org.springframework.web.client.RestTemplate;
 /**
  * OAuth Provider 사용자 정보 조회에 사용하는 HTTP 클라이언트 설정
  *
- * <p>Google OIDC와 Kakao OAuth2 사용자 정보 조회에 명시적인 연결 및
- * 응답 제한 시간을 적용합니다. Provider 응답이 지연되더라도 인증 요청
- * 스레드가 무기한 점유되지 않도록 합니다.</p>
+ * <p>Google OIDC와 Kakao·Naver OAuth2 사용자 정보 조회에 명시적인
+ * 연결 및 응답 제한 시간을 적용합니다.
+ * Provider 응답이 지연되더라도 인증 요청 스레드가 무기한 점유되지 않도록 합니다.</p>
  */
 @Configuration(proxyBeanMethods = false)
 public class OAuth2UserInfoClientConfig {
@@ -75,6 +75,30 @@ public class OAuth2UserInfoClientConfig {
     @Bean("kakaoOAuth2UserDelegate")
     public OAuth2UserService<OAuth2UserRequest, OAuth2User>
     kakaoOAuth2UserDelegate(
+        @Value("${app.oauth2.user-info.connect-timeout}")
+        Duration connectTimeout,
+        @Value("${app.oauth2.user-info.read-timeout}")
+        Duration readTimeout
+    ) {
+        return createDefaultOAuth2UserService(
+            connectTimeout,
+            readTimeout
+        );
+    }
+
+    /**
+     * Naver OAuth2 사용자 정보 조회 Delegate를 생성
+     *
+     * <p>Naver는 일반 OAuth2 Provider이므로
+     * {@link DefaultOAuth2UserService}를 직접 사용합니다.</p>
+     *
+     * @param connectTimeout Provider 연결 제한 시간
+     * @param readTimeout Provider 응답 제한 시간
+     * @return Naver OAuth2 사용자 정보 조회 Delegate
+     */
+    @Bean("naverOAuth2UserDelegate")
+    public OAuth2UserService<OAuth2UserRequest, OAuth2User>
+    naverOAuth2UserDelegate(
         @Value("${app.oauth2.user-info.connect-timeout}")
         Duration connectTimeout,
         @Value("${app.oauth2.user-info.read-timeout}")
