@@ -107,16 +107,27 @@ public class OAuthUserProvisioningService {
         String validatedProfileImageUrl =
             validateProfileImageUrl(profileImageUrl);
 
-        /*
-         * 동일 이메일이 존재하더라도 자동으로 Provider 계정을 연결하지 않는다.
-         * 기존 계정 인증 없이 연결하면 계정 탈취로 이어질 수 있다.
-         */
         if (userRepository.existsByEmail(normalizedEmail)) {
-            throw authenticationException(
-                ACCOUNT_LINK_REQUIRED,
-                "동일 이메일의 기존 사용자에게 명시적인 계정 연결이 필요합니다.",
-                null
-            );
+            /*
+             * 최초 조회 이후 동일 Provider 계정의 다른 로그인 요청이
+             * User와 OAuthAccount 생성을 먼저 완료했을 수 있다.
+             *
+             * 따라서 이메일이 존재한다는 이유만으로 기존 로컬 계정이라고
+             * 단정하지 않고, 동일 Provider 연결 정보를 다시 확인한다.
+             */
+            return oauthAccountRepository
+                .findByProviderAndProviderUserId(
+                    provider,
+                    providerUserId
+                )
+                .map(OAuthAccount::getUser)
+                .orElseThrow(() ->
+                    authenticationException(
+                        ACCOUNT_LINK_REQUIRED,
+                        "동일 이메일의 기존 사용자에게 명시적인 계정 연결이 필요합니다.",
+                        null
+                    )
+                );
         }
 
         try {
