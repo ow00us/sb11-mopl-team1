@@ -35,6 +35,9 @@ public class NaverOAuth2UserService
     public static final String INVALID_NAVER_USER_ID =
         "invalid_naver_user_id";
 
+    public static final String INVALID_NAVER_USER_INFO =
+        "invalid_naver_user_info";
+
     public static final String NAVER_ACCOUNT_LOCKED =
         "naver_account_locked";
 
@@ -116,9 +119,7 @@ public class NaverOAuth2UserService
          * response 객체 안에 담아 반환
          */
         Map<?, ?> response =
-            nestedMap(
-                attributes.get("response")
-            );
+            validateUserInfoResponse(attributes);
 
         String providerUserId =
             providerUserId(
@@ -197,6 +198,39 @@ public class NaverOAuth2UserService
     }
 
     /**
+     * Naver UserInfo 응답의 성공 코드와 response 객체를 검증
+     *
+     * <p>공식 응답 계약에서 resultcode가 00인 경우만 성공입니다.
+     * HTTP 요청 자체가 성공했더라도 Naver가 실패 resultcode를 반환하거나
+     * response 객체가 누락되면 사용자 생성으로 진행하지 않습니다.</p>
+     *
+     * @param attributes Naver UserInfo 최상위 응답
+     * @return 검증된 response 객체
+     */
+    private Map<?, ?> validateUserInfoResponse(
+        Map<String, Object> attributes
+    ) {
+        if (!"00".equals(attributes.get("resultcode"))) {
+            throw authenticationException(
+                INVALID_NAVER_USER_INFO,
+                "Naver 사용자 정보 조회 결과가 유효하지 않습니다."
+            );
+        }
+
+        Object responseValue =
+            attributes.get("response");
+
+        if (!(responseValue instanceof Map<?, ?> response)) {
+            throw authenticationException(
+                INVALID_NAVER_USER_INFO,
+                "Naver 사용자 정보 response가 없습니다."
+            );
+        }
+
+        return response;
+    }
+
+    /**
      * Naver UserInfo의 response.id를 Provider 사용자 식별자로 변환
      */
     private String providerUserId(
@@ -211,19 +245,6 @@ public class NaverOAuth2UserService
             INVALID_NAVER_USER_ID,
             "Naver 사용자 ID가 없습니다."
         );
-    }
-
-    /**
-     * 외부 응답의 중첩 객체를 읽기 전용 조회 용도로 변환
-     */
-    private Map<?, ?> nestedMap(
-        Object value
-    ) {
-        if (value instanceof Map<?, ?> map) {
-            return map;
-        }
-
-        return Map.of();
     }
 
     /**

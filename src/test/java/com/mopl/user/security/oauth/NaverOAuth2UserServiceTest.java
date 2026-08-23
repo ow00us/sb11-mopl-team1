@@ -161,6 +161,8 @@ class NaverOAuth2UserServiceTest {
         when(naverUser.getAttributes())
             .thenReturn(
                 Map.of(
+                    "resultcode",
+                    "00",
                     "response",
                     Map.of(
                         "id",
@@ -211,6 +213,8 @@ class NaverOAuth2UserServiceTest {
         when(naverUser.getAttributes())
             .thenReturn(
                 Map.of(
+                    "resultcode",
+                    "00",
                     "response",
                     Map.of(
                         "id",
@@ -245,6 +249,60 @@ class NaverOAuth2UserServiceTest {
                 "Naver 사용자",
                 null
             );
+    }
+
+    @Test
+    @DisplayName("Naver UserInfo 결과 코드가 성공이 아니면 사용자 생성을 거부한다")
+    void loadUser_fail_whenResultCodeIsNotSuccess() {
+        // given
+        stubNaverRequest();
+
+        when(delegate.loadUser(userRequest))
+            .thenReturn(naverUser);
+
+        /*
+         * response에 형식상 유효한 ID가 있어도 resultcode가 실패이면
+         * 신뢰하지 않고 사용자 생성 전에 인증을 중단
+         */
+        when(naverUser.getAttributes())
+            .thenReturn(
+                Map.of(
+                    "resultcode",
+                    "024",
+                    "message",
+                    "Authentication failed",
+                    "response",
+                    Map.of(
+                        "id",
+                        "naver-user-id-123"
+                    )
+                )
+            );
+
+        // when & then
+        assertThatThrownBy(() ->
+            naverOAuth2UserService.loadUser(
+                userRequest
+            )
+        )
+            .isInstanceOf(
+                OAuth2AuthenticationException.class
+            )
+            .satisfies(exception -> {
+                OAuth2AuthenticationException oauthException =
+                    (OAuth2AuthenticationException) exception;
+
+                assertThat(
+                    oauthException
+                        .getError()
+                        .getErrorCode()
+                ).isEqualTo(
+                    NaverOAuth2UserService
+                        .INVALID_NAVER_USER_INFO
+                );
+            });
+
+        verifyNoInteractions(provisioningService);
     }
 
     @Test
@@ -285,7 +343,7 @@ class NaverOAuth2UserServiceTest {
                         .getErrorCode()
                 ).isEqualTo(
                     NaverOAuth2UserService
-                        .INVALID_NAVER_USER_ID
+                        .INVALID_NAVER_USER_INFO
                 );
             });
 
@@ -304,6 +362,8 @@ class NaverOAuth2UserServiceTest {
         when(naverUser.getAttributes())
             .thenReturn(
                 Map.of(
+                    "resultcode",
+                    "00",
                     "response",
                     Map.of(
                         "nickname",
@@ -461,6 +521,8 @@ class NaverOAuth2UserServiceTest {
         when(naverUser.getAttributes())
             .thenReturn(
                 Map.of(
+                    "resultcode",
+                    "00",
                     "response",
                     Map.of(
                         "id",
