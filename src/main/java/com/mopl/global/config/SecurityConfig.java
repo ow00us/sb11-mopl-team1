@@ -8,6 +8,7 @@ import com.mopl.global.security.handler.RestAccessDeniedHandler;
 import com.mopl.global.security.handler.RestAuthenticationEntryPoint;
 import com.mopl.global.security.handler.SecurityErrorResponseWriter;
 import com.mopl.user.security.oauth.GoogleOidcUserService;
+import com.mopl.user.security.oauth.MoplOAuth2UserService;
 import com.mopl.user.security.oauth.handler.OAuth2AuthenticationFailureHandler;
 import com.mopl.user.security.oauth.handler.OAuth2AuthenticationSuccessHandler;
 import java.util.Arrays;
@@ -144,7 +145,9 @@ public class SecurityConfig {
         ObjectProvider<OAuth2AuthenticationFailureHandler>
             failureHandlerProvider,
         ObjectProvider<GoogleOidcUserService>
-            googleOidcUserServiceProvider
+            googleOidcUserServiceProvider,
+        ObjectProvider<MoplOAuth2UserService>
+            moplOAuth2UserServiceProvider
     ) throws Exception {
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource))
@@ -188,6 +191,9 @@ public class SecurityConfig {
         GoogleOidcUserService googleOidcUserService =
             googleOidcUserServiceProvider.getIfAvailable();
 
+        MoplOAuth2UserService moplOAuth2UserService =
+            moplOAuth2UserServiceProvider.getIfAvailable();
+
         if (clientRegistrationRepository != null
             && successHandler != null
             && failureHandler != null) {
@@ -198,15 +204,24 @@ public class SecurityConfig {
 
                 /*
                  * Google은 openid scope를 사용하는 OIDC Provider이므로
-                 * 일반 OAuth2UserService가 아닌 전용 OIDC 사용자 서비스를 연결
+                 * oidcUserService에 연결
+                 *
+                 * Kakao와 이후 Naver 같은 일반 OAuth2 Provider는
+                 * registrationId를 기준으로 분기하는 공통 라우터에 연결
                  */
-                if (googleOidcUserService != null) {
-                    oauth2.userInfoEndpoint(userInfo ->
+                oauth2.userInfoEndpoint(userInfo -> {
+                    if (googleOidcUserService != null) {
                         userInfo.oidcUserService(
                             googleOidcUserService
-                        )
-                    );
-                }
+                        );
+                    }
+
+                    if (moplOAuth2UserService != null) {
+                        userInfo.userService(
+                            moplOAuth2UserService
+                        );
+                    }
+                });
             });
         }
 
