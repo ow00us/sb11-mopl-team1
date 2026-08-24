@@ -295,6 +295,12 @@ app:
       max-attempts: ${OAUTH2_LOCAL_CREDENTIAL_MAX_ATTEMPTS:5}
       # 로컬 개발 전용 기본값이며 운영 프로필에서는 환경변수를 반드시 주입
       verification-secret: ${OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_SECRET:local-oauth-verification-secret-change-me}
+      mail:
+        # OAuth 전용 사용자의 이메일 소유 확인 메일 발신 주소
+        from-address: ${OAUTH2_LOCAL_CREDENTIAL_MAIL_FROM:no-reply@mopl.local}
+
+        # CR/LF 줄바꿈 문자를 허용하지 않는 인증 메일 제목
+        subject: ${OAUTH2_LOCAL_CREDENTIAL_MAIL_SUBJECT:[모두의 플리] 이메일 인증 코드 안내}
     redirect:
       # OAuth 인증 성공 후 Access Token 복원을 처리할 프론트엔드 화면
       success-uri: ${OAUTH2_SUCCESS_REDIRECT_URI:http://localhost:5173/oauth/callback}
