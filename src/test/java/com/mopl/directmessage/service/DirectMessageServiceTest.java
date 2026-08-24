@@ -24,6 +24,7 @@ import com.mopl.directmessage.event.DirectMessageOutboxEventFactory;
 import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.directmessage.repository.DirectMessageRepository;
 import com.mopl.directmessage.repository.DirectMessageSequenceGenerator;
+import com.mopl.directmessage.ratelimit.DirectMessageRateLimiter;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
@@ -78,6 +79,9 @@ class DirectMessageServiceTest {
 
     @Mock
     DirectMessageSequenceGenerator sequenceGenerator;
+
+    @Mock
+    DirectMessageRateLimiter rateLimiter;
 
     @Mock
     ConversationParticipantRepository participantRepository;
@@ -804,6 +808,10 @@ class DirectMessageServiceTest {
             sequenceGenerator.next(CONVERSATION_ID)
         ).thenReturn(1L);
 
+        when(
+            rateLimiter.tryAcquire(USER_ID_1)
+        ).thenReturn(true);
+
         UUID messageId =
             UUID.fromString(
                 "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
@@ -917,11 +925,15 @@ class DirectMessageServiceTest {
         InOrder inOrder =
             inOrder(
                 sequenceGenerator,
+                rateLimiter,
                 directMessageRepository,
                 outboxEventFactory,
                 outboxRecorder,
                 eventPublisher
             );
+
+        inOrder.verify(rateLimiter)
+            .tryAcquire(USER_ID_1);
 
         inOrder.verify(sequenceGenerator)
             .next(CONVERSATION_ID);
@@ -961,6 +973,10 @@ class DirectMessageServiceTest {
         when(
             sequenceGenerator.next(CONVERSATION_ID)
         ).thenReturn(1L);
+
+        when(
+            rateLimiter.tryAcquire(USER_ID_1)
+        ).thenReturn(true);
 
         UUID messageId =
             UUID.fromString(
@@ -1036,6 +1052,48 @@ class DirectMessageServiceTest {
     }
 
     @Test
+    @DisplayName("DM 전송 빈도를 초과하면 메시지를 저장하지 않는다.")
+    void create_rateLimitExceeded_fails() {
+        // given
+        when(
+            participantRepository.findAllByConversationId(
+                CONVERSATION_ID
+            )
+        ).thenReturn(participants());
+
+        when(
+            rateLimiter.tryAcquire(USER_ID_1)
+        ).thenReturn(false);
+
+        // when & then
+        assertThatThrownBy(() ->
+            directMessageService.create(
+                USER_ID_1,
+                CONVERSATION_ID,
+                "제한을 초과한 메시지"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(
+                            ErrorCode
+                                .DIRECT_MESSAGE_RATE_LIMIT_EXCEEDED
+                        )
+            );
+
+        verifyNoInteractions(
+            userRepository,
+            sequenceGenerator,
+            directMessageRepository,
+            outboxEventFactory,
+            outboxRecorder,
+            eventPublisher
+        );
+    }
+
+    @Test
     @DisplayName("내용이 비어 있는 DM은 저장할 수 없다.")
     void create_blankContent_fails() {
         // when & then
@@ -1060,6 +1118,7 @@ class DirectMessageServiceTest {
             userRepository,
             directMessageRepository,
             sequenceGenerator,
+            rateLimiter,
             outboxEventFactory,
             outboxRecorder,
             eventPublisher

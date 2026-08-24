@@ -28,6 +28,7 @@ public enum ErrorCode {
     REVIEW_NOT_FOUND(HttpStatus.NOT_FOUND, "REVIEW_404_1", "존재하지 않는 리뷰입니다."),
     REVIEW_DUPLICATE(HttpStatus.CONFLICT, "REVIEW_409_1", "이미 작성한 리뷰가 존재합니다."),
     DIRECT_MESSAGE_INVALID_STATE(HttpStatus.INTERNAL_SERVER_ERROR, "DM_500_1", "DM 데이터 상태가 올바르지 않습니다."),
+    DIRECT_MESSAGE_RATE_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "DM_429_1", "메시지를 너무 빠르게 전송하고 있습니다."),
     OUTBOX_EVENT_NOT_FOUND(HttpStatus.NOT_FOUND, "OUTBOX_404_1", "존재하지 않는 Outbox 이벤트입니다."),
     OUTBOX_EVENT_NOT_FAILED(HttpStatus.CONFLICT, "OUTBOX_409_1", "최종 실패 상태가 아닌 Outbox 이벤트입니다."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "COMMON_500_1", "서버 오류가 발생했습니다.");
