@@ -25,6 +25,9 @@ Dockerfile은 빌드 단계와 실행 단계를 분리합니다. 실행 이미�
 | `WS_ALLOWED_ORIGINS` | WebSocket handshake를 허용할 프론트엔드 origin 목록 |
 | `OAUTH2_SUCCESS_REDIRECT_URI` | OAuth 인증 성공 후 이동할 프론트엔드 Callback 절대 URI |
 | `OAUTH2_FAILURE_REDIRECT_URI` | OAuth 인증 실패 후 이동할 프론트엔드 로그인 절대 URI |
+| `GOOGLE_OAUTH_CLIENT_ID` | Google Cloud Console에서 발급한 웹 애플리케이션 OAuth Client ID |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Google Cloud Console에서 발급한 OAuth Client Secret |
+| `GOOGLE_OAUTH_REDIRECT_URI` | Google Cloud Console에 승인된 운영용 Google Callback 절대 URI |
 | `KAFKA_BOOTSTRAP_SERVERS` | Kafka bootstrap 주소 목록 |
 
 여러 origin은 쉼표로 구분합니다. 실제 비밀 값은 저장소나 이미지에 포함하지 않고 배포 환경의 Secret으로 주입합니다.
@@ -255,6 +258,9 @@ docker run --rm \
   -e WS_ALLOWED_ORIGINS=<frontend-origin> \
   -e OAUTH2_SUCCESS_REDIRECT_URI=<frontend-origin>/oauth/callback \
   -e OAUTH2_FAILURE_REDIRECT_URI=<frontend-origin>/sign-in \
+  -e GOOGLE_OAUTH_CLIENT_ID=<google-oauth-client-id> \
+  -e GOOGLE_OAUTH_CLIENT_SECRET=<google-oauth-client-secret> \
+  -e GOOGLE_OAUTH_REDIRECT_URI=https://<backend-domain>/login/oauth2/code/google \
   -e KAFKA_BOOTSTRAP_SERVERS=mopl-kafka:9092 \
   mopl:local
 ```

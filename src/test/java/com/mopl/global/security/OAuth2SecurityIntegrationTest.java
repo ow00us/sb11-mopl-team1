@@ -12,6 +12,7 @@ import com.mopl.global.config.SecurityConfig;
 import com.mopl.global.security.controller.CsrfTokenController;
 import com.mopl.user.security.oauth.handler.OAuth2AuthenticationFailureHandler;
 import com.mopl.user.security.oauth.handler.OAuth2AuthenticationSuccessHandler;
+import com.mopl.user.security.oauth.GoogleOidcUserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -52,6 +53,9 @@ class OAuth2SecurityIntegrationTest {
 
     @MockitoBean
     OAuth2AuthenticationFailureHandler failureHandler;
+
+    @MockitoBean
+    GoogleOidcUserService googleOidcUserService;
 
     @BeforeEach
     void setUp() {
