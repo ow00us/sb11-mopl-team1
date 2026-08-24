@@ -252,6 +252,35 @@ class LocalCredentialRegistrationRequestTest {
         assertThat(violations).isEmpty();
     }
 
+    @Test
+    @DisplayName("문자열 표현에 이메일, 인증 코드와 비밀번호 원문을 노출하지 않는다")
+    void toString_masksSensitiveValues() {
+        // given
+        LocalCredentialRegistrationRequest request =
+            new LocalCredentialRegistrationRequest(
+                "sensitive@example.com",
+                "123456",
+                "Password1!"
+            );
+
+        // when
+        String requestString =
+            request.toString();
+
+        // then
+        assertThat(requestString)
+            .doesNotContain(
+                "sensitive@example.com",
+                "123456",
+                "Password1!"
+            )
+            .contains(
+                "email=***",
+                "verificationCode=***",
+                "password=***"
+            );
+    }
+
     private LocalCredentialRegistrationRequest validRequest() {
         return new LocalCredentialRegistrationRequest(
             "user@example.com",

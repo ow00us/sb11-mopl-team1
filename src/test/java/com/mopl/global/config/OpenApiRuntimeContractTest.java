@@ -705,15 +705,25 @@ class OpenApiRuntimeContractTest {
             )
 
             /*
-             * OAuth 전용 사용자는 공개 비밀번호 초기화 경로로
-             * 로컬 로그인 수단을 새로 만들 수 없으므로
-             * 409 Conflict 응답을 문서화해야 한다.
+             * 계정 존재 여부를 공개 응답으로 구분할 수 없도록
+             * 미존재 사용자에 대한 404 응답을 노출하지 않는다.
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/reset-password']"
+                        + ".post.responses['404']"
+                ).doesNotExist()
+            )
+
+            /*
+             * OAuth 전용 사용자 여부를 공개 응답으로 구분할 수 없도록
+             * 로컬 로그인 수단 미등록에 대한 409 응답을 노출하지 않는다.
              */
             .andExpect(
                 jsonPath(
                     "$.paths['/api/auth/reset-password']"
                         + ".post.responses['409']"
-                ).exists()
+                ).doesNotExist()
             )
 
             /*

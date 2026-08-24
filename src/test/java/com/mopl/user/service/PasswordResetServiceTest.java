@@ -8,8 +8,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
-import com.mopl.global.exception.BusinessException;
-import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.dto.ResetPasswordRequest;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
@@ -169,8 +167,8 @@ class PasswordResetServiceTest {
     }
 
     @Test
-    @DisplayName("로컬 로그인 수단이 없는 OAuth 전용 사용자는 비밀번호를 초기화할 수 없다")
-    void resetPassword_fail_whenLocalCredentialDoesNotExist() {
+    @DisplayName("로컬 로그인 수단이 없는 OAuth 전용 사용자는 작업 없이 종료한다")
+    void resetPassword_ignore_whenLocalCredentialDoesNotExist() {
         // given
         String email =
             "oauth-user@example.com";
@@ -190,29 +188,17 @@ class PasswordResetServiceTest {
             Optional.of(oauthOnlyUser)
         );
 
-        // when & then
-        assertThatThrownBy(
-            () ->
-                passwordResetService
-                    .resetPassword(request)
-        )
-            .isInstanceOfSatisfying(
-                BusinessException.class,
-                exception ->
-                    assertThat(
-                        exception.getErrorCode()
-                    ).isEqualTo(
-                        ErrorCode.LOCAL_CREDENTIAL_NOT_FOUND
-                    )
-            );
+        // when
+        passwordResetService.resetPassword(request);
 
-        /*
-         * OAuth 전용 사용자는 이메일 인증 기반 로컬 로그인 등록
-         * 절차를 거쳐야 하므로 임시 비밀번호 생성부터 진행하지 않는다.
-         */
+        // then
         verify(userRepository)
             .findByEmail(email);
 
+        /*
+         * OAuth 전용 사용자는 별도의 이메일 인증 기반 등록 절차를
+         * 거쳐야 하므로 비밀번호 초기화 작업을 진행하지 않는다.
+         */
         verifyNoInteractions(
             temporaryPasswordGenerator,
             passwordEncoder,
@@ -226,8 +212,8 @@ class PasswordResetServiceTest {
     }
 
     @Test
-    @DisplayName("존재하지 않는 이메일이면 404 비즈니스 예외를 발생시킨다")
-    void resetPassword_fail_whenUserDoesNotExist() {
+    @DisplayName("존재하지 않는 이메일이면 작업 없이 종료한다")
+    void resetPassword_ignore_whenUserDoesNotExist() {
         // given
         String normalizedEmail =
             "missing@example.com";
@@ -245,25 +231,18 @@ class PasswordResetServiceTest {
             Optional.empty()
         );
 
-        // when & then
-        assertThatThrownBy(
-            () ->
-                passwordResetService
-                    .resetPassword(request)
-        )
-            .isInstanceOfSatisfying(
-                BusinessException.class,
-                exception ->
-                    assertThat(
-                        exception.getErrorCode()
-                    ).isEqualTo(
-                        ErrorCode.RESOURCE_NOT_FOUND
-                    )
+        // when
+        passwordResetService.resetPassword(request);
+
+        // then
+        verify(userRepository)
+            .findByEmail(
+                normalizedEmail
             );
 
         /*
-         * 사용자가 없으면 임시 비밀번호 생성, 인코딩 및
-         * 이메일 발송을 수행해서는 안된다.
+         * 존재하지 않는 사용자는 임시 비밀번호 생성, 인코딩,
+         * 세션 폐기 및 이메일 발송을 수행하지 않는다.
          */
         verifyNoInteractions(
             temporaryPasswordGenerator,
@@ -271,11 +250,6 @@ class PasswordResetServiceTest {
             temporaryPasswordEmailSender,
             refreshTokenStore
         );
-
-        verify(userRepository)
-            .findByEmail(
-                normalizedEmail
-            );
 
         verifyNoMoreInteractions(
             userRepository

@@ -91,4 +91,19 @@ public record LocalCredentialRegistrationRequest(
                 verificationCode.strip();
         }
     }
+
+    /**
+     * 요청 객체가 로그에 기록되더라도 이메일, 인증 코드와
+     * 비밀번호 원문이 노출되지 않도록 모든 필드를 마스킹
+     *
+     * @return 민감정보가 제거된 문자열 표현
+     */
+    @Override
+    public String toString() {
+        return "LocalCredentialRegistrationRequest["
+            + "email=***, "
+            + "verificationCode=***, "
+            + "password=***"
+            + "]";
+    }
 }
