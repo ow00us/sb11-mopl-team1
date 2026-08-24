@@ -37,6 +37,7 @@ import com.mopl.user.service.PasswordResetService;
 import com.mopl.user.service.UserService;
 import com.mopl.user.service.RefreshTokenService;
 import com.mopl.user.service.OAuthAccountManagementService;
+import com.mopl.user.service.OAuthLocalCredentialService;
 import com.mopl.user.security.oauth.link.OAuthLinkIntentSessionStore;
 import com.mopl.watchingsession.controller.WatchingSessionController;
 import com.mopl.watchingsession.service.WatchingSessionService;
@@ -164,6 +165,8 @@ class OpenApiRuntimeContractTest {
         "POST /api/playlists/{playlistId}/subscription",
         "POST /api/reviews",
         "POST /api/users",
+        "POST /api/users/{userId}/local-credentials",
+        "POST /api/users/{userId}/local-credentials/email-verifications",
         "POST /api/users/{userId}/oauth-accounts/{provider}/link"
     );
     private static Map<String, Object> contract;
@@ -215,6 +218,9 @@ class OpenApiRuntimeContractTest {
 
     @MockitoBean
     OAuthAccountManagementService oauthAccountManagementService;
+
+    @MockitoBean
+    OAuthLocalCredentialService oauthLocalCredentialService;
 
     @MockitoBean
     OAuthLinkIntentSessionStore oauthLinkIntentSessionStore;
@@ -503,6 +509,131 @@ class OpenApiRuntimeContractTest {
                     "$.components.schemas.OAuthAccountDto"
                         + ".properties.refreshToken"
                 ).doesNotExist()
+            );
+    }
+
+    /**
+     * OAuth 전용 사용자의 이메일 인증과
+     * 로컬 로그인 수단 등록 계약을 검증
+     */
+    @Test
+    void documentsOAuthLocalCredentialContract()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/v3/api-docs")
+            )
+            .andExpect(status().isOk())
+
+            /*
+             * 이메일 인증 코드 발송 요청 계약
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials/email-verifications']"
+                        + ".post.requestBody.required"
+                ).value(true)
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials/email-verifications']"
+                        + ".post.requestBody"
+                        + ".content['application/json']"
+                        + ".schema['$ref']"
+                ).value(
+                    "#/components/schemas/"
+                        + "LocalCredentialEmailVerificationRequest"
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials/email-verifications']"
+                        + ".post.responses['204']"
+                ).exists()
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials/email-verifications']"
+                        + ".post.responses['204'].content"
+                ).doesNotExist()
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials/email-verifications']"
+                        + ".post.responses['429']"
+                ).exists()
+            )
+
+            /*
+             * 로컬 로그인 수단 등록 요청 계약
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials']"
+                        + ".post.requestBody.required"
+                ).value(true)
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials']"
+                        + ".post.requestBody"
+                        + ".content['application/json']"
+                        + ".schema['$ref']"
+                ).value(
+                    "#/components/schemas/"
+                        + "LocalCredentialRegistrationRequest"
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials']"
+                        + ".post.responses['204']"
+                ).exists()
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials']"
+                        + ".post.responses['204'].content"
+                ).doesNotExist()
+            )
+
+            /*
+             * DTO 입력 제약 조건
+             */
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas"
+                        + ".LocalCredentialEmailVerificationRequest"
+                        + ".properties.email.format"
+                ).value("email")
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas"
+                        + ".LocalCredentialEmailVerificationRequest"
+                        + ".properties.email.maxLength"
+                ).value(100)
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas"
+                        + ".LocalCredentialRegistrationRequest"
+                        + ".properties.verificationCode.pattern"
+                ).value("^\\d{6}$")
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas"
+                        + ".LocalCredentialRegistrationRequest"
+                        + ".properties.password.minLength"
+                ).value(8)
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas"
+                        + ".LocalCredentialRegistrationRequest"
+                        + ".properties.password.maxLength"
+                ).value(72)
             );
     }
 
