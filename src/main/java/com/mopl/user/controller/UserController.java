@@ -9,15 +9,19 @@ import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserRoleUpdateRequest;
 import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.dto.OAuthAccountDto;
+import com.mopl.user.dto.OAuthLinkStartResponse;
 import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.service.UserService;
 import com.mopl.user.service.OAuthAccountManagementService;
+import com.mopl.user.security.oauth.link.OAuthLinkIntentSessionStore;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.Parameter;
 import java.util.UUID;
 import java.util.List;
+import java.util.Locale;
 import jakarta.validation.Valid;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.HttpStatus;
@@ -50,6 +54,7 @@ public class UserController {
 
     private final UserService userService;
     private final OAuthAccountManagementService oauthAccountManagementService;
+    private final OAuthLinkIntentSessionStore oauthLinkIntentSessionStore;
 
     /**
      * 이메일과 비밀번호를 이용해 사용자를 생성
@@ -157,6 +162,82 @@ public class UserController {
                 );
 
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 현재 사용자의 OAuth 계정 연결 인증을 시작
+     *
+     * <p>본인 여부와 기존 연결 상태를 확인한 뒤 OAuth 연결 의도를
+     * 현재 브라우저의 임시 세션에 저장합니다.</p>
+     *
+     * <p>사용자 입력 URL을 Redirect 대상으로 사용하지 않습니다.
+     * Provider enum으로부터 서버 내부의 고정 OAuth 시작 경로만
+     * 생성하여 Open Redirect를 방지합니다.</p>
+     *
+     * @param authenticatedUserId JWT에서 복원한 현재 사용자 UUID
+     * @param userId OAuth 계정을 연결할 사용자 UUID
+     * @param provider 연결할 OAuth Provider
+     * @param request 현재 HTTP 요청
+     * @return 프론트엔드가 이동할 OAuth 인증 시작 경로
+     */
+    @PostMapping(
+        "/{userId}/oauth-accounts/{provider}/link"
+    )
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "200",
+            description = "OAuth 계정 연결 인증 시작 성공"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자를 찾을 수 없음"
+        ),
+        @ApiResponse(
+            responseCode = "409",
+            description = "해당 Provider 계정이 이미 연결됨"
+        )
+    })
+    public ResponseEntity<OAuthLinkStartResponse>
+    startOAuthAccountLink(
+        @Parameter(hidden = true)
+        @AuthenticationPrincipal
+        UUID authenticatedUserId,
+        @PathVariable
+        UUID userId,
+        @PathVariable
+        OAuthProvider provider,
+        @Parameter(hidden = true)
+        HttpServletRequest request
+    ) {
+        /*
+         * 검증에 실패하면 세션에 연결 의도를 남기지 않는다.
+         */
+        oauthAccountManagementService
+            .validateLinkStart(
+                authenticatedUserId,
+                userId,
+                provider
+            );
+
+        oauthLinkIntentSessionStore.save(
+            request,
+            userId,
+            provider
+        );
+
+        String authorizationPath =
+            "/oauth2/authorization/"
+                + provider
+                .name()
+                .toLowerCase(
+                    Locale.ROOT
+                );
+
+        return ResponseEntity.ok(
+            new OAuthLinkStartResponse(
+                authorizationPath
+            )
+        );
     }
 
     /**

@@ -68,6 +68,55 @@ public class OAuthAccountManagementService {
     }
 
     /**
+     * OAuth 계정 연결 시작 요청이 유효한지 검증
+     *
+     * <p>실제 Provider 계정 연결은 Provider 인증 성공 이후 수행합니다.
+     * 이 메서드는 연결 의도를 세션에 저장하기 전에 본인 요청인지,
+     * 사용자가 존재하는지, 같은 Provider가 이미 연결됐는지 확인합니다.</p>
+     *
+     * @param authenticatedUserId JWT에서 복원한 현재 사용자 UUID
+     * @param userId OAuth 계정을 연결할 사용자 UUID
+     * @param provider 연결할 OAuth Provider
+     */
+    @Transactional(readOnly = true)
+    public void validateLinkStart(
+        UUID authenticatedUserId,
+        UUID userId,
+        OAuthProvider provider
+    ) {
+        validateSelf(
+            authenticatedUserId,
+            userId
+        );
+
+        if (provider == null) {
+            throw new BusinessException(
+                ErrorCode.INVALID_INPUT
+            );
+        }
+
+        if (!userRepository.existsById(userId)) {
+            throw new BusinessException(
+                ErrorCode.RESOURCE_NOT_FOUND
+            );
+        }
+
+        /*
+         * 한 사용자는 Provider별로 하나의 계정만 연결할 수 있다.
+         * 다른 Provider 계정 연결은 허용
+         */
+        if (oauthAccountRepository
+            .existsByUserIdAndProvider(
+                userId,
+                provider
+            )) {
+            throw new BusinessException(
+                ErrorCode.OAUTH_ACCOUNT_CONFLICT
+            );
+        }
+    }
+
+    /**
      * 본인에게 연결된 OAuth 계정을 해제
      *
      * <p>동시 해제 요청이 OAuth 전용 사용자의 마지막 로그인 수단을

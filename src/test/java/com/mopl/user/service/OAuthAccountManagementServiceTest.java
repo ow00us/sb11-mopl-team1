@@ -562,6 +562,139 @@ class OAuthAccountManagementServiceTest {
             .revokeAllByUserId(userId);
     }
 
+    @Test
+    @DisplayName("연결되지 않은 Provider이면 OAuth 연결을 시작할 수 있다")
+    void validateLinkStart_success() {
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        when(userRepository.existsById(userId))
+            .thenReturn(true);
+
+        when(
+            oauthAccountRepository
+                .existsByUserIdAndProvider(
+                    userId,
+                    OAuthProvider.GOOGLE
+                )
+        ).thenReturn(false);
+
+        oauthAccountManagementService
+            .validateLinkStart(
+                userId,
+                userId,
+                OAuthProvider.GOOGLE
+            );
+
+        verify(userRepository)
+            .existsById(userId);
+
+        verify(oauthAccountRepository)
+            .existsByUserIdAndProvider(
+                userId,
+                OAuthProvider.GOOGLE
+            );
+    }
+
+    @Test
+    @DisplayName("이미 같은 Provider가 연결되어 있으면 연결 시작을 거부한다")
+    void validateLinkStart_fail_whenProviderAlreadyLinked() {
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        when(userRepository.existsById(userId))
+            .thenReturn(true);
+
+        when(
+            oauthAccountRepository
+                .existsByUserIdAndProvider(
+                    userId,
+                    OAuthProvider.KAKAO
+                )
+        ).thenReturn(true);
+
+        assertThatThrownBy(() ->
+            oauthAccountManagementService
+                .validateLinkStart(
+                    userId,
+                    userId,
+                    OAuthProvider.KAKAO
+                )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(
+                ErrorCode.OAUTH_ACCOUNT_CONFLICT
+            );
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 사용자는 OAuth 연결을 시작할 수 없다")
+    void validateLinkStart_fail_whenUserDoesNotExist() {
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        when(userRepository.existsById(userId))
+            .thenReturn(false);
+
+        assertThatThrownBy(() ->
+            oauthAccountManagementService
+                .validateLinkStart(
+                    userId,
+                    userId,
+                    OAuthProvider.NAVER
+                )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(
+                ErrorCode.RESOURCE_NOT_FOUND
+            );
+
+        verifyNoInteractions(
+            oauthAccountRepository
+        );
+    }
+
+    @Test
+    @DisplayName("다른 사용자의 OAuth 연결 시작을 거부한다")
+    void validateLinkStart_fail_whenUserIsNotSelf() {
+        UUID authenticatedUserId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        UUID targetUserId =
+            UUID.fromString(
+                "22222222-2222-2222-2222-222222222222"
+            );
+
+        assertThatThrownBy(() ->
+            oauthAccountManagementService
+                .validateLinkStart(
+                    authenticatedUserId,
+                    targetUserId,
+                    OAuthProvider.GOOGLE
+                )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(
+                ErrorCode.FORBIDDEN
+            );
+
+        verifyNoInteractions(
+            userRepository,
+            oauthAccountRepository
+        );
+    }
+
     private User createUser() {
         return createUser("encoded-password");
     }

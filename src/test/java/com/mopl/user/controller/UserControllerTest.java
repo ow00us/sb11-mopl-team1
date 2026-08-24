@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -30,10 +31,12 @@ import com.mopl.user.entity.UserRole;
 import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.service.UserService;
 import com.mopl.user.service.OAuthAccountManagementService;
+import com.mopl.user.security.oauth.link.OAuthLinkIntentSessionStore;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import java.util.List;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterEach;
@@ -68,6 +71,9 @@ class UserControllerTest {
 
     @MockitoBean
     OAuthAccountManagementService oauthAccountManagementService;
+
+    @MockitoBean
+    OAuthLinkIntentSessionStore oauthLinkIntentSessionStore;
 
     /**
      * 테스트 종료 후 인증 정보 제거
@@ -1042,6 +1048,88 @@ class UserControllerTest {
                 userId,
                 userId
             );
+    }
+
+    @Test
+    @DisplayName("OAuth 계정 연결 시작 시 인증 경로를 반환한다")
+    void startOAuthAccountLink_success()
+        throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        // when & then
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/oauth-accounts/{provider}/link",
+                    userId,
+                    OAuthProvider.GOOGLE
+                )
+            )
+            .andExpect(status().isOk())
+            .andExpect(
+                jsonPath("$.authorizationPath")
+                    .value(
+                        "/oauth2/authorization/google"
+                    )
+            );
+
+        verify(oauthAccountManagementService)
+            .validateLinkStart(
+                userId,
+                userId,
+                OAuthProvider.GOOGLE
+            );
+
+        verify(oauthLinkIntentSessionStore)
+            .save(
+                any(HttpServletRequest.class),
+                eq(userId),
+                eq(OAuthProvider.GOOGLE)
+            );
+    }
+
+    @Test
+    @DisplayName("연결 시작 검증에 실패하면 세션에 연결 의도를 저장하지 않는다")
+    void startOAuthAccountLink_fail_doesNotStoreIntent()
+        throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        doThrow(
+            new BusinessException(
+                ErrorCode.OAUTH_ACCOUNT_CONFLICT
+            )
+        ).when(
+            oauthAccountManagementService
+        ).validateLinkStart(
+            userId,
+            userId,
+            OAuthProvider.KAKAO
+        );
+
+        // when & then
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/oauth-accounts/{provider}/link",
+                    userId,
+                    OAuthProvider.KAKAO
+                )
+            )
+            .andExpect(status().isConflict());
+
+        verifyNoInteractions(
+            oauthLinkIntentSessionStore
+        );
     }
 
     @Test
