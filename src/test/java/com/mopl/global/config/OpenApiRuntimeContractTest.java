@@ -37,6 +37,7 @@ import com.mopl.user.service.PasswordResetService;
 import com.mopl.user.service.UserService;
 import com.mopl.user.service.RefreshTokenService;
 import com.mopl.user.service.OAuthAccountManagementService;
+import com.mopl.user.security.oauth.link.OAuthLinkIntentSessionStore;
 import com.mopl.watchingsession.controller.WatchingSessionController;
 import com.mopl.watchingsession.service.WatchingSessionService;
 import java.io.InputStream;
@@ -162,7 +163,8 @@ class OpenApiRuntimeContractTest {
         "POST /api/playlists/{playlistId}/contents/{contentId}",
         "POST /api/playlists/{playlistId}/subscription",
         "POST /api/reviews",
-        "POST /api/users"
+        "POST /api/users",
+        "POST /api/users/{userId}/oauth-accounts/{provider}/link"
     );
     private static Map<String, Object> contract;
 
@@ -213,6 +215,9 @@ class OpenApiRuntimeContractTest {
 
     @MockitoBean
     OAuthAccountManagementService oauthAccountManagementService;
+
+    @MockitoBean
+    OAuthLinkIntentSessionStore oauthLinkIntentSessionStore;
 
     @MockitoBean
     WatchingSessionService watchingSessionService;
@@ -379,6 +384,52 @@ class OpenApiRuntimeContractTest {
                 ).value(
                     "#/components/schemas/OAuthAccountDto"
                 )
+            )
+
+            /*
+             * 계정 연결 시작 API는 Provider 인증 시작 경로를 반환
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}/link']"
+                        + ".post.responses['200']"
+                        + ".content['*/*'].schema['$ref']"
+                ).value(
+                    "#/components/schemas/OAuthLinkStartResponse"
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}/link']"
+                        + ".post.parameters[*].name"
+                ).value(
+                    org.hamcrest.Matchers.containsInAnyOrder(
+                        "userId",
+                        "provider"
+                    )
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}/link']"
+                        + ".post.parameters"
+                        + "[?(@.name == 'provider')]"
+                        + ".schema.enum"
+                ).value(
+                    org.hamcrest.Matchers.hasItem(
+                        org.hamcrest.Matchers.containsInAnyOrder(
+                            "GOOGLE",
+                            "KAKAO",
+                            "NAVER"
+                        )
+                    )
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.OAuthLinkStartResponse"
+                        + ".properties.authorizationPath.type"
+                ).value("string")
             )
 
             /*

@@ -1731,6 +1731,77 @@ paths:
             "*/*":
               schema:
                 "$ref": "#/components/schemas/ErrorResponse"
+  "/api/users/{userId}/oauth-accounts/{provider}/link":
+    post:
+      tags:
+        - "사용자 관리"
+      summary: "OAuth 계정 연결 인증 시작"
+      description: "현재 사용자 본인에게 OAuth Provider 계정을 연결하기 위한 인증 절차를 시작합니다."
+      operationId: "startOAuthAccountLink"
+      security:
+        - BearerAuth: [ ]
+          CsrfToken: [ ]
+      parameters:
+        - name: "userId"
+          in: "path"
+          description: "OAuth 계정을 연결할 사용자 ID"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+        - name: "provider"
+          in: "path"
+          description: "연결할 OAuth Provider"
+          required: true
+          schema:
+            type: "string"
+            enum:
+              - "GOOGLE"
+              - "KAKAO"
+              - "NAVER"
+      responses:
+        "200":
+          description: "OAuth 계정 연결 인증 시작 성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/OAuthLinkStartResponse"
+        "400":
+          description: "잘못된 사용자 ID 또는 OAuth Provider"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "다른 사용자에게 OAuth 계정을 연결할 권한 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "사용자를 찾을 수 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "409":
+          description: "해당 Provider 계정이 이미 연결됨"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
   "/api/users/{userId}/oauth-accounts/{provider}":
     delete:
       tags:
@@ -3446,6 +3517,16 @@ components:
       required:
         - "provider"
         - "connectedAt"
+    OAuthLinkStartResponse:
+      type: "object"
+      description: "OAuth 계정 연결을 시작할 서버 인증 경로"
+      properties:
+        authorizationPath:
+          type: "string"
+          description: "Spring Security OAuth2 Provider 인증 시작 경로"
+          example: "/oauth2/authorization/google"
+      required:
+        - "authorizationPath"
     ReviewCreateRequest:
       type: "object"
       properties:
