@@ -203,6 +203,48 @@ class OAuthLinkIntentSessionStoreTest {
     }
 
     @Test
+    @DisplayName("저장된 OAuth 연결 의도가 있으면 존재 여부를 반환한다")
+    void hasPendingIntent_returnsTrue_whenIntentExists() {
+        // given
+        MockHttpServletRequest request =
+            new MockHttpServletRequest();
+
+        store.save(
+            request,
+            USER_ID,
+            OAuthProvider.GOOGLE
+        );
+
+        // when
+        boolean result =
+            store.hasPendingIntent(request);
+
+        // then
+        assertThat(result)
+            .isTrue();
+    }
+
+    @Test
+    @DisplayName("세션이 없으면 연결 의도가 없다고 반환하고 세션을 생성하지 않는다")
+    void hasPendingIntent_doesNotCreateSession() {
+        // given
+        MockHttpServletRequest request =
+            new MockHttpServletRequest();
+
+        // when
+        boolean result =
+            store.hasPendingIntent(request);
+
+        // then
+        assertThat(result)
+            .isFalse();
+
+        assertThat(
+            request.getSession(false)
+        ).isNull();
+    }
+
+    @Test
     @DisplayName("OAuth 인증 실패 시 저장된 연결 의도를 제거한다")
     void clear_removesStoredIntent() {
         // given

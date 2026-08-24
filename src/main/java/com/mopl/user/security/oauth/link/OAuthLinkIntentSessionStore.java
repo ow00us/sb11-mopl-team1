@@ -109,6 +109,35 @@ public class OAuthLinkIntentSessionStore {
     }
 
     /**
+     * 현재 HTTP 세션에 OAuth 계정 연결 의도가 존재하는지 확인
+     *
+     * <p>연결 의도의 유효성 검증과 제거는 {@link #consume}에서 수행합니다.
+     * 이 메서드는 일반 로그인과 계정 연결 Callback을 구분하기 위해
+     * 세션 속성의 존재 여부만 확인합니다.</p>
+     *
+     * <p>세션이 없으면 새 세션을 생성하지 않습니다.</p>
+     *
+     * @param request 현재 HTTP 요청
+     * @return 연결 의도 속성이 존재하면 true
+     */
+    public boolean hasPendingIntent(
+        HttpServletRequest request
+    ) {
+        Objects.requireNonNull(
+            request,
+            "HTTP 요청은 필수입니다."
+        );
+
+        HttpSession session =
+            request.getSession(false);
+
+        return session != null
+            && session.getAttribute(
+            ATTRIBUTE_NAME
+        ) != null;
+    }
+
+    /**
      * 현재 세션의 OAuth 연결 의도를 한 번만 소비
      *
      * <p>세션 속성은 검증 전에 먼저 제거합니다. 만료됐거나 Provider가
