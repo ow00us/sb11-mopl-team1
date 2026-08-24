@@ -456,7 +456,11 @@ jobs:
             }'
           }
 
-          delivered="mopl_realtime_relay_delivered_messages_total"
+          # 이 smoke 는 특정 도메인이 아니라 중계 자체를 봅니다. 그래서 어떤 handler 도
+          # 지원하지 않는 eventType 을 보내고, 인스턴스를 건너와 self·duplicate 필터를
+          # 통과했다는 사실을 no_handler 폐기 지표로 확인합니다. delivered 는 handler 까지
+          # 넘어간 건수라 이 메시지에는 오르지 않습니다.
+          no_handler="mopl_realtime_relay_discarded_messages_total.*no_handler"
           duplicate="mopl_realtime_relay_discarded_messages_total.*duplicate"
 
           # 두 인스턴스가 같은 채널을 구독합니다.
@@ -466,8 +470,8 @@ jobs:
           assert_number "$(metric 8080 '^mopl_realtime_relay_subscribed')" 1 "instance a subscribed"
           assert_number "$(metric 8081 '^mopl_realtime_relay_subscribed')" 1 "instance b subscribed"
 
-          delivered_a_before="$(metric 8080 "^$delivered")"
-          delivered_b_before="$(metric 8081 "^$delivered")"
+          no_handler_a_before="$(metric 8080 "$no_handler")"
+          no_handler_b_before="$(metric 8081 "$no_handler")"
           duplicate_b_before="$(metric 8081 "$duplicate")"
 
           message_id="$(uuidgen)"
@@ -480,27 +484,27 @@ jobs:
           redis PUBLISH mopl.realtime.messages "$message" > /dev/null
 
           for attempt in {1..30}; do
-            delivered_a="$(metric 8080 "^$delivered")"
-            delivered_b="$(metric 8081 "^$delivered")"
+            no_handler_a="$(metric 8080 "$no_handler")"
+            no_handler_b="$(metric 8081 "$no_handler")"
             duplicate_b="$(metric 8081 "$duplicate")"
 
-            if [[ "$delivered_a" != "$delivered_a_before" \
-              && "$delivered_b" != "$delivered_b_before" \
+            if [[ "$no_handler_a" != "$no_handler_a_before" \
+              && "$no_handler_b" != "$no_handler_b_before" \
               && "$duplicate_b" != "$duplicate_b_before" ]]; then
               break
             fi
 
-            echo "Waiting for relay delivery ($attempt/30): a=$delivered_a b=$delivered_b"
+            echo "Waiting for relay delivery ($attempt/30): a=$no_handler_a b=$no_handler_b"
             sleep 2
           done
 
-          echo "delivered a: $delivered_a_before -> $delivered_a"
-          echo "delivered b: $delivered_b_before -> $delivered_b"
+          echo "no handler a: $no_handler_a_before -> $no_handler_a"
+          echo "no handler b: $no_handler_b_before -> $no_handler_b"
           echo "duplicate b: $duplicate_b_before -> $duplicate_b"
 
-          # 두 번 보냈지만 각 인스턴스에서 한 번만 전달되어야 합니다.
-          assert_number "$delivered_a" "$((${delivered_a_before%%.*} + 1))" "instance a delivered"
-          assert_number "$delivered_b" "$((${delivered_b_before%%.*} + 1))" "instance b delivered"
+          # 두 번 보냈지만 각 인스턴스에서 한 번만 처리 시도되어야 합니다.
+          assert_number "$no_handler_a" "$((${no_handler_a_before%%.*} + 1))" "instance a no-handler discards"
+          assert_number "$no_handler_b" "$((${no_handler_b_before%%.*} + 1))" "instance b no-handler discards"
           assert_number "$duplicate_b" "$((${duplicate_b_before%%.*} + 1))" "instance b duplicate discards"
 
           # 한 인스턴스가 내려가도 남은 인스턴스는 REST 와 자기 구독을 유지해야 합니다.
@@ -516,22 +520,21 @@ jobs:
           redis CLIENT KILL TYPE pubsub > /dev/null
           wait_for_subscribers 2
 
-          delivered_b_before="$(metric 8081 "^$delivered")"
+          no_handler_b_before="$(metric 8081 "$no_handler")"
           message="${message/$message_id/$(uuidgen)}"
           redis PUBLISH mopl.realtime.messages "$message" > /dev/null
 
           for attempt in {1..30}; do
-            delivered_b="$(metric 8081 "^$delivered")"
+            no_handler_b="$(metric 8081 "$no_handler")"
 
-            if [[ "$delivered_b" != "$delivered_b_before" ]]; then
+            if [[ "$no_handler_b" != "$no_handler_b_before" ]]; then
               echo "Relay delivery recovered after Redis restart."
               exit 0
             fi
 
-            echo "Waiting for relay recovery ($attempt/30): $delivered_b"
+            echo "Waiting for relay recovery ($attempt/30): $no_handler_b"
             sleep 2
           done
-
           echo "Relay delivery did not recover after Redis restart."
           exit 1
 

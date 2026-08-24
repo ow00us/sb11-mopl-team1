@@ -19,7 +19,16 @@ public enum RealtimeRelayDiscardReason {
     SELF("self"),
 
     /** 같은 messageId 를 이미 전달했습니다. */
-    DUPLICATE("duplicate");
+    DUPLICATE("duplicate"),
+
+    /**
+     * 읽었지만 이 인스턴스에 그 eventType 을 지원하는 handler 가 없습니다.
+     *
+     * <p>모든 인스턴스가 같은 코드를 돌리는 정상 상태에서는 0 이어야 합니다. 롤링 배포처럼
+     * 버전이 섞인 동안에는 잠깐 올라갈 수 있고, 계속 오른다면 발행 쪽이 아직 아무도 처리하지
+     * 못하는 eventType 을 내보내고 있다는 뜻입니다.
+     */
+    NO_HANDLER("no_handler");
 
     private final String tag;
 

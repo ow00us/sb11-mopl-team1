@@ -110,5 +110,13 @@ public class RealtimeRelaySubscriber implements MessageListener {
                     handler.getClass().getName(), received.eventType(), received.destination(), e);
             }
         }
+
+        if (!delivered) {
+            // 받아서 필터를 모두 통과했는데 처리할 handler 가 없는 상태입니다. 전달 성공으로
+            // 세면 지표가 이 상황을 가리므로 버린 이유를 따로 남깁니다.
+            metrics.recordDiscarded(RealtimeRelayDiscardReason.NO_HANDLER);
+            log.warn("지원하는 handler 가 없어 실시간 메시지를 버립니다. eventType={}, destination={}",
+                received.eventType(), received.destination());
+        }
     }
 }
