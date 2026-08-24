@@ -456,6 +456,33 @@ class OpenApiRuntimeContractTest {
             );
     }
 
+    /**
+     * 이메일이 없는 OAuth 사용자의 내부 식별 이메일이 외부로 노출되지 않도록
+     * UserDto.email이 null을 허용하는지 검증
+     */
+    @Test
+    void documentsNullableEmailForOAuthUser()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/v3/api-docs")
+            )
+            .andExpect(
+                status().isOk()
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.UserDto"
+                        + ".properties.email.type"
+                ).value(
+                    org.hamcrest.Matchers.containsInAnyOrder(
+                        "string",
+                        "null"
+                    )
+                )
+            );
+    }
+
     @Test
     void includesEveryProductionRestController() throws Exception {
         Set<Class<?>> configuredControllers = Set.of(
