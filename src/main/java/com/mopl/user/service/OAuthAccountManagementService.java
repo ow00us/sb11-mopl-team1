@@ -153,7 +153,7 @@ public class OAuthAccountManagementService {
 
         /*
          * 외부 식별자는 조회와 저장에서 반드시 같은 값을 사용해야 한다.
-         * 앞뒤 공백을 제거한 값을 이후 모든 Repository 호출에 사용한
+         * 앞뒤 공백을 제거한 값을 이후 모든 Repository 호출에 사용
          */
         String normalizedProviderUserId =
             providerUserId.strip();
@@ -178,6 +178,19 @@ public class OAuthAccountManagementService {
                         ErrorCode.RESOURCE_NOT_FOUND
                     )
                 );
+
+        /*
+         * 연결 시작 이후 Callback이 돌아오기 전에 계정이 잠길 수 있다.
+         *
+         * 잠긴 사용자의 OAuth 인증은 실패해야 하며,
+         * 인증 실패 전에 OAuthAccount가 저장되는 부분 성공 상태도
+         * 남아서는 안된다.
+         */
+        if (user.isLocked()) {
+            throw new BusinessException(
+                ErrorCode.FORBIDDEN
+            );
+        }
 
         /*
          * Provider 계정은 전체 서비스에서 한 사용자에게만 연결할 수 있다.

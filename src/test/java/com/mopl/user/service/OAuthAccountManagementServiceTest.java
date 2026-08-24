@@ -700,6 +700,68 @@ class OAuthAccountManagementServiceTest {
     }
 
     @Test
+    @DisplayName("잠긴 사용자에게 OAuth 계정을 연결하지 않는다")
+    void linkVerifiedAccount_fail_whenUserIsLocked() {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        User lockedUser =
+            User.builder()
+                .email("locked-user@example.com")
+                .passwordHash("encoded-password")
+                .name("잠긴 사용자")
+                .profileImageUrl(null)
+                .role(UserRole.USER)
+                .locked(true)
+                .build();
+
+        ReflectionTestUtils.setField(
+            lockedUser,
+            "id",
+            userId
+        );
+
+        when(
+            userRepository.findByIdForUpdate(
+                userId
+            )
+        ).thenReturn(
+            Optional.of(lockedUser)
+        );
+
+        // when & then
+        assertThatThrownBy(() ->
+            oauthAccountManagementService
+                .linkVerifiedAccount(
+                    createLinkIntent(
+                        userId,
+                        OAuthProvider.GOOGLE
+                    ),
+                    OAuthProvider.GOOGLE,
+                    "google-sub-123"
+                )
+        )
+            .isInstanceOf(
+                BusinessException.class
+            )
+            .extracting("errorCode")
+            .isEqualTo(
+                ErrorCode.FORBIDDEN
+            );
+
+        /*
+         * 잠금 상태를 확인한 뒤에는 OAuth 연결 조회나 저장을
+         * 수행하지 않아야 한다.
+         */
+        verifyNoInteractions(
+            oauthAccountRepository
+        );
+    }
+
+    @Test
     @DisplayName("검증된 OAuth 계정을 기존 사용자에게 연결한다")
     void linkVerifiedAccount_success() {
         UUID userId =
