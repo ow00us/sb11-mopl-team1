@@ -15,13 +15,13 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionSubscribeEvent;
 
 /**
- * 클라이언트가 /sub/contents/{contentId}/chat 토픽을 SUBSCRIBE하는 시점에,
- * 그 세션에만 최근 버퍼 메시지를 오래된 순서로 전달한다.
+ * SUBSCRIBE가 인터셉터 체인(인증·인가·존재 검증·구독 개수 제한)을 모두 통과해
+ * 브로커에 실제로 등록된 뒤, 그 세션에만 최근 버퍼 메시지를 오래된 순서로 전달한다.
+ *
+ * 인터셉터가 거부한(preSend가 null을 반환한) SUBSCRIBE는 SessionSubscribeEvent 자체가
+ * 발행되지 않으므로, 구독이 성립하지 않은 요청에는 이 리스너가 실행되지 않는다.
  *
  * watch 토픽 구독, DM 구독 등 다른 목적지의 SUBSCRIBE에는 관여하지 않는다.
- * ContentExistenceCache를 다시 확인하지 않는다 — WatchingSessionSubscribeExistenceInterceptor가
- * 이미 preSend 단계에서 존재하지 않는 콘텐츠의 SUBSCRIBE를 브로커에 도달하기 전에 차단하므로,
- * 이 리스너가 실행되는 시점의 SessionSubscribeEvent는 이미 그 검증을 통과한 것이다.
  */
 @Slf4j
 @Component
