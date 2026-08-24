@@ -4,16 +4,19 @@ import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.config.OAuthLocalCredentialProperties;
 import com.mopl.user.dto.LocalCredentialEmailVerificationRequest;
+import com.mopl.user.dto.LocalCredentialRegistrationRequest;
 import com.mopl.user.entity.User;
 import com.mopl.user.mail.EmailVerificationCodeSender;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.user.security.EmailVerificationCodeGenerator;
 import com.mopl.user.security.EmailVerificationCodeHasher;
+import com.mopl.user.storage.EmailVerificationConsumeResult;
 import com.mopl.user.storage.EmailVerificationIssueResult;
 import com.mopl.user.storage.EmailVerificationStore;
 import java.util.Locale;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 /**
@@ -31,16 +34,13 @@ public class OAuthLocalCredentialService {
         "@oauth.invalid";
 
     private final UserRepository userRepository;
-    private final EmailVerificationCodeGenerator
-        verificationCodeGenerator;
-    private final EmailVerificationCodeHasher
-        verificationCodeHasher;
-    private final EmailVerificationStore
-        verificationStore;
-    private final EmailVerificationCodeSender
-        verificationCodeSender;
-    private final OAuthLocalCredentialProperties
-        properties;
+    private final EmailVerificationCodeGenerator verificationCodeGenerator;
+    private final EmailVerificationCodeHasher verificationCodeHasher;
+    private final EmailVerificationStore verificationStore;
+    private final EmailVerificationCodeSender verificationCodeSender;
+    private final PasswordEncoder passwordEncoder;
+    private final OAuthLocalCredentialRegistrationService registrationService;
+    private final OAuthLocalCredentialProperties properties;
 
     /**
      * 로컬 로그인 ID로 사용할 이메일에 인증 코드를 발송
@@ -68,54 +68,14 @@ public class OAuthLocalCredentialService {
                 request.email()
             );
 
-        /*
-         * OAuth 전용 사용자 내부 식별 이메일 도메인을 실제 로그인 ID로
-         * 등록하지 못하도록 차단
-         */
-        if (isOAuthInternalEmail(
+        validateRequestedEmail(
             normalizedEmail
-        )) {
-            throw new BusinessException(
-                ErrorCode.INVALID_INPUT
-            );
-        }
+        );
 
-        User user =
-            userRepository.findById(userId)
-                .orElseThrow(() ->
-                    new BusinessException(
-                        ErrorCode.RESOURCE_NOT_FOUND
-                    )
-                );
-
-        if (user.isLocked()) {
-            throw new BusinessException(
-                ErrorCode.FORBIDDEN
-            );
-        }
-
-        /*
-         * passwordHash가 이미 존재하면 로컬 로그인이 가능한 사용자
-         * 기존 로그인 이메일 변경 API로 오용하지 못하도록 거부
-         */
-        if (user.getPasswordHash() != null) {
-            throw new BusinessException(
-                ErrorCode.LOCAL_CREDENTIAL_ALREADY_EXISTS
-            );
-        }
-
-        /*
-         * 기존 사용자와 동일한 이메일을 자동 병합하지 않는다.
-         * 이메일 소유권을 확인하더라도 계정 병합은 별도의 강한 인증
-         * 정책이 필요한 작업이므로 현재 요청은 충돌로 거부
-         */
-        if (userRepository.existsByEmail(
+        validateRegistrationCandidate(
+            userId,
             normalizedEmail
-        )) {
-            throw new BusinessException(
-                ErrorCode.EMAIL_DUPLICATE
-            );
-        }
+        );
 
         String verificationCode =
             verificationCodeGenerator.generate();
@@ -179,6 +139,92 @@ public class OAuthLocalCredentialService {
         }
     }
 
+    /**
+     * 인증된 이메일과 새 비밀번호를 로컬 로그인 수단으로 등록
+     *
+     * <p>인증 코드 검증과 비밀번호 인코딩은 DB 트랜잭션 밖에서 수행하고,
+     * 실제 사용자 행 변경은 별도의 트랜잭션 서비스에 위임합니다.</p>
+     *
+     * @param authenticatedUserId JWT 인증 사용자 UUID
+     * @param userId 로컬 로그인 수단을 추가할 사용자 UUID
+     * @param request 인증 코드와 새 비밀번호 요청
+     */
+    public void registerLocalCredential(
+        UUID authenticatedUserId,
+        UUID userId,
+        LocalCredentialRegistrationRequest request
+    ) {
+        validateSelf(
+            authenticatedUserId,
+            userId
+        );
+
+        String normalizedEmail =
+            normalizeEmail(
+                request.email()
+            );
+
+        validateRequestedEmail(
+            normalizedEmail
+        );
+
+        /*
+         * 인증 코드 소비 전에 현재 계정 상태를 먼저 검사
+         * 이미 잠겼거나 로컬 로그인이 추가된 요청 때문에 일회성 코드를
+         * 불필요하게 소비하지 않도록 한다.
+         *
+         * 실제 DB 변경 직전에는 트랜잭션 서비스가 쓰기 잠금과 함께
+         * 동일한 조건을 다시 검사
+         */
+        validateRegistrationCandidate(
+            userId,
+            normalizedEmail
+        );
+
+        String candidateCodeHash =
+            verificationCodeHasher.hash(
+                userId,
+                normalizedEmail,
+                request.verificationCode()
+            );
+
+        EmailVerificationConsumeResult consumeResult =
+            verificationStore.consume(
+                userId,
+                normalizedEmail,
+                candidateCodeHash,
+                properties.getMaxAttempts()
+            );
+
+        /*
+         * 상태 없음, 잘못된 코드, 시도 횟수 초과를 모두 같은 오류로
+         * 반환하여 인증 상태의 구체적인 정보를 노출하지 않는다.
+         */
+        if (
+            consumeResult
+                != EmailVerificationConsumeResult.VERIFIED
+        ) {
+            throw new BusinessException(
+                ErrorCode.EMAIL_VERIFICATION_INVALID
+            );
+        }
+
+        /*
+         * 올바른 인증 코드를 확인한 뒤에만 비용이 큰 BCrypt 연산을
+         * 수행하여 잘못된 코드 요청이 CPU 자원을 불필요하게 사용하지 않도록 한다.
+         */
+        String encodedPassword =
+            passwordEncoder.encode(
+                request.password()
+            );
+
+        registrationService.register(
+            userId,
+            normalizedEmail,
+            encodedPassword
+        );
+    }
+
     private void validateSelf(
         UUID authenticatedUserId,
         UUID userId
@@ -195,6 +241,58 @@ public class OAuthLocalCredentialService {
         ) {
             throw new BusinessException(
                 ErrorCode.FORBIDDEN
+            );
+        }
+    }
+
+    /**
+     * OAuth 내부 식별용 예약 이메일을 실제 로그인 ID로 사용할 수 없도록 검증
+     */
+    private void validateRequestedEmail(
+        String normalizedEmail
+    ) {
+        if (isOAuthInternalEmail(
+            normalizedEmail
+        )) {
+            throw new BusinessException(
+                ErrorCode.INVALID_INPUT
+            );
+        }
+    }
+
+    /**
+     * 인증 코드 발급 및 소비 전 현재 사용자가 로컬 로그인 수단을
+     * 추가할 수 있는 상태인지 검증
+     */
+    private void validateRegistrationCandidate(
+        UUID userId,
+        String normalizedEmail
+    ) {
+        User user =
+            userRepository.findById(userId)
+                .orElseThrow(() ->
+                    new BusinessException(
+                        ErrorCode.RESOURCE_NOT_FOUND
+                    )
+                );
+
+        if (user.isLocked()) {
+            throw new BusinessException(
+                ErrorCode.FORBIDDEN
+            );
+        }
+
+        if (user.getPasswordHash() != null) {
+            throw new BusinessException(
+                ErrorCode.LOCAL_CREDENTIAL_ALREADY_EXISTS
+            );
+        }
+
+        if (userRepository.existsByEmail(
+            normalizedEmail
+        )) {
+            throw new BusinessException(
+                ErrorCode.EMAIL_DUPLICATE
             );
         }
     }

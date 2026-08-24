@@ -11,12 +11,14 @@ import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.config.OAuthLocalCredentialProperties;
 import com.mopl.user.dto.LocalCredentialEmailVerificationRequest;
+import com.mopl.user.dto.LocalCredentialRegistrationRequest;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.mail.EmailVerificationCodeSender;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.user.security.EmailVerificationCodeGenerator;
 import com.mopl.user.security.EmailVerificationCodeHasher;
+import com.mopl.user.storage.EmailVerificationConsumeResult;
 import com.mopl.user.storage.EmailVerificationIssueResult;
 import com.mopl.user.storage.EmailVerificationStore;
 import java.time.Duration;
@@ -29,6 +31,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mail.MailSendException;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 /**
  * OAuth 로컬 로그인 이메일 인증 코드 발급 서비스 검증
@@ -57,19 +62,22 @@ class OAuthLocalCredentialServiceTest {
     UserRepository userRepository;
 
     @Mock
-    EmailVerificationCodeGenerator
-        verificationCodeGenerator;
+    EmailVerificationCodeGenerator verificationCodeGenerator;
 
     @Mock
-    EmailVerificationCodeHasher
-        verificationCodeHasher;
+    EmailVerificationCodeHasher verificationCodeHasher;
 
     @Mock
     EmailVerificationStore verificationStore;
 
     @Mock
-    EmailVerificationCodeSender
-        verificationCodeSender;
+    EmailVerificationCodeSender verificationCodeSender;
+
+    @Mock
+    PasswordEncoder passwordEncoder;
+
+    @Mock
+    OAuthLocalCredentialRegistrationService registrationService;
 
     OAuthLocalCredentialProperties properties;
     OAuthLocalCredentialService service;
@@ -100,6 +108,8 @@ class OAuthLocalCredentialServiceTest {
                 verificationCodeHasher,
                 verificationStore,
                 verificationCodeSender,
+                passwordEncoder,
+                registrationService,
                 properties
             );
     }
@@ -468,6 +478,210 @@ class OAuthLocalCredentialServiceTest {
                 USER_ID,
                 CODE_HASH
             );
+    }
+
+    @Test
+    @DisplayName("검증된 인증 코드로 실제 이메일과 비밀번호를 등록한다")
+    void registerLocalCredential_success() {
+        // given
+        prepareRegistrationRequest();
+
+        when(
+            verificationStore.consume(
+                USER_ID,
+                "user@example.com",
+                CODE_HASH,
+                5
+            )
+        ).thenReturn(
+            EmailVerificationConsumeResult.VERIFIED
+        );
+
+        when(
+            passwordEncoder.encode(
+                "Password1!"
+            )
+        ).thenReturn(
+            "encoded-password"
+        );
+
+        LocalCredentialRegistrationRequest request =
+            new LocalCredentialRegistrationRequest(
+                " User@Example.com ",
+                RAW_CODE,
+                "Password1!"
+            );
+
+        // when
+        service.registerLocalCredential(
+            USER_ID,
+            USER_ID,
+            request
+        );
+
+        // then
+        verify(registrationService)
+            .register(
+                USER_ID,
+                "user@example.com",
+                "encoded-password"
+            );
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+        value = EmailVerificationConsumeResult.class,
+        names = {
+            "NOT_FOUND",
+            "INVALID",
+            "ATTEMPTS_EXHAUSTED"
+        }
+    )
+    @DisplayName("유효하지 않은 인증 상태는 동일한 400 오류로 처리한다")
+    void registerLocalCredential_rejectsInvalidVerification(
+        EmailVerificationConsumeResult consumeResult
+    ) {
+        // given
+        prepareRegistrationRequest();
+
+        when(
+            verificationStore.consume(
+                USER_ID,
+                "user@example.com",
+                CODE_HASH,
+                5
+            )
+        ).thenReturn(
+            consumeResult
+        );
+
+        LocalCredentialRegistrationRequest request =
+            new LocalCredentialRegistrationRequest(
+                "user@example.com",
+                RAW_CODE,
+                "Password1!"
+            );
+
+        // when
+        BusinessException exception =
+            catchThrowableOfType(
+                () ->
+                    service.registerLocalCredential(
+                        USER_ID,
+                        USER_ID,
+                        request
+                    ),
+                BusinessException.class
+            );
+
+        // then
+        assertThat(exception.getErrorCode())
+            .isEqualTo(
+                ErrorCode.EMAIL_VERIFICATION_INVALID
+            );
+
+        verify(
+            passwordEncoder,
+            never()
+        ).encode(
+            "Password1!"
+        );
+
+        verifyNoInteractions(
+            registrationService
+        );
+    }
+
+    @Test
+    @DisplayName("인증 성공 후에만 비밀번호를 BCrypt로 인코딩한다")
+    void registerLocalCredential_encodesPasswordAfterVerification() {
+        // given
+        prepareRegistrationRequest();
+
+        when(
+            verificationStore.consume(
+                USER_ID,
+                "user@example.com",
+                CODE_HASH,
+                5
+            )
+        ).thenReturn(
+            EmailVerificationConsumeResult.VERIFIED
+        );
+
+        when(
+            passwordEncoder.encode(
+                "Password1!"
+            )
+        ).thenReturn(
+            "encoded-password"
+        );
+
+        LocalCredentialRegistrationRequest request =
+            new LocalCredentialRegistrationRequest(
+                "user@example.com",
+                RAW_CODE,
+                "Password1!"
+            );
+
+        // when
+        service.registerLocalCredential(
+            USER_ID,
+            USER_ID,
+            request
+        );
+
+        // then
+        org.mockito.InOrder inOrder =
+            org.mockito.Mockito.inOrder(
+                verificationStore,
+                passwordEncoder,
+                registrationService
+            );
+
+        inOrder.verify(verificationStore)
+            .consume(
+                USER_ID,
+                "user@example.com",
+                CODE_HASH,
+                5
+            );
+
+        inOrder.verify(passwordEncoder)
+            .encode(
+                "Password1!"
+            );
+
+        inOrder.verify(registrationService)
+            .register(
+                USER_ID,
+                "user@example.com",
+                "encoded-password"
+            );
+    }
+
+    private void prepareRegistrationRequest() {
+        when(
+            userRepository.findById(USER_ID)
+        ).thenReturn(
+            Optional.of(
+                oauthOnlyUser(false)
+            )
+        );
+
+        when(
+            userRepository.existsByEmail(
+                "user@example.com"
+            )
+        ).thenReturn(false);
+
+        when(
+            verificationCodeHasher.hash(
+                USER_ID,
+                "user@example.com",
+                RAW_CODE
+            )
+        ).thenReturn(CODE_HASH);
     }
 
     private void prepareIssueRequest() {
