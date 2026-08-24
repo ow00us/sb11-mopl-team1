@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.AuthenticationFailureHandler;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -46,13 +47,18 @@ public class OAuth2AuthenticationFailureHandler
     ) throws IOException, ServletException {
         SecurityContextHolder.clearContext();
 
-        /*
-         * 사용자 이메일, Provider Access Token 및 예외 메시지는
-         * 로그에 남기지 않고 예외 타입만 기록
-         */
+        String oauthErrorCode =
+            exception instanceof OAuth2AuthenticationException
+                oauthException
+                ? oauthException
+                  .getError()
+                  .getErrorCode()
+                : "not_available";
+
         log.warn(
-            "OAuth2 authentication failed: {}",
-            exception.getClass().getSimpleName()
+            "OAuth2 authentication failed: type={}, errorCode={}",
+            exception.getClass().getSimpleName(),
+            oauthErrorCode
         );
 
         URI failureRedirectUri =

@@ -3,6 +3,8 @@ package com.mopl.user.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -19,6 +21,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -449,53 +452,89 @@ class OAuthUserProvisioningServiceTest {
     }
 
     @Test
-    @DisplayName("신규 OAuth 사용자 이메일이 없으면 생성하지 않는다")
-    void resolveOrCreate_rejectsMissingEmail() {
+    @DisplayName("이메일이 없는 OAuth 사용자는 내부 식별 이메일로 생성한다")
+    void resolveOrCreate_createsInternalEmailWhenEmailIsMissing() {
         // given
         when(
             oauthAccountRepository
                 .findByProviderAndProviderUserId(
-                    OAuthProvider.GOOGLE,
-                    "google-sub-123"
+                    OAuthProvider.KAKAO,
+                    "kakao-user-123"
                 )
         ).thenReturn(
             Optional.empty()
         );
 
-        // when & then
-        assertThatThrownBy(() ->
-            provisioningService.resolveOrCreate(
-                OAuthProvider.GOOGLE,
-                "google-sub-123",
-                null,
-                "Google 사용자",
-                null
-            )
-        )
-            .isInstanceOf(
-                OAuth2AuthenticationException.class
-            )
-            .satisfies(exception -> {
-                OAuth2AuthenticationException oauthException =
-                    (OAuth2AuthenticationException) exception;
-
-                assertThat(
-                    oauthException
-                        .getError()
-                        .getErrorCode()
-                ).isEqualTo(
-                    "oauth_email_required"
-                );
-            });
-
-        verify(oauthUserCreationService, never())
-            .create(
-                any(),
-                any(),
-                any(),
-                any(),
+        when(
+            userRepository.existsByEmail(
                 any()
+            )
+        ).thenReturn(false);
+
+        User createdUser =
+            User.builder()
+                .email("generated@oauth.invalid")
+                .passwordHash(null)
+                .name("Kakao 사용자")
+                .role(UserRole.USER)
+                .locked(false)
+                .build();
+
+        when(
+            oauthUserCreationService.create(
+                eq(OAuthProvider.KAKAO),
+                eq("kakao-user-123"),
+                any(),
+                eq("Kakao 사용자"),
+                isNull()
+            )
+        ).thenReturn(createdUser);
+
+        // when
+        User result =
+            provisioningService.resolveOrCreate(
+                OAuthProvider.KAKAO,
+                "kakao-user-123",
+                null,
+                "Kakao 사용자",
+                null
             );
+
+        // then
+        assertThat(result)
+            .isSameAs(createdUser);
+
+        ArgumentCaptor<String> emailCaptor =
+            ArgumentCaptor.forClass(String.class);
+
+        verify(oauthUserCreationService)
+            .create(
+                eq(OAuthProvider.KAKAO),
+                eq("kakao-user-123"),
+                emailCaptor.capture(),
+                eq("Kakao 사용자"),
+                isNull()
+            );
+
+        String generatedEmail =
+            emailCaptor.getValue();
+
+        assertThat(generatedEmail)
+            .startsWith("kakao-")
+            .endsWith("@oauth.invalid");
+
+        assertThat(generatedEmail)
+            .matches(
+                "kakao-[0-9a-f]{8}-"
+                    + "[0-9a-f]{4}-"
+                    + "[0-9a-f]{4}-"
+                    + "[0-9a-f]{4}-"
+                    + "[0-9a-f]{12}"
+                    + "@oauth\\.invalid"
+            );
+
+        verify(userRepository)
+            .existsByEmail(generatedEmail);
     }
 
     @Test
