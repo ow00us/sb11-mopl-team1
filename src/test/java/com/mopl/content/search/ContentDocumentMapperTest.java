@@ -43,6 +43,9 @@ class ContentDocumentMapperTest {
         assertThat(document.getAverageRating()).isEqualTo(content.getAverageRating().doubleValue());
         assertThat(document.getCreatedAt())
                 .isEqualTo(LocalDateTime.ofInstant(content.getCreatedAt(), ZoneOffset.UTC));
+        assertThat(document.getReviewCount()).isEqualTo(content.getReviewCount().intValue());
+        assertThat(document.getContentId()).isEqualTo(content.getId().toString());
+        assertThat(document.getThumbnailUrl()).isEqualTo(content.getThumbnailUrl());
     }
 
     // ── toUpdateFields ───────────────────────────────────────────────────────
@@ -69,6 +72,21 @@ class ContentDocumentMapperTest {
         java.util.List<String> tags = (java.util.List<String>) fields.get("tags");
         assertThat(tags).containsExactlyInAnyOrderElementsOf(content.getTags());
         assertThat(fields.get("averageRating")).isEqualTo(content.getAverageRating().doubleValue());
+        assertThat(fields.get("reviewCount")).isEqualTo(content.getReviewCount().intValue());
+        assertThat(fields.get("thumbnailUrl")).isEqualTo(content.getThumbnailUrl());
+        assertThat(fields).doesNotContainKey("contentId");
+    }
+
+    @Test
+    @DisplayName("toUpdateFields()는 thumbnailUrl이 null이어도 예외 없이 null 값을 그대로 담는다")
+    void toUpdateFields_nullThumbnailUrl_mapsNullWithoutException() {
+        Content content = content();
+        ReflectionTestUtils.setField(content, "thumbnailUrl", null);
+
+        Map<String, Object> fields = mapper.toUpdateFields(content);
+
+        assertThat(fields).containsKey("thumbnailUrl");
+        assertThat(fields.get("thumbnailUrl")).isNull();
     }
 
     @Test
@@ -89,12 +107,14 @@ class ContentDocumentMapperTest {
                 .type(ContentType.MOVIE)
                 .title("제목")
                 .description("설명")
+                .thumbnailUrl("https://example.com/thumb.jpg")
                 .build();
         content.addTag("action");
         content.addTag("sf");
         ReflectionTestUtils.setField(content, "id", UUID.randomUUID());
         ReflectionTestUtils.setField(content, "createdAt", Instant.now());
         ReflectionTestUtils.setField(content, "averageRating", new BigDecimal("4.5"));
+        ReflectionTestUtils.setField(content, "reviewCount", 3L);
         return content;
     }
 }
