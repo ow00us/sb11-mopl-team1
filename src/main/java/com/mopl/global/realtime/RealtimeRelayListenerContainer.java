@@ -18,6 +18,17 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 @Slf4j
 public class RealtimeRelayListenerContainer extends RedisMessageListenerContainer {
 
+    /**
+     * 실제로 구독이 붙어 있는지입니다.
+     *
+     * <p>실행 중 여부만으로는 부족합니다. 구독이 붙지 않은 채 실행 중으로 남을 수 있어 실제로
+     * 듣고 있는지까지 봅니다. 다시 시작할지 판단하는 쪽과 상태를 보고하는 쪽이 같은 기준을
+     * 써야 하므로 여기 한 곳에 둡니다.
+     */
+    public boolean isSubscribed() {
+        return isRunning() && isListening();
+    }
+
     @Override
     public void start() {
         try {

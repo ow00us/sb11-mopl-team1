@@ -27,15 +27,18 @@ public class RealtimeRelayPublisher {
     private final StringRedisTemplate stringRedisTemplate;
     private final ObjectMapper objectMapper;
     private final RealtimeInstanceId instanceId;
+    private final RealtimeRelayMetrics metrics;
 
     public RealtimeRelayPublisher(
         StringRedisTemplate stringRedisTemplate,
         ObjectMapper objectMapper,
-        RealtimeInstanceId instanceId
+        RealtimeInstanceId instanceId,
+        RealtimeRelayMetrics metrics
     ) {
         this.stringRedisTemplate = stringRedisTemplate;
         this.objectMapper = objectMapper;
         this.instanceId = instanceId;
+        this.metrics = metrics;
     }
 
     /**
@@ -54,18 +57,23 @@ public class RealtimeRelayPublisher {
             throw new IllegalArgumentException("destination 은 비어 있을 수 없습니다.");
         }
 
-        RealtimeMessage message = new RealtimeMessage(
-            UUID.randomUUID(),
-            instanceId.value(),
-            eventType,
-            destination,
-            objectMapper.valueToTree(payload));
-
         try {
+            // payload 직렬화도 발행 실패로 다룹니다. try 밖에 두면 변환이 실패했을 때
+            // failed 지표가 오르지 않고 예외가 호출자로 나가, 반환값으로 실패를 알린다는
+            // 이 메서드의 계약이 깨집니다.
+            RealtimeMessage message = new RealtimeMessage(
+                UUID.randomUUID(),
+                instanceId.value(),
+                eventType,
+                destination,
+                objectMapper.valueToTree(payload));
+
             stringRedisTemplate.convertAndSend(
                 RealtimeChannels.MESSAGES, objectMapper.writeValueAsString(message));
+            metrics.recordPublishSucceeded();
             return true;
         } catch (Exception e) {
+            metrics.recordPublishFailed();
             log.warn("실시간 메시지 중계 발행에 실패했습니다. eventType={}, destination={}",
                 eventType, destination, e);
             return false;
