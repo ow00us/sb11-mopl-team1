@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.mopl.directmessage.entity.Conversation;
+import com.mopl.directmessage.entity.ConversationPairKey;
 import com.mopl.directmessage.entity.ConversationParticipant;
 import com.mopl.directmessage.entity.ParticipantSlot;
 import com.mopl.global.config.JpaConfig;
@@ -111,7 +112,12 @@ public class ConversationParticipantRepositoryTest {
     void saveAndFindParticipants() {
         // given
         Conversation conversation =
-            conversationRepository.saveAndFlush(Conversation.create());
+            conversationRepository.saveAndFlush(
+                Conversation.create(
+                    USER_ID_1,
+                    USER_ID_2
+                )
+            );
 
         ConversationParticipant participant1 =
             ConversationParticipant.create(
@@ -155,7 +161,12 @@ public class ConversationParticipantRepositoryTest {
     void saveParticipantsWithSameSlotFails() {
         // given
         Conversation conversation =
-            conversationRepository.saveAndFlush(Conversation.create());
+            conversationRepository.saveAndFlush(
+                Conversation.create(
+                    USER_ID_1,
+                    USER_ID_2
+                )
+            );
 
         ConversationParticipant participant1 =
             ConversationParticipant.create(
@@ -184,7 +195,12 @@ public class ConversationParticipantRepositoryTest {
     void saveSameUserInBothSlotsFails() {
         // given
         Conversation conversation =
-            conversationRepository.saveAndFlush(Conversation.create());
+            conversationRepository.saveAndFlush(
+                Conversation.create(
+                    USER_ID_1,
+                    USER_ID_2
+                )
+            );
 
         ConversationParticipant participant1 =
             ConversationParticipant.create(
@@ -222,7 +238,12 @@ public class ConversationParticipantRepositoryTest {
         );
 
         Conversation conversation =
-            conversationRepository.saveAndFlush(Conversation.create());
+            conversationRepository.saveAndFlush(
+                Conversation.create(
+                    USER_ID_1,
+                    USER_ID_2
+                )
+            );
 
         ConversationParticipant participant1 =
             ConversationParticipant.create(
@@ -259,11 +280,32 @@ public class ConversationParticipantRepositoryTest {
     @DisplayName("서로 다른 대화에서는 같은 슬롯을 사용할 수 있음")
     void saveSameSlotInDifferentConversations() {
         // given
+        UUID userId3 =
+            UUID.fromString(
+                "33333333-3333-3333-3333-333333333333"
+            );
+
+        insertUser(
+            userId3,
+            "third@example.com",
+            "third"
+        );
+
         Conversation conversation1 =
-            conversationRepository.saveAndFlush(Conversation.create());
+            conversationRepository.saveAndFlush(
+                Conversation.create(
+                    USER_ID_1,
+                    USER_ID_2
+                )
+            );
 
         Conversation conversation2 =
-            conversationRepository.saveAndFlush(Conversation.create());
+            conversationRepository.saveAndFlush(
+                Conversation.create(
+                    USER_ID_2,
+                    userId3
+                )
+            );
 
         ConversationParticipant participant1 =
             ConversationParticipant.create(
@@ -309,12 +351,18 @@ public class ConversationParticipantRepositoryTest {
 
         Conversation targetConversation =
             conversationRepository.saveAndFlush(
-                Conversation.create()
+                Conversation.create(
+                    USER_ID_1,
+                    USER_ID_2
+                )
             );
 
         Conversation otherConversation =
             conversationRepository.saveAndFlush(
-                Conversation.create()
+                Conversation.create(
+                    USER_ID_1,
+                    userId3
+                )
             );
 
         participantRepository.saveAllAndFlush(
@@ -358,6 +406,8 @@ public class ConversationParticipantRepositoryTest {
 
     private void insertConversation(
         UUID conversationId,
+        UUID firstUserId,
+        UUID secondUserId,
         Instant createdAt
     ) {
         jdbcTemplate.update(
@@ -365,13 +415,18 @@ public class ConversationParticipantRepositoryTest {
             INSERT INTO conversations (
                 id,
                 created_at,
-                updated_at
+                updated_at,
+                participant_pair_key
             )
-            VALUES (?, ?, ?)
+            VALUES (?, ?, ?, ?)
             """,
             conversationId,
             Timestamp.from(createdAt),
-            Timestamp.from(createdAt)
+            Timestamp.from(createdAt),
+            ConversationPairKey.create(
+                firstUserId,
+                secondUserId
+            )
         );
     }
 
@@ -418,6 +473,17 @@ public class ConversationParticipantRepositoryTest {
             "third"
         );
 
+        UUID userId4 =
+            UUID.fromString(
+                "44444444-4444-4444-4444-444444444444"
+            );
+
+        insertUser(
+            userId4,
+            "fourth@example.com",
+            "fourth"
+        );
+
         UUID conversationId1 =
             UUID.fromString(
                 "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"
@@ -441,16 +507,22 @@ public class ConversationParticipantRepositoryTest {
 
         insertConversation(
             conversationId1,
+            USER_ID_1,
+            USER_ID_2,
             firstTime
         );
 
         insertConversation(
             conversationId2,
+            USER_ID_1,
+            userId3,
             secondTime
         );
 
         insertConversation(
             conversationId3,
+            USER_ID_1,
+            userId4,
             secondTime
         );
 
@@ -497,7 +569,7 @@ public class ConversationParticipantRepositoryTest {
         insertParticipant(
             UUID.randomUUID(),
             conversationId3,
-            USER_ID_2,
+            userId4,
             ParticipantSlot.SECOND,
             secondTime
         );

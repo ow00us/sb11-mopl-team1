@@ -106,7 +106,10 @@ public class ConversationService {
 
         Conversation conversation =
             conversationRepository.save(
-                Conversation.create()
+                Conversation.create(
+                    requesterId,
+                    withUserId
+                )
             );
 
         ConversationParticipant requester =

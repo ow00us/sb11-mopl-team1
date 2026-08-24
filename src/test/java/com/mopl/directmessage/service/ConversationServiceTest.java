@@ -101,7 +101,10 @@ class ConversationServiceTest {
             createUser(WITH_USER_ID, "상대 사용자");
 
         Conversation conversation =
-            Conversation.create();
+            Conversation.create(
+                REQUESTER_ID,
+                WITH_USER_ID
+            );
 
         ReflectionTestUtils.setField(
             conversation,
@@ -225,7 +228,10 @@ class ConversationServiceTest {
             createUser(WITH_USER_ID, "상대 사용자");
 
         Conversation conversation =
-            Conversation.create();
+            Conversation.create(
+                REQUESTER_ID,
+                WITH_USER_ID
+            );
 
         ReflectionTestUtils.setField(
             conversation,
@@ -403,7 +409,10 @@ class ConversationServiceTest {
     void getConversation_participant_returnsConversation() {
         // given
         Conversation conversation =
-            Conversation.create();
+            Conversation.create(
+                REQUESTER_ID,
+                WITH_USER_ID
+            );
 
         ReflectionTestUtils.setField(
             conversation,
