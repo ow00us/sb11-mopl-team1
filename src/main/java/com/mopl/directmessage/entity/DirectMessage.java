@@ -22,6 +22,9 @@ public class DirectMessage extends BaseEntity {
     @Column(name = "sender_id", nullable = false)
     private UUID senderId;
 
+    @Column(name = "message_sequence", nullable = false)
+    private long messageSequence;
+
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
@@ -31,21 +34,25 @@ public class DirectMessage extends BaseEntity {
     private DirectMessage(
         UUID conversationId,
         UUID senderId,
+        long messageSequence,
         String content
     ) {
         this.conversationId = conversationId;
         this.senderId = senderId;
+        this.messageSequence = messageSequence;
         this.content = content;
     }
 
     public static DirectMessage create(
         UUID conversationId,
         UUID senderId,
+        long messageSequence,
         String content
     ) {
         return new DirectMessage(
             conversationId,
             senderId,
+            messageSequence,
             content
         );
     }

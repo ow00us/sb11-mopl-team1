@@ -3,6 +3,7 @@ package com.mopl.directmessage.service;
 import com.mopl.directmessage.dto.DirectMessageCreatedEvent;
 import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.directmessage.repository.DirectMessageRepository;
+import com.mopl.directmessage.repository.DirectMessageSequenceGenerator;
 import com.mopl.directmessage.entity.ConversationParticipant;
 import com.mopl.directmessage.dto.DirectMessageDto;
 import com.mopl.directmessage.entity.DirectMessage;
@@ -39,6 +40,7 @@ public class DirectMessageService {
     private static final int MAX_LIMIT = 100;
 
     private final DirectMessageRepository directMessageRepository;
+    private final DirectMessageSequenceGenerator sequenceGenerator;
     private final ConversationParticipantRepository participantRepository;
     private final UserRepository userRepository;
     private final ApplicationEventPublisher eventPublisher;
@@ -360,10 +362,14 @@ public class DirectMessageService {
         Map<UUID, UserSummary> userSummaries =
             getUserSummaries(participants);
 
+        long messageSequence =
+            sequenceGenerator.next(conversationId);
+
         DirectMessage directMessage =
             DirectMessage.create(
                 conversationId,
                 senderId,
+                messageSequence,
                 content
             );
 

@@ -23,6 +23,7 @@ import com.mopl.directmessage.entity.ParticipantSlot;
 import com.mopl.directmessage.event.DirectMessageOutboxEventFactory;
 import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.directmessage.repository.DirectMessageRepository;
+import com.mopl.directmessage.repository.DirectMessageSequenceGenerator;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
@@ -74,6 +75,9 @@ class DirectMessageServiceTest {
 
     @Mock
     DirectMessageRepository directMessageRepository;
+
+    @Mock
+    DirectMessageSequenceGenerator sequenceGenerator;
 
     @Mock
     ConversationParticipantRepository participantRepository;
@@ -375,6 +379,7 @@ class DirectMessageServiceTest {
         DirectMessage message = DirectMessage.create(
             CONVERSATION_ID,
             senderId,
+            1L,
             content
         );
 
@@ -795,6 +800,10 @@ class DirectMessageServiceTest {
         // given
         stubParticipantsAndUsers();
 
+        when(
+            sequenceGenerator.next(CONVERSATION_ID)
+        ).thenReturn(1L);
+
         UUID messageId =
             UUID.fromString(
                 "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
@@ -861,6 +870,9 @@ class DirectMessageServiceTest {
         assertThat(savedMessage.getSenderId())
             .isEqualTo(USER_ID_1);
 
+        assertThat(savedMessage.getMessageSequence())
+            .isEqualTo(1L);
+
         assertThat(savedMessage.getContent())
             .isEqualTo("반가워요!");
 
@@ -878,6 +890,9 @@ class DirectMessageServiceTest {
 
         assertThat(result.content())
             .isEqualTo("반가워요!");
+
+        assertThat(result.messageSequence())
+            .isEqualTo(1L);
 
         verify(outboxEventFactory)
             .create(
@@ -901,11 +916,15 @@ class DirectMessageServiceTest {
 
         InOrder inOrder =
             inOrder(
+                sequenceGenerator,
                 directMessageRepository,
                 outboxEventFactory,
                 outboxRecorder,
                 eventPublisher
             );
+
+        inOrder.verify(sequenceGenerator)
+            .next(CONVERSATION_ID);
 
         inOrder.verify(directMessageRepository)
             .save(
@@ -938,6 +957,10 @@ class DirectMessageServiceTest {
     void create_outboxRecordFails_doesNotPublishEvent() {
         // given
         stubParticipantsAndUsers();
+
+        when(
+            sequenceGenerator.next(CONVERSATION_ID)
+        ).thenReturn(1L);
 
         UUID messageId =
             UUID.fromString(
@@ -1036,6 +1059,7 @@ class DirectMessageServiceTest {
             participantRepository,
             userRepository,
             directMessageRepository,
+            sequenceGenerator,
             outboxEventFactory,
             outboxRecorder,
             eventPublisher

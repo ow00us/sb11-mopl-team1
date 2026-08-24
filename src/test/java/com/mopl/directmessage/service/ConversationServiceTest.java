@@ -800,6 +800,7 @@ class ConversationServiceTest {
             DirectMessage.create(
                 CONVERSATION_ID,
                 WITH_USER_ID,
+                1L,
                 "최근 메시지"
             );
 

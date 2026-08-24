@@ -23,6 +23,12 @@ public class Conversation extends BaseEntity {
     )
     private String participantPairKey;
 
+    @Column(
+        name = "next_message_sequence",
+        nullable = false
+    )
+    private long nextMessageSequence;
+
     private Conversation(
         String participantPairKey
     ) {
