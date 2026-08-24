@@ -2,7 +2,7 @@ package com.mopl.user.security.oauth;
 
 import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.entity.User;
-import com.mopl.user.service.OAuthUserProvisioningService;
+import com.mopl.user.security.oauth.link.OAuthUserResolutionService;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.authentication.LockedException;
@@ -22,7 +22,7 @@ import org.springframework.stereotype.Service;
  *
  * <p>현재 Naver 애플리케이션은 이메일 권한을 사용하지 않으므로 이메일을
  * 계정 식별이나 자동 연결에 사용하지 않습니다. 신규 사용자의 내부 식별
- * 이메일 생성은 {@link OAuthUserProvisioningService}에 위임합니다.</p>
+ * 이메일 생성은 {@link OAuthUserResolutionService}에 위임합니다.</p>
  *
  * <p>Naver 외부 네트워크 요청은 DB 트랜잭션 밖에서 완료하고,
  * 사용자 조회·생성은 Provisioning Service의 별도 트랜잭션에서
@@ -47,8 +47,8 @@ public class NaverOAuth2UserService
     private static final String DEFAULT_NAVER_USER_NAME =
         "Naver 사용자";
 
-    private final OAuthUserProvisioningService
-        provisioningService;
+    private final OAuthUserResolutionService
+        userResolutionService;
 
     private final OAuth2UserService<OAuth2UserRequest, OAuth2User>
         delegate;
@@ -56,15 +56,15 @@ public class NaverOAuth2UserService
     /**
      * 제한 시간이 적용된 Naver OAuth2 delegate를 주입받아 사용
      *
-     * @param provisioningService MOPL 사용자 조회·생성 서비스
+     * @param userResolutionService OAuth 로그인·계정 연결 분기 서비스
      * @param delegate Naver UserInfo 조회 delegate
      */
     public NaverOAuth2UserService(
-        OAuthUserProvisioningService provisioningService,
+        OAuthUserResolutionService userResolutionService,
         @Qualifier("naverOAuth2UserDelegate")
         OAuth2UserService<OAuth2UserRequest, OAuth2User> delegate
     ) {
-        this.provisioningService = provisioningService;
+        this.userResolutionService = userResolutionService;
         this.delegate = delegate;
     }
 
@@ -148,7 +148,7 @@ public class NaverOAuth2UserService
          * 내부 식별 이메일을 생성
          */
         User user =
-            provisioningService.resolveOrCreate(
+            userResolutionService.resolve(
                 OAuthProvider.NAVER,
                 providerUserId,
                 null,

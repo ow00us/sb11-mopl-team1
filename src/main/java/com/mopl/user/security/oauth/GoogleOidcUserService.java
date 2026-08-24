@@ -2,7 +2,7 @@ package com.mopl.user.security.oauth;
 
 import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.entity.User;
-import com.mopl.user.service.OAuthUserProvisioningService;
+import com.mopl.user.security.oauth.link.OAuthUserResolutionService;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserService;
 import org.springframework.security.authentication.LockedException;
@@ -21,7 +21,7 @@ import org.springframework.stereotype.Service;
  * 고유 식별자로 사용합니다.</p>
  *
  * <p>Google 네트워크 요청은 DB 트랜잭션 밖에서 완료하고,
- * 사용자 조회·생성은 {@link OAuthUserProvisioningService}의
+ * 사용자 조회·생성은 {@link OAuthUserResolutionService}의
  * 별도 트랜잭션에서 처리합니다.</p>
  */
 @Service
@@ -46,8 +46,7 @@ public class GoogleOidcUserService
     private static final String DEFAULT_GOOGLE_USER_NAME =
         "Google 사용자";
 
-    private final OAuthUserProvisioningService
-        provisioningService;
+    private final OAuthUserResolutionService userResolutionService;
 
     private final OAuth2UserService<OidcUserRequest, OidcUser>
         delegate;
@@ -59,12 +58,12 @@ public class GoogleOidcUserService
      * 분리하여 운영 코드에서 기본 무제한 클라이언트를 직접 생성하지 않습니다.</p>
      */
     public GoogleOidcUserService(
-        OAuthUserProvisioningService provisioningService,
+        OAuthUserResolutionService userResolutionService,
         @Qualifier("googleOidcUserDelegate")
         OAuth2UserService<OidcUserRequest, OidcUser> delegate
     ) {
-        this.provisioningService =
-            provisioningService;
+        this.userResolutionService =
+            userResolutionService;
         this.delegate = delegate;
     }
 
@@ -138,7 +137,7 @@ public class GoogleOidcUserService
             );
 
         User user =
-            provisioningService.resolveOrCreate(
+            userResolutionService.resolve(
                 OAuthProvider.GOOGLE,
                 providerUserId,
                 email,

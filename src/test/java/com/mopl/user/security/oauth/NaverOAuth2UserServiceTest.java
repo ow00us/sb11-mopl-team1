@@ -10,7 +10,7 @@ import static org.mockito.Mockito.when;
 import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
-import com.mopl.user.service.OAuthUserProvisioningService;
+import com.mopl.user.security.oauth.link.OAuthUserResolutionService;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,7 +39,7 @@ class NaverOAuth2UserServiceTest {
         );
 
     @Mock
-    OAuthUserProvisioningService provisioningService;
+    OAuthUserResolutionService userResolutionService;
 
     @Mock
     OAuth2UserService<OAuth2UserRequest, OAuth2User> delegate;
@@ -62,7 +62,7 @@ class NaverOAuth2UserServiceTest {
     void setUp() {
         naverOAuth2UserService =
             new NaverOAuth2UserService(
-                provisioningService,
+                userResolutionService,
                 delegate
             );
     }
@@ -97,7 +97,7 @@ class NaverOAuth2UserServiceTest {
             .thenReturn(attributes);
 
         when(
-            provisioningService.resolveOrCreate(
+            userResolutionService.resolve(
                 OAuthProvider.NAVER,
                 "naver-user-id-123",
                 null,
@@ -139,8 +139,8 @@ class NaverOAuth2UserServiceTest {
         verify(delegate)
             .loadUser(userRequest);
 
-        verify(provisioningService)
-            .resolveOrCreate(
+        verify(userResolutionService)
+            .resolve(
                 OAuthProvider.NAVER,
                 "naver-user-id-123",
                 null,
@@ -174,7 +174,7 @@ class NaverOAuth2UserServiceTest {
             );
 
         when(
-            provisioningService.resolveOrCreate(
+            userResolutionService.resolve(
                 OAuthProvider.NAVER,
                 "naver-user-id-123",
                 null,
@@ -191,8 +191,8 @@ class NaverOAuth2UserServiceTest {
         );
 
         // then
-        verify(provisioningService)
-            .resolveOrCreate(
+        verify(userResolutionService)
+            .resolve(
                 OAuthProvider.NAVER,
                 "naver-user-id-123",
                 null,
@@ -224,7 +224,7 @@ class NaverOAuth2UserServiceTest {
             );
 
         when(
-            provisioningService.resolveOrCreate(
+            userResolutionService.resolve(
                 OAuthProvider.NAVER,
                 "naver-user-id-123",
                 null,
@@ -241,8 +241,8 @@ class NaverOAuth2UserServiceTest {
         );
 
         // then
-        verify(provisioningService)
-            .resolveOrCreate(
+        verify(userResolutionService)
+            .resolve(
                 OAuthProvider.NAVER,
                 "naver-user-id-123",
                 null,
@@ -302,7 +302,7 @@ class NaverOAuth2UserServiceTest {
                 );
             });
 
-        verifyNoInteractions(provisioningService);
+        verifyNoInteractions(userResolutionService);
     }
 
     @Test
@@ -347,7 +347,7 @@ class NaverOAuth2UserServiceTest {
                 );
             });
 
-        verifyNoInteractions(provisioningService);
+        verifyNoInteractions(userResolutionService);
     }
 
     @Test
@@ -395,7 +395,7 @@ class NaverOAuth2UserServiceTest {
                 );
             });
 
-        verifyNoInteractions(provisioningService);
+        verifyNoInteractions(userResolutionService);
     }
 
     @Test
@@ -432,7 +432,7 @@ class NaverOAuth2UserServiceTest {
                 );
             });
 
-        verifyNoInteractions(provisioningService);
+        verifyNoInteractions(userResolutionService);
     }
 
     @Test
@@ -443,7 +443,7 @@ class NaverOAuth2UserServiceTest {
         stubValidNaverUser();
 
         when(
-            provisioningService.resolveOrCreate(
+            userResolutionService.resolve(
                 OAuthProvider.NAVER,
                 "naver-user-id-123",
                 null,
@@ -503,7 +503,7 @@ class NaverOAuth2UserServiceTest {
         verify(delegate, never())
             .loadUser(userRequest);
 
-        verifyNoInteractions(provisioningService);
+        verifyNoInteractions(userResolutionService);
     }
 
     private void stubNaverRequest() {
