@@ -36,6 +36,11 @@ public class NotificationKafkaListener {
         if (!notificationEventMapper.supports(envelope.type())) {
             return;
         }
+        if (!notificationEventMapper.supports(envelope.type(), envelope.version())) {
+            throw new EventContractViolationException(
+                "지원하지 않는 알림 이벤트 type·version입니다."
+            );
+        }
 
         notificationEventMapper.map(envelope)
             .ifPresent(
