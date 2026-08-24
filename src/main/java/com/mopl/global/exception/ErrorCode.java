@@ -19,6 +19,7 @@ public enum ErrorCode {
     FORBIDDEN(HttpStatus.FORBIDDEN, "COMMON_403_1", "권한이 없습니다."),
     RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "COMMON_404_1", "리소스를 찾을 수 없습니다."),
     CONTENT_NOT_FOUND(HttpStatus.NOT_FOUND, "CONTENT_404_1", "존재하지 않는 콘텐츠입니다"),
+    CONTENT_SEARCH_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "CONTENT_503_1", "검색 기능을 일시적으로 사용할 수 없습니다."),
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "COMMON_405_1", "지원하지 않는 요청 메서드입니다."),
     UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "COMMON_415_1", "지원하지 않는 요청 형식입니다."),
     NOT_ACCEPTABLE(HttpStatus.NOT_ACCEPTABLE, "COMMON_406_1", "요청한 응답 형식으로는 표현할 수 없습니다."),
