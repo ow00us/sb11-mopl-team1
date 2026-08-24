@@ -293,6 +293,8 @@ app:
       resend-cooldown: ${OAUTH2_LOCAL_CREDENTIAL_RESEND_COOLDOWN:1m}
       # 코드 무차별 대입을 막기 위한 최대 검증 실패 횟수
       max-attempts: ${OAUTH2_LOCAL_CREDENTIAL_MAX_ATTEMPTS:5}
+      # 로컬 개발 전용 기본값이며 운영 프로필에서는 환경변수를 반드시 주입
+      verification-secret: ${OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_SECRET:local-oauth-verification-secret-change-me}
     redirect:
       # OAuth 인증 성공 후 Access Token 복원을 처리할 프론트엔드 화면
       success-uri: ${OAUTH2_SUCCESS_REDIRECT_URI:http://localhost:5173/oauth/callback}
@@ -387,6 +389,9 @@ app:
     # prod는 기본값 없이 강제 - 값이 누락되면 애플리케이션 시작 시점에 실패
     allowed-origins: ${WS_ALLOWED_ORIGINS}
   oauth2:
+    local-credential:
+      # 운영에서는 기본값 없이 Secret 환경변수를 반드시 주입
+      verification-secret: ${OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_SECRET}
     redirect:
       # 운영 환경에서는 실제 프론트엔드 OAuth Callback URI를 반드시 주입
       success-uri: ${OAUTH2_SUCCESS_REDIRECT_URI}

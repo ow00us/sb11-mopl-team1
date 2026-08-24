@@ -4,6 +4,8 @@ import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import java.time.Duration;
 import lombok.Getter;
 import lombok.Setter;
@@ -55,6 +57,23 @@ public class OAuthLocalCredentialProperties {
         message = "OAuth 로컬 로그인 인증 코드 최대 시도 횟수는 10 이하여야 합니다."
     )
     private Integer maxAttempts;
+
+    /**
+     * 이메일 인증 코드 HMAC 생성에 사용하는 서버 비밀키
+     *
+     * <p>6자리 인증 코드는 경우의 수가 작으므로 단순 SHA-256만 사용하면
+     * Redis 데이터가 노출됐을 때 전체 코드 대입이 가능합니다.
+     * 서버 비밀키를 포함한 HMAC-SHA256을 사용해 이를 방지합니다.</p>
+     */
+    @NotBlank(
+        message = "OAuth 로컬 로그인 인증 코드 비밀키는 반드시 설정해야 합니다."
+    )
+    @Size(
+        min = 32,
+        max = 512,
+        message = "OAuth 로컬 로그인 인증 코드 비밀키는 32~512자여야 합니다."
+    )
+    private String verificationSecret;
 
     /**
      * Redis TTL에 사용할 두 시간이 양의 정수 초인지 확인하고,

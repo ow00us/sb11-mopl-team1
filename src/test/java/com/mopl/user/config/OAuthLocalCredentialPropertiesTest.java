@@ -360,6 +360,71 @@ class OAuthLocalCredentialPropertiesTest {
             );
     }
 
+    @Test
+    @DisplayName("인증 코드 비밀키가 null이면 검증에 실패한다")
+    void validate_fail_whenVerificationSecretIsNull() {
+        // given
+        OAuthLocalCredentialProperties properties =
+            validProperties();
+
+        properties.setVerificationSecret(null);
+
+        // when
+        Set<ConstraintViolation<OAuthLocalCredentialProperties>>
+            violations = validator.validate(properties);
+
+        // then
+        assertThat(violations)
+            .extracting(ConstraintViolation::getMessage)
+            .contains(
+                "OAuth 로컬 로그인 인증 코드 비밀키는 반드시 설정해야 합니다."
+            );
+    }
+
+    @Test
+    @DisplayName("인증 코드 비밀키가 공백이면 검증에 실패한다")
+    void validate_fail_whenVerificationSecretIsBlank() {
+        // given
+        OAuthLocalCredentialProperties properties =
+            validProperties();
+
+        properties.setVerificationSecret("   ");
+
+        // when
+        Set<ConstraintViolation<OAuthLocalCredentialProperties>>
+            violations = validator.validate(properties);
+
+        // then
+        assertThat(violations)
+            .extracting(ConstraintViolation::getMessage)
+            .contains(
+                "OAuth 로컬 로그인 인증 코드 비밀키는 반드시 설정해야 합니다."
+            );
+    }
+
+    @Test
+    @DisplayName("인증 코드 비밀키가 32자보다 짧으면 검증에 실패한다")
+    void validate_fail_whenVerificationSecretIsTooShort() {
+        // given
+        OAuthLocalCredentialProperties properties =
+            validProperties();
+
+        properties.setVerificationSecret(
+            "short-secret"
+        );
+
+        // when
+        Set<ConstraintViolation<OAuthLocalCredentialProperties>>
+            violations = validator.validate(properties);
+
+        // then
+        assertThat(violations)
+            .extracting(ConstraintViolation::getMessage)
+            .contains(
+                "OAuth 로컬 로그인 인증 코드 비밀키는 32~512자여야 합니다."
+            );
+    }
+
     /**
      * 각 테스트에서 변경하지 않는 나머지 설정을 유효하게 구성
      */
@@ -376,6 +441,10 @@ class OAuthLocalCredentialPropertiesTest {
         );
 
         properties.setMaxAttempts(5);
+
+        properties.setVerificationSecret(
+            "test-oauth-local-verification-secret-1234"
+        );
 
         return properties;
     }
