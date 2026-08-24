@@ -86,13 +86,24 @@ public class RealtimeRelaySubscriber implements MessageListener {
     }
 
     private void dispatch(RealtimeMessage received) {
-        metrics.recordDelivered();
+        boolean delivered = false;
 
         for (RealtimeMessageHandler handler : handlers) {
             try {
-                if (handler.supports(received.eventType())) {
-                    handler.handle(received);
+                if (!handler.supports(received.eventType())) {
+                    continue;
                 }
+
+                if (!delivered) {
+                    // 지원하는 handler 를 처음 부르기 직전에 한 번만 셉니다. 아무 handler 도
+                    // 지원하지 않는 메시지를 전달 성공으로 세면, 지표가 드러내야 할 상황을
+                    // 지표가 가립니다. handle() 앞에서 세므로 handler 가 실패해도 전달 시도와
+                    // 실패가 함께 남습니다.
+                    metrics.recordDelivered();
+                    delivered = true;
+                }
+
+                handler.handle(received);
             } catch (Exception e) {
                 metrics.recordHandlerFailure(handler.getClass().getSimpleName());
                 log.error("실시간 메시지 전달에 실패했습니다. handler={}, eventType={}, destination={}",
