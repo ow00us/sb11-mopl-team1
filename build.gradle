@@ -68,6 +68,9 @@ dependencies {
     // Elasticsearch — 심화 검색 착수 시 담당자가 주석을 풀어 활성화합니다.
     implementation 'org.springframework.boot:spring-boot-starter-data-elasticsearch'
 
+    // Redis Lettuce 커넥션 풀링 - 한 명령의 타임아웃이 다른 명령이 쓰는 커넥션까지 오염시키지 않음
+    implementation 'org.apache.commons:commons-pool2'
+
     // Test
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.batch:spring-batch-test'

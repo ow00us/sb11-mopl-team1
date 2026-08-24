@@ -69,6 +69,11 @@ spring:
     redis:
       timeout: 2s
       connect-timeout: 1s
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
   elasticsearch:
     connection-timeout: 3s
     socket-timeout: 5s
