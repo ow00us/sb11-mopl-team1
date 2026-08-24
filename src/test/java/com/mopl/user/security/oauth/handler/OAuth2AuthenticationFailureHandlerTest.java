@@ -16,11 +16,18 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2Error;
 
-@ExtendWith(MockitoExtension.class)
+@ExtendWith({
+    MockitoExtension.class,
+    OutputCaptureExtension.class
+})
 class OAuth2AuthenticationFailureHandlerTest {
 
     @Mock
@@ -106,5 +113,44 @@ class OAuth2AuthenticationFailureHandlerTest {
                 .getContext()
                 .getAuthentication()
         ).isNull();
+    }
+
+    @Test
+    @DisplayName("OAuth 인증 실패 로그에는 오류 코드만 남기고 상세 메시지는 노출하지 않는다")
+    void authenticationFailure_logsSafeOAuthErrorCode(
+        CapturedOutput output
+    ) throws Exception {
+        when(redirectProperties.getFailureUri())
+            .thenReturn(
+                URI.create(
+                    "http://localhost:5173/sign-in"
+                )
+            );
+
+        OAuth2AuthenticationException exception =
+            new OAuth2AuthenticationException(
+                new OAuth2Error(
+                    "invalid_token_response",
+                    "Provider Access Token과 사용자 정보가 포함된 내부 오류",
+                    null
+                )
+            );
+
+        failureHandler.onAuthenticationFailure(
+            request,
+            response,
+            exception
+        );
+
+        assertThat(output)
+            .contains(
+                "type=OAuth2AuthenticationException"
+            )
+            .contains(
+                "errorCode=invalid_token_response"
+            )
+            .doesNotContain(
+                "Provider Access Token과 사용자 정보가 포함된 내부 오류"
+            );
     }
 }
