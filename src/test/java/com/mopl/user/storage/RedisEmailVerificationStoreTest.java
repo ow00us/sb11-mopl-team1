@@ -474,6 +474,82 @@ class RedisEmailVerificationStoreTest {
     }
 
     @Test
+    @DisplayName("저장된 해시가 일치하면 인증 상태와 재전송 제한을 삭제한다")
+    void deleteIfCodeHashMatches_deletesMatchingState() {
+        // given
+        issue(
+            CODE_HASH,
+            Duration.ofMinutes(10),
+            Duration.ofMinutes(1)
+        );
+
+        // when
+        boolean deleted =
+            verificationStore
+                .deleteIfCodeHashMatches(
+                    USER_ID,
+                    CODE_HASH
+                );
+
+        // then
+        assertThat(deleted).isTrue();
+
+        assertThat(
+            redisTemplate.hasKey(
+                verificationKey()
+            )
+        ).isFalse();
+
+        assertThat(
+            redisTemplate.hasKey(
+                cooldownKey()
+            )
+        ).isFalse();
+    }
+
+    @Test
+    @DisplayName("저장된 해시가 다르면 새로운 인증 상태를 삭제하지 않는다")
+    void deleteIfCodeHashMatches_preservesDifferentState() {
+        // given
+        issue(
+            CODE_HASH,
+            Duration.ofMinutes(10),
+            Duration.ofMinutes(1)
+        );
+
+        // when
+        boolean deleted =
+            verificationStore
+                .deleteIfCodeHashMatches(
+                    USER_ID,
+                    DIFFERENT_CODE_HASH
+                );
+
+        // then
+        assertThat(deleted).isFalse();
+
+        assertThat(
+            redisTemplate.hasKey(
+                verificationKey()
+            )
+        ).isTrue();
+
+        assertThat(
+            redisTemplate.hasKey(
+                cooldownKey()
+            )
+        ).isTrue();
+
+        assertThat(
+            redisTemplate.opsForHash()
+                .get(
+                    verificationKey(),
+                    "codeHash"
+                )
+        ).isEqualTo(CODE_HASH);
+    }
+
+    @Test
     @DisplayName("사용자의 인증 상태와 재전송 제한을 함께 삭제한다")
     void deleteByUserId_removesVerificationAndCooldown() {
         // given

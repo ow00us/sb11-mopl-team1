@@ -136,6 +136,41 @@ public class RedisEmailVerificationStore
             Long.class
         );
 
+    /**
+     * 저장된 인증 코드 해시가 기대한 해시와 일치할 때만
+     * 인증 상태와 재전송 제한을 제거
+     *
+     * <p>KEYS[1]: 인증 상태 Hash Key</p>
+     * <p>KEYS[2]: 재전송 제한 Key</p>
+     * <p>ARGV[1]: 삭제하려는 인증 코드 HMAC</p>
+     */
+    private static final DefaultRedisScript<Long>
+        DELETE_IF_HASH_MATCHES_SCRIPT =
+        new DefaultRedisScript<>(
+            """
+            local storedCodeHash =
+                redis.call(
+                    'HGET',
+                    KEYS[1],
+                    'codeHash'
+                )
+
+            if not storedCodeHash
+                or storedCodeHash ~= ARGV[1] then
+                return 0
+            end
+
+            redis.call(
+                'DEL',
+                KEYS[1],
+                KEYS[2]
+            )
+
+            return 1
+            """,
+            Long.class
+        );
+
     private final StringRedisTemplate redisTemplate;
 
     @Override
@@ -229,6 +264,51 @@ public class RedisEmailVerificationStore
                     "알 수 없는 이메일 인증 코드 검증 결과입니다."
                 );
         };
+    }
+
+    @Override
+    public boolean deleteIfCodeHashMatches(
+        UUID userId,
+        String expectedCodeHash
+    ) {
+        if (userId == null) {
+            throw new IllegalArgumentException(
+                "이메일 인증 사용자 UUID는 null일 수 없습니다."
+            );
+        }
+
+        if (
+            expectedCodeHash == null
+                || !CODE_HASH_PATTERN
+                .matcher(expectedCodeHash)
+                .matches()
+        ) {
+            throw new IllegalArgumentException(
+                "이메일 인증 코드 해시는 64자의 소문자 16진수여야 합니다."
+            );
+        }
+
+        Long result =
+            redisTemplate.execute(
+                DELETE_IF_HASH_MATCHES_SCRIPT,
+                List.of(
+                    verificationKey(userId),
+                    cooldownKey(userId)
+                ),
+                expectedCodeHash
+            );
+
+        if (Long.valueOf(1L).equals(result)) {
+            return true;
+        }
+
+        if (Long.valueOf(0L).equals(result)) {
+            return false;
+        }
+
+        throw new IllegalStateException(
+            "이메일 인증 상태 보상 삭제 결과를 확인할 수 없습니다."
+        );
     }
 
     @Override

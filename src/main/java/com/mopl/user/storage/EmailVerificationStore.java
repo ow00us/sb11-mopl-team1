@@ -59,6 +59,23 @@ public interface EmailVerificationStore {
     );
 
     /**
+     * 현재 저장된 인증 코드 해시가 전달된 해시와 일치할 때만
+     * 인증 상태와 재전송 제한을 제거
+     *
+     * <p>Redis 저장 이후 이메일 발송이 실패했을 때 사용합니다.
+     * 메일 발송이 지연되는 동안 더 새로운 인증 코드가 발급됐다면
+     * 새로운 인증 상태는 삭제하지 않습니다.</p>
+     *
+     * @param userId 인증 상태 소유 사용자 UUID
+     * @param expectedCodeHash 삭제하려는 인증 코드의 HMAC 해시
+     * @return 일치하는 인증 상태를 삭제했으면 true
+     */
+    boolean deleteIfCodeHashMatches(
+        UUID userId,
+        String expectedCodeHash
+    );
+
+    /**
      * 사용자의 남아 있는 이메일 인증 상태를 제거
      *
      * <p>로컬 로그인 수단 추가가 완료되거나 계정 상태가 변경되어
