@@ -41,8 +41,10 @@ EXPOSE 8080
 # JVM 힙도 따라갑니다.
 ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0"
 
-# ALB health check 대상과 같은 엔드포인트를 사용합니다.
+# liveness probe 를 씁니다. 전체 /actuator/health 는 Kafka 리스너 중지처럼 프로세스를 다시
+# 띄운다고 풀리지 않는 상태까지 DOWN 으로 집계합니다. 그것을 컨테이너 재시작 조건으로 두면
+# 원인은 그대로인 채 재시작만 반복됩니다.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
-    CMD wget -qO- http://localhost:8080/actuator/health || exit 1
+    CMD wget -qO- http://localhost:8080/actuator/health/liveness || exit 1
 
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar app.jar"]

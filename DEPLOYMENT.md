@@ -8,7 +8,7 @@
 docker build --pull -t mopl:local .
 ```
 
-Dockerfile은 빌드 단계와 실행 단계를 분리합니다. 실행 이미지는 `mopl` 비특권 사용자로 애플리케이션을 실행하며 `/actuator/health`를 Docker healthcheck로 사용합니다.
+Dockerfile은 빌드 단계와 실행 단계를 분리합니다. 실행 이미지는 `mopl` 비특권 사용자로 애플리케이션을 실행하며 `/actuator/health/liveness`를 Docker healthcheck로 사용합니다.
 
 ## 필수 환경 변수
 
@@ -61,7 +61,7 @@ mopl.direct-message.events  mopl.direct-message.events.DLT
 
 `OUTBOX_LEASE_DURATION`이 짧으면 발행이 끝나기 전에 다른 인스턴스가 회수해 중복 발행이 늘고, 길면 relay가 비정상 종료했을 때 회수가 그만큼 지연됩니다. `OUTBOX_RELAY_ACK_TIMEOUT`보다 넉넉하게 둡니다.
 
-최대 시도 횟수를 넘긴 이벤트는 삭제하지 않고 최종 실패 상태로 남습니다. 자동 relay 대상에서는 빠지므로, 원인을 고친 뒤 `OutboxFailureService`로 다시 발행 대기로 돌립니다.
+최대 시도 횟수를 넘긴 이벤트는 삭제하지 않고 최종 실패 상태로 남습니다. 자동 relay 대상에서는 빠지므로, 원인을 고친 뒤 아래 관리자 API로 다시 발행 대기로 돌립니다.
 
 ### 발행 완료 레코드 정리
 
@@ -107,6 +107,37 @@ gauge 값은 `OUTBOX_METRICS_REFRESH_INTERVAL`(기본 15000밀리초)마다 집�
 
 지표는 `/actuator/prometheus`로 노출합니다. 이 경로는 인증이 필요한 경로이므로, 스크레이퍼가 접근할 방법은 배포 환경에서 별도로 정합니다.
 
+### 최종 실패 이벤트 조회와 종결
+
+`mopl_outbox_events{state="failed"}`가 0보다 크면 사람이 개입해야 합니다. 관리자 전용 API 세 개가 그 경계입니다. 세 경로 모두 `ROLE_ADMIN`이 없으면 403입니다.
+
+| 메서드와 경로 | 하는 일 |
+| --- | --- |
+| `GET /api/admin/outbox/failures?limit=20` | 최종 실패 이벤트를 발생 시각이 이른 순으로 조회합니다. `limit`은 1에서 100 사이이며 기본값은 20입니다 |
+| `POST /api/admin/outbox/failures/{eventId}/requeue` | 이벤트 한 건을 다시 발행 대기로 되돌립니다 |
+| `POST /api/admin/outbox/failures/{eventId}/skip` | 이벤트 한 건을 보내지 않기로 하고 종결합니다. 본문에 `reason`이 필요합니다 |
+
+끝내는 방법은 둘입니다. 원인을 고쳤으면 `requeue`로 다시 내보내고, 보내지 않아도 된다고 판단했으면 `skip`으로 사유를 남기고 종결합니다. 어느 쪽이든 행을 지우지 않습니다.
+
+절차는 다음과 같습니다.
+
+1. 목록을 조회해 `lastError`로 실패 원인과 `attempts`로 몇 번 시도했는지 확인합니다.
+2. 원인을 해소합니다. 원인이 남아 있으면 되돌려도 같은 실패를 반복하고 최종 실패로 돌아옵니다.
+3. `requeue`로 이벤트를 하나씩 되돌립니다. 이벤트를 보내는 것 자체가 더 이상 의미가 없다면 대신 `skip`으로 사유를 남기고 종결합니다.
+4. `totalCount`가 줄어드는지 확인합니다. 목록은 상한이 걸린 조회라 남은 규모는 이 값으로 봅니다.
+
+주의할 점이 있습니다.
+
+- 목록에 이벤트 payload를 담지 않습니다. payload에는 DM 본문처럼 도메인이 사용자에게만 보이기로 한 값이 들어갑니다. 운영 조회가 그 경계를 우회하는 통로가 되면 안 됩니다. `lastError`도 500자까지만 싣고 전체는 애플리케이션 로그에서 확인합니다.
+- 재처리는 새 레코드나 새 envelope을 만들지 않고 기존 행의 상태만 되돌립니다. eventId, 파티션 키, 중복 제거 키가 유지되므로 이미 처리에 성공한 이벤트가 다시 나가도 소비자의 멱등 경계가 걸러냅니다.
+- 단건 경로만 열려 있습니다. 원인을 확인하지 않은 일괄 처리는 같은 실패와 부하를 그대로 반복합니다.
+- 대상이 없으면 404, 최종 실패 상태가 아니면 409입니다. `requeue`는 같은 요청을 두 번 보내면 두 번째가 409입니다. 두 요청이 동시에 들어와도 전이는 한 번만 일어납니다.
+- `skip`은 같은 요청을 두 번 보내도 204입니다. 결과가 "그 이벤트는 건너뛴 상태다"로 같기 때문입니다. 다만 처리자와 시각, 사유는 처음 전환 때의 값을 그대로 둡니다. 실제로 판단한 사람은 처음 부른 쪽입니다.
+- `skip`한 이벤트는 되돌릴 수 없습니다. 종결 상태이고, 빠져나가는 전이를 두지 않았습니다. 다시 보내야 한다면 도메인에서 사건을 새로 만듭니다.
+- `skip`한 행은 정리 대상이 아닙니다. 발행 완료 레코드 정리는 `PUBLISHED`만 지웁니다. 판단의 기록이 지워지면 남긴 의미가 없습니다.
+- 순서를 보장하는 partition에서 앞선 이벤트를 `skip`하면 뒤 이벤트가 진행합니다. 계속 막으면 앞선 이벤트를 종결한 의미가 없고 뒤 이벤트도 함께 최종 실패로 밀려갑니다.
+- 조회와 재처리, 건너뛰기는 `mopl.audit.outbox` logger로 처리자, 대상과 결과를 남깁니다. 이름을 따로 둔 이유는 이 로그의 보존 기준이 진단 로그와 다르기 때문입니다. 배포 환경에서 별도 대상으로 보내거나 더 오래 보관합니다.
+
 ## DLT 조회와 수동 replay
 
 소비 실패는 공통 오류 처리가 재시도를 모두 소진한 뒤 `<원본 토픽>.DLT`로 옮깁니다. 옮겨진 레코드는 자동으로 다시 처리되지 않습니다. 원인을 확인한 뒤 사람이 다시 넣습니다.
@@ -134,6 +165,65 @@ gauge 값은 `OUTBOX_METRICS_REFRESH_INTERVAL`(기본 15000밀리초)마다 집�
 - 조회는 그때마다 새 Consumer Group으로 읽고 offset을 커밋하지 않습니다. 도메인 리스너의 소비 위치에 영향을 주지 않습니다.
 
 `KAFKA_DLT_REPLAY_ACK_TIMEOUT`은 선택 값이며 기본값은 `10s`입니다. 이 시간 안에 원본 토픽 발행 확인을 받지 못하면 replay는 실패로 끝나고 DLT 레코드는 그대로 남습니다.
+
+## 리스너 중지 확인과 재시작
+
+DLT 발행이 같은 레코드에서 세 번 연속 실패하면 공통 오류 처리가 리스너 컨테이너를 멈춥니다. 계약이 DLT 발행 실패 시 원본 offset을 성공 처리하지 못하게 하므로, 멈추지 않으면 같은 레코드를 무한히 다시 소비합니다.
+
+그 뒤로 소비는 멈춰 있지만 프로세스는 살아 있고 REST는 정상 응답합니다. API 지표에도 흔적이 없습니다. 아래 두 가지가 그 상황을 드러냅니다.
+
+| 확인 대상 | 값 |
+| --- | --- |
+| `GET /actuator/health` | 리스너가 비정상 중지되면 전체 상태가 `DOWN`이 됩니다 |
+| `mopl_kafka_listener_containers{state="stopped"}` | 멈춰 있는 컨테이너 수 |
+| `mopl_kafka_listener_stops_total{topic="..."}` | DLT 발행 실패로 중지한 횟수 |
+
+`kafkaListener` health component의 상세에는 Consumer Group, 구독 토픽, 마지막 중지 시각과 사유가 들어갑니다. `/actuator/health`는 인증 없이 열려 있으므로 상세는 `ROLE_ADMIN`으로 인증한 요청에만 보입니다. 인증 없이 호출하면 상태만 보입니다.
+
+### health 정책
+
+리스너 중지는 liveness와 readiness 어느 group에도 넣지 않습니다.
+
+- liveness에 넣으면 오케스트레이터가 프로세스를 재시작합니다. DLT가 아직 복구되지 않았다면 다시 띄운 리스너가 같은 이유로 또 멈춥니다. 원인은 그대로인 채 재시작만 반복됩니다.
+- readiness에 넣으면 로드밸런서가 인스턴스를 뺍니다. REST 요청은 정상 처리할 수 있는 인스턴스인데 Kafka 문제로 처리 용량만 줄어듭니다.
+
+컨테이너 HEALTHCHECK와 ALB health check는 `/actuator/health/liveness`를 씁니다. 전체 `/actuator/health`는 사람이 보거나 알림이 거는 대상입니다.
+
+### 재시작 절차
+
+리스너를 다시 띄우는 경로는 프로세스 재시작뿐입니다. 원인을 확인하지 않고 다시 띄우는 버튼을 두면 같은 중지가 반복되므로 API로 열지 않았습니다.
+
+1. `/actuator/health`의 `kafkaListener` 상세에서 멈춘 Consumer Group과 사유를 확인합니다. `ROLE_ADMIN`으로 인증해야 상세가 보입니다.
+2. 원인을 해소합니다. DLT 발행 실패의 원인은 대개 둘입니다.
+   - 브로커에 닿지 않음. `KAFKA_BOOTSTRAP_SERVERS`와 네트워크를 확인합니다.
+   - DLT 토픽이 없음. 운영 토픽은 애플리케이션이 만들지 않으므로 `<원본 토픽>.DLT`가 준비되어 있어야 합니다. `KAFKA_TOPIC_VERIFY=true`로 두면 기동 시 확인합니다.
+3. 인스턴스를 재시작합니다. 리스너가 다시 붙으면 `/actuator/health`가 `UP`으로 돌아옵니다.
+4. 멈춰 있는 동안 쌓인 lag을 확인합니다. offset은 성공한 지점까지만 전진했으므로 중지 시점의 레코드부터 다시 소비합니다. 소비자 멱등 경계가 중복 처리를 걸러냅니다.
+
+원인을 해소하지 않고 재시작하면 같은 레코드에서 다시 세 번 실패하고 또 멈춥니다. `mopl_kafka_listener_stops_total`이 계속 올라가는 것이 그 신호입니다.
+
+## 멱등 처리 기록 정리
+
+Consumer는 이미 처리한 이벤트를 `processed_events`에 남겨 두고, 같은 `(consumer_name, event_id)`가 다시 오면 걸러냅니다. 이 테이블은 이벤트를 처리할 때마다 한 행이 늘고 갱신되지 않습니다. 지우는 경로가 없으면 테이블과 인덱스가 소비량에 비례해 계속 커집니다. 보관 기간을 지난 기록을 주기적으로 지웁니다.
+
+| 환경 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `PROCESSED_EVENT_CLEANUP_ENABLED` | `true` | 정리 주기 실행 여부 |
+| `PROCESSED_EVENT_CLEANUP_INTERVAL` | `3600000` | 이전 실행이 끝난 뒤 다음 실행까지의 간격(밀리초) |
+| `PROCESSED_EVENT_CLEANUP_RETENTION` | `30d` | 기록한 뒤 이 기간이 지나야 지웁니다 |
+| `PROCESSED_EVENT_CLEANUP_BATCH_SIZE` | `1000` | 한 번의 실행이 지울 최대 건수 |
+
+**보관 기간을 줄일 때는 근거가 필요합니다.** 기록을 지운 이벤트가 다시 들어오면 처음 보는 이벤트로 판정되어 도메인 부수 효과가 한 번 더 일어납니다. 알림이 두 번 가거나 집계가 두 번 오르는 식입니다. 같은 이벤트가 다시 도착할 수 있는 경로는 둘입니다.
+
+- Kafka 원본 토픽의 보관 기간. 그 안에서는 offset을 되돌리면 같은 레코드가 다시 소비됩니다.
+- DLT 수동 replay. `DeadLetterReplayService.replay`는 원본 바이트를 그대로 보내므로 eventId가 유지됩니다. DLT 레코드를 지우지 않으므로 사람이 언제든 다시 보낼 수 있습니다.
+
+보관 기간은 이 둘보다 길어야 합니다. 기본값 `30d`는 Kafka 기본 보관 기간 7일과 DLT를 살펴보고 replay를 결정하기까지의 여유를 함께 감당하는 값입니다. Kafka 토픽 보관 기간을 늘렸다면 이 값도 함께 늘립니다.
+
+삭제 상한을 두는 이유는 한 번의 실행이 오래 걸리면 그동안 잠금과 트랜잭션이 유지되어 소비 경로의 기록 선점이 함께 느려지기 때문입니다. 상한에 걸려 남은 기록은 다음 실행으로 넘어갑니다. 쌓인 양이 많아 한 주기로 따라잡지 못하면 `PROCESSED_EVENT_CLEANUP_INTERVAL`을 줄이거나 상한을 올립니다.
+
+지운 건수는 `mopl_kafka_processed_cleaned_records_total`로 확인합니다.
+
 ## 인스턴스 간 실시간 중계
 
 WebSocket과 SSE 연결은 인스턴스마다 따로 유지됩니다. 인스턴스를 여러 개 띄우면 한 인스턴스가 만든 알림이 다른 인스턴스에 연결된 사용자에게 닿지 않습니다. Redis Pub/Sub 채널 `mopl.realtime.messages`가 그 사이를 잇습니다.
@@ -181,7 +271,7 @@ docker run --rm \
 curl --fail http://localhost:8080/actuator/health
 ```
 
-정상 응답은 `{"status":"UP"}`이며, Docker 컨테이너 상태도 `healthy`로 전환되어야 합니다.
+정상 응답은 `{"status":"UP"}`입니다. Docker 컨테이너 상태가 `healthy`로 전환되는 기준은 `/actuator/health/liveness`이므로, 컨테이너가 `healthy`인데 위 응답이 `DOWN`일 수 있습니다. 그때는 어떤 component가 내려가 있는지 확인합니다.
 
 ## CI 컨테이너 smoke 검증
 

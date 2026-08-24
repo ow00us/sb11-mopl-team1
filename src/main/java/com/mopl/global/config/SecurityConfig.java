@@ -57,7 +57,10 @@ public class SecurityConfig {
             "/swagger-ui/**",
             "/swagger-ui.html",
             "/v3/api-docs/**",
-            "/actuator/health"
+            "/actuator/health",
+            // liveness·readiness probe 경로입니다. 오케스트레이터가 인증 없이 호출합니다.
+            // 상세는 management.endpoint.health.show-details 가 가립니다.
+            "/actuator/health/**"
     };
 
     /** JWT 인증 없이 접근 가능한 공개 POST 경로입니다. */
@@ -160,6 +163,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/users").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PATCH, "/api/users/*/locked", "/api/users/*/role").hasRole("ADMIN")
+                        // 운영 경계는 경로 하나로 묶어 둡니다. 새 관리자 API 를 추가할 때
+                        // 권한 부여를 따로 기억해야 하면 언젠가 빠뜨립니다.
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
                 .addFilterBefore(new JwtAuthenticationFilter(jwtProvider), UsernamePasswordAuthenticationFilter.class);
 

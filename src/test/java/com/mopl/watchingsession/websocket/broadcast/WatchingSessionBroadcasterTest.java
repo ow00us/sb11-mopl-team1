@@ -13,6 +13,7 @@ import com.mopl.global.common.ContentSummary;
 import com.mopl.global.common.UserSummary;
 import com.mopl.watchingsession.dto.WatchingSessionChange;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
+import com.mopl.watchingsession.presence.WatchingSessionPresenceReader;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.time.Instant;
 import java.util.List;
@@ -24,8 +25,11 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
+@MockitoSettings(strictness = Strictness.LENIENT)
 @ExtendWith(MockitoExtension.class)
 public class WatchingSessionBroadcasterTest {
 
@@ -33,7 +37,8 @@ public class WatchingSessionBroadcasterTest {
     private SimpMessagingTemplate messagingTemplate;
 
     @Mock
-    private WatchingSessionSnapshotRepository watchingSessionSnapshotRepository;
+    private WatchingSessionPresenceReader presenceReader;
+
 
     @InjectMocks
     private WatchingSessionBroadcaster broadcaster;
@@ -54,7 +59,7 @@ public class WatchingSessionBroadcasterTest {
     @DisplayName("메시지 전송이 실패해도 예외를 호출자로 전파하지 않음")
     void broadcastJoin_doesNotThrow_whenSendFails() {
         // given
-        when(watchingSessionSnapshotRepository.countByContentId(eq(CONTENT_ID), any(), any()))
+        when(presenceReader.countByContent(CONTENT_ID))
             .thenReturn(3L);
         doThrow(new RuntimeException("브로커 전송 실패"))
             .when(messagingTemplate).convertAndSend(anyString(), any((Object.class)));
@@ -64,15 +69,13 @@ public class WatchingSessionBroadcasterTest {
 
         // then: 전송 시도 자체는 실제로 있었는지 확인
         verify(messagingTemplate).convertAndSend(eq("/sub/contents/" + CONTENT_ID + "/watch"), any(Object.class));
-
     }
 
     @Test
     @DisplayName("시청자 수 조회가 실패하면 대체 값(-1)으로 브로드캐스트가 시도됨")
     void broadcastLeave_stillSends_whenWatcherCountQueryFails() {
         // given
-        when(watchingSessionSnapshotRepository.countByContentId(eq(CONTENT_ID), any(), any()))
-            .thenThrow(new RuntimeException("DB 커넥션 끊김"));
+        when(presenceReader.countByContent(CONTENT_ID)).thenThrow(new RuntimeException("Redis 연결 끊김"));
 
         // when
         broadcaster.broadcastLeave(dtoFixture(), CONTENT_ID);
@@ -87,8 +90,7 @@ public class WatchingSessionBroadcasterTest {
     @DisplayName("정상 경로에서는 조회한 시청자 수 그대로 전송")
     void broadcastJoin_success_sendsActualWatcherCount() {
         // given
-        when(watchingSessionSnapshotRepository.countByContentId(eq(CONTENT_ID), any(), any()))
-            .thenReturn(5L);
+        when(presenceReader.countByContent(CONTENT_ID)).thenReturn(5L);
 
         // when
         broadcaster.broadcastJoin(dtoFixture(), CONTENT_ID);

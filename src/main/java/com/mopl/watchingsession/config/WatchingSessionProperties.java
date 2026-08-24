@@ -1,9 +1,11 @@
 package com.mopl.watchingsession.config;
 
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import java.time.Duration;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.validator.constraints.time.DurationMin;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 import org.springframework.validation.annotation.Validated;
@@ -48,6 +50,7 @@ public class WatchingSessionProperties {
      * (주기 결정은 클라이언트 책임), openapi 계약 문서와의 정합 확인용으로 보관한다.
      */
     @NotNull
+    @DurationMin(millis = 2)
     private Duration heartbeatInterval;
 
     /**
@@ -56,5 +59,37 @@ public class WatchingSessionProperties {
      */
     @NotNull
     private Duration sweepInterval;
+
+    /**
+     * 콘텐츠 채팅 SEND의 최소 허용 간격. 이보다 빠른 전송은 조용히 무시된다.
+     */
+    @NotNull
+    @DurationMin(millis = 1)
+    private Duration chatSendMinInterval;
+
+    /**
+     * watch 토픽 재구독(SUBSCRIBE)의 최소 허용 간격. 이보다 빠른 재구독은 조용히 무시된다.
+     * 정상 흐름(페이지 진입, 재연결)은 이 값에 절대 닿지 않아야 한다.
+     */
+    @NotNull
+    @DurationMin(millis = 1)
+    private Duration watchSubscribeMinInterval;
+
+    /**
+     * 한 WebSocket 연결이 동시에 유지할 수 있는 콘텐츠 채팅 구독 개수 상한.
+     * 정상 사용(페이지당 1개)보다 넉넉히 크게 잡아 어뷰징만 걸리게 한다.
+     */
+    @NotNull
+    @Positive
+    private Integer chatSubscriptionLimit;
+
+    /**
+     * 콘텐츠 존재 검증 캐시(양성 결과만)의 TTL. 콘텐츠 삭제는 이벤트를 발행하지
+     * 않아 무효화 신호가 없으므로, 삭제된 콘텐츠가 이 시간 동안은 존재하는 것으로
+     * 판정될 수 있다 — 짧게 잡아 그 지연을 허용 범위로 둔다.
+     */
+    @NotNull
+    @DurationMin(millis = 1)
+    private Duration contentExistenceCacheTtl;
 
 }

@@ -17,6 +17,8 @@ import com.mopl.directmessage.service.ConversationService;
 import com.mopl.directmessage.service.DirectMessageService;
 import com.mopl.follow.controller.FollowController;
 import com.mopl.follow.service.FollowService;
+import com.mopl.global.outbox.OutboxFailureService;
+import com.mopl.global.outbox.controller.OutboxAdminController;
 import com.mopl.global.security.controller.CsrfTokenController;
 import com.mopl.notification.controller.NotificationController;
 import com.mopl.notification.service.NotificationService;
@@ -78,6 +80,7 @@ import org.yaml.snakeyaml.Yaml;
     DirectMessageController.class,
     FollowController.class,
     NotificationController.class,
+    OutboxAdminController.class,
     SseController.class,
     PlaylistController.class,
     ReviewController.class,
@@ -110,6 +113,7 @@ class OpenApiRuntimeContractTest {
         "DELETE /api/playlists/{playlistId}/contents/{contentId}",
         "DELETE /api/playlists/{playlistId}/subscription",
         "DELETE /api/reviews/{reviewId}",
+        "GET /api/admin/outbox/failures",
         "GET /api/auth/csrf-token",
         "GET /api/contents",
         "GET /api/contents/{contentId}",
@@ -141,6 +145,8 @@ class OpenApiRuntimeContractTest {
         "PATCH /api/users/{userId}/locked",
         "PATCH /api/users/{userId}/password",
         "PATCH /api/users/{userId}/role",
+        "POST /api/admin/outbox/failures/{eventId}/requeue",
+        "POST /api/admin/outbox/failures/{eventId}/skip",
         "POST /api/auth/sign-in",
         "POST /api/auth/reset-password",
         "POST /api/auth/refresh",
@@ -177,6 +183,9 @@ class OpenApiRuntimeContractTest {
 
     @MockitoBean
     NotificationService notificationService;
+
+    @MockitoBean
+    OutboxFailureService outboxFailureService;
 
     @MockitoBean
     PlaylistService playlistService;

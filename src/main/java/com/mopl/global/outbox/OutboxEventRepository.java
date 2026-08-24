@@ -1,11 +1,13 @@
 package com.mopl.global.outbox;
 
+import jakarta.persistence.LockModeType;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -19,6 +21,17 @@ import org.springframework.data.repository.query.Param;
 public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> {
 
     Optional<OutboxEvent> findByEventId(UUID eventId);
+
+    /**
+     * 상태를 바꿀 목적으로 한 건을 잠그고 읽습니다.
+     *
+     * <p>운영자 두 명이 같은 이벤트를 동시에 되돌리면, 잠금 없이는 둘 다 최종 실패 상태를
+     * 읽고 둘 다 성공으로 응답합니다. 실제로 일어난 전이는 한 번인데 기록은 두 번 남습니다.
+     * 잠금을 걸면 뒤에 온 쪽이 앞선 전이가 커밋된 뒤의 상태를 읽어 거절됩니다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT e FROM OutboxEvent e WHERE e.eventId = :eventId")
+    Optional<OutboxEvent> findByEventIdForUpdate(@Param("eventId") UUID eventId);
 
     boolean existsByEventId(UUID eventId);
 

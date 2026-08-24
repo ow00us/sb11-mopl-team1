@@ -82,6 +82,15 @@ management:
     web:
       exposure:
         include: health, info, metrics, prometheus
+  endpoint:
+    health:
+      # liveness·readiness group 을 켭니다. Kubernetes 밖에서는 기본으로 꺼져 있습니다.
+      probes:
+        enabled: true
+      # 상세에는 Consumer Group, 토픽과 중지 사유가 들어갑니다. /actuator/health 는 인증
+      # 없이 열려 있으므로 상태만 보이게 하고, 상세는 관리자에게만 보여줍니다.
+      show-details: when-authorized
+      roles: ADMIN
 
 springdoc:
   api-docs:
@@ -124,6 +133,10 @@ watching-session:
   session-ttl: ${WATCHING_SESSION_SESSION_TTL:120s}
   heartbeat-interval: ${WATCHING_SESSION_HEARTBEAT_INTERVAL:20s}
   sweep-interval: ${WATCHING_SESSION_SWEEP_INTERVAL:5m}
+  chat-send-min-interval: ${WATCHING_SESSION_CHAT_SEND_MIN_INTERVAL:500ms}
+  watch-subscribe-min-interval: ${WATCHING_SESSION_WATCH_SUBSCRIBE_MIN_INTERVAL:2s}
+  chat-subscription-limit: ${WATCHING_SESSION_CHAT_SUBSCRIPTION_LIMIT:20}
+  content-existence-cache-ttl: ${WATCHING_SESSION_CONTENT_EXISTENCE_CACHE_TTL:30s}
 
 tmdb:
   base-url: https://api.themoviedb.org/3
@@ -149,6 +162,11 @@ external-content-batch:
   zone: Asia/Seoul
 
 mopl:
+  direct-message:
+    presence:
+      ttl: ${DIRECT_MESSAGE_PRESENCE_TTL:30s}
+      renew-interval: ${DIRECT_MESSAGE_PRESENCE_RENEW_INTERVAL:10s}
+
   kafka:
     topic:
       # 공통 토픽과 DLT 를 기동 시 선언적으로 생성할지 여부입니다.
@@ -162,6 +180,18 @@ mopl:
     dlt:
       # DLT replay 발행 확인을 기다리는 한도입니다. 확인 전에 성공으로 기록하지 않습니다.
       replay-ack-timeout: ${KAFKA_DLT_REPLAY_ACK_TIMEOUT:10s}
+    processed-event:
+      cleanup:
+        # 멱등 처리 기록 정리 여부입니다.
+        enabled: ${PROCESSED_EVENT_CLEANUP_ENABLED:true}
+        # 이전 실행이 끝난 뒤부터 이 간격만큼 쉬고 다시 돕니다.
+        interval: ${PROCESSED_EVENT_CLEANUP_INTERVAL:3600000}
+        # 기록한 뒤 이 기간이 지나야 지웁니다. Kafka 원본 토픽 보관 기간과 DLT 수동 replay
+        # 가능 기간보다 길어야 합니다. 짧으면 지운 이벤트가 다시 왔을 때 처음 보는 것으로
+        # 판정되어 도메인 부수 효과가 한 번 더 일어납니다.
+        retention: ${PROCESSED_EVENT_CLEANUP_RETENTION:30d}
+        # 한 번의 실행이 지울 최대 건수입니다.
+        batch-size: ${PROCESSED_EVENT_CLEANUP_BATCH_SIZE:1000}
   outbox:
     # 선점 유효 기간입니다. 짧으면 발행이 끝나기 전에 다른 인스턴스가 회수해 중복 발행이
     # 늘고, 길면 relay 가 죽었을 때 회수가 그만큼 지연됩니다.
@@ -222,6 +252,11 @@ app:
       # OAuth 인증 실패 후 이동할 프론트엔드 로그인 화면
       failure-uri: ${OAUTH2_FAILURE_REDIRECT_URI:http://localhost:5173/sign-in}
 
+logging:
+  level:
+    # 감사 로그는 이름을 따로 둡니다. 루트 레벨을 올리더라도 누가 무엇을 했는지는
+    # 계속 남아야 합니다.
+    mopl.audit: info
 ---
 spring:
   config:

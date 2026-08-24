@@ -115,6 +115,23 @@ public class OutboxEvent extends BaseEntity {
     @Column(name = "last_error", columnDefinition = "text")
     private String lastError;
 
+    /** {@link OutboxStatus#SKIPPED} 로 전환한 운영자입니다. */
+    @Column(name = "skipped_by")
+    private UUID skippedBy;
+
+    /** 건너뛰기로 판단한 시각입니다. */
+    @Column(name = "skipped_at")
+    private Instant skippedAt;
+
+    /**
+     * 건너뛴 사유입니다.
+     *
+     * <p>비워 둘 수 없습니다. 사유 없는 종결은 나중에 행을 보고 무슨 일이 있었는지 알 수 없게
+     * 만들고, 그러면 단순히 지운 것과 다르지 않습니다.
+     */
+    @Column(name = "skip_reason", columnDefinition = "text")
+    private String skipReason;
+
     /**
      * broker 발행 확인을 받은 뒤 완료로 표시합니다.
      *
@@ -174,6 +191,33 @@ public class OutboxEvent extends BaseEntity {
         this.claimOwner = null;
         this.claimExpiresAt = null;
         this.nextAttemptAt = now;
+    }
+
+    /**
+     * 보내지 않기로 하고 종결합니다.
+     *
+     * <p>{@code lastError} 를 지우지 않습니다. 왜 실패했었는지와 왜 보내지 않기로 했는지는
+     * 다른 정보이고, 나중에 판단을 되짚을 때 둘 다 필요합니다.
+     *
+     * <p>선점 정보를 비웁니다. 남겨두면 만료된 lease 를 회수하는 조회가 이미 끝난 레코드를
+     * 계속 훑습니다.
+     *
+     * @param actorId 건너뛰기로 판단한 운영자
+     * @param reason 건너뛴 사유. 비어 있을 수 없습니다
+     */
+    public void skip(UUID actorId, String reason, Instant now) {
+        if (actorId == null) {
+            throw new IllegalArgumentException("건너뛰기 처리자는 비워 둘 수 없습니다.");
+        }
+        if (reason == null || reason.isBlank()) {
+            throw new IllegalArgumentException("건너뛰기 사유는 비워 둘 수 없습니다.");
+        }
+        this.status = OutboxStatus.SKIPPED;
+        this.claimOwner = null;
+        this.claimExpiresAt = null;
+        this.skippedBy = actorId;
+        this.skippedAt = now;
+        this.skipReason = reason;
     }
 
     public OutboxEvent(
