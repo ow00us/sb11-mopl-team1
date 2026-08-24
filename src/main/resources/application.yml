@@ -137,7 +137,7 @@ watching-session:
   watch-subscribe-min-interval: ${WATCHING_SESSION_WATCH_SUBSCRIBE_MIN_INTERVAL:2s}
   chat-subscription-limit: ${WATCHING_SESSION_CHAT_SUBSCRIPTION_LIMIT:20}
   content-existence-cache-ttl: ${WATCHING_SESSION_CONTENT_EXISTENCE_CACHE_TTL:30s}
-  chat-buffer-size: ${WATCHING_SESSION_CHAT_BUFFER_SIZE:30}
+  chat-buffer-size: ${WATCHING_SESSION_CHAT_BUFFER_SIZE:10}
   chat-buffer-ttl: ${WATCHING_SESSION_CHAT_BUFFER_TTL:10m}
 
 tmdb:
