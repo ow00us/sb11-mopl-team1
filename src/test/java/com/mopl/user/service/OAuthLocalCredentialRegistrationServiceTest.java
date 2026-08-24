@@ -272,6 +272,53 @@ class OAuthLocalCredentialRegistrationServiceTest {
     }
 
     @Test
+    @DisplayName("현재 OAuth 사용자가 이미 가진 실제 이메일로 로컬 로그인을 등록할 수 있다")
+    void register_allowsCurrentUserEmail() {
+        // given
+        User user =
+            oauthOnlyUserWithActualEmail(false);
+
+        when(
+            userRepository.findByIdForUpdate(
+                USER_ID
+            )
+        ).thenReturn(
+            Optional.of(user)
+        );
+
+        // when
+        service.register(
+            USER_ID,
+            EMAIL,
+            ENCODED_PASSWORD
+        );
+
+        // then
+        assertThat(user.getEmail())
+            .isEqualTo(EMAIL);
+
+        assertThat(user.getPasswordHash())
+            .isEqualTo(
+                ENCODED_PASSWORD
+            );
+
+        verify(
+            userRepository,
+            never()
+        ).existsByEmail(
+            EMAIL
+        );
+
+        verify(userRepository)
+            .flush();
+
+        verify(refreshTokenStore)
+            .revokeAllByUserId(
+                USER_ID
+            );
+    }
+
+    @Test
     @DisplayName("DB 고유 제약 충돌도 이메일 중복 오류로 변환한다")
     void register_mapsUniqueConstraintConflict() {
         // given
@@ -380,6 +427,19 @@ class OAuthLocalCredentialRegistrationServiceTest {
             )
             .passwordHash(null)
             .name("OAuth 사용자")
+            .profileImageUrl(null)
+            .role(UserRole.USER)
+            .locked(locked)
+            .build();
+    }
+
+    private User oauthOnlyUserWithActualEmail(
+        boolean locked
+    ) {
+        return User.builder()
+            .email(EMAIL)
+            .passwordHash(null)
+            .name("Google OAuth 사용자")
             .profileImageUrl(null)
             .role(UserRole.USER)
             .locked(locked)

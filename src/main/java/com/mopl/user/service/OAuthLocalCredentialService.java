@@ -288,9 +288,14 @@ public class OAuthLocalCredentialService {
             );
         }
 
-        if (userRepository.existsByEmail(
-            normalizedEmail
-        )) {
+        if (
+            !normalizedEmail.equals(
+                user.getEmail()
+            )
+                && userRepository.existsByEmail(
+                normalizedEmail
+            )
+        ) {
             throw new BusinessException(
                 ErrorCode.EMAIL_DUPLICATE
             );

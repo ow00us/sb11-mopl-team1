@@ -379,6 +379,66 @@ class OAuthLocalCredentialServiceTest {
     }
 
     @Test
+    @DisplayName("현재 OAuth 사용자가 이미 가진 실제 이메일은 중복으로 판단하지 않는다")
+    void sendVerificationCode_allowsCurrentUserEmail() {
+        // given
+        User user =
+            oauthOnlyUserWithActualEmail(false);
+
+        when(
+            userRepository.findById(USER_ID)
+        ).thenReturn(
+            Optional.of(user)
+        );
+
+        when(
+            verificationCodeGenerator.generate()
+        ).thenReturn(RAW_CODE);
+
+        when(
+            verificationCodeHasher.hash(
+                USER_ID,
+                "user@example.com",
+                RAW_CODE
+            )
+        ).thenReturn(CODE_HASH);
+
+        when(
+            verificationStore.issue(
+                USER_ID,
+                "user@example.com",
+                CODE_HASH,
+                EXPIRATION,
+                COOLDOWN
+            )
+        ).thenReturn(
+            EmailVerificationIssueResult.ISSUED
+        );
+
+        // when
+        service.sendVerificationCode(
+            USER_ID,
+            USER_ID,
+            request()
+        );
+
+        // then
+        verify(
+            userRepository,
+            never()
+        ).existsByEmail(
+            "user@example.com"
+        );
+
+        verify(verificationCodeSender)
+            .send(
+                "user@example.com",
+                RAW_CODE,
+                EXPIRATION
+            );
+    }
+
+    @Test
     @DisplayName("재전송 제한 중이면 메일을 발송하지 않고 429를 반환한다")
     void sendVerificationCode_rejectsActiveCooldown() {
         // given
@@ -727,6 +787,19 @@ class OAuthLocalCredentialServiceTest {
             )
             .passwordHash(null)
             .name("OAuth 사용자")
+            .profileImageUrl(null)
+            .role(UserRole.USER)
+            .locked(locked)
+            .build();
+    }
+
+    private User oauthOnlyUserWithActualEmail(
+        boolean locked
+    ) {
+        return User.builder()
+            .email("user@example.com")
+            .passwordHash(null)
+            .name("Google OAuth 사용자")
             .profileImageUrl(null)
             .role(UserRole.USER)
             .locked(locked)
