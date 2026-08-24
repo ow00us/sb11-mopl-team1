@@ -14,6 +14,7 @@ import com.mopl.user.service.UserService;
 import com.mopl.user.service.OAuthAccountManagementService;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.Parameter;
 import java.util.UUID;
 import java.util.List;
 import jakarta.validation.Valid;
@@ -142,6 +143,7 @@ public class UserController {
     })
     public ResponseEntity<List<OAuthAccountDto>>
     getLinkedOAuthAccounts(
+        @Parameter(hidden = true)
         @AuthenticationPrincipal
         UUID authenticatedUserId,
         @PathVariable
@@ -189,6 +191,7 @@ public class UserController {
         )
     })
     public ResponseEntity<Void> unlinkOAuthAccount(
+        @Parameter(hidden = true)
         @AuthenticationPrincipal
         UUID authenticatedUserId,
         @PathVariable
