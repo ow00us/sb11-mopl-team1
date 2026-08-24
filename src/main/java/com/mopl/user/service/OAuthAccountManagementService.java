@@ -9,9 +9,11 @@ import com.mopl.user.dto.OAuthAccountDto;
 import com.mopl.user.repository.OAuthAccountRepository;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.user.storage.RefreshTokenStore;
+import com.mopl.user.security.oauth.link.OAuthLinkIntent;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -114,6 +116,137 @@ public class OAuthAccountManagementService {
                 ErrorCode.OAUTH_ACCOUNT_CONFLICT
             );
         }
+    }
+
+    /**
+     * Provider 인증이 완료된 OAuth 계정을 기존 사용자에게 연결
+     *
+     * <p>linkIntent는 JWT 인증을 거쳐 세션에 저장되고, OAuth Callback에서
+     * 한 번만 소비된 연결 의도여야 합니다.</p>
+     *
+     * <p>같은 외부 계정이 이미 동일 사용자에게 연결돼 있으면 Callback
+     * 재처리로 보고 멱등하게 기존 사용자를 반환합니다. 다른 사용자에게
+     * 연결됐거나 대상 사용자가 같은 Provider의 다른 계정을 가지고 있으면
+     * 연결 충돌로 거부합니다.</p>
+     *
+     * @param linkIntent 세션에서 소비한 일회성 연결 의도
+     * @param authenticatedProvider 실제 인증을 완료한 Provider
+     * @param providerUserId Provider가 검증해 반환한 사용자 식별자
+     * @return OAuth 계정이 연결된 MOPL 사용자
+     */
+    @Transactional
+    public User linkVerifiedAccount(
+        OAuthLinkIntent linkIntent,
+        OAuthProvider authenticatedProvider,
+        String providerUserId
+    ) {
+        if (linkIntent == null
+            || authenticatedProvider == null
+            || linkIntent.provider()
+            != authenticatedProvider
+            || providerUserId == null
+            || providerUserId.isBlank()) {
+            throw new BusinessException(
+                ErrorCode.INVALID_INPUT
+            );
+        }
+
+        /*
+         * 외부 식별자는 조회와 저장에서 반드시 같은 값을 사용해야 한다.
+         * 앞뒤 공백을 제거한 값을 이후 모든 Repository 호출에 사용한
+         */
+        String normalizedProviderUserId =
+            providerUserId.strip();
+
+        if (normalizedProviderUserId.length() > 255) {
+            throw new BusinessException(
+                ErrorCode.INVALID_INPUT
+            );
+        }
+
+        UUID userId =
+            linkIntent.userId();
+
+        /*
+         * 같은 사용자의 동시 연결·해제 요청을 직렬화
+         */
+        User user =
+            userRepository
+                .findByIdForUpdate(userId)
+                .orElseThrow(() ->
+                    new BusinessException(
+                        ErrorCode.RESOURCE_NOT_FOUND
+                    )
+                );
+
+        /*
+         * Provider 계정은 전체 서비스에서 한 사용자에게만 연결할 수 있다.
+         */
+        var existingProviderAccount =
+            oauthAccountRepository
+                .findByProviderAndProviderUserId(
+                    authenticatedProvider,
+                    normalizedProviderUserId
+                );
+
+        if (existingProviderAccount.isPresent()) {
+            OAuthAccount existingAccount =
+                existingProviderAccount.orElseThrow();
+
+            if (existingAccount
+                .getUser()
+                .getId()
+                .equals(userId)) {
+                /*
+                 * 동일 Callback 재처리는 새로운 연결 정보를 만들지 않는다.
+                 */
+                return user;
+            }
+
+            throw new BusinessException(
+                ErrorCode.OAUTH_ACCOUNT_CONFLICT
+            );
+        }
+
+        /*
+         * 사용자는 같은 Provider의 서로 다른 계정을
+         * 두 개 이상 연결할 수 없다.
+         */
+        if (oauthAccountRepository
+            .existsByUserIdAndProvider(
+                userId,
+                authenticatedProvider
+            )) {
+            throw new BusinessException(
+                ErrorCode.OAUTH_ACCOUNT_CONFLICT
+            );
+        }
+
+        OAuthAccount oauthAccount =
+            OAuthAccount.builder()
+                .user(user)
+                .provider(authenticatedProvider)
+                .providerUserId(
+                    normalizedProviderUserId
+                )
+                .build();
+
+        try {
+            /*
+             * 사전 조회와 INSERT 사이에 다른 요청이 먼저 저장할 수 있으므로
+             * DB 고유 제약을 최종 동시성 방어선으로 사용
+             */
+            oauthAccountRepository
+                .saveAndFlush(
+                    oauthAccount
+                );
+        } catch (DataIntegrityViolationException exception) {
+            throw new BusinessException(
+                ErrorCode.OAUTH_ACCOUNT_CONFLICT
+            );
+        }
+
+        return user;
     }
 
     /**
