@@ -3,8 +3,12 @@ package com.mopl.user.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import com.mopl.global.config.JpaConfig;
+import com.mopl.global.exception.BusinessException;
+import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.entity.OAuthAccount;
 import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.entity.User;
@@ -13,6 +17,11 @@ import com.mopl.user.repository.OAuthAccountRepository;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.user.storage.RefreshTokenStore;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -138,5 +147,194 @@ class OAuthAccountManagementServiceIntegrationTest {
             oauthAccountRepository
                 .countByUserId(userId)
         ).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("OAuth 계정 동시 해제에서도 마지막 로그인 수단을 유지한다")
+    void unlinkAccount_concurrentRequestsPreserveLastLoginMethod()
+        throws Exception {
+        // given
+        User oauthOnlyUser =
+            User.builder()
+                .email("oauth-user@mopl.local")
+                .passwordHash(null)
+                .name("OAuth 사용자")
+                .profileImageUrl(null)
+                .role(UserRole.USER)
+                .locked(false)
+                .build();
+
+        userRepository.saveAndFlush(
+            oauthOnlyUser
+        );
+
+        UUID userId =
+            oauthOnlyUser.getId();
+
+        OAuthAccount googleAccount =
+            OAuthAccount.builder()
+                .user(oauthOnlyUser)
+                .provider(OAuthProvider.GOOGLE)
+                .providerUserId("google-sub-123")
+                .build();
+
+        OAuthAccount kakaoAccount =
+            OAuthAccount.builder()
+                .user(oauthOnlyUser)
+                .provider(OAuthProvider.KAKAO)
+                .providerUserId("kakao-id-456")
+                .build();
+
+        oauthAccountRepository.saveAllAndFlush(
+            java.util.List.of(
+                googleAccount,
+                kakaoAccount
+            )
+        );
+
+        ExecutorService executorService =
+            Executors.newFixedThreadPool(2);
+
+        CountDownLatch ready =
+            new CountDownLatch(2);
+
+        CountDownLatch start =
+            new CountDownLatch(1);
+
+        try {
+            Future<ErrorCode> googleUnlink =
+                executorService.submit(() ->
+                    unlinkAfterStart(
+                        ready,
+                        start,
+                        userId,
+                        OAuthProvider.GOOGLE
+                    )
+                );
+
+            Future<ErrorCode> kakaoUnlink =
+                executorService.submit(() ->
+                    unlinkAfterStart(
+                        ready,
+                        start,
+                        userId,
+                        OAuthProvider.KAKAO
+                    )
+                );
+
+            /*
+             * 두 작업 스레드가 모두 준비된 뒤 해제를 동시에 시작
+             */
+            assertThat(
+                ready.await(
+                    5,
+                    TimeUnit.SECONDS
+                )
+            ).isTrue();
+
+            start.countDown();
+
+            ErrorCode googleResult =
+                googleUnlink.get(
+                    15,
+                    TimeUnit.SECONDS
+                );
+
+            ErrorCode kakaoResult =
+                kakaoUnlink.get(
+                    15,
+                    TimeUnit.SECONDS
+                );
+
+            /*
+             * 두 요청 중 하나만 성공하고, 나머지 요청은
+             * 마지막 로그인 수단 보호 정책에 의해 거부되어야 한다.
+             */
+            assertThat(
+                java.util.List.of(
+                    googleResult == null,
+                    kakaoResult == null
+                )
+            ).containsExactlyInAnyOrder(
+                true,
+                false
+            );
+
+            ErrorCode rejectedError =
+                googleResult != null
+                    ? googleResult
+                    : kakaoResult;
+
+            assertThat(rejectedError)
+                .isEqualTo(
+                    ErrorCode.OAUTH_LAST_LOGIN_METHOD
+                );
+
+            /*
+             * 실제 PostgreSQL에도 OAuth 계정 하나가 남아 있어야 한다.
+             */
+            assertThat(
+                oauthAccountRepository
+                    .countByUserId(userId)
+            ).isEqualTo(1);
+
+            assertThat(
+                oauthAccountRepository
+                    .findAllByUserId(userId)
+            ).hasSize(1);
+
+            /*
+             * 실제 삭제에 성공한 요청에서만 세션 폐기가 실행
+             */
+            verify(
+                refreshTokenStore,
+                times(1)
+            ).revokeAllByUserId(userId);
+        } finally {
+            start.countDown();
+            executorService.shutdownNow();
+
+            assertThat(
+                executorService.awaitTermination(
+                    5,
+                    TimeUnit.SECONDS
+                )
+            ).isTrue();
+        }
+    }
+
+    /**
+     * 두 연결 해제 작업을 같은 시점에 시작하고 처리 결과를 반환
+     *
+     * @return 성공하면 null, 정책에 의해 거부되면 해당 ErrorCode
+     */
+    private ErrorCode unlinkAfterStart(
+        CountDownLatch ready,
+        CountDownLatch start,
+        UUID userId,
+        OAuthProvider provider
+    ) throws InterruptedException {
+        ready.countDown();
+
+        if (!start.await(
+            5,
+            TimeUnit.SECONDS
+        )) {
+            throw new IllegalStateException(
+                "동시 연결 해제 시작 신호를 기다리지 못했습니다."
+            );
+        }
+
+        try {
+            managementService.unlinkAccount(
+                userId,
+                userId,
+                provider
+            );
+
+            return null;
+        } catch (BusinessException exception) {
+            return exception.getErrorCode();
+        }
     }
 }
