@@ -108,11 +108,11 @@ class ContentChatBufferTest {
     void append_renewsTtl_onEachAppend() throws InterruptedException {
         contentChatBuffer.append(CONTENT_ID, messageOf("1"));
         Thread.sleep(700);
+        assertThat(stringRedisTemplate.hasKey(KEY)).isTrue();
         contentChatBuffer.append(CONTENT_ID, messageOf("2")); // TTL 재설정
 
-        Thread.sleep(700); // 첫 append 기준으로는 이미 1.4s 지났지만 두 번째 append가 갱신했으므로 유지
-
-        assertThat(stringRedisTemplate.hasKey(KEY)).isTrue();
+        assertThat(stringRedisTemplate.getExpire(KEY, TimeUnit.MILLISECONDS))
+            .isGreaterThan(500L);
     }
 
     @Test
