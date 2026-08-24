@@ -228,6 +228,9 @@ jobs:
             --env GOOGLE_OAUTH_CLIENT_ID=mopl-ci-google-client-id \
             --env GOOGLE_OAUTH_CLIENT_SECRET=mopl-ci-google-client-secret \
             --env GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8080/login/oauth2/code/google \
+            --env KAKAO_OAUTH_CLIENT_ID=mopl-ci-kakao-client-id \
+            --env KAKAO_OAUTH_CLIENT_SECRET=mopl-ci-kakao-client-secret \
+            --env KAKAO_OAUTH_REDIRECT_URI=http://localhost:8080/login/oauth2/code/kakao \
             --env KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092 \
             --env KAFKA_TOPIC_VERIFY=true \
             mopl:ci
