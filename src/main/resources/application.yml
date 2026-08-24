@@ -286,6 +286,13 @@ app:
     link:
       # 로그인된 사용자가 OAuth Provider 인증을 완료할 수 있는 제한 시간
       intent-expiration: ${OAUTH2_LINK_INTENT_EXPIRATION:5m}
+    local-credential:
+      # OAuth 전용 사용자의 이메일 소유 확인 코드 유효 시간
+      verification-expiration: ${OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_EXPIRATION:10m}
+      # 인증 메일 반복 요청을 제한하는 최소 대기 시간
+      resend-cooldown: ${OAUTH2_LOCAL_CREDENTIAL_RESEND_COOLDOWN:1m}
+      # 코드 무차별 대입을 막기 위한 최대 검증 실패 횟수
+      max-attempts: ${OAUTH2_LOCAL_CREDENTIAL_MAX_ATTEMPTS:5}
     redirect:
       # OAuth 인증 성공 후 Access Token 복원을 처리할 프론트엔드 화면
       success-uri: ${OAUTH2_SUCCESS_REDIRECT_URI:http://localhost:5173/oauth/callback}
