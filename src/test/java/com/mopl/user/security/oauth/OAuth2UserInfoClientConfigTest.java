@@ -56,6 +56,17 @@ class OAuth2UserInfoClientConfigTest {
     }
 
     @Test
+    @DisplayName("정상 제한 시간으로 Naver OAuth2 delegate를 생성한다")
+    void createNaverDelegate_success() {
+        assertThat(
+            config.naverOAuth2UserDelegate(
+                Duration.ofSeconds(3),
+                Duration.ofSeconds(5)
+            )
+        ).isNotNull();
+    }
+
+    @Test
     @DisplayName("연결 제한 시간이 0이면 생성을 거부한다")
     void createDelegate_failWhenConnectTimeoutIsZero() {
         assertThatThrownBy(() ->

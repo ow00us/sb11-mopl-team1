@@ -11,8 +11,8 @@ import org.springframework.stereotype.Service;
  * 일반 OAuth2 Provider의 사용자 정보 조회 서비스를 선택하는 공통 라우터
  *
  * <p>Spring Security의 OAuth2 Login 설정에서 {@code userService}는
- * 모든 일반 OAuth2 Provider에 공통 적용됩니다. Kakao 전용 서비스를
- * 직접 등록하면 이후 Naver 요청도 Kakao 서비스로 전달되므로,
+ * 모든 일반 OAuth2 Provider에 공통 적용됩니다. 특정 Provider 서비스를
+ * 직접 등록하면 다른 Provider 요청도 같은 서비스로 전달되므로,
  * registrationId에 따라 Provider별 서비스를 선택합니다.</p>
  *
  * <p>Google은 OIDC Provider이므로 이 라우터를 거치지 않고
@@ -28,19 +28,29 @@ public class MoplOAuth2UserService
     private static final String KAKAO_REGISTRATION_ID =
         "kakao";
 
+    private static final String NAVER_REGISTRATION_ID =
+        "naver";
+
     private final KakaoOAuth2UserService
         kakaoOAuth2UserService;
+
+    private final NaverOAuth2UserService
+        naverOAuth2UserService;
 
     /**
      * 일반 OAuth2 Provider 라우터를 생성
      *
      * @param kakaoOAuth2UserService Kakao 사용자 정보 조회 서비스
+     * @param naverOAuth2UserService Naver 사용자 정보 조회 서비스
      */
     public MoplOAuth2UserService(
-        KakaoOAuth2UserService kakaoOAuth2UserService
+        KakaoOAuth2UserService kakaoOAuth2UserService,
+        NaverOAuth2UserService naverOAuth2UserService
     ) {
         this.kakaoOAuth2UserService =
             kakaoOAuth2UserService;
+        this.naverOAuth2UserService =
+            naverOAuth2UserService;
     }
 
     /**
@@ -60,6 +70,14 @@ public class MoplOAuth2UserService
             registrationId
         )) {
             return kakaoOAuth2UserService.loadUser(
+                userRequest
+            );
+        }
+
+        if (NAVER_REGISTRATION_ID.equals(
+            registrationId
+        )) {
+            return naverOAuth2UserService.loadUser(
                 userRequest
             );
         }
@@ -102,6 +120,9 @@ public class MoplOAuth2UserService
         return registrationId.strip();
     }
 
+    /**
+     * 지원하지 않는 Provider 요청을 OAuth2 인증 실패로 변환
+     */
     private OAuth2AuthenticationException
     authenticationException(
         String description
