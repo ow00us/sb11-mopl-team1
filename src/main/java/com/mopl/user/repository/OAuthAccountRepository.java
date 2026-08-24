@@ -51,4 +51,17 @@ public interface OAuthAccountRepository
      * @return 사용자에게 연결된 OAuth 계정 목록
      */
     List<OAuthAccount> findAllByUserId(UUID userId);
+
+    /**
+     * 특정 사용자에게 연결된 OAuth 계정을 연결 시각 오름차순으로 조회
+     *
+     * <p>API 응답 순서가 데이터베이스 실행 계획에 따라 바뀌지 않도록
+     * 명시적인 정렬 조건을 적용합니다.</p>
+     *
+     * @param userId 모두의 플리 사용자 UUID
+     * @return 연결 시각이 오래된 순서로 정렬된 OAuth 계정 목록
+     */
+    List<OAuthAccount> findAllByUserIdOrderByCreatedAtAsc(
+        UUID userId
+    );
 }
