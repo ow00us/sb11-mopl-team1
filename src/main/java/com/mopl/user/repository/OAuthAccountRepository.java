@@ -64,4 +64,27 @@ public interface OAuthAccountRepository
     List<OAuthAccount> findAllByUserIdOrderByCreatedAtAsc(
         UUID userId
     );
+
+    /**
+     * 사용자와 Provider가 일치하는 OAuth 연결 정보를 조회
+     *
+     * @param userId 사용자 UUID
+     * @param provider OAuth Provider
+     * @return 연결 정보, 존재하지 않으면 빈 Optional
+     */
+    Optional<OAuthAccount> findByUserIdAndProvider(
+        UUID userId,
+        OAuthProvider provider
+    );
+
+    /**
+     * 사용자에게 연결된 OAuth 계정 수를 조회
+     *
+     * <p>로컬 비밀번호가 없는 OAuth 전용 사용자의 마지막 로그인 수단을
+     * 해제하지 못하도록 검사할 때 사용합니다.</p>
+     *
+     * @param userId 사용자 UUID
+     * @return 연결된 OAuth 계정 수
+     */
+    long countByUserId(UUID userId);
 }
