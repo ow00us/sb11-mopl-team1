@@ -25,6 +25,7 @@ Dockerfile은 빌드 단계와 실행 단계를 분리합니다. 실행 이미�
 | `WS_ALLOWED_ORIGINS` | WebSocket handshake를 허용할 프론트엔드 origin 목록 |
 | `OAUTH2_SUCCESS_REDIRECT_URI` | OAuth 인증 성공 후 이동할 프론트엔드 Callback 절대 URI |
 | `OAUTH2_FAILURE_REDIRECT_URI` | OAuth 인증 실패 후 이동할 프론트엔드 로그인 절대 URI |
+| `OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_SECRET` | OAuth 사용자의 이메일 인증 코드를 HMAC-SHA256으로 보호하는 32자 이상의 비밀 값 |
 | `GOOGLE_OAUTH_CLIENT_ID` | Google Cloud Console에서 발급한 웹 애플리케이션 OAuth Client ID |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Google Cloud Console에서 발급한 OAuth Client Secret |
 | `GOOGLE_OAUTH_REDIRECT_URI` | Google Cloud Console에 승인된 운영용 Google Callback 절대 URI |
@@ -319,6 +320,7 @@ docker run --rm \
   -e WS_ALLOWED_ORIGINS=<frontend-origin> \
   -e OAUTH2_SUCCESS_REDIRECT_URI=<frontend-origin>/oauth/callback \
   -e OAUTH2_FAILURE_REDIRECT_URI=<frontend-origin>/sign-in \
+  -e OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_SECRET=<32-character-or-longer-secret> \
   -e GOOGLE_OAUTH_CLIENT_ID=<google-oauth-client-id> \
   -e GOOGLE_OAUTH_CLIENT_SECRET=<google-oauth-client-secret> \
   -e GOOGLE_OAUTH_REDIRECT_URI=https://<backend-domain>/login/oauth2/code/google \
