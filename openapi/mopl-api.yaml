@@ -1501,21 +1501,9 @@ paths:
         required: true
       responses:
         "204":
-          description: "성공"
+          description: "비밀번호 초기화 요청 접수"
         "400":
           description: "잘못된 요청"
-          content:
-            "*/*":
-              schema:
-                "$ref": "#/components/schemas/ErrorResponse"
-        "404":
-          description: "해당 리소스 없음"
-          content:
-            "*/*":
-              schema:
-                "$ref": "#/components/schemas/ErrorResponse"
-        "409":
-          description: "로컬 로그인 수단이 등록되지 않은 사용자"
           content:
             "*/*":
               schema:
