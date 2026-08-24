@@ -4,8 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mopl.content.repository.ContentRepository;
@@ -16,6 +19,7 @@ import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.ContentChatDto;
+import com.mopl.watchingsession.presence.ContentChatBuffer;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceReader;
 import java.util.Optional;
 import java.util.UUID;
@@ -43,6 +47,9 @@ public class ContentChatServiceTest {
 
     @Mock
     private WatchingSessionPresenceReader watchingSessionPresenceReader;
+
+    @Mock
+    private ContentChatBuffer contentChatBuffer;
 
     @InjectMocks
     private ContentChatService contentChatService;
@@ -155,5 +162,67 @@ public class ContentChatServiceTest {
                 e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.UNAUTHORIZED));
 
         verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));
+    }
+
+    @Test
+    @DisplayName("브로드캐스트에 성공하면 같은 ContentChatDto로 버퍼에 기록한다")
+    void sendAndBroadcast_success_appendsSameDtoToBuffer() {
+        // given
+        when(watchingSessionPresenceReader.isWatching(SENDER_ID, CONTENT_ID)).thenReturn(true);
+        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+
+        // when
+        contentChatService.sendAndBroadcast(SENDER_ID, CONTENT_ID, createCachedSender(), "안녕하세요");
+
+        // then
+        ArgumentCaptor<ContentChatDto> broadcastCaptor = ArgumentCaptor.forClass(ContentChatDto.class);
+        ArgumentCaptor<ContentChatDto> bufferCaptor = ArgumentCaptor.forClass(ContentChatDto.class);
+        verify(messagingTemplate).convertAndSend(anyString(), broadcastCaptor.capture());
+        verify(contentChatBuffer).append(eq(CONTENT_ID), bufferCaptor.capture());
+
+        assertThat(bufferCaptor.getValue()).isSameAs(broadcastCaptor.getValue());
+    }
+
+    @Test
+    @DisplayName("시청 중이 아니면 버퍼에 기록하지 않는다")
+    void sendAndBroadcast_notWatching_doesNotAppendToBuffer() {
+        // given
+        when(watchingSessionPresenceReader.isWatching(SENDER_ID, CONTENT_ID)).thenReturn(false);
+
+        // when & then
+        assertThatThrownBy(() -> contentChatService.sendAndBroadcast(SENDER_ID, CONTENT_ID, createCachedSender(), "도배 시도"))
+            .isInstanceOf(BusinessException.class);
+
+        verifyNoInteractions(contentChatBuffer);
+    }
+
+    @Test
+    @DisplayName("콘텐츠가 존재하지 않으면 버퍼에 기록하지 않는다")
+    void sendAndBroadcast_contentNotFound_doesNotAppendToBuffer() {
+        // given
+        when(watchingSessionPresenceReader.isWatching(SENDER_ID, CONTENT_ID)).thenReturn(true);
+        when(contentRepository.existsById(CONTENT_ID)).thenReturn(false);
+
+        // when & then
+        assertThatThrownBy(() -> contentChatService.sendAndBroadcast(SENDER_ID, CONTENT_ID, createCachedSender(), "안녕하세요"))
+            .isInstanceOf(BusinessException.class);
+
+        verifyNoInteractions(contentChatBuffer);
+    }
+
+    @Test
+    @DisplayName("브로드캐스트 자체가 실패하면 버퍼에 기록하지 않는다")
+    void sendAndBroadcast_broadcastThrows_doesNotAppendToBuffer() {
+        // given
+        when(watchingSessionPresenceReader.isWatching(SENDER_ID, CONTENT_ID)).thenReturn(true);
+        when(contentRepository.existsById(CONTENT_ID)).thenReturn(true);
+        doThrow(new RuntimeException("브로커 전송 실패"))
+            .when(messagingTemplate).convertAndSend(anyString(), any(Object.class));
+
+        // when & then
+        assertThatThrownBy(() -> contentChatService.sendAndBroadcast(SENDER_ID, CONTENT_ID, createCachedSender(), "안녕하세요"))
+            .isInstanceOf(RuntimeException.class);
+
+        verifyNoInteractions(contentChatBuffer);
     }
 }
