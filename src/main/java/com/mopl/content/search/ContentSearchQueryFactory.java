@@ -16,6 +16,12 @@ import org.springframework.stereotype.Component;
 /**
  * 콘텐츠 목록 조회를 위한 Elasticsearch 쿼리를 만든다.
  * ContentRepository의 네이티브 쿼리 메서드들과 같은 필터·정렬·커서 계약을 ES 쿼리로 재현한다.
+ *
+ * <p>주의: 여기서 받는 typeEqual은 ContentRepository의 typeEqual(이미 ContentType enum name으로
+ * 변환된 값, 예: "MOVIE")과 이름은 같지만 의미가 다르다. 이 클래스는 내부에서
+ * {@code ContentType.fromApiValue(typeEqual).name()}으로 직접 변환하므로, API 원본 camelCase
+ * 값(예: "movie")을 그대로 넘겨야 한다. 이미 변환된 enum name을 넘기면 fromApiValue()가 못 찾아
+ * 예외가 던져진다.
  */
 @Component
 public class ContentSearchQueryFactory {
@@ -114,12 +120,35 @@ public class ContentSearchQueryFactory {
         return build(typeEqual, keywordLike, tagsIn, sort, searchAfter, limit);
     }
 
+    // ── count ───────────────────────────────────────────────────────────────
+
+    /** countByFilter()용으로 필터만 적용하고 정렬/커서/limit은 없는 쿼리를 만든다. */
+    public NativeQuery createCountQuery(String typeEqual, String keywordLike, List<String> tagsIn) {
+        return NativeQuery.builder()
+                .withQuery(buildFilterQuery(typeEqual, keywordLike, tagsIn))
+                .build();
+    }
+
     // ── 공통 ────────────────────────────────────────────────────────────────
 
     private NativeQuery build(
             String typeEqual, String keywordLike, List<String> tagsIn,
             List<SortOptions> sort, List<Object> searchAfter, int limit) {
 
+        NativeQueryBuilder builder = NativeQuery.builder()
+                .withQuery(buildFilterQuery(typeEqual, keywordLike, tagsIn))
+                .withSort(sort)
+                .withMaxResults(limit);
+
+        if (searchAfter != null) {
+            builder.withSearchAfter(searchAfter);
+        }
+
+        return builder.build();
+    }
+
+    // find 6종과 countByFilter()가 공유하는 필터(bool must/filter) 빌드 로직.
+    private Query buildFilterQuery(String typeEqual, String keywordLike, List<String> tagsIn) {
         BoolQuery.Builder bool = new BoolQuery.Builder();
 
         if (keywordLike != null && !keywordLike.isBlank()) {
@@ -143,16 +172,7 @@ public class ContentSearchQueryFactory {
             bool.filter(filters);
         }
 
-        NativeQueryBuilder builder = NativeQuery.builder()
-                .withQuery(Query.of(q -> q.bool(bool.build())))
-                .withSort(sort)
-                .withMaxResults(limit);
-
-        if (searchAfter != null) {
-            builder.withSearchAfter(searchAfter);
-        }
-
-        return builder.build();
+        return Query.of(q -> q.bool(bool.build()));
     }
 
     private SortOptions fieldSort(String field, SortOrder order) {
