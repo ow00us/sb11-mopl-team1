@@ -92,4 +92,18 @@ public class WatchingSessionProperties {
     @DurationMin(millis = 1)
     private Duration contentExistenceCacheTtl;
 
+    /**
+     * 콘텐츠별 채팅 롤링 버퍼가 유지하는 최근 메시지 개수. 이 값을 넘으면 가장 오래된 메시지부터 밀려난다.
+     */
+    @NotNull
+    @Positive
+    private Integer chatBufferSize;
+
+    /**
+     * 채팅 버퍼 키의 TTL. 메시지가 추가될 때마다 이 값으로 재설정되므로 마지막 메시지 이후 이 시간이 지나면 버퍼가 통째로 사라진다.
+     */
+    @NotNull
+    @DurationMin(millis = 1)
+    private Duration chatBufferTtl;
+
 }
