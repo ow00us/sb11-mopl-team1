@@ -16,12 +16,14 @@ import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.OAuthAccountRepository;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.user.storage.RefreshTokenStore;
+import com.mopl.user.security.oauth.link.OAuthLinkIntent;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -147,6 +149,155 @@ class OAuthAccountManagementServiceIntegrationTest {
             oauthAccountRepository
                 .countByUserId(userId)
         ).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("동일한 OAuth 계정의 동시 연결은 한 사용자에게만 성공한다")
+    void linkVerifiedAccount_concurrentRequestsAllowOnlyOneUser()
+        throws Exception {
+        // given
+        User firstUser =
+            User.builder()
+                .email("first-user@example.com")
+                .passwordHash("encoded-password")
+                .name("첫 번째 사용자")
+                .profileImageUrl(null)
+                .role(UserRole.USER)
+                .locked(false)
+                .build();
+
+        User secondUser =
+            User.builder()
+                .email("second-user@example.com")
+                .passwordHash("encoded-password")
+                .name("두 번째 사용자")
+                .profileImageUrl(null)
+                .role(UserRole.USER)
+                .locked(false)
+                .build();
+
+        userRepository.saveAllAndFlush(
+            java.util.List.of(
+                firstUser,
+                secondUser
+            )
+        );
+
+        String providerUserId =
+            "shared-google-sub";
+
+        ExecutorService executorService =
+            Executors.newFixedThreadPool(2);
+
+        CountDownLatch ready =
+            new CountDownLatch(2);
+
+        CountDownLatch start =
+            new CountDownLatch(1);
+
+        try {
+            Future<ErrorCode> firstResultFuture =
+                executorService.submit(() ->
+                    linkAfterStart(
+                        ready,
+                        start,
+                        firstUser.getId(),
+                        OAuthProvider.GOOGLE,
+                        providerUserId
+                    )
+                );
+
+            Future<ErrorCode> secondResultFuture =
+                executorService.submit(() ->
+                    linkAfterStart(
+                        ready,
+                        start,
+                        secondUser.getId(),
+                        OAuthProvider.GOOGLE,
+                        providerUserId
+                    )
+                );
+
+            assertThat(
+                ready.await(
+                    5,
+                    TimeUnit.SECONDS
+                )
+            ).isTrue();
+
+            start.countDown();
+
+            ErrorCode firstResult =
+                firstResultFuture.get(
+                    15,
+                    TimeUnit.SECONDS
+                );
+
+            ErrorCode secondResult =
+                secondResultFuture.get(
+                    15,
+                    TimeUnit.SECONDS
+                );
+
+            /*
+             * 하나의 요청만 성공하고 다른 요청은
+             * Provider 사용자 ID 고유 제약에 의해 거부되어야 한다.
+             */
+            assertThat(
+                java.util.List.of(
+                    firstResult == null,
+                    secondResult == null
+                )
+            ).containsExactlyInAnyOrder(
+                true,
+                false
+            );
+
+            ErrorCode rejectedError =
+                firstResult != null
+                    ? firstResult
+                    : secondResult;
+
+            assertThat(rejectedError)
+                .isEqualTo(
+                    ErrorCode.OAUTH_ACCOUNT_CONFLICT
+                );
+
+            assertThat(
+                oauthAccountRepository.count()
+            ).isEqualTo(1);
+
+            OAuthAccount linkedAccount =
+                oauthAccountRepository
+                    .findByProviderAndProviderUserId(
+                        OAuthProvider.GOOGLE,
+                        providerUserId
+                    )
+                    .orElseThrow();
+
+            /*
+             * 저장된 계정은 두 연결 요청 사용자 중 정확히 한 명에게만
+             * 연결되어야 한다.
+             */
+            assertThat(
+                linkedAccount
+                    .getUser()
+                    .getId()
+            ).isIn(
+                firstUser.getId(),
+                secondUser.getId()
+            );
+        } finally {
+            start.countDown();
+            executorService.shutdownNow();
+
+            assertThat(
+                executorService.awaitTermination(
+                    5,
+                    TimeUnit.SECONDS
+                )
+            ).isTrue();
+        }
     }
 
     @Test
@@ -300,6 +451,52 @@ class OAuthAccountManagementServiceIntegrationTest {
                     TimeUnit.SECONDS
                 )
             ).isTrue();
+        }
+    }
+
+    /**
+     * OAuth 연결 작업을 동시에 시작하고 처리 결과를 반환
+     *
+     * @return 성공하면 null, 연결 충돌이면 해당 ErrorCode
+     */
+    private ErrorCode linkAfterStart(
+        CountDownLatch ready,
+        CountDownLatch start,
+        UUID userId,
+        OAuthProvider provider,
+        String providerUserId
+    ) throws InterruptedException {
+        ready.countDown();
+
+        if (!start.await(
+            5,
+            TimeUnit.SECONDS
+        )) {
+            throw new IllegalStateException(
+                "동시 OAuth 연결 시작 신호를 기다리지 못했습니다."
+            );
+        }
+
+        OAuthLinkIntent linkIntent =
+            new OAuthLinkIntent(
+                userId,
+                provider,
+                Instant.parse(
+                    "2099-01-01T00:00:00Z"
+                )
+            );
+
+        try {
+            managementService
+                .linkVerifiedAccount(
+                    linkIntent,
+                    provider,
+                    providerUserId
+                );
+
+            return null;
+        } catch (BusinessException exception) {
+            return exception.getErrorCode();
         }
     }
 
