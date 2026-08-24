@@ -7,7 +7,11 @@ import com.mopl.content.service.ContentService;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import jakarta.validation.Validator;
@@ -65,15 +69,44 @@ public class ContentController {
     }
 
     /** 커서 페이지네이션으로 콘텐츠 목록을 조회합니다. 공개 API로, 인증이 필요 없습니다. */
+    @Operation(
+            summary = "콘텐츠 목록 조회 (커서 페이지네이션)",
+            description = "커서 페이지네이션으로 콘텐츠 목록을 조회합니다. Elasticsearch 기반 검색으로, "
+                    + "keywordLike는 단순 부분 문자열이 아니라 형태소 분석(nori) 기반으로 title/description을 매칭합니다. "
+                    + "watcherCount 정렬 값은 최대 60초 지연될 수 있습니다(실시간 아님). 공개 API로 인증이 필요 없습니다."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "성공"),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청 (limit/sortBy 범위 오류, cursor/idAfter 조합 오류, 잘못된 cursor 형식 등)"),
+            @ApiResponse(responseCode = "503", description = "검색 기능을 일시적으로 사용할 수 없음 (Elasticsearch 장애)"),
+            @ApiResponse(responseCode = "500", description = "서버 오류")
+    })
     @GetMapping
     public CursorResponse<ContentDto> getList(
+            @Parameter(description = "콘텐츠 타입", schema = @Schema(allowableValues = {"movie", "tvSeries", "sport"}))
             @RequestParam(required = false) @Pattern(regexp = "movie|tvSeries|sport") String typeEqual,
+
+            @Parameter(description = "검색 키워드 (title/description 대상, 형태소 분석 기반 매칭)")
             @RequestParam(required = false) String keywordLike,
+
+            @Parameter(description = "태그 필터 (전부 포함하는 콘텐츠만 매칭, 최대 20개)")
             @RequestParam(required = false) @Size(max = 20) List<String> tagsIn,
+
+            @Parameter(description = "커서")
             @RequestParam(required = false) String cursor,
+
+            @Parameter(description = "보조 커서")
             @RequestParam(required = false) UUID idAfter,
+
+            @Parameter(description = "한 번에 가져올 개수", required = true)
             @RequestParam @Min(1) @Max(100) int limit,
+
+            @Parameter(description = "정렬 방향", required = true,
+                    schema = @Schema(allowableValues = {"ASCENDING", "DESCENDING"}))
             @RequestParam @Pattern(regexp = "ASCENDING|DESCENDING") String sortDirection,
+
+            @Parameter(description = "정렬 기준", required = true,
+                    schema = @Schema(allowableValues = {"createdAt", "watcherCount", "averageRating"}))
             @RequestParam @Pattern(regexp = "createdAt|watcherCount|averageRating") String sortBy) {
         return contentService.getList(typeEqual, keywordLike, tagsIn, cursor, idAfter, limit, sortBy, sortDirection);
     }
