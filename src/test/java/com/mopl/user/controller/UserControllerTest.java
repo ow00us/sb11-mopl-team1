@@ -24,8 +24,11 @@ import com.mopl.user.dto.UserUpdateRequest;
 import com.mopl.user.dto.UserLockUpdateRequest;
 import com.mopl.user.dto.UserRoleUpdateRequest;
 import com.mopl.user.dto.ChangePasswordRequest;
+import com.mopl.user.dto.OAuthAccountDto;
 import com.mopl.user.entity.UserRole;
+import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.service.UserService;
+import com.mopl.user.service.OAuthAccountManagementService;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
@@ -61,6 +64,9 @@ class UserControllerTest {
 
     @MockitoBean
     UserService userService;
+
+    @MockitoBean
+    OAuthAccountManagementService oauthAccountManagementService;
 
     /**
      * 테스트 종료 후 인증 정보 제거
@@ -968,6 +974,73 @@ class UserControllerTest {
          * Service는 호출되지 않는다.
          */
         verifyNoInteractions(userService);
+    }
+
+    @Test
+    @DisplayName("본인의 OAuth 연결 계정 목록을 조회하면 200과 공개 정보를 반환한다")
+    void getLinkedOAuthAccounts_success()
+        throws Exception {
+
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        Instant googleConnectedAt =
+            Instant.parse("2026-08-01T01:00:00Z");
+
+        Instant naverConnectedAt =
+            Instant.parse("2026-08-02T01:00:00Z");
+
+        setAuthenticatedUser(userId);
+
+        when(
+            oauthAccountManagementService
+                .getLinkedAccounts(
+                    userId,
+                    userId
+                )
+        ).thenReturn(
+            List.of(
+                new OAuthAccountDto(
+                    OAuthProvider.GOOGLE,
+                    googleConnectedAt
+                ),
+                new OAuthAccountDto(
+                    OAuthProvider.NAVER,
+                    naverConnectedAt
+                )
+            )
+        );
+
+        mockMvc.perform(
+                get(
+                    "/api/users/{userId}/oauth-accounts",
+                    userId
+                )
+            )
+            .andExpect(status().isOk())
+            .andExpect(content().contentType("application/json"))
+            .andExpect(jsonPath("$[0].provider")
+                .value("GOOGLE"))
+            .andExpect(jsonPath("$[0].connectedAt")
+                .value(googleConnectedAt.toString()))
+            .andExpect(jsonPath("$[1].provider")
+                .value("NAVER"))
+            .andExpect(jsonPath("$[1].connectedAt")
+                .value(naverConnectedAt.toString()))
+            .andExpect(jsonPath("$[0].providerUserId")
+                .doesNotExist())
+            .andExpect(jsonPath("$[0].accessToken")
+                .doesNotExist())
+            .andExpect(jsonPath("$[0].refreshToken")
+                .doesNotExist());
+
+        verify(oauthAccountManagementService)
+            .getLinkedAccounts(
+                userId,
+                userId
+            );
     }
 
     /**

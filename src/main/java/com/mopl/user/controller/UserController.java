@@ -8,10 +8,13 @@ import com.mopl.user.dto.UserLockUpdateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserRoleUpdateRequest;
 import com.mopl.user.dto.ChangePasswordRequest;
+import com.mopl.user.dto.OAuthAccountDto;
 import com.mopl.user.service.UserService;
+import com.mopl.user.service.OAuthAccountManagementService;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.util.UUID;
+import java.util.List;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
@@ -43,6 +46,7 @@ import org.springframework.web.bind.annotation.ModelAttribute;
 public class UserController {
 
     private final UserService userService;
+    private final OAuthAccountManagementService oauthAccountManagementService;
 
     /**
      * 이메일과 비밀번호를 이용해 사용자를 생성
@@ -111,29 +115,45 @@ public class UserController {
         return ResponseEntity.ok(response);
     }
 
-    /* 추후 선택기능 개발 과정에서 살릴 부분 /api/users/me
     /**
-     * 현재 인증된 사용자의 프로필을 조회
+     * 현재 사용자에게 연결된 OAuth 계정 목록을 조회
      *
-     * 클라이언트가 사용자 ID를 path나 request body로 전달하지 않음.
-     * JwtAuthenticationFilter가 유효한 액세스 토큰에서 복원한 사용자 UUID를
-     * Spring Security의 Authentication principal에서 가져옴
+     * <p>JWT 인증 정보의 사용자 UUID와 URL 경로의 사용자 UUID를
+     * Service에 전달하여 본인의 연결 정보만 조회할 수 있도록 합니다.</p>
      *
-     * 이를 통해 다른 사용자의 UUID를 요청값으로 전달해
-     * 자신의 프로필인 것처럼 조회하는 문제를 방지
+     * <p>Provider 사용자 ID와 OAuth Token은 응답에 포함하지 않습니다.</p>
      *
-     * @param userId JWT subject에서 복원된 현재 인증 사용자의 UUID
-     * @return 현재 사용자의 프로필 정보와 200 OK
-
-    @GetMapping("/me")
-    public ResponseEntity<UserDto> getMyProfile(
-        @AuthenticationPrincipal UUID userId
+     * @param authenticatedUserId JWT에서 복원한 현재 사용자 UUID
+     * @param userId OAuth 연결 계정을 조회할 대상 사용자 UUID
+     * @return 연결된 OAuth 계정 목록과 200 OK 응답
+     */
+    @GetMapping("/{userId}/oauth-accounts")
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "200",
+            description = "OAuth 연결 계정 목록 조회 성공"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자를 찾을 수 없음"
+        )
+    })
+    public ResponseEntity<List<OAuthAccountDto>>
+    getLinkedOAuthAccounts(
+        @AuthenticationPrincipal
+        UUID authenticatedUserId,
+        @PathVariable
+        UUID userId
     ) {
-        UserDto response = userService.getMyProfile(userId);
+        List<OAuthAccountDto> response =
+            oauthAccountManagementService
+                .getLinkedAccounts(
+                    authenticatedUserId,
+                    userId
+                );
 
         return ResponseEntity.ok(response);
     }
-    */
 
     /**
      * 사용자의 프로필 정보를 변경
