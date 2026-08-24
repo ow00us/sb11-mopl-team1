@@ -514,6 +514,85 @@ class AuthControllerTest {
     }
 
     @Test
+    @DisplayName("로컬 로그인 수단이 없는 OAuth 전용 사용자는 비밀번호 초기화 시 409를 반환한다")
+    void resetPassword_fail_whenLocalCredentialDoesNotExist()
+        throws Exception {
+
+        // given
+        Map<String, String> request =
+            Map.of(
+                "email",
+                "oauth-user@example.com"
+            );
+
+        doThrow(
+            new BusinessException(
+                ErrorCode.LOCAL_CREDENTIAL_NOT_FOUND
+            )
+        )
+            .when(passwordResetService)
+            .resetPassword(
+                any(
+                    ResetPasswordRequest.class
+                )
+            );
+
+        // when & then
+        mockMvc.perform(
+                post(
+                    "/api/auth/reset-password"
+                )
+                    .contentType(
+                        "application/json"
+                    )
+                    .content(
+                        objectMapper
+                            .writeValueAsString(
+                                request
+                            )
+                    )
+            )
+            .andExpect(
+                status().isConflict()
+            )
+            .andExpect(
+                content()
+                    .contentType(
+                        "application/json"
+                    )
+            )
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("USER_409_3")
+            )
+            .andExpect(
+                jsonPath("$.message")
+                    .value(
+                        "이메일·비밀번호 로그인 수단이 등록되어 있지 않습니다."
+                    )
+            )
+            /*
+             * 요청 이메일이 오류 응답에 노출되지 않는지 확인
+             */
+            .andExpect(
+                content().string(
+                    org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString(
+                            "oauth-user@example.com"
+                        )
+                    )
+                )
+            );
+
+        verify(passwordResetService)
+            .resetPassword(
+                new ResetPasswordRequest(
+                    "oauth-user@example.com"
+                )
+            );
+    }
+
+    @Test
     @DisplayName("Refresh Token 재발급 성공 시 200과 새 토큰 Cookie를 반환한다")
     void refresh_success() throws Exception {
         // given
