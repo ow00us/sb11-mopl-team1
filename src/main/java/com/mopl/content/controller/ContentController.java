@@ -78,7 +78,6 @@ public class ContentController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "성공"),
             @ApiResponse(responseCode = "400", description = "잘못된 요청 (limit/sortBy 범위 오류, cursor/idAfter 조합 오류, 잘못된 cursor 형식 등)"),
-            @ApiResponse(responseCode = "503", description = "검색 기능을 일시적으로 사용할 수 없음 (Elasticsearch 장애)"),
             @ApiResponse(responseCode = "500", description = "서버 오류")
     })
     @GetMapping

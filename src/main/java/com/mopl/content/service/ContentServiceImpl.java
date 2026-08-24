@@ -26,14 +26,11 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -91,15 +88,9 @@ public class ContentServiceImpl implements ContentService {
                 : tagsIn.stream().map(Content::normalize).distinct().toList();
 
         int fetchSize = limit + 1;
-        List<ContentDocument> rows;
-        long total;
-        try {
-            rows = fetchPage(typeEqual, keywordLike, normalizedTags, cursor, idAfter, fetchSize, sortBy, sortDirection);
-            total = contentSearchExecutor.countByFilter(typeEqual, keywordLike, normalizedTags);
-        } catch (DataAccessException e) {
-            log.warn("ES 조회 실패로 콘텐츠 목록 조회를 처리할 수 없습니다.", e);
-            throw new BusinessException(ErrorCode.CONTENT_SEARCH_UNAVAILABLE);
-        }
+        List<ContentDocument> rows = fetchPage(
+                typeEqual, keywordLike, normalizedTags, cursor, idAfter, fetchSize, sortBy, sortDirection);
+        long total = contentSearchExecutor.countByFilter(typeEqual, keywordLike, normalizedTags);
 
         boolean hasNext = rows.size() == fetchSize;
         List<ContentDocument> page = hasNext ? rows.subList(0, limit) : rows;

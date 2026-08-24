@@ -41,7 +41,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -284,32 +283,6 @@ class ContentServiceTest {
                 null, null, null, "not-a-valid-cursor!!", UUID.randomUUID(), 10, "createdAt", "DESCENDING"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
-    }
-
-    @Test
-    @DisplayName("ES 조회(findByXxx) 실패 시 CONTENT_SEARCH_UNAVAILABLE 예외가 발생한다")
-    void getList_fail_esSearchUnavailable_throwsContentSearchUnavailable() {
-        when(contentSearchExecutor.findByCreatedAtDesc(any(), any(), any(), any(), any(), anyInt()))
-                .thenThrow(new DataAccessResourceFailureException("ES 연결 실패"));
-
-        assertThatThrownBy(() -> contentService.getList(
-                null, null, null, null, null, 10, "createdAt", "DESCENDING"))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.CONTENT_SEARCH_UNAVAILABLE);
-    }
-
-    @Test
-    @DisplayName("ES count(countByFilter) 실패 시에도 CONTENT_SEARCH_UNAVAILABLE 예외가 발생한다")
-    void getList_fail_esCountUnavailable_throwsContentSearchUnavailable() {
-        when(contentSearchExecutor.findByCreatedAtDesc(any(), any(), any(), any(), any(), anyInt()))
-                .thenReturn(List.of());
-        when(contentSearchExecutor.countByFilter(any(), any(), any()))
-                .thenThrow(new DataAccessResourceFailureException("ES 연결 실패"));
-
-        assertThatThrownBy(() -> contentService.getList(
-                null, null, null, null, null, 10, "createdAt", "DESCENDING"))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode").isEqualTo(ErrorCode.CONTENT_SEARCH_UNAVAILABLE);
     }
 
     @Test
