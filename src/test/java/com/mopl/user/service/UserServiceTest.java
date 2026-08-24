@@ -512,6 +512,65 @@ class UserServiceTest {
     }
 
     @Test
+    @DisplayName("로컬 로그인 수단이 없는 OAuth 전용 사용자는 비밀번호 변경 API를 사용할 수 없다")
+    void changePassword_fail_whenLocalCredentialDoesNotExist() {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        User oauthOnlyUser =
+            User.builder()
+                .email("oauth-user@oauth.invalid")
+                .passwordHash(null)
+                .name("OAuth 사용자")
+                .profileImageUrl(null)
+                .role(UserRole.USER)
+                .locked(false)
+                .build();
+
+        ChangePasswordRequest request =
+            new ChangePasswordRequest(
+                "newPassword1!"
+            );
+
+        when(userRepository.findById(userId))
+            .thenReturn(
+                Optional.of(oauthOnlyUser)
+            );
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.changePassword(
+                userId,
+                userId,
+                request
+            )
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(
+                ErrorCode.LOCAL_CREDENTIAL_NOT_FOUND
+            );
+
+        verify(userRepository)
+            .findById(userId);
+
+        /*
+         * 기존 로컬 비밀번호가 없으면 이메일 인증 등록 경로를
+         * 사용해야 하므로 BCrypt 연산과 세션 폐기를 실행하지 않는다.
+         */
+        verifyNoInteractions(
+            passwordEncoder,
+            refreshTokenStore
+        );
+
+        assertThat(oauthOnlyUser.getPasswordHash())
+            .isNull();
+    }
+
+    @Test
     @DisplayName("Refresh Token 전체 세션 폐기에 실패하면 비밀번호 변경 요청도 실패한다")
     void changePassword_fail_whenRefreshTokenRevocationFails() {
         // given

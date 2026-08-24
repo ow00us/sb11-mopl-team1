@@ -477,6 +477,10 @@ public class UserController {
         @ApiResponse(
             responseCode = "404",
             description = "사용자를 찾을 수 없음"
+        ),
+        @ApiResponse(
+            responseCode = "409",
+            description = "변경할 로컬 로그인 수단이 없음"
         )
     })
     public ResponseEntity<Void> changePassword(

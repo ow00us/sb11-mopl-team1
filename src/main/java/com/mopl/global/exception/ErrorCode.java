@@ -26,6 +26,7 @@ public enum ErrorCode {
     REQUEST_CONFLICT(HttpStatus.CONFLICT, "COMMON_409_1", "요청이 다른 처리와 충돌했습니다."),
     EMAIL_DUPLICATE(HttpStatus.CONFLICT, "USER_409_1", "이미 사용 중인 이메일입니다."),
     LOCAL_CREDENTIAL_ALREADY_EXISTS(HttpStatus.CONFLICT, "USER_409_2", "이미 이메일·비밀번호 로그인 수단이 등록되어 있습니다."),
+    LOCAL_CREDENTIAL_NOT_FOUND(HttpStatus.CONFLICT, "USER_409_3", "이메일·비밀번호 로그인 수단이 등록되어 있지 않습니다."),
     EMAIL_VERIFICATION_COOLDOWN(HttpStatus.TOO_MANY_REQUESTS, "USER_429_1", "잠시 후 인증 코드를 다시 요청해주세요."),
     EMAIL_VERIFICATION_INVALID(HttpStatus.BAD_REQUEST, "USER_400_1", "인증 코드가 올바르지 않거나 만료되었습니다."),
     OAUTH_ACCOUNT_NOT_FOUND(HttpStatus.NOT_FOUND, "OAUTH_404_1", "연결된 OAuth 계정을 찾을 수 없습니다."),
