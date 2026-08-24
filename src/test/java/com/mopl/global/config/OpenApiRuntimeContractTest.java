@@ -637,9 +637,9 @@ class OpenApiRuntimeContractTest {
             )
 
             /*
-            * 로컬 로그인 수단이 없는 OAuth 전용 사용자는
-            * 기존 비밀번호 변경 API를 사용할 수 없어야 한다.
-            */
+             * 로컬 로그인 수단이 없는 OAuth 전용 사용자는
+             * 기존 비밀번호 변경 API를 사용할 수 없어야 한다.
+             */
             .andExpect(
                 jsonPath(
                     "$.paths['/api/users/{userId}/password']"
