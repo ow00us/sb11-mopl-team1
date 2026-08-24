@@ -90,6 +90,7 @@ public class PasswordResetService {
      *
      * @param request 비밀번호를 초기화할 사용자 이메일
      * @throws BusinessException 이메일에 해당하는 사용자가 존재하지 않는 경우
+     * @throws BusinessException 사용자가 로컬 로그인 수단을 등록하지 않은 경우
      */
     @Transactional
     public void resetPassword(
@@ -121,6 +122,22 @@ public class PasswordResetService {
                             ErrorCode.RESOURCE_NOT_FOUND
                         )
                 );
+
+        /*
+         * 비밀번호 초기화 API는 이미 등록된 로컬 로그인 수단의
+         * 비밀번호를 재설정하는 용도로만 사용
+         *
+         * OAuth 전용 사용자가 이 공개 경로로 passwordHash를 새로 만들면
+         * 인증된 이메일을 통한 로컬 로그인 등록 절차를 우회할 수 있으므로 거부
+         */
+        if (
+            user.getPasswordHash() == null
+                || user.getPasswordHash().isBlank()
+        ) {
+            throw new BusinessException(
+                ErrorCode.LOCAL_CREDENTIAL_NOT_FOUND
+            );
+        }
 
         /*
          * 이메일로 전달할 임시 비밀번호 원문을 생성

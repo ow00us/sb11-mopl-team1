@@ -169,6 +169,63 @@ class PasswordResetServiceTest {
     }
 
     @Test
+    @DisplayName("로컬 로그인 수단이 없는 OAuth 전용 사용자는 비밀번호를 초기화할 수 없다")
+    void resetPassword_fail_whenLocalCredentialDoesNotExist() {
+        // given
+        String email =
+            "oauth-user@example.com";
+
+        ResetPasswordRequest request =
+            new ResetPasswordRequest(email);
+
+        User oauthOnlyUser =
+            createUser(
+                email,
+                null
+            );
+
+        when(
+            userRepository.findByEmail(email)
+        ).thenReturn(
+            Optional.of(oauthOnlyUser)
+        );
+
+        // when & then
+        assertThatThrownBy(
+            () ->
+                passwordResetService
+                    .resetPassword(request)
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(
+                        exception.getErrorCode()
+                    ).isEqualTo(
+                        ErrorCode.LOCAL_CREDENTIAL_NOT_FOUND
+                    )
+            );
+
+        /*
+         * OAuth 전용 사용자는 이메일 인증 기반 로컬 로그인 등록
+         * 절차를 거쳐야 하므로 임시 비밀번호 생성부터 진행하지 않는다.
+         */
+        verify(userRepository)
+            .findByEmail(email);
+
+        verifyNoInteractions(
+            temporaryPasswordGenerator,
+            passwordEncoder,
+            temporaryPasswordEmailSender,
+            refreshTokenStore
+        );
+
+        verifyNoMoreInteractions(
+            userRepository
+        );
+    }
+
+    @Test
     @DisplayName("존재하지 않는 이메일이면 404 비즈니스 예외를 발생시킨다")
     void resetPassword_fail_whenUserDoesNotExist() {
         // given

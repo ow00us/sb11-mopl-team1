@@ -16,6 +16,7 @@ import io.swagger.v3.oas.annotations.headers.Header;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
 import jakarta.validation.Valid;
@@ -134,10 +135,16 @@ public class AuthController {
      * @return 응답 본문이 없는 204 No Content
      */
     @PostMapping("/reset-password")
-    @ApiResponse(
-        responseCode = "204",
-        description = "비밀번호 초기화 및 임시 비밀번호 이메일 발송 성공"
-    )
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "204",
+            description = "비밀번호 초기화 및 임시 비밀번호 이메일 발송 성공"
+        ),
+        @ApiResponse(
+            responseCode = "409",
+            description = "로컬 로그인 수단이 등록되지 않은 사용자"
+        )
+    })
     public ResponseEntity<Void> resetPassword(
         @Valid @RequestBody
         ResetPasswordRequest request
