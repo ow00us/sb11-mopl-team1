@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.exception.BusinessException;
@@ -1041,6 +1042,68 @@ class UserControllerTest {
                 userId,
                 userId
             );
+    }
+
+    @Test
+    @DisplayName("본인의 OAuth 연결 계정을 해제하면 204를 반환한다")
+    void unlinkOAuthAccount_success()
+        throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        // when & then
+        mockMvc.perform(
+                delete(
+                    "/api/users/{userId}/oauth-accounts/{provider}",
+                    userId,
+                    OAuthProvider.GOOGLE
+                )
+            )
+            .andExpect(status().isNoContent())
+            .andExpect(content().string(""));
+
+        verify(oauthAccountManagementService)
+            .unlinkAccount(
+                userId,
+                userId,
+                OAuthProvider.GOOGLE
+            );
+    }
+
+    @Test
+    @DisplayName("지원하지 않는 OAuth Provider이면 400을 반환한다")
+    void unlinkOAuthAccount_fail_whenProviderIsInvalid()
+        throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        // when & then
+        mockMvc.perform(
+                delete(
+                    "/api/users/{userId}/oauth-accounts/{provider}",
+                    userId,
+                    "FACEBOOK"
+                )
+            )
+            .andExpect(status().isBadRequest());
+
+        /*
+         * PathVariable을 OAuthProvider로 변환하는 과정에서 실패하므로
+         * Controller 메서드와 Service는 실행되지 않는다.
+         */
+        verifyNoInteractions(
+            oauthAccountManagementService
+        );
     }
 
     /**

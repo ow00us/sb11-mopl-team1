@@ -9,6 +9,7 @@ import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserRoleUpdateRequest;
 import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.dto.OAuthAccountDto;
+import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.service.UserService;
 import com.mopl.user.service.OAuthAccountManagementService;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -27,6 +28,7 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -153,6 +155,57 @@ public class UserController {
                 );
 
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 현재 사용자에게 연결된 OAuth 계정을 해제
+     *
+     * <p>JWT 인증 사용자 UUID와 URL의 사용자 UUID를 Service에 전달하여
+     * 본인의 OAuth 연결만 해제할 수 있도록 합니다.</p>
+     *
+     * <p>로컬 비밀번호가 없는 OAuth 전용 사용자는 마지막으로 남은
+     * OAuth 로그인 수단을 해제할 수 없습니다.</p>
+     *
+     * @param authenticatedUserId JWT에서 복원한 현재 사용자 UUID
+     * @param userId OAuth 연결을 해제할 대상 사용자 UUID
+     * @param provider 연결을 해제할 OAuth Provider
+     * @return 응답 본문이 없는 204 No Content
+     */
+    @DeleteMapping(
+        "/{userId}/oauth-accounts/{provider}"
+    )
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "204",
+            description = "OAuth 계정 연결 해제 성공"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자 또는 OAuth 연결 계정을 찾을 수 없음"
+        ),
+        @ApiResponse(
+            responseCode = "409",
+            description = "마지막 로그인 수단이어서 연결 해제할 수 없음"
+        )
+    })
+    public ResponseEntity<Void> unlinkOAuthAccount(
+        @AuthenticationPrincipal
+        UUID authenticatedUserId,
+        @PathVariable
+        UUID userId,
+        @PathVariable
+        OAuthProvider provider
+    ) {
+        oauthAccountManagementService
+            .unlinkAccount(
+                authenticatedUserId,
+                userId,
+                provider
+            );
+
+        return ResponseEntity
+            .noContent()
+            .build();
     }
 
     /**
