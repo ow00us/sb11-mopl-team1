@@ -15,6 +15,9 @@ import com.mopl.global.realtime.RealtimeInstanceId;
 import com.mopl.global.realtime.RealtimeMessage;
 import com.mopl.global.realtime.RealtimeRelayConfig;
 import com.mopl.global.realtime.RealtimeRelayPublisher;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import com.mopl.global.realtime.RealtimeRelayMetrics;
+import com.mopl.global.realtime.RealtimeRelayStateMetrics;
 import com.mopl.global.realtime.RealtimeRelaySubscriber;
 import com.mopl.global.realtime.RealtimeRelaySubscriptionStarter;
 import java.time.Duration;
@@ -46,6 +49,9 @@ import org.testcontainers.utility.DockerImageName;
     RealtimeRelayConfig.class,
     RealtimeRelayPublisher.class,
     RealtimeInstanceId.class,
+    RealtimeRelayMetrics.class,
+    RealtimeRelayStateMetrics.class,
+    SimpleMeterRegistry.class,
     RealtimeRelaySubscriptionStarter.class,
     DirectMessageRelayPublisher.class,
     DirectMessageRelayHandler.class,
@@ -114,7 +120,8 @@ class DirectMessageRedisRelayIntegrationTest {
             new RealtimeRelaySubscriber(
                 objectMapper,
                 new RealtimeInstanceId(),
-                List.of(remoteHandler)
+                List.of(remoteHandler),
+                new RealtimeRelayMetrics(new SimpleMeterRegistry())
             );
 
         remoteContainer =

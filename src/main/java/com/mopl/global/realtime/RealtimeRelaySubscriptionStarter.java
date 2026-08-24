@@ -27,9 +27,7 @@ public class RealtimeRelaySubscriptionStarter {
 
     @Scheduled(fixedDelayString = "${mopl.realtime.relay.subscribe-retry-interval}")
     public void ensureSubscribed() {
-        // 실행 중 여부만으로는 부족합니다. 구독이 붙지 않은 채 실행 중으로 남을 수 있어
-        // 실제로 듣고 있는지까지 봅니다.
-        if (container.isRunning() && container.isListening()) {
+        if (container.isSubscribed()) {
             return;
         }
 

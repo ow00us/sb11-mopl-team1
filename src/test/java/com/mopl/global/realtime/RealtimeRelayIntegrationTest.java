@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +50,8 @@ import org.testcontainers.utility.DockerImageName;
     RealtimeRelayConfig.class,
     RealtimeRelayPublisher.class,
     RealtimeInstanceId.class,
+    RealtimeRelayMetrics.class,
+    RealtimeRelayStateMetrics.class,
     RealtimeRelaySubscriptionStarter.class,
     RealtimeRelayIntegrationTest.LocalHandlerConfig.class,
     JacksonAutoConfiguration.class,
@@ -89,11 +93,17 @@ class RealtimeRelayIntegrationTest {
     @Autowired
     RealtimeRelaySubscriptionStarter subscriptionStarter;
 
+    @Autowired
+    MeterRegistry meterRegistry;
+
     /** 두 번째 인스턴스입니다. 식별자가 달라야 자기 메시지 판정이 갈립니다. */
     RealtimeInstanceId remoteInstanceId;
     RecordingHandler remoteHandler;
     FailingHandler remoteFailingHandler;
     RedisMessageListenerContainer remoteContainer;
+
+    /** 두 번째 인스턴스의 지표입니다. 수신 쪽 판정을 발행 쪽 지표와 섞지 않습니다. */
+    SimpleMeterRegistry remoteRegistry;
 
     /** 받은 메시지를 모아 두는 목적지 handler 입니다. 도메인 broadcaster 자리에 해당합니다. */
     static class RecordingHandler implements RealtimeMessageHandler {
@@ -149,6 +159,11 @@ class RealtimeRelayIntegrationTest {
         RecordingHandler localHandler() {
             return new RecordingHandler();
         }
+
+        @Bean
+        MeterRegistry meterRegistry() {
+            return new SimpleMeterRegistry();
+        }
     }
 
     @BeforeEach
@@ -159,8 +174,10 @@ class RealtimeRelayIntegrationTest {
         remoteHandler = new RecordingHandler();
         remoteFailingHandler = new FailingHandler();
 
+        remoteRegistry = new SimpleMeterRegistry();
         RealtimeRelaySubscriber remoteSubscriber = new RealtimeRelaySubscriber(
-            objectMapper, remoteInstanceId, List.of(remoteFailingHandler, remoteHandler));
+            objectMapper, remoteInstanceId, List.of(remoteFailingHandler, remoteHandler),
+            new RealtimeRelayMetrics(remoteRegistry));
 
         remoteContainer = new RedisMessageListenerContainer();
         remoteContainer.setConnectionFactory(redisConnectionFactory);
@@ -180,6 +197,25 @@ class RealtimeRelayIntegrationTest {
         }
     }
 
+    private double remoteDiscarded(String reason) {
+        return remoteRegistry.get("mopl.realtime.relay.discarded.messages")
+            .tag("reason", reason).counter().count();
+    }
+
+    private double localDiscarded(String reason) {
+        return meterRegistry.get("mopl.realtime.relay.discarded.messages")
+            .tag("reason", reason).counter().count();
+    }
+
+    private double localPublished(String outcome) {
+        return meterRegistry.get("mopl.realtime.relay.published.messages")
+            .tag("outcome", outcome).counter().count();
+    }
+
+    private double subscribedGauge() {
+        return meterRegistry.get("mopl.realtime.relay.subscribed").gauge().value();
+    }
+
     private void sendRaw(String json) {
         stringRedisTemplate.convertAndSend(RealtimeChannels.MESSAGES, json);
     }
@@ -197,6 +233,9 @@ class RealtimeRelayIntegrationTest {
     @Test
     @DisplayName("한 인스턴스가 발행한 메시지를 다른 인스턴스가 받는다")
     void publish_isReceivedByOtherInstance() {
+        // 카운터는 컨텍스트를 공유하는 테스트 사이에 누적되므로 증가분으로 판정합니다.
+        double publishedBefore = localPublished("succeeded");
+
         publisher.publish(RecordingHandler.SUPPORTED, "/topic/user/1", Map.of("body", "안녕하세요"));
 
         await().atMost(TIMEOUT).until(() -> !remoteHandler.received().isEmpty());
@@ -207,6 +246,10 @@ class RealtimeRelayIntegrationTest {
         assertThat(received.destination()).isEqualTo("/topic/user/1");
         assertThat(received.payload().get("body").asText()).isEqualTo("안녕하세요");
         assertThat(received.messageId()).isNotNull();
+
+        assertThat(localPublished("succeeded")).isEqualTo(publishedBefore + 1);
+        assertThat(remoteRegistry.get("mopl.realtime.relay.delivered.messages")
+            .counter().count()).isEqualTo(1);
     }
 
     /**
@@ -218,11 +261,16 @@ class RealtimeRelayIntegrationTest {
     @Test
     @DisplayName("자기가 발행한 메시지는 자기 인스턴스에서 전달하지 않는다")
     void publish_doesNotLoopBackToOrigin() {
+        double selfDiscardedBefore = localDiscarded("self");
+
         publisher.publish(RecordingHandler.SUPPORTED, "/topic/user/1", Map.of("body", "안녕하세요"));
 
         await().atMost(TIMEOUT).until(() -> !remoteHandler.received().isEmpty());
 
         assertThat(localHandler.received()).isEmpty();
+        // 자기 메시지 폐기는 설계대로 동작하고 있다는 뜻입니다. 계약이 깨진 폐기와 구분됩니다.
+        await().atMost(TIMEOUT)
+            .until(() -> localDiscarded("self") == selfDiscardedBefore + 1);
     }
 
     @Test
@@ -239,6 +287,8 @@ class RealtimeRelayIntegrationTest {
         // 두 번째가 늦게 도착할 수 있으므로 잠시 더 지켜본 뒤 판정합니다.
         await().during(Duration.ofSeconds(2)).atMost(TIMEOUT)
             .until(() -> remoteHandler.received().size() == 1);
+
+        assertThat(remoteDiscarded("duplicate")).isEqualTo(1);
     }
 
     /**
@@ -251,6 +301,8 @@ class RealtimeRelayIntegrationTest {
         sendRaw(rawMessage(UUID.randomUUID(), "another-instance", RecordingHandler.SUPPORTED));
 
         await().atMost(TIMEOUT).until(() -> remoteHandler.received().size() == 1);
+
+        assertThat(remoteDiscarded("malformed")).isEqualTo(1);
     }
 
     @Test
@@ -271,6 +323,9 @@ class RealtimeRelayIntegrationTest {
 
         await().atMost(TIMEOUT).until(() -> !remoteHandler.received().isEmpty());
         assertThat(remoteFailingHandler.calls()).isEqualTo(1);
+
+        assertThat(remoteRegistry.get("mopl.realtime.relay.handler.failures")
+            .tag("handler", "FailingHandler").counter().count()).isEqualTo(1);
     }
 
     @Test
@@ -304,11 +359,17 @@ class RealtimeRelayIntegrationTest {
 
         try {
             StringRedisTemplate brokenTemplate = new StringRedisTemplate(broken);
-            RealtimeRelayPublisher brokenPublisher =
-                new RealtimeRelayPublisher(brokenTemplate, objectMapper, localInstanceId);
+            SimpleMeterRegistry brokenRegistry = new SimpleMeterRegistry();
+            RealtimeRelayPublisher brokenPublisher = new RealtimeRelayPublisher(
+                brokenTemplate, objectMapper, localInstanceId,
+                new RealtimeRelayMetrics(brokenRegistry));
 
             assertThat(brokenPublisher.publish(
                 RecordingHandler.SUPPORTED, "/topic/user/1", Map.of("body", "안녕하세요"))).isFalse();
+
+            // 발행 실패는 호출부로 전파되지 않으므로 이 카운터가 유일한 흔적입니다.
+            assertThat(brokenRegistry.get("mopl.realtime.relay.published.messages")
+                .tag("outcome", "failed").counter().count()).isEqualTo(1);
         } finally {
             broken.destroy();
         }
@@ -325,9 +386,13 @@ class RealtimeRelayIntegrationTest {
     void subscriptionStarter_resubscribes() {
         localContainer.stop();
         assertThat(localContainer.isListening()).isFalse();
+        assertThat(subscribedGauge()).isZero();
 
         subscriptionStarter.ensureSubscribed();
         await().atMost(TIMEOUT).until(localContainer::isListening);
+
+        // 구독이 끊긴 구간과 복구가 지표에 드러나야 그동안 놓친 전달 범위를 정할 수 있습니다.
+        assertThat(subscribedGauge()).isEqualTo(1);
 
         sendRaw(rawMessage(UUID.randomUUID(), "another-instance", RecordingHandler.SUPPORTED));
 
