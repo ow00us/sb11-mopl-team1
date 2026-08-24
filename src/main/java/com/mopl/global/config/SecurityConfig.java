@@ -7,6 +7,7 @@ import com.mopl.global.security.csrf.RotatingCookieCsrfTokenRepository;
 import com.mopl.global.security.handler.RestAccessDeniedHandler;
 import com.mopl.global.security.handler.RestAuthenticationEntryPoint;
 import com.mopl.global.security.handler.SecurityErrorResponseWriter;
+import com.mopl.user.security.oauth.GoogleOidcUserService;
 import com.mopl.user.security.oauth.handler.OAuth2AuthenticationFailureHandler;
 import com.mopl.user.security.oauth.handler.OAuth2AuthenticationSuccessHandler;
 import java.util.Arrays;
@@ -141,7 +142,9 @@ public class SecurityConfig {
         ObjectProvider<OAuth2AuthenticationSuccessHandler>
             successHandlerProvider,
         ObjectProvider<OAuth2AuthenticationFailureHandler>
-            failureHandlerProvider
+            failureHandlerProvider,
+        ObjectProvider<GoogleOidcUserService>
+            googleOidcUserServiceProvider
     ) throws Exception {
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource))
@@ -167,13 +170,11 @@ public class SecurityConfig {
                 .addFilterBefore(new JwtAuthenticationFilter(jwtProvider), UsernamePasswordAuthenticationFilter.class);
 
         /*
-         * Provider별 ClientRegistration이 등록된 경우에만
-         * OAuth2 Login 필터를 SecurityFilterChain에 연결
+         * OAuth ClientRegistration과 공통 성공·실패 Handler가
+         * 모두 등록된 환경에서만 OAuth2 Login 필터를 연결한다.
          *
-         * 현재 공통 기반 PR에는 Google, Kakao, Naver의 실제 Client ID와
-         * Client Secret이 아직 없으므로 무조건 oauth2Login()을 적용하면
-         * ClientRegistrationRepository가 생성되지 않은 테스트와 로컬 환경에서
-         * ApplicationContext 시작이 실패할 수 있다.
+         * ObjectProvider를 사용하면 OAuth 설정을 로드하지 않는 슬라이스 테스트나
+         * 일부 제한된 실행 환경에서도 SecurityFilterChain을 구성할 수 있다.
          */
         ClientRegistrationRepository clientRegistrationRepository =
             clientRegistrationRepositoryProvider.getIfAvailable();
@@ -184,13 +185,29 @@ public class SecurityConfig {
         OAuth2AuthenticationFailureHandler failureHandler =
             failureHandlerProvider.getIfAvailable();
 
+        GoogleOidcUserService googleOidcUserService =
+            googleOidcUserServiceProvider.getIfAvailable();
+
         if (clientRegistrationRepository != null
             && successHandler != null
             && failureHandler != null) {
-            http.oauth2Login(oauth2 -> oauth2
-                .successHandler(successHandler)
-                .failureHandler(failureHandler)
-            );
+            http.oauth2Login(oauth2 -> {
+                oauth2
+                    .successHandler(successHandler)
+                    .failureHandler(failureHandler);
+
+                /*
+                 * Google은 openid scope를 사용하는 OIDC Provider이므로
+                 * 일반 OAuth2UserService가 아닌 전용 OIDC 사용자 서비스를 연결
+                 */
+                if (googleOidcUserService != null) {
+                    oauth2.userInfoEndpoint(userInfo ->
+                        userInfo.oidcUserService(
+                            googleOidcUserService
+                        )
+                    );
+                }
+            });
         }
 
         return http.build();
