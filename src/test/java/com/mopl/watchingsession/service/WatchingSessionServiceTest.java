@@ -28,6 +28,7 @@ import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.presence.ContentExistenceCache;
 import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
+import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter.RenewResult;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import com.mopl.watchingsession.service.WatchingSessionSnapshotWriter.UpsertResult;
 import java.math.BigDecimal;
@@ -40,6 +41,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -149,11 +151,13 @@ public class WatchingSessionServiceTest {
                 String sessionId = invocation.getArgument(1);
                 String subscriptionId = invocation.getArgument(2);
                 WatchingPresence current = presenceStore.get(watcherId);
+
                 if (current == null) {
-                    return false;
+                    return RenewResult.KEY_MISSING;
                 }
-                return current.sessionId().equals(sessionId)
-                    && Objects.equals(current.subscriptionId(), subscriptionId);
+                boolean ownerMatches = current.sessionId().equals(sessionId)
+                    && current.subscriptionId().equals(subscriptionId);
+                return ownerMatches ? RenewResult.RENEWED : RenewResult.OWNER_MISMATCH;
             });
     }
 
@@ -957,6 +961,11 @@ public class WatchingSessionServiceTest {
     @Test
     @DisplayName("활성 세션이 없으면 DB를 전혀 건드리지 않는다")
     void heartbeat_skipsDbUpdate_whenNoActiveSession() {
+        when(watchingSessionPresenceWriter.findExistingWatcherIds(List.of(WATCHER_ID)))
+            .thenReturn(Set.of());
+        when(watchingSessionSnapshotRepository.findByWatcherId(WATCHER_ID))
+            .thenReturn(Optional.empty());
+
         watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
 
         verify(watchingSessionSnapshotWriter, never()).renewExpiresAt(any(), any(), any());
@@ -1152,5 +1161,85 @@ public class WatchingSessionServiceTest {
             eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(recovered.getId()), tokenCaptor.capture());
 
         assertThat(tokenCaptor.getValue()).isEqualTo(Instant.parse("2026-08-19T00:00:00.987654Z"));
+    }
+
+    @Test
+    @DisplayName("heartbeat가 KEY_MISSING을 받으면 DB 스냅샷과 일치하는 경우 presence를 재수립한다")
+    void heartbeat_recoversPresence_whenKeyMissingAndDbSnapshotMatchesContent() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        when(watchingSessionPresenceWriter.renewIfOwner(eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), any()))
+            .thenReturn(RenewResult.KEY_MISSING);
+
+        Instant notExpired = Instant.now().plus(1, ChronoUnit.HOURS);
+        WatchingSessionSnapshot existing = createSnapshotFixture(
+            SNAPSHOT_ID, WATCHER_ID, CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT, notExpired);
+        when(watchingSessionSnapshotRepository.findByWatcherId(WATCHER_ID))
+            .thenReturn(Optional.of(existing));
+
+        clearInvocations(watchingSessionPresenceWriter);
+        when(watchingSessionPresenceWriter.findExistingWatcherIds(List.of(WATCHER_ID)))
+            .thenReturn(Set.of()); // 재확인 시점에도 여전히 presence 없음 - 재수립 대상
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionPresenceWriter).swap(
+            eq(WATCHER_ID), eq(existing.getId()), eq(CONTENT_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID),
+            any(), any(), any());
+        verify(watchingSessionSnapshotWriter, never()).renewExpiresAt(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("재확인 시점에 다른 연결이 이미 presence를 재수립했다면 덮어쓰지 않고 포기한다")
+    void heartbeat_backsOff_whenPresenceAlreadyRecoveredByAnotherConnection() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        when(watchingSessionPresenceWriter.renewIfOwner(eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), any()))
+            .thenReturn(RenewResult.KEY_MISSING);
+        when(watchingSessionPresenceWriter.findExistingWatcherIds(List.of(WATCHER_ID)))
+            .thenReturn(Set.of(WATCHER_ID)); // 다른 연결이 이미 재수립함
+
+        clearInvocations(watchingSessionPresenceWriter, watchingSessionSnapshotWriter, watchingSessionSnapshotRepository);
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionPresenceWriter, never()).swap(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(watchingSessionSnapshotRepository, never()).findByWatcherId(any());
+    }
+
+    @Test
+    @DisplayName("KEY_MISSING인데 DB 스냅샷도 없거나 다른 콘텐츠면 재수립을 포기한다")
+    void heartbeat_backsOff_whenNoMatchingDbSnapshot() {
+        when(watchingSessionPresenceWriter.renewIfOwner(eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), any()))
+            .thenReturn(RenewResult.KEY_MISSING);
+        when(watchingSessionPresenceWriter.findExistingWatcherIds(List.of(WATCHER_ID)))
+            .thenReturn(Set.of());
+        when(watchingSessionSnapshotRepository.findByWatcherId(WATCHER_ID))
+            .thenReturn(Optional.empty());
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionPresenceWriter, never()).swap(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("정상 heartbeat 경로(RENEWED)에서는 재수립 관련 호출이 전혀 일어나지 않는다")
+    void heartbeat_normalPath_neverTouchesRecoveryPath() {
+        when(watchingSessionPresenceWriter.renewIfOwner(any(), any(), any(), any()))
+            .thenReturn(RenewResult.RENEWED);
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(1);
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionPresenceWriter, never()).findExistingWatcherIds(any());
+        verify(watchingSessionPresenceWriter, never())
+            .swap(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(watchingSessionSnapshotRepository, never()).findByWatcherId(any());
     }
 }

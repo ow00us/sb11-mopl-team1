@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.mopl.global.config.RedisConfig;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter.DeletedSnapshot;
+import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter.RenewResult;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -125,8 +126,6 @@ public class WatchingSessionPresenceIntegrationTest {
         assertThat(previousForC.get().sessionId()).isEqualTo("session-B");
     }
 
-
-
     @Test
     @DisplayName("deleteIfOwner()는 소유권이 일치할 때만 실제로 키를 삭제한다")
     void deleteIfOwner_removesKey_onlyWhenOwnerMatches() {
@@ -152,13 +151,11 @@ public class WatchingSessionPresenceIntegrationTest {
         writer.swap(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, now, normalizeToMicros(now),
             Duration.ofSeconds(5));
 
-        boolean renewedByOtherOwner = writer.renewIfOwner(WATCHER_ID, "other-session", "other-sub",
-            Duration.ofSeconds(60));
-        assertThat(renewedByOtherOwner).isFalse();
+        assertThat(writer.renewIfOwner(WATCHER_ID, "other-session", "other-sub", Duration.ofSeconds(60)))
+            .isEqualTo(RenewResult.OWNER_MISMATCH);
 
-        boolean renewedByRealOwner = writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID,
-            Duration.ofSeconds(60));
-        assertThat(renewedByRealOwner).isTrue();
+        assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60)))
+            .isEqualTo(RenewResult.RENEWED);
 
         Long ttl = stringRedisTemplate.getExpire(KEY, TimeUnit.SECONDS);
         assertThat(ttl).isGreaterThan(5).isLessThanOrEqualTo(60);
@@ -166,12 +163,20 @@ public class WatchingSessionPresenceIntegrationTest {
     }
 
     @Test
-    @DisplayName("renewIfOwner()는 존재하지 않는 키에 대해 false를 반환하고 키를 새로 만들지 않는다")
-    void renewIfOwner_doesNotCreateKey_whenKeyDoesNotExist() {
-        boolean result = writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60));
-
-        assertThat(result).isFalse();
+    @DisplayName("renewIfOwner()는 존재하지 않는 키에 대해 KEY_MISSING을 반환하고 키를 새로 만들지 않는다")
+    void renewIfOwner_returnsKeyMissing_whenKeyDoesNotExist() {
+        assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60)))
+            .isEqualTo(RenewResult.KEY_MISSING);
         assertThat(stringRedisTemplate.hasKey(KEY)).isFalse();
+    }
+
+    @Test
+    @DisplayName("레거시 문자열 타입 presence 키에 대해 renewIfOwner()는 예외 없이 KEY_MISSING을 반환한다")
+    void renewIfOwner_returnsKeyMissing_forLegacyStringKey_withoutWrongTypeError() {
+        stringRedisTemplate.opsForValue().set(KEY, "{\"legacy\":\"json\"}");
+
+        assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60)))
+            .isEqualTo(RenewResult.KEY_MISSING);
     }
 
     @Test
@@ -292,16 +297,6 @@ public class WatchingSessionPresenceIntegrationTest {
         assertThat(result.get().snapshotId()).isEqualTo(SNAPSHOT_ID);
         assertThat(result.get().snapshotUpdatedAt()).isNull();
         assertThat(stringRedisTemplate.hasKey(KEY)).isFalse();
-    }
-
-    @Test
-    @DisplayName("레거시 문자열 타입 presence 키에 대해 renewIfOwner()는 예외 없이 false를 반환한다")
-    void renewIfOwner_returnsFalse_forLegacyStringKey_withoutWrongTypeError() {
-        stringRedisTemplate.opsForValue().set(KEY, "{\"legacy\":\"json\"}");
-
-        boolean result = writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60));
-
-        assertThat(result).isFalse();
     }
 
     @Test
