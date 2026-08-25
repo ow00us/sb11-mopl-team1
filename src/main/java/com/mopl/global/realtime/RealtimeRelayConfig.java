@@ -31,9 +31,10 @@ public class RealtimeRelayConfig {
     public RealtimeRelaySubscriber realtimeRelaySubscriber(
         ObjectMapper objectMapper,
         RealtimeInstanceId instanceId,
-        List<RealtimeMessageHandler> handlers
+        List<RealtimeMessageHandler> handlers,
+        RealtimeRelayMetrics metrics
     ) {
-        return new RealtimeRelaySubscriber(objectMapper, instanceId, handlers);
+        return new RealtimeRelaySubscriber(objectMapper, instanceId, handlers, metrics);
     }
 
     @Bean

@@ -11,9 +11,6 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class DirectMessageBroadcaster {
 
-    private static final String DESTINATION =
-        "/sub/conversations/%s/direct-messages";
-
     private final SimpMessagingTemplate messagingTemplate;
 
     public void broadcast(
@@ -21,8 +18,20 @@ public class DirectMessageBroadcaster {
         DirectMessageDto message
     ) {
         String destination =
-            DESTINATION.formatted(conversationId);
+            DirectMessageRealtimeContract.destination(
+                conversationId
+            );
 
+        broadcast(
+            destination,
+            message
+        );
+    }
+
+    void broadcast(
+        String destination,
+        DirectMessageDto message
+    ) {
         messagingTemplate.convertAndSend(
             destination,
             message

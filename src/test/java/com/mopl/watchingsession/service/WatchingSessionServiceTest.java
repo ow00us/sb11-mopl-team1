@@ -25,6 +25,7 @@ import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.config.WatchingSessionProperties;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
+import com.mopl.watchingsession.presence.ContentExistenceCache;
 import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
@@ -63,6 +64,9 @@ public class WatchingSessionServiceTest {
     ContentRepository contentRepository;
 
     @Mock
+    ContentExistenceCache contentExistenceCache;
+
+    @Mock
     WatchingSessionSnapshotWriter watchingSessionSnapshotWriter;
 
     @Mock
@@ -96,7 +100,7 @@ public class WatchingSessionServiceTest {
 
         watchingSessionService = new WatchingSessionService(
             watchingSessionProperties, watchingSessionSnapshotRepository, contentRepository,
-            userRepository, watchingSessionSnapshotWriter, watchingSessionPresenceWriter);
+            userRepository, watchingSessionSnapshotWriter, watchingSessionPresenceWriter, contentExistenceCache);
 
         when(watchingSessionSnapshotWriter.deleteById(any(), any(), any())).thenReturn(1);
 
@@ -163,7 +167,7 @@ public class WatchingSessionServiceTest {
         when(mockContent.getAverageRating()).thenReturn(BigDecimal.ZERO);
         when(mockContent.getReviewCount()).thenReturn(0L);
 
-        when(contentRepository.existsById(contentId)).thenReturn(true);
+        when(contentExistenceCache.exists(contentId)).thenReturn(true);
         when(contentRepository.findById(contentId)).thenReturn(Optional.of(mockContent));
     }
 
@@ -309,7 +313,7 @@ public class WatchingSessionServiceTest {
     @Test
     @DisplayName("콘텐츠가 존재하지 않으면 임계 구역에 들어가기 전에 실패하고 upsert를 호출하지 않는다")
     void start_failure_beforeCriticalSection_whenContentMissing() {
-        when(contentRepository.existsById(CONTENT_ID)).thenReturn(false);
+        when(contentExistenceCache.exists(CONTENT_ID)).thenReturn(false);
 
         assertThatThrownBy(() -> watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID))
             .isInstanceOf(BusinessException.class);

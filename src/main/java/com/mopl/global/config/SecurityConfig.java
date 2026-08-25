@@ -7,6 +7,8 @@ import com.mopl.global.security.csrf.RotatingCookieCsrfTokenRepository;
 import com.mopl.global.security.handler.RestAccessDeniedHandler;
 import com.mopl.global.security.handler.RestAuthenticationEntryPoint;
 import com.mopl.global.security.handler.SecurityErrorResponseWriter;
+import com.mopl.user.security.oauth.GoogleOidcUserService;
+import com.mopl.user.security.oauth.MoplOAuth2UserService;
 import com.mopl.user.security.oauth.handler.OAuth2AuthenticationFailureHandler;
 import com.mopl.user.security.oauth.handler.OAuth2AuthenticationSuccessHandler;
 import java.util.Arrays;
@@ -56,7 +58,10 @@ public class SecurityConfig {
             "/swagger-ui/**",
             "/swagger-ui.html",
             "/v3/api-docs/**",
-            "/actuator/health"
+            "/actuator/health",
+            // liveness·readiness probe 경로입니다. 오케스트레이터가 인증 없이 호출합니다.
+            // 상세는 management.endpoint.health.show-details 가 가립니다.
+            "/actuator/health/**"
     };
 
     /** JWT 인증 없이 접근 가능한 공개 POST 경로입니다. */
@@ -138,7 +143,11 @@ public class SecurityConfig {
         ObjectProvider<OAuth2AuthenticationSuccessHandler>
             successHandlerProvider,
         ObjectProvider<OAuth2AuthenticationFailureHandler>
-            failureHandlerProvider
+            failureHandlerProvider,
+        ObjectProvider<GoogleOidcUserService>
+            googleOidcUserServiceProvider,
+        ObjectProvider<MoplOAuth2UserService>
+            moplOAuth2UserServiceProvider
     ) throws Exception {
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource))
@@ -164,13 +173,11 @@ public class SecurityConfig {
                 .addFilterBefore(new JwtAuthenticationFilter(jwtProvider), UsernamePasswordAuthenticationFilter.class);
 
         /*
-         * Provider별 ClientRegistration이 등록된 경우에만
-         * OAuth2 Login 필터를 SecurityFilterChain에 연결
+         * OAuth ClientRegistration과 공통 성공·실패 Handler가
+         * 모두 등록된 환경에서만 OAuth2 Login 필터를 연결한다.
          *
-         * 현재 공통 기반 PR에는 Google, Kakao, Naver의 실제 Client ID와
-         * Client Secret이 아직 없으므로 무조건 oauth2Login()을 적용하면
-         * ClientRegistrationRepository가 생성되지 않은 테스트와 로컬 환경에서
-         * ApplicationContext 시작이 실패할 수 있다.
+         * ObjectProvider를 사용하면 OAuth 설정을 로드하지 않는 슬라이스 테스트나
+         * 일부 제한된 실행 환경에서도 SecurityFilterChain을 구성할 수 있다.
          */
         ClientRegistrationRepository clientRegistrationRepository =
             clientRegistrationRepositoryProvider.getIfAvailable();
@@ -181,13 +188,41 @@ public class SecurityConfig {
         OAuth2AuthenticationFailureHandler failureHandler =
             failureHandlerProvider.getIfAvailable();
 
+        GoogleOidcUserService googleOidcUserService =
+            googleOidcUserServiceProvider.getIfAvailable();
+
+        MoplOAuth2UserService moplOAuth2UserService =
+            moplOAuth2UserServiceProvider.getIfAvailable();
+
         if (clientRegistrationRepository != null
             && successHandler != null
             && failureHandler != null) {
-            http.oauth2Login(oauth2 -> oauth2
-                .successHandler(successHandler)
-                .failureHandler(failureHandler)
-            );
+            http.oauth2Login(oauth2 -> {
+                oauth2
+                    .successHandler(successHandler)
+                    .failureHandler(failureHandler);
+
+                /*
+                 * Google은 openid scope를 사용하는 OIDC Provider이므로
+                 * oidcUserService에 연결
+                 *
+                 * Kakao와 Naver 같은 일반 OAuth2 Provider는
+                 * registrationId를 기준으로 분기하는 공통 라우터에 연결
+                 */
+                oauth2.userInfoEndpoint(userInfo -> {
+                    if (googleOidcUserService != null) {
+                        userInfo.oidcUserService(
+                            googleOidcUserService
+                        );
+                    }
+
+                    if (moplOAuth2UserService != null) {
+                        userInfo.userService(
+                            moplOAuth2UserService
+                        );
+                    }
+                });
+            });
         }
 
         return http.build();

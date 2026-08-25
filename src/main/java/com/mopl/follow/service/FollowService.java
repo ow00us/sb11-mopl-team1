@@ -12,6 +12,8 @@ import com.mopl.global.common.UserSummary;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.outbox.OutboxRecorder;
+import com.mopl.global.event.EventEnvelope;
+import com.mopl.global.event.KafkaEventContract;
 import com.mopl.global.util.CursorUtils;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
@@ -88,12 +90,13 @@ public class FollowService {
     // - partitionKey: followId, orderingScope: NONE
     // - deduplicationKey: follow.created:<followId>
     private void recordFollowCreatedEvent(Follow follow) {
-        UUID followId = follow.getId();
+        EventEnvelope envelope = followEventFactory.createFollowCreatedEnvelope(follow);
+        KafkaEventContract contract = KafkaEventContract.FOLLOW_CREATED;
         outboxRecorder.record(
-                followEventFactory.createFollowCreatedEnvelope(follow),
-                followId.toString(),
-                "NONE",
-                "follow.created:" + followId);
+                envelope,
+                contract.partitionKey(envelope),
+                contract.orderingScope(),
+                contract.deduplicationKey(envelope));
     }
 
     @Transactional

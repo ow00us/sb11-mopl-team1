@@ -272,6 +272,14 @@ class NotificationEventMapperTest {
     }
 
     @Test
+    @DisplayName("알림 소비자가 지원하는 이벤트 type과 version을 함께 판정")
+    void supports_typeAndVersion() {
+        assertThat(notificationEventMapper.supports("follow.created", 1)).isTrue();
+        assertThat(notificationEventMapper.supports("follow.created", 2)).isFalse();
+        assertThat(notificationEventMapper.supports("unsupported.created", 1)).isFalse();
+    }
+
+    @Test
     @DisplayName("지원하지 않는 이벤트 버전이면 변환에 실패")
     void map_unsupportedVersion_fails() {
         // given

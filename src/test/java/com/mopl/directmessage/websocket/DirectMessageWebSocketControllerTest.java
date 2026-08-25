@@ -47,6 +47,9 @@ class DirectMessageWebSocketControllerTest {
     @Mock
     private DirectMessageBroadcaster broadcaster;
 
+    @Mock
+    private DirectMessageRelayPublisher relayPublisher;
+
     @InjectMocks
     private DirectMessageWebSocketController controller;
 
@@ -86,7 +89,8 @@ class DirectMessageWebSocketControllerTest {
         InOrder inOrder =
             inOrder(
                 directMessageService,
-                broadcaster
+                broadcaster,
+                relayPublisher
             );
 
         inOrder.verify(directMessageService)
@@ -98,6 +102,12 @@ class DirectMessageWebSocketControllerTest {
 
         inOrder.verify(broadcaster)
             .broadcast(
+                CONVERSATION_ID,
+                savedMessage
+            );
+
+        inOrder.verify(relayPublisher)
+            .publish(
                 CONVERSATION_ID,
                 savedMessage
             );
@@ -131,7 +141,8 @@ class DirectMessageWebSocketControllerTest {
 
         verifyNoInteractions(
             directMessageService,
-            broadcaster
+            broadcaster,
+            relayPublisher
         );
     }
 
@@ -169,7 +180,10 @@ class DirectMessageWebSocketControllerTest {
         ).isInstanceOf(BusinessException.class);
 
         // 저장에 실패하면 전송 컴포넌트는 호출되지 않는다.
-        verifyNoInteractions(broadcaster);
+        verifyNoInteractions(
+            broadcaster,
+            relayPublisher
+        );
     }
 
     private DirectMessageDto createMessageDto() {
@@ -195,6 +209,7 @@ class DirectMessageWebSocketControllerTest {
             Instant.parse(
                 "2026-08-04T01:00:00Z"
             ),
+            1L,
             sender,
             receiver,
             "실시간 메시지"
@@ -232,7 +247,8 @@ class DirectMessageWebSocketControllerTest {
 
         verifyNoInteractions(
             directMessageService,
-            broadcaster
+            broadcaster,
+            relayPublisher
         );
     }
 }

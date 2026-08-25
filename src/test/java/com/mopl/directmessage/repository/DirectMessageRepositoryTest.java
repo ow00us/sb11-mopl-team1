@@ -53,6 +53,9 @@ public class DirectMessageRepositoryTest {
     private static final UUID USER_ID_2 =
         UUID.fromString("22222222-2222-2222-2222-222222222222");
 
+    private static final UUID USER_ID_3 =
+        UUID.fromString("33333333-3333-3333-3333-333333333333");
+
     @Container
     @ServiceConnection
     static PostgreSQLContainer<?> postgres =
@@ -110,6 +113,7 @@ public class DirectMessageRepositoryTest {
         UUID messageId,
         UUID conversationId,
         UUID senderId,
+        long messageSequence,
         Instant createdAt
     ) {
         jdbcTemplate.update(
@@ -120,16 +124,18 @@ public class DirectMessageRepositoryTest {
                 updated_at,
                 conversation_id,
                 sender_id,
+                message_sequence,
                 content,
                 read_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, NULL)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
             """,
             messageId,
             Timestamp.from(createdAt),
             Timestamp.from(createdAt),
             conversationId,
             senderId,
+            messageSequence,
             "테스트 메시지"
         );
     }
@@ -148,6 +154,12 @@ public class DirectMessageRepositoryTest {
             "other@example.com",
             "other"
         );
+
+        insertUser(
+            USER_ID_3,
+            "third@example.com",
+            "third"
+        );
     }
 
     //readAt 초기값 확인
@@ -156,7 +168,12 @@ public class DirectMessageRepositoryTest {
     void saveAndFindDirectMessage() {
         // given
         Conversation conversation =
-            conversationRepository.saveAndFlush(Conversation.create());
+            conversationRepository.saveAndFlush(
+                Conversation.create(
+                    USER_ID_1,
+                    USER_ID_2
+                )
+            );
 
         ConversationParticipant participant =
             ConversationParticipant.create(
@@ -170,6 +187,7 @@ public class DirectMessageRepositoryTest {
         DirectMessage message = DirectMessage.create(
             conversation.getId(),
             USER_ID_1,
+            1L,
             "안녕하세요"
         );
 
@@ -194,7 +212,12 @@ public class DirectMessageRepositoryTest {
     void markAsReadIfUnread_concurrent_updatesOnce() throws Exception {
         // given
         Conversation conversation =
-            conversationRepository.save(Conversation.create());
+            conversationRepository.save(
+                Conversation.create(
+                    USER_ID_1,
+                    USER_ID_2
+                )
+            );
 
         participantRepository.save(
             ConversationParticipant.create(
@@ -209,6 +232,7 @@ public class DirectMessageRepositoryTest {
                 DirectMessage.create(
                     conversation.getId(),
                     USER_ID_1,
+                    1L,
                     "동시 읽음 테스트"
                 )
             );
@@ -293,9 +317,10 @@ public class DirectMessageRepositoryTest {
                 conversation.getId()
             );
             jdbcTemplate.update(
-                "DELETE FROM users WHERE id IN (?, ?)",
+                "DELETE FROM users WHERE id IN (?, ?, ?)",
                 USER_ID_1,
-                USER_ID_2
+                USER_ID_2,
+                USER_ID_3
             );
         }
     }
@@ -305,7 +330,12 @@ public class DirectMessageRepositoryTest {
     void saveDirectMessageByNonParticipantFails() {
         // given
         Conversation conversation =
-            conversationRepository.saveAndFlush(Conversation.create());
+            conversationRepository.saveAndFlush(
+                Conversation.create(
+                    USER_ID_1,
+                    USER_ID_2
+                )
+            );
 
         ConversationParticipant participant =
             ConversationParticipant.create(
@@ -319,6 +349,7 @@ public class DirectMessageRepositoryTest {
         DirectMessage message = DirectMessage.create(
             conversation.getId(),
             USER_ID_2,
+            1L,
             "참여자가 아닌 사용자의 메시지"
         );
 
@@ -333,10 +364,20 @@ public class DirectMessageRepositoryTest {
     void findAllByCursor() {
         // given
         Conversation conversation =
-            conversationRepository.saveAndFlush(Conversation.create());
+            conversationRepository.saveAndFlush(
+                Conversation.create(
+                    USER_ID_1,
+                    USER_ID_2
+                )
+            );
 
         Conversation otherConversation =
-            conversationRepository.saveAndFlush(Conversation.create());
+            conversationRepository.saveAndFlush(
+                Conversation.create(
+                    USER_ID_1,
+                    USER_ID_3
+                )
+            );
 
         participantRepository.saveAllAndFlush(List.of(
             ConversationParticipant.create(
@@ -364,16 +405,32 @@ public class DirectMessageRepositoryTest {
             UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1");
 
         insertDirectMessage(
-            messageId1, conversation.getId(), USER_ID_1, firstTime
+            messageId1,
+            conversation.getId(),
+            USER_ID_1,
+            1L,
+            firstTime
         );
         insertDirectMessage(
-            messageId2, conversation.getId(), USER_ID_1, secondTime
+            messageId2,
+            conversation.getId(),
+            USER_ID_1,
+            2L,
+            secondTime
         );
         insertDirectMessage(
-            messageId3, conversation.getId(), USER_ID_1, secondTime
+            messageId3,
+            conversation.getId(),
+            USER_ID_1,
+            3L,
+            secondTime
         );
         insertDirectMessage(
-            otherMessageId, otherConversation.getId(), USER_ID_1, secondTime
+            otherMessageId,
+            otherConversation.getId(),
+            USER_ID_1,
+            1L,
+            secondTime
         );
 
         entityManager.clear();
@@ -439,12 +496,18 @@ public class DirectMessageRepositoryTest {
         // given
         Conversation conversation1 =
             conversationRepository.saveAndFlush(
-                Conversation.create()
+                Conversation.create(
+                    USER_ID_1,
+                    USER_ID_2
+                )
             );
 
         Conversation conversation2 =
             conversationRepository.saveAndFlush(
-                Conversation.create()
+                Conversation.create(
+                    USER_ID_1,
+                    USER_ID_3
+                )
             );
 
         participantRepository.saveAllAndFlush(
@@ -466,7 +529,7 @@ public class DirectMessageRepositoryTest {
                 ),
                 ConversationParticipant.create(
                     conversation2.getId(),
-                    USER_ID_2,
+                    USER_ID_3,
                     ParticipantSlot.SECOND
                 )
             )
@@ -497,6 +560,7 @@ public class DirectMessageRepositoryTest {
             oldMessageId,
             conversation1.getId(),
             USER_ID_1,
+            1L,
             firstTime
         );
 
@@ -504,6 +568,7 @@ public class DirectMessageRepositoryTest {
             latestMessageId,
             conversation1.getId(),
             USER_ID_2,
+            2L,
             secondTime
         );
 
@@ -511,6 +576,7 @@ public class DirectMessageRepositoryTest {
             secondConversationMessageId,
             conversation2.getId(),
             USER_ID_1,
+            1L,
             secondTime
         );
 

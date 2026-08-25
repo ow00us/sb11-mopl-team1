@@ -101,7 +101,10 @@ class ConversationServiceTest {
             createUser(WITH_USER_ID, "상대 사용자");
 
         Conversation conversation =
-            Conversation.create();
+            Conversation.create(
+                REQUESTER_ID,
+                WITH_USER_ID
+            );
 
         ReflectionTestUtils.setField(
             conversation,
@@ -116,17 +119,25 @@ class ConversationServiceTest {
         );
 
         when(
-            participantRepository.findConversationIdsByUserPair(
-                REQUESTER_ID,
-                WITH_USER_ID
-            )
-        ).thenReturn(List.of());
+            conversationRepository
+                .findByParticipantPairKey(
+                    any(String.class)
+                )
+        ).thenReturn(Optional.empty());
 
         when(
-            conversationRepository.save(
-                any(Conversation.class)
+            conversationRepository.insertIfAbsent(
+                any(UUID.class),
+                any(Instant.class),
+                any(String.class)
             )
-        ).thenReturn(conversation);
+        ).thenReturn(1);
+
+        when(
+            conversationRepository.findById(
+                any(UUID.class)
+            )
+        ).thenReturn(Optional.of(conversation));
 
         // when
         ConversationCreateResult result =
@@ -225,7 +236,10 @@ class ConversationServiceTest {
             createUser(WITH_USER_ID, "상대 사용자");
 
         Conversation conversation =
-            Conversation.create();
+            Conversation.create(
+                REQUESTER_ID,
+                WITH_USER_ID
+            );
 
         ReflectionTestUtils.setField(
             conversation,
@@ -240,18 +254,10 @@ class ConversationServiceTest {
         );
 
         when(
-            participantRepository.findConversationIdsByUserPair(
-                REQUESTER_ID,
-                WITH_USER_ID
-            )
-        ).thenReturn(
-            List.of(CONVERSATION_ID)
-        );
-
-        when(
-            conversationRepository.findById(
-                CONVERSATION_ID
-            )
+            conversationRepository
+                .findByParticipantPairKey(
+                    any(String.class)
+                )
         ).thenReturn(
             Optional.of(conversation)
         );
@@ -286,7 +292,11 @@ class ConversationServiceTest {
         verify(
             conversationRepository,
             never()
-        ).save(any(Conversation.class));
+        ).insertIfAbsent(
+            any(UUID.class),
+            any(Instant.class),
+            any(String.class)
+        );
 
         verify(
             participantRepository,
@@ -353,8 +363,9 @@ class ConversationServiceTest {
     }
 
     @Test
-    @DisplayName("같은 사용자 쌍의 대화가 여러 개면 데이터 상태 오류")
-    void create_duplicateConversations_fails() {
+    @DisplayName("동시 생성 충돌 시 먼저 생성된 대화를 반환")
+    void create_conflict_returnsExistingConversation() {
+        // given
         ConversationCreateRequest request =
             new ConversationCreateRequest(WITH_USER_ID);
 
@@ -364,6 +375,18 @@ class ConversationServiceTest {
         User withUser =
             createUser(WITH_USER_ID, "상대 사용자");
 
+        Conversation conversation =
+            Conversation.create(
+                REQUESTER_ID,
+                WITH_USER_ID
+            );
+
+        ReflectionTestUtils.setField(
+            conversation,
+            "id",
+            CONVERSATION_ID
+        );
+
         when(
             userRepository.findAllById(anyList())
         ).thenReturn(
@@ -371,31 +394,56 @@ class ConversationServiceTest {
         );
 
         when(
-            participantRepository.findConversationIdsByUserPair(
-                REQUESTER_ID,
-                WITH_USER_ID
-            )
+            conversationRepository
+                .findByParticipantPairKey(
+                    any(String.class)
+                )
         ).thenReturn(
-            List.of(
-                UUID.randomUUID(),
-                UUID.randomUUID()
-            )
+            Optional.empty(),
+            Optional.of(conversation)
         );
 
-        assertThatThrownBy(() ->
+        when(
+            conversationRepository.insertIfAbsent(
+                any(UUID.class),
+                any(Instant.class),
+                any(String.class)
+            )
+        ).thenReturn(0);
+
+        when(
+            directMessageRepository
+                .findFirstByConversationIdOrderByCreatedAtDescIdDesc(
+                    CONVERSATION_ID
+                )
+        ).thenReturn(Optional.empty());
+
+        when(
+            directMessageRepository
+                .existsByConversationIdAndSenderIdNotAndReadAtIsNull(
+                    CONVERSATION_ID,
+                    REQUESTER_ID
+                )
+        ).thenReturn(false);
+
+        // when
+        ConversationCreateResult result =
             conversationService.create(
                 REQUESTER_ID,
                 request
-            )
-        )
-            .isInstanceOfSatisfying(
-                BusinessException.class,
-                exception ->
-                    assertThat(exception.getErrorCode())
-                        .isEqualTo(
-                            ErrorCode.DIRECT_MESSAGE_INVALID_STATE
-                        )
             );
+
+        // then
+        assertThat(result.created())
+            .isFalse();
+
+        assertThat(result.conversation().id())
+            .isEqualTo(CONVERSATION_ID);
+
+        verify(
+            participantRepository,
+            never()
+        ).saveAll(anyList());
     }
 
     @Test
@@ -403,7 +451,10 @@ class ConversationServiceTest {
     void getConversation_participant_returnsConversation() {
         // given
         Conversation conversation =
-            Conversation.create();
+            Conversation.create(
+                REQUESTER_ID,
+                WITH_USER_ID
+            );
 
         ReflectionTestUtils.setField(
             conversation,
@@ -630,12 +681,11 @@ class ConversationServiceTest {
     void getConversationWithUser_notFound_fails() {
         // given
         when(
-            participantRepository
-                .findConversationIdsByUserPair(
-                    REQUESTER_ID,
-                    WITH_USER_ID
+            conversationRepository
+                .findByParticipantPairKey(
+                    any(String.class)
                 )
-        ).thenReturn(List.of());
+        ).thenReturn(Optional.empty());
 
         // when & then
         assertThatThrownBy(() ->
@@ -655,9 +705,15 @@ class ConversationServiceTest {
                     )
             );
 
+        verify(
+            conversationRepository
+        ).findByParticipantPairKey(
+            any(String.class)
+        );
+
         verifyNoInteractions(
+            participantRepository,
             userRepository,
-            conversationRepository,
             directMessageRepository
         );
     }
@@ -744,6 +800,7 @@ class ConversationServiceTest {
             DirectMessage.create(
                 CONVERSATION_ID,
                 WITH_USER_ID,
+                1L,
                 "최근 메시지"
             );
 

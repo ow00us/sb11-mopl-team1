@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.event.EventContractViolationException;
 import com.mopl.global.event.EventEnvelope;
+import com.mopl.global.event.KafkaEventContract;
 import com.mopl.notification.entity.NotificationLevel;
 import com.mopl.notification.entity.NotificationType;
 import com.mopl.notification.kafka.payload.DirectMessageCreatedPayload;
@@ -14,6 +15,7 @@ import com.mopl.notification.kafka.payload.PlaylistSubscriptionCreatedPayload;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import java.util.Optional;
+import java.util.EnumSet;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
@@ -24,15 +26,11 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class NotificationEventMapper {
 
-    private static final int SUPPORTED_VERSION = 1;
-    private static final String FOLLOW_CREATED = "follow.created";
-    private static final String PLAYLIST_SUBSCRIPTION_CREATED = "playlist.subscription.created";
-    private static final String DIRECT_MESSAGE_CREATED = "direct-message.created";
     private static final int MAX_CONTENT_PREVIEW_LENGTH = 100;
-    private static final Set<String> SUPPORTED_TYPES = Set.of(
-            FOLLOW_CREATED,
-            PLAYLIST_SUBSCRIPTION_CREATED,
-            DIRECT_MESSAGE_CREATED
+    private static final Set<KafkaEventContract> SUPPORTED_CONTRACTS = EnumSet.of(
+            KafkaEventContract.FOLLOW_CREATED,
+            KafkaEventContract.PLAYLIST_SUBSCRIPTION_CREATED,
+            KafkaEventContract.DIRECT_MESSAGE_CREATED
     );
 
     private final ObjectMapper objectMapper;
@@ -70,22 +68,34 @@ public class NotificationEventMapper {
     public Optional<NotificationCreateCommand> map(
         EventEnvelope envelope
     ) {
-        validateEnvelope(envelope);
+        KafkaEventContract contract = validateEnvelope(envelope);
+        if (!SUPPORTED_CONTRACTS.contains(contract)) {
+            throw new EventContractViolationException(
+                "지원하지 않는 알림 이벤트 type·version입니다."
+            );
+        }
 
-        return switch (envelope.type()) {
+        return switch (contract) {
             case FOLLOW_CREATED -> mapFollow(envelope);
             case PLAYLIST_SUBSCRIPTION_CREATED -> mapPlaylistSubscription(envelope);
             case DIRECT_MESSAGE_CREATED -> mapDirectMessage(envelope);
-            default -> throw new EventContractViolationException(
-                "지원하지 않는 이벤트 타입입니다."
-            );
         };
     }
 
     public boolean supports(
         String type
     ) {
-        return SUPPORTED_TYPES.contains(type);
+        return SUPPORTED_CONTRACTS.stream()
+            .anyMatch(contract -> contract.type().equals(type));
+    }
+
+    public boolean supports(
+        String type,
+        int version
+    ) {
+        return KafkaEventContract.find(type, version)
+            .filter(SUPPORTED_CONTRACTS::contains)
+            .isPresent();
     }
 
     private Optional<NotificationCreateCommand> mapFollow(
@@ -313,7 +323,7 @@ public class NotificationEventMapper {
         );
     }
 
-    private void validateEnvelope(
+    private KafkaEventContract validateEnvelope(
         EventEnvelope envelope
     ) {
         if (envelope == null) {
@@ -342,14 +352,6 @@ public class NotificationEventMapper {
             "aggregateId"
         );
 
-        if (envelope.version()
-            != SUPPORTED_VERSION) {
-
-            throw new EventContractViolationException(
-                "지원하지 않는 이벤트 version입니다."
-            );
-        }
-
         JsonNode payload =
             envelope.payload();
 
@@ -362,6 +364,11 @@ public class NotificationEventMapper {
                 "payload가 올바른 객체가 아닙니다."
             );
         }
+
+        return KafkaEventContract.require(
+            envelope.type(),
+            envelope.version()
+        );
     }
 
     private <T> T convertPayload(

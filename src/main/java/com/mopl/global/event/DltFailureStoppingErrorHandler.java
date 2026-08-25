@@ -24,14 +24,20 @@ import org.springframework.util.backoff.BackOff;
 public class DltFailureStoppingErrorHandler extends DefaultErrorHandler {
 
     private final CountingDeadLetterRecoverer recoverer;
+    private final KafkaListenerStopTracker stopTracker;
     private final int maxConsecutiveFailures;
     private final CommonContainerStoppingErrorHandler containerStopper =
         new CommonContainerStoppingErrorHandler();
 
     public DltFailureStoppingErrorHandler(
-        CountingDeadLetterRecoverer recoverer, BackOff backOff, int maxConsecutiveFailures) {
+        CountingDeadLetterRecoverer recoverer,
+        KafkaListenerStopTracker stopTracker,
+        BackOff backOff,
+        int maxConsecutiveFailures
+    ) {
         super(recoverer, backOff);
         this.recoverer = recoverer;
+        this.stopTracker = stopTracker;
         this.maxConsecutiveFailures = maxConsecutiveFailures;
     }
 
@@ -77,6 +83,10 @@ public class DltFailureStoppingErrorHandler extends DefaultErrorHandler {
      *
      * <p>중지 과정에서 생긴 예외는 밖으로 던지지 않습니다. 원래의 처리 실패를 덮으면
      * 진짜 원인이 로그에서 사라집니다.
+     *
+     * <p>중지 성공 여부는 예외가 아니라 컨테이너 상태로 판정합니다.
+     * {@link CommonContainerStoppingErrorHandler} 는 중지를 지시한 뒤 항상 예외를 던지므로,
+     * 예외 유무로 판정하면 성공한 중지까지 실패로 읽힙니다.
      */
     private void stopIfDeadLetterKeepsFailing(
         ConsumerRecord<?, ?> record, Consumer<?, ?> consumer, MessageListenerContainer container) {
@@ -85,18 +95,36 @@ public class DltFailureStoppingErrorHandler extends DefaultErrorHandler {
             return;
         }
 
+        String reason = "DLT 발행이 " + failures + "회 연속 실패했습니다. record="
+            + CountingDeadLetterRecoverer.recordKey(record);
         log.error("DLT 발행이 {}회 연속 실패해 리스너 컨테이너를 중지합니다. record={}",
             failures, CountingDeadLetterRecoverer.recordKey(record));
 
+        // 중지 사유를 먼저 남깁니다. health 의 판정은 컨테이너의 실제 상태에서 읽고 이 기록은
+        // 거기에 설명을 더하는 값이라, 중지가 끝나기 전에 남겨도 상태가 어긋나지 않습니다.
+        stopTracker.recordDeadLetterStop(
+            container.getGroupId(), container.getListenerId(), record.topic(), reason);
+
         try {
-            containerStopper.handleOne(
+            // handleOne 이 아니라 handleRemaining 을 부릅니다.
+            // CommonContainerStoppingErrorHandler 는 handleOne 을 재정의하지 않아서, 그쪽으로
+            // 부르면 CommonErrorHandler 의 기본 구현이 오류 로그만 남기고 끝납니다. 컨테이너를
+            // 실제로 멈추는 경로는 handleRemaining 입니다.
+            containerStopper.handleRemaining(
                 new KafkaException("DLT 발행이 반복 실패해 컨테이너를 중지했습니다."),
-                record, consumer, container);
-        } catch (RuntimeException stopFailure) {
-            // 중지에 실패했으면 카운트를 남겨 둡니다. 여기서 지우면 컨테이너가 계속
-            // 돌면서 같은 레코드가 임계값까지 다시 쌓여야 재시도되고, 중지 실패가
-            // 반복되는 동안 에스컬레이션 없이 같은 주기만 돕니다.
-            log.error("리스너 컨테이너 중지에 실패했습니다. 실패 카운트를 유지합니다.", stopFailure);
+                List.of(record), consumer, container);
+        } catch (RuntimeException signal) {
+            // CommonContainerStoppingErrorHandler 는 중지를 지시한 뒤 반드시 예외를 던집니다.
+            // 호출부에서 이 레코드의 처리를 끊으라는 신호이지 중지 실패가 아닙니다. 이것을
+            // 실패로 읽으면 아래 판정과 정리가 영영 실행되지 않습니다.
+            log.debug("컨테이너 중지 신호를 받았습니다.", signal);
+        }
+
+        if (container.isInExpectedState()) {
+            // 중지가 반영되지 않았습니다. 카운트를 남겨 둡니다. 여기서 지우면 컨테이너가 계속
+            // 돌면서 같은 레코드가 임계값까지 다시 쌓여야 재시도되고, 중지 실패가 반복되는
+            // 동안 에스컬레이션 없이 같은 주기만 돕니다.
+            log.error("리스너 컨테이너가 중지되지 않았습니다. 실패 카운트를 유지합니다.");
             return;
         }
 

@@ -81,6 +81,42 @@ public class OutboxFailureService {
     }
 
     /**
+     * 최종 실패한 이벤트 한 건을 보내지 않기로 하고 종결합니다.
+     *
+     * <p>발행에 성공했다고 표시하거나 행을 지우지 않습니다. 둘 다 판단이 있었다는 사실을
+     * 지웁니다. 누가 언제 왜 보내지 않기로 했는지를 함께 남깁니다.
+     *
+     * <p>이미 건너뛴 이벤트에는 아무것도 쓰지 않고 {@link OutboxSkipOutcome#ALREADY_SKIPPED}
+     * 를 돌려줍니다. 같은 요청이 두 번 들어와도 결과는 같아야 하지만, 실제로 판단한 사람과
+     * 시각은 처음 전환한 쪽입니다.
+     *
+     * @param actorId 건너뛰기로 판단한 운영자
+     * @param reason 건너뛴 사유. 비어 있을 수 없습니다
+     * @return 전이 결과
+     */
+    @Transactional
+    public OutboxSkipOutcome skip(UUID eventId, UUID actorId, String reason, Instant now) {
+        if (reason == null || reason.isBlank()) {
+            throw new IllegalArgumentException("건너뛰기 사유는 비워 둘 수 없습니다.");
+        }
+
+        return outboxEventRepository.findByEventIdForUpdate(eventId)
+            .map(event -> {
+                if (event.getStatus() == OutboxStatus.SKIPPED) {
+                    return OutboxSkipOutcome.ALREADY_SKIPPED;
+                }
+                if (event.getStatus() != OutboxStatus.FAILED) {
+                    return OutboxSkipOutcome.NOT_FAILED;
+                }
+                event.skip(actorId, reason, now);
+                log.info("Outbox 최종 실패 이벤트를 건너뜁니다. eventId={}, type={}, actorId={}",
+                    event.getEventId(), event.getType(), actorId);
+                return OutboxSkipOutcome.SKIPPED;
+            })
+            .orElse(OutboxSkipOutcome.NOT_FOUND);
+    }
+
+    /**
      * 최종 실패한 이벤트를 상한만큼 다시 발행 대기로 돌립니다.
      *
      * <p>브로커 장애처럼 원인이 하나여서 다수가 함께 실패한 경우에 씁니다. 상한을 받는 이유는

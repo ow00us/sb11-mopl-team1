@@ -27,15 +27,18 @@ public class RealtimeRelaySubscriber implements MessageListener {
     private final RealtimeInstanceId instanceId;
     private final List<RealtimeMessageHandler> handlers;
     private final RecentMessageIds recentMessageIds;
+    private final RealtimeRelayMetrics metrics;
 
     public RealtimeRelaySubscriber(
         ObjectMapper objectMapper,
         RealtimeInstanceId instanceId,
-        List<RealtimeMessageHandler> handlers
+        List<RealtimeMessageHandler> handlers,
+        RealtimeRelayMetrics metrics
     ) {
         this.objectMapper = objectMapper;
         this.instanceId = instanceId;
         this.handlers = handlers;
+        this.metrics = metrics;
         this.recentMessageIds = new RecentMessageIds(RECENT_MESSAGE_CAPACITY);
     }
 
@@ -48,17 +51,20 @@ public class RealtimeRelaySubscriber implements MessageListener {
 
         if (received.messageId() == null || received.originInstanceId() == null
             || received.eventType() == null || received.destination() == null) {
+            metrics.recordDiscarded(RealtimeRelayDiscardReason.INCOMPLETE);
             log.warn("실시간 중계 메시지에 필수 값이 없습니다. messageId={}, eventType={}",
                 received.messageId(), received.eventType());
             return;
         }
 
         if (instanceId.value().equals(received.originInstanceId())) {
+            metrics.recordDiscarded(RealtimeRelayDiscardReason.SELF);
             log.trace("자기 인스턴스가 발행한 메시지를 건너뜁니다. messageId={}", received.messageId());
             return;
         }
 
         if (!recentMessageIds.markSeen(received.messageId())) {
+            metrics.recordDiscarded(RealtimeRelayDiscardReason.DUPLICATE);
             log.debug("이미 전달한 실시간 메시지를 건너뜁니다. messageId={}", received.messageId());
             return;
         }
@@ -73,21 +79,44 @@ public class RealtimeRelaySubscriber implements MessageListener {
         } catch (Exception e) {
             // 본문을 로그에 남기지 않습니다. 실시간 메시지에는 사용자에게 보내는 내용이 들어
             // 있습니다.
+            metrics.recordDiscarded(RealtimeRelayDiscardReason.MALFORMED);
             log.warn("실시간 중계 메시지를 읽지 못했습니다. 이 메시지는 버립니다.", e);
             return null;
         }
     }
 
     private void dispatch(RealtimeMessage received) {
+        boolean delivered = false;
+
         for (RealtimeMessageHandler handler : handlers) {
             try {
-                if (handler.supports(received.eventType())) {
-                    handler.handle(received);
+                if (!handler.supports(received.eventType())) {
+                    continue;
                 }
+
+                if (!delivered) {
+                    // 지원하는 handler 를 처음 부르기 직전에 한 번만 셉니다. 아무 handler 도
+                    // 지원하지 않는 메시지를 전달 성공으로 세면, 지표가 드러내야 할 상황을
+                    // 지표가 가립니다. handle() 앞에서 세므로 handler 가 실패해도 전달 시도와
+                    // 실패가 함께 남습니다.
+                    metrics.recordDelivered();
+                    delivered = true;
+                }
+
+                handler.handle(received);
             } catch (Exception e) {
+                metrics.recordHandlerFailure(handler.getClass().getSimpleName());
                 log.error("실시간 메시지 전달에 실패했습니다. handler={}, eventType={}, destination={}",
                     handler.getClass().getName(), received.eventType(), received.destination(), e);
             }
+        }
+
+        if (!delivered) {
+            // 받아서 필터를 모두 통과했는데 처리할 handler 가 없는 상태입니다. 전달 성공으로
+            // 세면 지표가 이 상황을 가리므로 버린 이유를 따로 남깁니다.
+            metrics.recordDiscarded(RealtimeRelayDiscardReason.NO_HANDLER);
+            log.warn("지원하는 handler 가 없어 실시간 메시지를 버립니다. eventType={}, destination={}",
+                received.eventType(), received.destination());
         }
     }
 }

@@ -3,6 +3,7 @@ package com.mopl.global.outbox;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -240,6 +241,17 @@ class OutboxClaimerIntegrationTest {
     }
 
     /**
+     * 건너뛰기는 감사 정보를 함께 요구합니다. 상태만 바꾸면 체크 제약이 거부합니다.
+     */
+    private void setSkipped(OutboxEvent event) {
+        jdbcTemplate.update("""
+            UPDATE outbox_events
+            SET status = 'SKIPPED', skipped_by = ?, skipped_at = ?, skip_reason = ?
+            WHERE id = ?
+            """, UUID.randomUUID(), Timestamp.from(BASE), "업무 영향 확인함", event.getId());
+    }
+
+    /**
      * 앞선 이벤트가 아직 나가지 않았으면 뒤 이벤트를 선점하지 않습니다.
      *
      * <p>이 조건이 없으면 앞선 이벤트가 실패해 재시도 대기로 밀릴 때 뒤 이벤트가 먼저
@@ -279,6 +291,23 @@ class OutboxClaimerIntegrationTest {
         List<OutboxEvent> claimed = outboxClaimer.claim(OWNER, 10, BASE.plusSeconds(60));
 
         assertThat(claimed).isEmpty();
+    }
+
+    /**
+     * 운영자가 앞선 이벤트를 보내지 않기로 판단한 상황입니다.
+     *
+     * <p>그 판단의 효과는 뒤 이벤트가 진행하는 것입니다. 계속 막으면 앞선 이벤트를 종결한
+     * 의미가 없고, 뒤 이벤트도 함께 최종 실패로 밀려갑니다.
+     */
+    @Test
+    @DisplayName("앞선 이벤트를 건너뛰면 뒤 이벤트를 선점한다")
+    void claim_releasesGateWhenEarlierSkipped() {
+        List<OutboxEvent> pair = saveOrderedPair("agg-1");
+        setSkipped(pair.get(0));
+
+        List<OutboxEvent> claimed = outboxClaimer.claim(OWNER, 10, BASE.plusSeconds(60));
+
+        assertThat(claimed).extracting(OutboxEvent::getId).containsExactly(pair.get(1).getId());
     }
 
     @Test

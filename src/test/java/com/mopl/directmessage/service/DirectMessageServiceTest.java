@@ -23,10 +23,14 @@ import com.mopl.directmessage.entity.ParticipantSlot;
 import com.mopl.directmessage.event.DirectMessageOutboxEventFactory;
 import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.directmessage.repository.DirectMessageRepository;
+import com.mopl.directmessage.repository.DirectMessageSequenceGenerator;
+import com.mopl.directmessage.ratelimit.DirectMessageRateLimiter;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.event.EventEnvelope;
+import com.mopl.global.event.KafkaEventContract;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.mopl.global.outbox.OutboxRecorder;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
@@ -72,6 +76,12 @@ class DirectMessageServiceTest {
 
     @Mock
     DirectMessageRepository directMessageRepository;
+
+    @Mock
+    DirectMessageSequenceGenerator sequenceGenerator;
+
+    @Mock
+    DirectMessageRateLimiter rateLimiter;
 
     @Mock
     ConversationParticipantRepository participantRepository;
@@ -373,6 +383,7 @@ class DirectMessageServiceTest {
         DirectMessage message = DirectMessage.create(
             CONVERSATION_ID,
             senderId,
+            1L,
             content
         );
 
@@ -793,6 +804,14 @@ class DirectMessageServiceTest {
         // given
         stubParticipantsAndUsers();
 
+        when(
+            sequenceGenerator.next(CONVERSATION_ID)
+        ).thenReturn(1L);
+
+        when(
+            rateLimiter.tryAcquire(USER_ID_1)
+        ).thenReturn(true);
+
         UUID messageId =
             UUID.fromString(
                 "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
@@ -824,8 +843,7 @@ class DirectMessageServiceTest {
             return message;
         });
 
-        EventEnvelope envelope =
-            mock(EventEnvelope.class);
+        EventEnvelope envelope = directMessageEnvelope(messageId, createdAt);
 
         when(
             outboxEventFactory.create(
@@ -860,6 +878,9 @@ class DirectMessageServiceTest {
         assertThat(savedMessage.getSenderId())
             .isEqualTo(USER_ID_1);
 
+        assertThat(savedMessage.getMessageSequence())
+            .isEqualTo(1L);
+
         assertThat(savedMessage.getContent())
             .isEqualTo("반가워요!");
 
@@ -877,6 +898,9 @@ class DirectMessageServiceTest {
 
         assertThat(result.content())
             .isEqualTo("반가워요!");
+
+        assertThat(result.messageSequence())
+            .isEqualTo(1L);
 
         verify(outboxEventFactory)
             .create(
@@ -900,11 +924,19 @@ class DirectMessageServiceTest {
 
         InOrder inOrder =
             inOrder(
+                sequenceGenerator,
+                rateLimiter,
                 directMessageRepository,
                 outboxEventFactory,
                 outboxRecorder,
                 eventPublisher
             );
+
+        inOrder.verify(rateLimiter)
+            .tryAcquire(USER_ID_1);
+
+        inOrder.verify(sequenceGenerator)
+            .next(CONVERSATION_ID);
 
         inOrder.verify(directMessageRepository)
             .save(
@@ -937,6 +969,14 @@ class DirectMessageServiceTest {
     void create_outboxRecordFails_doesNotPublishEvent() {
         // given
         stubParticipantsAndUsers();
+
+        when(
+            sequenceGenerator.next(CONVERSATION_ID)
+        ).thenReturn(1L);
+
+        when(
+            rateLimiter.tryAcquire(USER_ID_1)
+        ).thenReturn(true);
 
         UUID messageId =
             UUID.fromString(
@@ -971,8 +1011,7 @@ class DirectMessageServiceTest {
             return message;
         });
 
-        EventEnvelope envelope =
-            mock(EventEnvelope.class);
+        EventEnvelope envelope = directMessageEnvelope(messageId, createdAt);
 
         when(
             outboxEventFactory.create(
@@ -1013,6 +1052,48 @@ class DirectMessageServiceTest {
     }
 
     @Test
+    @DisplayName("DM 전송 빈도를 초과하면 메시지를 저장하지 않는다.")
+    void create_rateLimitExceeded_fails() {
+        // given
+        when(
+            participantRepository.findAllByConversationId(
+                CONVERSATION_ID
+            )
+        ).thenReturn(participants());
+
+        when(
+            rateLimiter.tryAcquire(USER_ID_1)
+        ).thenReturn(false);
+
+        // when & then
+        assertThatThrownBy(() ->
+            directMessageService.create(
+                USER_ID_1,
+                CONVERSATION_ID,
+                "제한을 초과한 메시지"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(
+                            ErrorCode
+                                .DIRECT_MESSAGE_RATE_LIMIT_EXCEEDED
+                        )
+            );
+
+        verifyNoInteractions(
+            userRepository,
+            sequenceGenerator,
+            directMessageRepository,
+            outboxEventFactory,
+            outboxRecorder,
+            eventPublisher
+        );
+    }
+
+    @Test
     @DisplayName("내용이 비어 있는 DM은 저장할 수 없다.")
     void create_blankContent_fails() {
         // when & then
@@ -1036,9 +1117,24 @@ class DirectMessageServiceTest {
             participantRepository,
             userRepository,
             directMessageRepository,
+            sequenceGenerator,
+            rateLimiter,
             outboxEventFactory,
             outboxRecorder,
             eventPublisher
+        );
+    }
+
+    private EventEnvelope directMessageEnvelope(UUID messageId, Instant createdAt) {
+        KafkaEventContract contract = KafkaEventContract.DIRECT_MESSAGE_CREATED;
+        return new EventEnvelope(
+            UUID.randomUUID(),
+            contract.type(),
+            contract.version(),
+            createdAt,
+            messageId,
+            JsonNodeFactory.instance.objectNode()
+                .put("conversationId", CONVERSATION_ID.toString())
         );
     }
 }

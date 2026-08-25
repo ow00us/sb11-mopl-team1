@@ -1,6 +1,7 @@
 package com.mopl.user.security.oauth.handler;
 
 import com.mopl.user.config.OAuthRedirectProperties;
+import com.mopl.user.security.oauth.link.OAuthLinkIntentSessionStore;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -11,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.AuthenticationFailureHandler;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -31,6 +33,8 @@ public class OAuth2AuthenticationFailureHandler
 
     private final OAuthRedirectProperties redirectProperties;
 
+    private final OAuthLinkIntentSessionStore linkIntentSessionStore;
+
     /**
      * OAuth2 인증 실패 결과를 처리
      *
@@ -47,12 +51,29 @@ public class OAuth2AuthenticationFailureHandler
         SecurityContextHolder.clearContext();
 
         /*
-         * 사용자 이메일, Provider Access Token 및 예외 메시지는
-         * 로그에 남기지 않고 예외 타입만 기록
+         * Provider 인증 취소, Authorization Code 교환 실패처럼
+         * OAuth UserService에 도달하기 전에 인증이 끝난 경우에는
+         * 연결 의도가 아직 소비되지 않았을 수 있다.
+         *
+         * 실패한 연결 의도가 다음 OAuth 로그인에 재사용되지 않도록
+         * 실패 처리 시 세션에서 명시적으로 제거
          */
+        linkIntentSessionStore.clear(
+            request
+        );
+
+        String oauthErrorCode =
+            exception instanceof OAuth2AuthenticationException
+                oauthException
+                ? oauthException
+                  .getError()
+                  .getErrorCode()
+                : "not_available";
+
         log.warn(
-            "OAuth2 authentication failed: {}",
-            exception.getClass().getSimpleName()
+            "OAuth2 authentication failed: type={}, errorCode={}",
+            exception.getClass().getSimpleName(),
+            oauthErrorCode
         );
 
         URI failureRedirectUri =

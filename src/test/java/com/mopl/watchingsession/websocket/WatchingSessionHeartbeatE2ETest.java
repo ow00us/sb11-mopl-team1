@@ -258,7 +258,7 @@ class WatchingSessionHeartbeatE2ETest {
         long deadline = System.currentTimeMillis() + 3500;
         while (System.currentTimeMillis() < deadline) {
             session.send("/pub/contents/" + contentId + "/watch/heartbeat", null);
-            Thread.sleep(100);
+            Thread.sleep(300);
         }
 
         // then: presence-ttl(2s)을 넘긴 시점인데도 presence가 살아있다.

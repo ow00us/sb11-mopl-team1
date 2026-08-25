@@ -7,6 +7,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * OAuth 계정 연결 정보를 저장하고 조회하는 Repository
@@ -24,6 +25,7 @@ public interface OAuthAccountRepository
      * @param providerUserId Provider가 발급한 사용자 고유 식별자
      * @return 연결된 OAuth 계정, 존재하지 않으면 빈 Optional
      */
+    @Transactional(readOnly = true)
     @EntityGraph(attributePaths = "user")
     Optional<OAuthAccount> findByProviderAndProviderUserId(
         OAuthProvider provider,
@@ -49,4 +51,40 @@ public interface OAuthAccountRepository
      * @return 사용자에게 연결된 OAuth 계정 목록
      */
     List<OAuthAccount> findAllByUserId(UUID userId);
+
+    /**
+     * 특정 사용자에게 연결된 OAuth 계정을 연결 시각 오름차순으로 조회
+     *
+     * <p>API 응답 순서가 데이터베이스 실행 계획에 따라 바뀌지 않도록
+     * 명시적인 정렬 조건을 적용합니다.</p>
+     *
+     * @param userId 모두의 플리 사용자 UUID
+     * @return 연결 시각이 오래된 순서로 정렬된 OAuth 계정 목록
+     */
+    List<OAuthAccount> findAllByUserIdOrderByCreatedAtAsc(
+        UUID userId
+    );
+
+    /**
+     * 사용자와 Provider가 일치하는 OAuth 연결 정보를 조회
+     *
+     * @param userId 사용자 UUID
+     * @param provider OAuth Provider
+     * @return 연결 정보, 존재하지 않으면 빈 Optional
+     */
+    Optional<OAuthAccount> findByUserIdAndProvider(
+        UUID userId,
+        OAuthProvider provider
+    );
+
+    /**
+     * 사용자에게 연결된 OAuth 계정 수를 조회
+     *
+     * <p>로컬 비밀번호가 없는 OAuth 전용 사용자의 마지막 로그인 수단을
+     * 해제하지 못하도록 검사할 때 사용합니다.</p>
+     *
+     * @param userId 사용자 UUID
+     * @return 연결된 OAuth 계정 수
+     */
+    long countByUserId(UUID userId);
 }

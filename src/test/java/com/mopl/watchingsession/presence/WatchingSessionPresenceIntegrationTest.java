@@ -46,11 +46,14 @@ public class WatchingSessionPresenceIntegrationTest {
 
     private static final UUID WATCHER_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
     private static final UUID CONTENT_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
+    private static final UUID OTHER_CONTENT_ID = UUID.fromString("44444444-4444-4444-4444-444444444444");
     private static final UUID SNAPSHOT_ID = UUID.fromString("33333333-3333-3333-3333-333333333333");
     private static final String SESSION_ID = "session-1";
     private static final String SUBSCRIPTION_ID = "sub-1";
     private static final String KEY = "mopl:presence:watcher:" + WATCHER_ID;
     private static final Duration DEFAULT_TTL = Duration.ofMinutes(30);
+    private static final String CONTENT_ZSET_KEY = "mopl:presence:content:" + CONTENT_ID;
+    private static final String OTHER_CONTENT_ZSET_KEY = "mopl:presence:content:" + OTHER_CONTENT_ID;
 
     @Autowired
     private WatchingSessionPresenceWriter writer;
@@ -61,6 +64,8 @@ public class WatchingSessionPresenceIntegrationTest {
     @BeforeEach
     void clearPresenceKeys() {
         stringRedisTemplate.delete(KEY);
+        stringRedisTemplate.delete(CONTENT_ZSET_KEY);
+        stringRedisTemplate.delete(OTHER_CONTENT_ZSET_KEY);
     }
 
     @Test
@@ -119,6 +124,8 @@ public class WatchingSessionPresenceIntegrationTest {
         assertThat(previousForC).isPresent();
         assertThat(previousForC.get().sessionId()).isEqualTo("session-B");
     }
+
+
 
     @Test
     @DisplayName("deleteIfOwner()는 소유권이 일치할 때만 실제로 키를 삭제한다")
@@ -236,6 +243,27 @@ public class WatchingSessionPresenceIntegrationTest {
     }
 
     @Test
+    @DisplayName("Hash와 콘텐츠 ZSet의 만료 시각이 동일한 절대 시각(PEXPIREAT)으로 맞춰진다")
+    void swap_alignsHashAndContentZSetExpiry() {
+        Instant now = Instant.now();
+        Instant before = Instant.now();
+        writer.swap(WATCHER_ID, UUID.randomUUID(), CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, now, now, Duration.ofSeconds(60));
+        Instant after = Instant.now();
+
+        Long hashTtlMillis = stringRedisTemplate.getExpire(KEY, TimeUnit.MILLISECONDS);
+        Double zsetScore = stringRedisTemplate.opsForZSet().score(CONTENT_ZSET_KEY, WATCHER_ID.toString());
+        Long zsetTtlMillis = stringRedisTemplate.getExpire(CONTENT_ZSET_KEY, TimeUnit.MILLISECONDS);
+
+        long expiresAtLowerBound = before.plusSeconds(60).toEpochMilli();
+        long expiresAtUpperBound = after.plusSeconds(60).toEpochMilli();
+
+        assertThat(zsetScore.longValue()).isBetween(expiresAtLowerBound, expiresAtUpperBound);
+        // Hash TTL과 ZSet 키 TTL이 같은 절대 시각을 기준으로 하므로 수 ms 오차 내로 일치해야 함
+        assertThat(Math.abs(hashTtlMillis - zsetTtlMillis)).isLessThan(50);
+    }
+
+
+    @Test
     @DisplayName("레거시 문자열 타입 presence 키에 대해 deleteIfOwner()는 예외 없이 빈 Optional을 반환한다")
     void deleteIfOwner_returnsEmpty_forLegacyStringKey_withoutWrongTypeError() {
         stringRedisTemplate.opsForValue().set(KEY, "{\"legacy\":\"json\"}");
@@ -325,5 +353,84 @@ public class WatchingSessionPresenceIntegrationTest {
         Map<Object, Object> entries = stringRedisTemplate.opsForHash().entries(KEY);
         assertThat(entries.get("snapshotId")).isEqualTo(SNAPSHOT_ID.toString());
         assertThat(entries.get("snapshotUpdatedAt")).isEqualTo(originalUpdatedAt.toString());
+    }
+
+    @Test
+    @DisplayName("swap()은 새 콘텐츠의 ZSet에 watcherId를 추가하고, 직전 콘텐츠가 다르면 그 ZSet에서 제거한다")
+    void swap_updatesContentZSet_onContentChange() {
+        Instant now = Instant.now();
+        writer.swap(WATCHER_ID, UUID.randomUUID(), CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, now, now, Duration.ofMinutes(30));
+
+        writer.swap(WATCHER_ID, UUID.randomUUID(), OTHER_CONTENT_ID, "session-2", "sub-2", now, now, Duration.ofMinutes(30));
+
+        assertThat(stringRedisTemplate.opsForZSet().score("mopl:presence:content:" + CONTENT_ID, WATCHER_ID.toString()))
+            .isNull();
+        assertThat(stringRedisTemplate.opsForZSet().score("mopl:presence:content:" + OTHER_CONTENT_ID, WATCHER_ID.toString()))
+            .isNotNull();
+    }
+
+    @Test
+    @DisplayName("같은 콘텐츠로 재구독하면 ZREM 없이 score만 갱신된다")
+    void swap_onSameContent_onlyRefreshesScore() {
+        Instant now = Instant.now();
+        writer.swap(WATCHER_ID, UUID.randomUUID(), CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, now, now, Duration.ofMinutes(1));
+        Double firstScore = stringRedisTemplate.opsForZSet().score("mopl:presence:content:" + CONTENT_ID, WATCHER_ID.toString());
+
+        writer.swap(WATCHER_ID, UUID.randomUUID(), CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, now, now, Duration.ofMinutes(30));
+        Double secondScore = stringRedisTemplate.opsForZSet().score("mopl:presence:content:" + CONTENT_ID, WATCHER_ID.toString());
+
+        assertThat(secondScore).isGreaterThan(firstScore);
+    }
+
+    @Test
+    @DisplayName("deleteIfOwner()는 콘텐츠 ZSet에서도 watcherId를 제거한다")
+    void deleteIfOwner_removesFromContentZSet() {
+        Instant now = Instant.now();
+        writer.swap(WATCHER_ID, UUID.randomUUID(), CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, now, now, Duration.ofMinutes(30));
+
+        writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(stringRedisTemplate.opsForZSet().score("mopl:presence:content:" + CONTENT_ID, WATCHER_ID.toString()))
+            .isNull();
+    }
+
+    @Test
+    @DisplayName("renewIfOwner()는 콘텐츠 ZSet의 score를 함께 연장한다")
+    void renewIfOwner_extendsContentZSetScore() {
+        Instant now = Instant.now();
+        writer.swap(WATCHER_ID, UUID.randomUUID(), CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, now, now, Duration.ofSeconds(1));
+        Double beforeRenew = stringRedisTemplate.opsForZSet().score("mopl:presence:content:" + CONTENT_ID, WATCHER_ID.toString());
+
+        writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofMinutes(30));
+        Double afterRenew = stringRedisTemplate.opsForZSet().score("mopl:presence:content:" + CONTENT_ID, WATCHER_ID.toString());
+
+        assertThat(afterRenew).isGreaterThan(beforeRenew);
+    }
+
+    @Test
+    @DisplayName("마지막 presence가 만료되면 콘텐츠 ZSet 키도 함께 사라진다")
+    void contentZSetKey_expires_whenLastPresenceExpires() throws InterruptedException {
+        Instant now = Instant.now();
+        writer.swap(WATCHER_ID, UUID.randomUUID(), CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, now, now, Duration.ofMillis(200));
+
+        assertThat(stringRedisTemplate.hasKey(CONTENT_ZSET_KEY)).isTrue();
+
+        Thread.sleep(400);
+
+        assertThat(stringRedisTemplate.hasKey(KEY)).isFalse();
+        assertThat(stringRedisTemplate.hasKey(CONTENT_ZSET_KEY)).isFalse(); // 빈 채로 남지 않고 키 자체가 제거됨
+    }
+
+    @Test
+    @DisplayName("두 시청자 중 먼저 만료된 시청자만 빠지고, 남은 시청자가 있는 한 콘텐츠 ZSet 키는 유지된다")
+    void contentZSetKey_survives_whileOtherWatcherStillActive() throws InterruptedException {
+        Instant now = Instant.now();
+        writer.swap(WATCHER_ID, UUID.randomUUID(), CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID, now, now, Duration.ofMillis(200));
+        writer.swap(UUID.randomUUID(), UUID.randomUUID(), CONTENT_ID, "session-2", "sub-2", now, now, Duration.ofMinutes(30));
+
+        Thread.sleep(400);
+
+        // 짧은 TTL의 첫 시청자는 만료됐지만, 두 번째 시청자가 아직 살아있어 키 자체는 남아야 함
+        assertThat(stringRedisTemplate.hasKey(CONTENT_ZSET_KEY)).isTrue();
     }
 }

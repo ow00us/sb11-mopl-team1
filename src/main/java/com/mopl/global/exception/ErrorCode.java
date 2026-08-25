@@ -25,9 +25,13 @@ public enum ErrorCode {
     FOLLOW_SELF(HttpStatus.BAD_REQUEST, "FOLLOW_400_1", "자기 자신은 팔로우할 수 없습니다."),
     REQUEST_CONFLICT(HttpStatus.CONFLICT, "COMMON_409_1", "요청이 다른 처리와 충돌했습니다."),
     EMAIL_DUPLICATE(HttpStatus.CONFLICT, "USER_409_1", "이미 사용 중인 이메일입니다."),
+    OAUTH_ACCOUNT_NOT_FOUND(HttpStatus.NOT_FOUND, "OAUTH_404_1", "연결된 OAuth 계정을 찾을 수 없습니다."),
+    OAUTH_ACCOUNT_CONFLICT(HttpStatus.CONFLICT, "OAUTH_409_1", "OAuth 계정 연결이 다른 사용자 또는 계정과 충돌했습니다."),
+    OAUTH_LAST_LOGIN_METHOD(HttpStatus.CONFLICT, "OAUTH_409_2", "마지막 로그인 수단은 연결 해제할 수 없습니다."),
     REVIEW_NOT_FOUND(HttpStatus.NOT_FOUND, "REVIEW_404_1", "존재하지 않는 리뷰입니다."),
     REVIEW_DUPLICATE(HttpStatus.CONFLICT, "REVIEW_409_1", "이미 작성한 리뷰가 존재합니다."),
     DIRECT_MESSAGE_INVALID_STATE(HttpStatus.INTERNAL_SERVER_ERROR, "DM_500_1", "DM 데이터 상태가 올바르지 않습니다."),
+    DIRECT_MESSAGE_RATE_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "DM_429_1", "메시지를 너무 빠르게 전송하고 있습니다."),
     OUTBOX_EVENT_NOT_FOUND(HttpStatus.NOT_FOUND, "OUTBOX_404_1", "존재하지 않는 Outbox 이벤트입니다."),
     OUTBOX_EVENT_NOT_FAILED(HttpStatus.CONFLICT, "OUTBOX_409_1", "최종 실패 상태가 아닌 Outbox 이벤트입니다."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "COMMON_500_1", "서버 오류가 발생했습니다.");
