@@ -6,8 +6,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
-import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -19,20 +17,22 @@ import com.mopl.content.dto.ContentUpdateRequest;
 import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentType;
 import com.mopl.content.repository.ContentRepository;
+import com.mopl.content.search.ContentDocument;
 import com.mopl.content.search.ContentSearchDeleteEvent;
+import com.mopl.content.search.ContentSearchExecutor;
 import com.mopl.content.search.ContentSearchSyncEvent;
 import com.mopl.content.storage.ThumbnailStorage;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.util.CursorUtils;
-import com.mopl.watchingsession.repository.ContentWatcherCountView;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -52,6 +52,9 @@ class ContentServiceTest {
     ContentRepository contentRepository;
 
     @Mock
+    ContentSearchExecutor contentSearchExecutor;
+
+    @Mock
     ThumbnailStorage thumbnailStorage;
 
     @Mock
@@ -62,14 +65,6 @@ class ContentServiceTest {
 
     @InjectMocks
     ContentServiceImpl contentService;
-
-    @BeforeEach
-    void setUp() {
-        // watcherCount 실시간 집계는 sortBy와 무관하게 매 getList() 호출마다 조회되므로,
-        // 이 값을 신경 쓰지 않는 기존 테스트들이 별도 스텁 없이 통과하도록 기본값(빈 목록)을 깔아둔다.
-        lenient().when(watchingSessionSnapshotRepository.countGroupedByContentIds(any(), any()))
-                .thenReturn(List.of());
-    }
 
     private static final UUID CONTENT_ID = UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc");
     private static final String THUMBNAIL_URL = "https://placeholder.mopl.local/thumbnails/x-thumb.png";
@@ -153,72 +148,72 @@ class ContentServiceTest {
     // ── getList ──────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("tagsIn이 정규화되어 레포지토리에 전달된다")
+    @DisplayName("tagsIn이 정규화되어 검색 실행기에 전달된다")
     void getList_normalizesTags() {
-        when(contentRepository.findByCreatedAtDesc(any(), any(), any(), anyInt(), any(), any(), anyInt()))
+        when(contentSearchExecutor.findByCreatedAtDesc(any(), any(), any(), any(), any(), anyInt()))
                 .thenReturn(List.of());
-        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(0L);
+        when(contentSearchExecutor.countByFilter(any(), any(), any())).thenReturn(0L);
 
         contentService.getList(null, null, List.of("Action", " SF "), null, null, 10, "createdAt", "DESCENDING");
 
-        verify(contentRepository).findByCreatedAtDesc(
-                isNull(), isNull(), eq(List.of("action", "sf")), eq(2), isNull(), isNull(), eq(11));
-        verify(contentRepository).countByFilter(isNull(), isNull(), eq(List.of("action", "sf")), eq(2));
+        verify(contentSearchExecutor).findByCreatedAtDesc(
+                any(), any(), eq(List.of("action", "sf")), any(), any(), anyInt());
     }
 
     @Test
-    @DisplayName("대소문자만 다른 중복 태그는 정규화 후 하나로 합쳐져 tagCount에 반영된다")
+    @DisplayName("대소문자만 다른 중복 태그는 정규화 후 하나로 합쳐져 전달된다")
     void getList_deduplicatesNormalizedTags() {
-        ArgumentCaptor<Integer> tagCountCaptor = ArgumentCaptor.forClass(Integer.class);
-        when(contentRepository.findByCreatedAtDesc(
-                any(), any(), any(), tagCountCaptor.capture(), any(), any(), anyInt()))
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> tagsCaptor = ArgumentCaptor.forClass(List.class);
+        when(contentSearchExecutor.findByCreatedAtDesc(
+                any(), any(), tagsCaptor.capture(), any(), any(), anyInt()))
                 .thenReturn(List.of());
-        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(0L);
+        when(contentSearchExecutor.countByFilter(any(), any(), any())).thenReturn(0L);
 
         contentService.getList(
                 null, null, List.of("Action", "ACTION", "SF"), null, null, 10, "createdAt", "DESCENDING");
 
-        assertThat(tagCountCaptor.getValue()).isEqualTo(2);
+        assertThat(tagsCaptor.getValue()).containsExactlyInAnyOrder("action", "sf");
     }
 
     @Test
-    @DisplayName("tagsIn이 없으면 더미 태그와 tagCount 0이 레포지토리에 전달된다")
-    void getList_withoutTags_passesDummyTagAndZeroCount() {
-        when(contentRepository.findByCreatedAtDesc(any(), any(), any(), anyInt(), any(), any(), anyInt()))
+    @DisplayName("tagsIn이 없으면 빈 리스트가 전달된다")
+    void getList_withoutTags_passesEmptyList() {
+        when(contentSearchExecutor.findByCreatedAtDesc(any(), any(), any(), any(), any(), anyInt()))
                 .thenReturn(List.of());
-        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(0L);
+        when(contentSearchExecutor.countByFilter(any(), any(), any())).thenReturn(0L);
 
         contentService.getList(null, null, null, null, null, 10, "createdAt", "DESCENDING");
 
-        verify(contentRepository).findByCreatedAtDesc(
-                isNull(), isNull(), eq(List.of("")), eq(0), isNull(), isNull(), eq(11));
+        verify(contentSearchExecutor).findByCreatedAtDesc(
+                isNull(), isNull(), eq(List.of()), isNull(), isNull(), eq(11));
     }
 
     @Test
-    @DisplayName("typeEqual은 DB 저장 형식(enum name)으로 변환되어 전달된다")
-    void getList_convertsTypeEqualToEnumName() {
-        when(contentRepository.findByCreatedAtDesc(any(), any(), any(), anyInt(), any(), any(), anyInt()))
+    @DisplayName("typeEqual은 변환 없이 원본 API 값 그대로 전달된다")
+    void getList_passesTypeEqualAsRawApiValue() {
+        when(contentSearchExecutor.findByCreatedAtDesc(any(), any(), any(), any(), any(), anyInt()))
                 .thenReturn(List.of());
-        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(0L);
+        when(contentSearchExecutor.countByFilter(any(), any(), any())).thenReturn(0L);
 
         contentService.getList("tvSeries", null, null, null, null, 10, "createdAt", "DESCENDING");
 
-        verify(contentRepository).findByCreatedAtDesc(
-                eq("TV_SERIES"), isNull(), any(), anyInt(), isNull(), isNull(), eq(11));
+        verify(contentSearchExecutor).findByCreatedAtDesc(
+                eq("tvSeries"), isNull(), any(), isNull(), isNull(), eq(11));
     }
 
     @Test
-    @DisplayName("keywordLike에 LIKE 와일드카드 문자가 포함되면 이스케이프해서 리포지토리에 전달한다")
-    void getList_escapesLikeWildcardsInKeyword() {
+    @DisplayName("keywordLike는 이스케이프 없이 그대로 전달된다")
+    void getList_passesKeywordLikeAsIs() {
         ArgumentCaptor<String> keywordCaptor = ArgumentCaptor.forClass(String.class);
-        when(contentRepository.findByCreatedAtDesc(
-                any(), keywordCaptor.capture(), any(), anyInt(), any(), any(), anyInt()))
+        when(contentSearchExecutor.findByCreatedAtDesc(
+                any(), keywordCaptor.capture(), any(), any(), any(), anyInt()))
                 .thenReturn(List.of());
-        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(0L);
+        when(contentSearchExecutor.countByFilter(any(), any(), any())).thenReturn(0L);
 
         contentService.getList(null, "50%_off", null, null, null, 10, "createdAt", "DESCENDING");
 
-        assertThat(keywordCaptor.getValue()).isEqualTo("50\\%\\_off");
+        assertThat(keywordCaptor.getValue()).isEqualTo("50%_off");
     }
 
     @Test
@@ -256,7 +251,7 @@ class ContentServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.INVALID_INPUT);
 
-        verifyNoInteractions(contentRepository);
+        verifyNoInteractions(contentSearchExecutor);
     }
 
     @Test
@@ -293,34 +288,29 @@ class ContentServiceTest {
     @Test
     @DisplayName("watcherCount DESC 정렬이면 findByWatcherCountDesc를 호출한다")
     void getList_watcherCountSort_descending_callsFindByWatcherCountDesc() {
-        when(contentRepository.findByWatcherCountDesc(
-                any(), any(), any(), anyInt(), any(), any(), any(), any(), anyInt()))
+        when(contentSearchExecutor.findByWatcherCountDesc(
+                any(), any(), any(), any(), any(), any(), anyInt()))
                 .thenReturn(List.of());
-        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(0L);
+        when(contentSearchExecutor.countByFilter(any(), any(), any())).thenReturn(0L);
 
         contentService.getList(null, null, null, null, null, 10, "watcherCount", "DESCENDING");
 
-        verify(contentRepository).findByWatcherCountDesc(
-                isNull(), isNull(), any(), anyInt(), isNull(), isNull(), isNull(), any(), eq(11));
+        verify(contentSearchExecutor).findByWatcherCountDesc(
+                isNull(), isNull(), any(), isNull(), isNull(), isNull(), eq(11));
     }
 
     @Test
-    @DisplayName("watcherCount DESC 정렬 시 다음 페이지가 있으면 실시간 집계값으로 (watcherCount, reviewCount) 복합 커서를 반환한다")
+    @DisplayName("watcherCount DESC 정렬 시 다음 페이지가 있으면 마지막 문서의 (watcherCount, reviewCount)로 복합 커서를 반환한다")
     void getList_watcherCountDescSort_returnsCompositeCursor() {
-        Content lastOfPage = savedContentWithId(UUID.randomUUID(), "B");
-        ReflectionTestUtils.setField(lastOfPage, "reviewCount", 3L);
-        List<Content> rows = List.of(
-                savedContentWithId(UUID.randomUUID(), "A"),
+        ContentDocument lastOfPage = searchDocument(UUID.randomUUID(), "B", 10, 3);
+        List<ContentDocument> rows = List.of(
+                searchDocument(UUID.randomUUID(), "A", 0, 0),
                 lastOfPage,
-                savedContentWithId(UUID.randomUUID(), "C"));
-        when(contentRepository.findByWatcherCountDesc(
-                any(), any(), any(), anyInt(), any(), any(), any(), any(), eq(3)))
+                searchDocument(UUID.randomUUID(), "C", 0, 0));
+        when(contentSearchExecutor.findByWatcherCountDesc(
+                any(), any(), any(), any(), any(), any(), eq(3)))
                 .thenReturn(rows);
-        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(5L);
-        // watcher_count 컬럼(죽은 값)이 아니라 countGroupedByContentIds의 실시간 집계값이 커서에 쓰여야 한다.
-        ContentWatcherCountView liveCount = watcherCountView(lastOfPage.getId(), 10L);
-        when(watchingSessionSnapshotRepository.countGroupedByContentIds(any(), any()))
-                .thenReturn(List.of(liveCount));
+        when(contentSearchExecutor.countByFilter(any(), any(), any())).thenReturn(5L);
 
         CursorResponse<ContentDto> result = contentService.getList(
                 null, null, null, null, null, 2, "watcherCount", "DESCENDING");
@@ -344,26 +334,26 @@ class ContentServiceTest {
     @Test
     @DisplayName("averageRating ASC 정렬이면 findByAverageRatingAsc를 호출한다")
     void getList_averageRatingSort_ascending_callsFindByAverageRatingAsc() {
-        when(contentRepository.findByAverageRatingAsc(any(), any(), any(), anyInt(), any(), any(), anyInt()))
+        when(contentSearchExecutor.findByAverageRatingAsc(any(), any(), any(), any(), any(), anyInt()))
                 .thenReturn(List.of());
-        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(0L);
+        when(contentSearchExecutor.countByFilter(any(), any(), any())).thenReturn(0L);
 
         contentService.getList(null, null, null, null, null, 10, "averageRating", "ASCENDING");
 
-        verify(contentRepository).findByAverageRatingAsc(
-                isNull(), isNull(), any(), anyInt(), isNull(), isNull(), eq(11));
+        verify(contentSearchExecutor).findByAverageRatingAsc(
+                isNull(), isNull(), any(), isNull(), isNull(), eq(11));
     }
 
     @Test
     @DisplayName("createdAt 정렬 시 다음 페이지가 있으면 hasNext true와 nextCursor를 반환한다")
     void getList_createdAtSort_hasNextPage() {
-        List<Content> rows = List.of(
-                savedContentWithId(UUID.randomUUID(), "A"),
-                savedContentWithId(UUID.randomUUID(), "B"),
-                savedContentWithId(UUID.randomUUID(), "C"));
-        when(contentRepository.findByCreatedAtDesc(any(), any(), any(), anyInt(), any(), any(), eq(3)))
+        List<ContentDocument> rows = List.of(
+                searchDocument(UUID.randomUUID(), "A", 0, 0),
+                searchDocument(UUID.randomUUID(), "B", 0, 0),
+                searchDocument(UUID.randomUUID(), "C", 0, 0));
+        when(contentSearchExecutor.findByCreatedAtDesc(any(), any(), any(), any(), any(), eq(3)))
                 .thenReturn(rows);
-        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(5L);
+        when(contentSearchExecutor.countByFilter(any(), any(), any())).thenReturn(5L);
 
         CursorResponse<ContentDto> result = contentService.getList(
                 null, null, null, null, null, 2, "createdAt", "DESCENDING");
@@ -386,10 +376,10 @@ class ContentServiceTest {
     @Test
     @DisplayName("createdAt 정렬 첫 페이지 조회 시 hasNext false를 반환한다")
     void getList_createdAtSort_firstPage_noNextPage() {
-        List<Content> rows = List.of(savedContentWithId(UUID.randomUUID(), "A"));
-        when(contentRepository.findByCreatedAtAsc(any(), any(), any(), anyInt(), any(), any(), eq(3)))
+        List<ContentDocument> rows = List.of(searchDocument(UUID.randomUUID(), "A", 0, 0));
+        when(contentSearchExecutor.findByCreatedAtAsc(any(), any(), any(), any(), any(), eq(3)))
                 .thenReturn(rows);
-        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(1L);
+        when(contentSearchExecutor.countByFilter(any(), any(), any())).thenReturn(1L);
 
         CursorResponse<ContentDto> result = contentService.getList(
                 null, null, null, null, null, 2, "createdAt", "ASCENDING");
@@ -402,13 +392,13 @@ class ContentServiceTest {
     @Test
     @DisplayName("watcherCount 정렬 시 다음 페이지가 있으면 hasNext true와 nextCursor를 반환한다")
     void getList_watcherCountSort_hasNextPage() {
-        List<Content> rows = List.of(
-                savedContentWithId(UUID.randomUUID(), "A"),
-                savedContentWithId(UUID.randomUUID(), "B"),
-                savedContentWithId(UUID.randomUUID(), "C"));
-        when(contentRepository.findByWatcherCountAsc(any(), any(), any(), anyInt(), any(), any(), any(), eq(3)))
+        List<ContentDocument> rows = List.of(
+                searchDocument(UUID.randomUUID(), "A", 0, 0),
+                searchDocument(UUID.randomUUID(), "B", 0, 0),
+                searchDocument(UUID.randomUUID(), "C", 0, 0));
+        when(contentSearchExecutor.findByWatcherCountAsc(any(), any(), any(), any(), any(), eq(3)))
                 .thenReturn(rows);
-        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(5L);
+        when(contentSearchExecutor.countByFilter(any(), any(), any())).thenReturn(5L);
 
         CursorResponse<ContentDto> result = contentService.getList(
                 null, null, null, null, null, 2, "watcherCount", "ASCENDING");
@@ -422,13 +412,13 @@ class ContentServiceTest {
     @Test
     @DisplayName("averageRating 정렬 시 다음 페이지가 있으면 hasNext true와 nextCursor를 반환한다")
     void getList_averageRatingSort_hasNextPage() {
-        List<Content> rows = List.of(
-                savedContentWithId(UUID.randomUUID(), "A"),
-                savedContentWithId(UUID.randomUUID(), "B"),
-                savedContentWithId(UUID.randomUUID(), "C"));
-        when(contentRepository.findByAverageRatingDesc(any(), any(), any(), anyInt(), any(), any(), eq(3)))
+        List<ContentDocument> rows = List.of(
+                searchDocument(UUID.randomUUID(), "A", 0, 0),
+                searchDocument(UUID.randomUUID(), "B", 0, 0),
+                searchDocument(UUID.randomUUID(), "C", 0, 0));
+        when(contentSearchExecutor.findByAverageRatingDesc(any(), any(), any(), any(), any(), eq(3)))
                 .thenReturn(rows);
-        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(5L);
+        when(contentSearchExecutor.countByFilter(any(), any(), any())).thenReturn(5L);
 
         CursorResponse<ContentDto> result = contentService.getList(
                 null, null, null, null, null, 2, "averageRating", "DESCENDING");
@@ -436,42 +426,6 @@ class ContentServiceTest {
         assertThat(result.data()).hasSize(2);
         assertThat(result.hasNext()).isTrue();
         assertThat(result.nextCursor()).isNotNull();
-    }
-
-    @Test
-    @DisplayName("createdAt 정렬로 조회해도 ContentDto.watcherCount는 실시간 집계값을 반영한다")
-    void getList_createdAtSort_reflectsLiveWatcherCountRegardlessOfSortBy() {
-        Content content = savedContentWithId(UUID.randomUUID(), "A");
-        when(contentRepository.findByCreatedAtDesc(any(), any(), any(), anyInt(), any(), any(), anyInt()))
-                .thenReturn(List.of(content));
-        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(1L);
-        ContentWatcherCountView liveCount = watcherCountView(content.getId(), 7L);
-        when(watchingSessionSnapshotRepository.countGroupedByContentIds(any(), any()))
-                .thenReturn(List.of(liveCount));
-
-        CursorResponse<ContentDto> result = contentService.getList(
-                null, null, null, null, null, 10, "createdAt", "DESCENDING");
-
-        assertThat(result.data()).hasSize(1);
-        assertThat(result.data().get(0).watcherCount()).isEqualTo(7L);
-    }
-
-    @Test
-    @DisplayName("averageRating 정렬로 조회해도 ContentDto.watcherCount는 실시간 집계값을 반영한다")
-    void getList_averageRatingSort_reflectsLiveWatcherCountRegardlessOfSortBy() {
-        Content content = savedContentWithId(UUID.randomUUID(), "A");
-        when(contentRepository.findByAverageRatingDesc(any(), any(), any(), anyInt(), any(), any(), anyInt()))
-                .thenReturn(List.of(content));
-        when(contentRepository.countByFilter(any(), any(), any(), anyInt())).thenReturn(1L);
-        ContentWatcherCountView liveCount = watcherCountView(content.getId(), 3L);
-        when(watchingSessionSnapshotRepository.countGroupedByContentIds(any(), any()))
-                .thenReturn(List.of(liveCount));
-
-        CursorResponse<ContentDto> result = contentService.getList(
-                null, null, null, null, null, 10, "averageRating", "DESCENDING");
-
-        assertThat(result.data()).hasSize(1);
-        assertThat(result.data().get(0).watcherCount()).isEqualTo(3L);
     }
 
     // ── update ───────────────────────────────────────────────────────────────
@@ -583,21 +537,20 @@ class ContentServiceTest {
         return content;
     }
 
-    private Content savedContentWithId(UUID id, String title) {
-        Content content = Content.builder()
-                .type(ContentType.MOVIE)
+    private ContentDocument searchDocument(UUID id, String title, long watcherCount, long reviewCount) {
+        Instant now = Instant.now();
+        return ContentDocument.builder()
+                .id(id.toString())
+                .contentId(id.toString())
                 .title(title)
                 .description("설명")
+                .type(ContentType.MOVIE.name())
+                .tags(List.of())
+                .averageRating(0.0)
+                .watcherCount((int) watcherCount)
+                .reviewCount((int) reviewCount)
+                .createdAt(LocalDateTime.ofInstant(now, ZoneOffset.UTC))
+                .createdAtEpochMicros(now.getEpochSecond() * 1_000_000L + now.getNano() / 1_000)
                 .build();
-        ReflectionTestUtils.setField(content, "id", id);
-        ReflectionTestUtils.setField(content, "createdAt", Instant.now());
-        return content;
-    }
-
-    private ContentWatcherCountView watcherCountView(UUID contentId, long watcherCount) {
-        ContentWatcherCountView view = mock(ContentWatcherCountView.class);
-        when(view.getContentId()).thenReturn(contentId);
-        when(view.getWatcherCount()).thenReturn(watcherCount);
-        return view;
     }
 }

@@ -7,6 +7,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
 
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -30,6 +31,8 @@ class ContentSearchSyncListenerTest {
     @Test
     @DisplayName("handleSync는 contentId로 레인에 위임하고, 위임된 작업은 worker.sync를 호출한다")
     void handleSync_delegatesToKeyedExecutor_andRunsWorkerSync() {
+        when(contentSearchSyncWorker.sync(CONTENT_ID)).thenReturn(true);
+
         listener.handleSync(new ContentSearchSyncEvent(CONTENT_ID));
 
         ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
@@ -44,6 +47,8 @@ class ContentSearchSyncListenerTest {
     @Test
     @DisplayName("handleDelete는 contentId로 레인에 위임하고, 위임된 작업은 worker.delete를 호출한다")
     void handleDelete_delegatesToKeyedExecutor_andRunsWorkerDelete() {
+        when(contentSearchSyncWorker.delete(CONTENT_ID)).thenReturn(true);
+
         listener.handleDelete(new ContentSearchDeleteEvent(CONTENT_ID));
 
         ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
@@ -53,6 +58,38 @@ class ContentSearchSyncListenerTest {
 
         verify(contentSearchSyncWorker).delete(CONTENT_ID);
         verifyNoMoreInteractions(contentSearchRetryService);
+    }
+
+    // ── 실행 자체 실패(sync/delete가 false 반환) ────────────────────────────────
+
+    @Test
+    @DisplayName("handleSync에서 worker.sync가 false를 반환하면 재시도 대기열에 SYNC로 기록한다")
+    void handleSync_workerReturnsFalse_recordsRetryAsSync() {
+        when(contentSearchSyncWorker.sync(CONTENT_ID)).thenReturn(false);
+
+        listener.handleSync(new ContentSearchSyncEvent(CONTENT_ID));
+
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        verify(contentSearchKeyedExecutor).execute(eq(CONTENT_ID), taskCaptor.capture());
+
+        taskCaptor.getValue().run();
+
+        verify(contentSearchRetryService).recordRejected(CONTENT_ID, ContentSearchRetryEventType.SYNC);
+    }
+
+    @Test
+    @DisplayName("handleDelete에서 worker.delete가 false를 반환하면 재시도 대기열에 DELETE로 기록한다")
+    void handleDelete_workerReturnsFalse_recordsRetryAsDelete() {
+        when(contentSearchSyncWorker.delete(CONTENT_ID)).thenReturn(false);
+
+        listener.handleDelete(new ContentSearchDeleteEvent(CONTENT_ID));
+
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        verify(contentSearchKeyedExecutor).execute(eq(CONTENT_ID), taskCaptor.capture());
+
+        taskCaptor.getValue().run();
+
+        verify(contentSearchRetryService).recordRejected(CONTENT_ID, ContentSearchRetryEventType.DELETE);
     }
 
     // ── 레인 큐 포화(거부) ───────────────────────────────────────────────────
