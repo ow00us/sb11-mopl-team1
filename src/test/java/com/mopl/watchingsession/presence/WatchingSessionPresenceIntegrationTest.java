@@ -428,4 +428,37 @@ public class WatchingSessionPresenceIntegrationTest {
         // 짧은 TTL의 첫 시청자는 만료됐지만, 두 번째 시청자가 아직 살아있어 키 자체는 남아야 함
         assertThat(stringRedisTemplate.hasKey(CONTENT_ZSET_KEY)).isTrue();
     }
+
+    @Test
+    @DisplayName("A가 KEY_MISSING 판정 후 복구하려는 사이 B가 새 연결로 소유권을 확보하면, "
+        + "A의 복구는 거부되고 최종 소유자는 B로 남는다")
+    void recoverIfAbsent_refusesToOverwrite_whenAnotherInstanceClaimsOwnershipFirst() {
+        // 전제: A의 heartbeat가 KEY_MISSING을 판정한 시점 - 아직 키 없음
+        assertThat(stringRedisTemplate.hasKey(KEY)).isFalse();
+
+        // B(다른 인스턴스): 그 사이 새 연결이 start()로 소유권을 확보
+        Instant now = Instant.now();
+        writer.swap(WATCHER_ID, UUID.randomUUID(), CONTENT_ID, "session-B", "sub-B",
+            now, normalizeToMicros(now), DEFAULT_TTL);
+
+        // A: (낡은 sessionId/subscriptionId로) DB 기준 복구 시도
+        boolean recovered = writer.recoverIfAbsent(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID,
+            SESSION_ID, SUBSCRIPTION_ID, now, normalizeToMicros(now), DEFAULT_TTL);
+
+        assertThat(recovered).isFalse();
+        assertThat(stringRedisTemplate.opsForHash().get(KEY, "sessionId")).isEqualTo("session-B");
+        assertThat(stringRedisTemplate.opsForHash().get(KEY, "subscriptionId")).isEqualTo("sub-B");
+    }
+
+    @Test
+    @DisplayName("레거시 문자열 타입 키는 복구 대상으로 간주해 새 소유자로 덮어쓴다")
+    void recoverIfAbsent_overwritesLegacyStringKey() {
+        stringRedisTemplate.opsForValue().set(KEY, "{\"legacy\":\"json\"}");
+
+        boolean recovered = writer.recoverIfAbsent(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID,
+            SESSION_ID, SUBSCRIPTION_ID, Instant.now(), normalizeToMicros(Instant.now()), DEFAULT_TTL);
+
+        assertThat(recovered).isTrue();
+        assertThat(stringRedisTemplate.opsForHash().get(KEY, "sessionId")).isEqualTo(SESSION_ID);
+    }
 }

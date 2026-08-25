@@ -494,4 +494,46 @@ public class WatchingSessionPresenceWriterTest {
 
         assertThat(result).containsExactlyInAnyOrder(w1, w2);
     }
+
+    @Test
+    @DisplayName("recoverIfAbsent()는 키가 없으면 새 소유자를 기록하고 true를 반환한다")
+    void recoverIfAbsent_writesNewOwner_whenKeyMissing() {
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
+            eq(WATCHER_ID.toString()), anyString()))
+            .thenReturn(1L);
+
+        boolean recovered = writer.recoverIfAbsent(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID,
+            SESSION_ID, SUBSCRIPTION_ID, Instant.now(), Instant.now(), Duration.ofSeconds(60));
+
+        assertThat(recovered).isTrue();
+    }
+
+    @Test
+    @DisplayName("recoverIfAbsent()는 이미 hash로 존재하면(다른 연결이 확보) false를 반환한다")
+    void recoverIfAbsent_returnsFalse_whenHashAlreadyExists() {
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
+            eq(WATCHER_ID.toString()), anyString()))
+            .thenReturn(0L);
+
+        boolean recovered = writer.recoverIfAbsent(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID,
+            SESSION_ID, SUBSCRIPTION_ID, Instant.now(), Instant.now(), Duration.ofSeconds(60));
+
+        assertThat(recovered).isFalse();
+    }
+
+    @Test
+    @DisplayName("recoverIfAbsent() 도중 Redis 예외가 나면 격리되어 false를 반환한다")
+    void recoverIfAbsent_isolatesRedisFailure() {
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
+            eq(WATCHER_ID.toString()), anyString()))
+            .thenThrow(new RuntimeException("Redis 연결 끊김"));
+
+        boolean recovered = writer.recoverIfAbsent(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID,
+            SESSION_ID, SUBSCRIPTION_ID, Instant.now(), Instant.now(), Duration.ofSeconds(60));
+
+        assertThat(recovered).isFalse();
+    }
 }

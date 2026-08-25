@@ -469,25 +469,11 @@ public class WatchingSessionService {
         }
     }
 
-    /**
-     * heartbeat가 "키 없음(TTL 만료)" 판정을 받았을 때, DB 스냅샷이 여전히 이 콘텐츠를 가리키고
-     * 있다면 그 스냅샷을 기준으로 presence를 다시 세운다.
-     * <p>
-     * start()와 동일한 watcherLock으로 직렬화한다. 락을 얻는 사이 다른 연결이 이미 새 소유권을
-     * 확보했을 수 있으므로, 쓰기 직전 presence 존재 여부를 한 번 더 확인해 그런 경우 덮어쓰지 않고
-     * 포기한다 - 이 확인이 없으면 낡은 heartbeat가 방금 확보된 소유권을 빼앗는다.
-     */
     private void recoverPresenceFromSnapshot(UUID watcherId, UUID contentId, String sessionId,
         String subscriptionId) {
         WatcherLock watcherLock = acquireWatcherLock(watcherId);
         try {
             synchronized (watcherLock) {
-                if (!watchingSessionPresenceWriter.findExistingWatcherIds(List.of(watcherId)).isEmpty()) {
-                    log.debug("presence가 이미 다른 연결로 재수립돼 DB 기준 복구를 포기함: watcherId={}",
-                        watcherId);
-                    return;
-                }
-
                 WatchingSessionSnapshot snapshot = watchingSessionSnapshotRepository
                     .findByWatcherId(watcherId)
                     .filter(s -> contentId.equals(s.getContentId()))
@@ -495,15 +481,21 @@ public class WatchingSessionService {
                     .orElse(null);
 
                 if (snapshot == null) {
-                    // DB에도 이 콘텐츠의 세션이 없음 - 이미 종료됐거나 다른 콘텐츠로 넘어간 것이라 복구 대상 아님
                     return;
                 }
 
-                watchingSessionPresenceWriter.swap(watcherId, snapshot.getId(), contentId, sessionId,
-                    subscriptionId, snapshot.getCreatedAt(), normalizeToMicros(snapshot.getUpdatedAt()),
+                boolean recovered = watchingSessionPresenceWriter.recoverIfAbsent(
+                    watcherId, snapshot.getId(), contentId, sessionId, subscriptionId,
+                    snapshot.getCreatedAt(), normalizeToMicros(snapshot.getUpdatedAt()),
                     watchingSessionProperties.getPresenceTtl());
-                log.debug("TTL 소실 후 DB 스냅샷 기준으로 presence 재수립됨: watcherId={}, contentId={}",
-                    watcherId, contentId);
+
+                if (recovered) {
+                    log.debug("TTL 소실 후 DB 스냅샷 기준으로 presence 재수립됨: watcherId={}, contentId={}",
+                        watcherId, contentId);
+                } else {
+                    log.debug("presence가 이미 다른 연결로 재수립돼 DB 기준 복구를 포기함: watcherId={}",
+                        watcherId);
+                }
             }
         } catch (RuntimeException e) {
             log.error("DB 스냅샷 기준 presence 재수립 실패: watcherId={}, contentId={}", watcherId, contentId, e);

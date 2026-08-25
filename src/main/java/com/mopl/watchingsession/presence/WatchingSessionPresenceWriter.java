@@ -44,18 +44,26 @@ public class WatchingSessionPresenceWriter {
 
     /**
      * presence TTL 갱신 시도의 판정 결과.
-     *
-     * 호출자가 "재수립해도 되는 실패"와 "재수립하면 안 되는 실패"를 구분할 수 있어야 하므로
-     * boolean 대신 네 갈래로 반환한다. RENEWED 외에는 모두 갱신이 일어나지 않은 상태다.
+     * <p>
+     * 호출자가 "재수립해도 되는 실패"와 "재수립하면 안 되는 실패"를 구분할 수 있어야 하므로 boolean 대신 네 갈래로 반환한다. RENEWED 외에는 모두 갱신이
+     * 일어나지 않은 상태다.
      */
     public enum RenewResult {
-        /** 소유권이 일치해 TTL이 연장됨 */
+        /**
+         * 소유권이 일치해 TTL이 연장됨
+         */
         RENEWED,
-        /** presence 키 자체가 없음(TTL 만료) 또는 레거시 문자열 키 - DB 기준 재수립 후보 */
+        /**
+         * presence 키 자체가 없음(TTL 만료) 또는 레거시 문자열 키 - DB 기준 재수립 후보
+         */
         KEY_MISSING,
-        /** 키는 살아있으나 소유자가 다른 연결/구독 - 재수립하면 남의 소유권을 빼앗게 됨 */
+        /**
+         * 키는 살아있으나 소유자가 다른 연결/구독 - 재수립하면 남의 소유권을 빼앗게 됨
+         */
         OWNER_MISMATCH,
-        /** Redis 실패·예상 못한 응답. 현재 소유 상태를 알 수 없으므로 아무것도 하지 않는다 */
+        /**
+         * Redis 실패·예상 못한 응답. 현재 소유 상태를 알 수 없으므로 아무것도 하지 않는다
+         */
         FAILED
     }
 
@@ -107,6 +115,43 @@ public class WatchingSessionPresenceWriter {
 
         return previous
         """;
+
+    // 복구 전용: 키가 없거나(TTL 만료) 레거시 타입일 때만 새 소유자를 기록한다. 이미 hash로
+    // 살아있는 presence가 있으면(다른 연결이 그 사이 확보한 소유권) 쓰지 않고 거부한다.
+    // 확인과 쓰기가 하나의 스크립트 안에서 원자적으로 실행되므로, findExistingWatcherIds()와
+    // swap()을 별도 호출로 나누던 이전 방식과 달리 그 사이 다른 인스턴스가 끼어들 창이 없다.
+    private static final String RECOVER_IF_ABSENT_LUA = """
+        local key = KEYS[1]
+        local type = redis.call('TYPE', key)['ok']
+        if type == 'hash' then
+          return 0
+        end
+        if type ~= 'none' then
+          redis.call('DEL', key)
+        end
+
+        local newContentId = ARGV[2]
+        local watcherId = ARGV[7]
+        local expiresAt = ARGV[8]
+
+        redis.call('HSET', key,
+          'snapshotId', ARGV[1], 'contentId', ARGV[2],
+          'sessionId', ARGV[3], 'subscriptionId', ARGV[4], 'startedAt', ARGV[5],
+           'snapshotUpdatedAt', ARGV[6])
+        redis.call('PEXPIREAT', key, expiresAt)
+
+        local contentKey = 'mopl:presence:content:' .. newContentId
+        redis.call('ZADD', contentKey, expiresAt, watcherId)
+        local newMax = redis.call('ZREVRANGE', contentKey, 0, 0, 'WITHSCORES')
+        if newMax[2] then
+          redis.call('PEXPIREAT', contentKey, newMax[2])
+        end
+
+        return 1
+        """;
+
+    private static final RedisScript<Long> RECOVER_IF_ABSENT_SCRIPT = new DefaultRedisScript<>(
+        RECOVER_IF_ABSENT_LUA, Long.class);
 
     // 키가 없으면 HGET이 false를 반환해 문자열 비교가 실패
     // 반환: {'1', snapshotId} 삭제됨 / {'0', ''} 소유권 불일치(이상 신호) /
@@ -276,8 +321,7 @@ public class WatchingSessionPresenceWriter {
     /**
      * 요청자가 현재 소유자일 때만 presence TTL을 재설정한다.
      *
-     * @return 갱신 성공/키 없음/소유권 불일치/실패를 구분하는 판정 결과.
-     *         KEY_MISSING만이 DB 스냅샷 기준 재수립의 대상이다.
+     * @return 갱신 성공/키 없음/소유권 불일치/실패를 구분하는 판정 결과. KEY_MISSING만이 DB 스냅샷 기준 재수립의 대상이다.
      */
     @SuppressWarnings("ConstantConditions")
     public RenewResult renewIfOwner(UUID watcherId, String sessionId, String subscriptionId,
@@ -394,6 +438,31 @@ public class WatchingSessionPresenceWriter {
         }
     }
 
+    /**
+     * heartbeat의 DB 기준 재수립 전용. presence 키가 없거나(TTL 만료) 레거시 타입일 때만
+     * 새 소유자를 기록한다.
+     *
+     * @return 실제로 기록했으면 true. 이미 hash로 살아있는 presence가 있으면(다른 연결이
+     *         이미 확보한 소유권) false, Redis 실패도 false.
+     */
+    public boolean recoverIfAbsent(UUID watcherId, UUID snapshotId, UUID contentId,
+        String sessionId, String subscriptionId, Instant startedAt, Instant snapshotUpdatedAt,
+        Duration ttl) {
+        try {
+            Instant expiresAt = Instant.now().plus(ttl);
+
+            Long result = stringRedisTemplate.execute(RECOVER_IF_ABSENT_SCRIPT, List.of(key(watcherId)),
+                snapshotId.toString(), contentId.toString(), nullSafe(sessionId),
+                nullSafe(subscriptionId), startedAt.toString(), snapshotUpdatedAt.toString(),
+                watcherId.toString(), String.valueOf(expiresAt.toEpochMilli()));
+
+            return Long.valueOf(1L).equals(result);
+        } catch (RuntimeException e) {
+            log.error("Presence DB 기준 재수립 실패: watcherId={}", watcherId, e);
+            return false;
+        }
+    }
+
     // DISCONNECT는 프레임에 subscriptionId가 없어 null이 넘어올 수 있음 -> 빈 문자열로 바꿔 넘기면 안전하게 무동작이 됨
     private String nullSafe(String value) {
         return (value == null) ? "" : value;
@@ -430,7 +499,8 @@ public class WatchingSessionPresenceWriter {
         }
         try {
             UUID snapshotId = UUID.fromString(result.get(1));
-            Instant snapshotUpdatedAt = result.get(2).isEmpty() ? null : Instant.parse(result.get(2));
+            Instant snapshotUpdatedAt =
+                result.get(2).isEmpty() ? null : Instant.parse(result.get(2));
             return Optional.of(new DeletedSnapshot(snapshotId, snapshotUpdatedAt));
         } catch (RuntimeException e) {
             log.error("Presence 삭제 결과 필드 파싱 실패: watcherId={}", watcherId, e);
