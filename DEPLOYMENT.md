@@ -12,37 +12,110 @@ docker build --pull -t mopl:local .
 
 Dockerfile은 빌드 단계와 실행 단계를 분리합니다. 실행 이미지는 `mopl` 비특권 사용자로 애플리케이션을 실행하며 `/actuator/health/liveness`를 Docker healthcheck로 사용합니다.
 
-## 필수 환경 변수
+## 운영 환경 변수
+
+`prod` 프로파일이 쓰는 값을 세 범주로 나눕니다.
+
+- **필수** — 없으면 기동이 실패합니다. 기본값을 두지 않았습니다.
+- **Secret** — 필수이면서 값 자체가 비밀입니다. 저장소, 이미지, 로그에 남기지 않습니다.
+- **조정값** — 기본값으로 동작합니다. 운영 중 필요할 때만 바꿉니다.
+
+기동에 필요한 값이 빠지면 애플리케이션이 뜨지 않습니다. 형식이 잘못된 값은 `ProdEnvironmentValidator`가 기동 시점에 걸러 내며, 문제가 여럿이면 한 번에 모두 보고합니다. 하나씩 알려 주면 고치고 다시 띄우기를 값의 수만큼 반복해야 하고 그 반복이 그대로 중단 시간이 됩니다.
+
+### 필수
 
 | 변수 | 설명 |
 | --- | --- |
 | `SPRING_PROFILES_ACTIVE` | 운영 실행 시 `prod` |
 | `SPRING_DATASOURCE_URL` | PostgreSQL JDBC URL |
 | `SPRING_DATASOURCE_USERNAME` | PostgreSQL 사용자 |
-| `SPRING_DATASOURCE_PASSWORD` | PostgreSQL 비밀번호 |
 | `SPRING_DATA_REDIS_HOST` | Redis 호스트 |
 | `SPRING_DATA_REDIS_PORT` | Redis 포트 |
-| `JWT_SECRET` | HS256용 32바이트 이상 키를 Base64로 인코딩한 값 |
-| `CORS_ALLOWED_ORIGINS` | 브라우저 REST 요청을 허용할 프론트엔드 origin 목록 |
-| `WS_ALLOWED_ORIGINS` | WebSocket handshake를 허용할 프론트엔드 origin 목록 |
+| `KAFKA_BOOTSTRAP_SERVERS` | Kafka bootstrap 주소 목록 |
+| `ELASTICSEARCH_URIS` | Elasticsearch 접속 URI |
+| `MAIL_HOST` | 운영 SMTP 호스트 |
+| `MAIL_PORT` | 운영 SMTP 포트 |
+| `CORS_ALLOWED_ORIGINS` | 브라우저 REST 요청을 허용할 origin 목록 |
+| `WS_ALLOWED_ORIGINS` | WebSocket handshake를 허용할 origin 목록 |
 | `OAUTH2_SUCCESS_REDIRECT_URI` | OAuth 인증 성공 후 이동할 프론트엔드 Callback 절대 URI |
 | `OAUTH2_FAILURE_REDIRECT_URI` | OAuth 인증 실패 후 이동할 프론트엔드 로그인 절대 URI |
-| `GOOGLE_OAUTH_CLIENT_ID` | Google Cloud Console에서 발급한 웹 애플리케이션 OAuth Client ID |
-| `GOOGLE_OAUTH_CLIENT_SECRET` | Google Cloud Console에서 발급한 OAuth Client Secret |
-| `GOOGLE_OAUTH_REDIRECT_URI` | Google Cloud Console에 승인된 운영용 Google Callback 절대 URI |
+| `GOOGLE_OAUTH_REDIRECT_URI` | Google Console에 승인된 운영용 Callback 절대 URI |
+| `KAKAO_OAUTH_REDIRECT_URI` | Kakao Developers에 등록한 운영용 Callback 절대 URI |
+| `NAVER_OAUTH_REDIRECT_URI` | Naver Developers에 등록한 운영용 Callback 절대 URI |
+| `IMAGE_STORAGE_BUCKET` | 이미지 S3 버킷 이름 |
+| `IMAGE_STORAGE_PUBLIC_BASE_URL` | 이미지 조회 URL의 앞부분. CDN을 두면 그 주소 |
+
+origin 목록은 쉼표로 구분합니다. origin은 scheme과 host까지이며 경로를 붙이지 않습니다. 경로가 붙으면 어떤 요청과도 맞지 않아 설정은 있는데 모든 브라우저 요청이 막힙니다.
+
+`SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATA_REDIS_*`는 `application.yml`에 나타나지 않습니다. Spring Boot가 환경 변수 이름을 그대로 읽습니다.
+
+### Secret
+
+| 변수 | 설명 |
+| --- | --- |
+| `SPRING_DATASOURCE_PASSWORD` | PostgreSQL 비밀번호 |
+| `JWT_SECRET` | HS256용 32바이트 이상 키를 Base64로 인코딩한 값 |
+| `GOOGLE_OAUTH_CLIENT_ID` | Google Cloud Console에서 발급한 OAuth Client ID |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Google Cloud Console에서 발급한 Client Secret |
 | `KAKAO_OAUTH_CLIENT_ID` | Kakao Developers에서 발급한 REST API 키 |
 | `KAKAO_OAUTH_CLIENT_SECRET` | Kakao Developers에서 발급하고 활성화한 Client Secret |
-| `KAKAO_OAUTH_REDIRECT_URI` | Kakao Developers에 등록한 운영용 Kakao Callback 절대 URI |
-| `NAVER_OAUTH_CLIENT_ID` | Naver Developers에서 발급한 애플리케이션 Client ID |
+| `NAVER_OAUTH_CLIENT_ID` | Naver Developers에서 발급한 Client ID |
 | `NAVER_OAUTH_CLIENT_SECRET` | Naver Developers에서 발급한 Client Secret |
-| `NAVER_OAUTH_REDIRECT_URI` | Naver Developers에 등록한 운영용 Naver Callback 절대 URI |
-| `KAFKA_BOOTSTRAP_SERVERS` | Kafka bootstrap 주소 목록 |
+| `TMDB_ACCESS_TOKEN` | TMDB API 접근 토큰 |
+| `SPORTSDB_API_KEY` | SportsDB API 키 |
+| `MAIL_USERNAME` | SMTP 인증 사용자. 인증이 필요한 SMTP에서만 |
+| `MAIL_PASSWORD` | SMTP 인증 비밀번호. 인증이 필요한 SMTP에서만 |
 
-여러 origin은 쉼표로 구분합니다. 실제 비밀 값은 저장소나 이미지에 포함하지 않고 배포 환경의 Secret으로 주입합니다.
+`JWT_SECRET`은 Base64로 디코딩한 길이가 32바이트 미만이면 기동이 실패합니다. 짧은 키는 HS256 서명 강도를 떨어뜨립니다.
 
-`JWT_ACCESS_TOKEN_EXPIRATION`은 선택 값이며, 지정하지 않으면 애플리케이션 기본값 `30m`을 사용합니다.
+S3 접근에는 자격 증명을 주입하지 않습니다. 기본 자격 증명 체인이 EC2 인스턴스 역할을 먼저 찾습니다.
 
-`KAFKA_TOPIC_VERIFY`는 선택 값이며 기본값은 `false`입니다. `true`로 두면 기동 시 필요한 토픽과 DLT가 있는지 확인하고 없으면 기동을 실패시킵니다. 애플리케이션 기동이 Kafka 가용성에 묶이므로, 브로커가 보장되는 환경에서만 켭니다. 운영 토픽은 애플리케이션이 만들지 않으므로(`KAFKA_TOPIC_AUTO_CREATE` 기본 동작과 무관하게 prod는 생성하지 않습니다) 배포 전에 다음 토픽을 준비합니다.
+### 조정값
+
+지정하지 않으면 기본값으로 동작합니다. 각 값을 언제 바꾸는지는 아래 해당 절에 있습니다.
+
+| 영역 | 변수 | 기본값 |
+| --- | --- | --- |
+| 인증 | `JWT_ACCESS_TOKEN_EXPIRATION` | `3h` |
+| 인증 | `REFRESH_TOKEN_EXPIRATION` | `7d` |
+| 인증 | `REFRESH_TOKEN_COOKIE_SAME_SITE` | `Lax` |
+| 인증 | `REFRESH_TOKEN_COOKIE_SECURE` | `true` (prod) |
+| 인증 | `OAUTH2_AUTHORIZATION_REQUEST_TTL` | `5m` |
+| 메일 | `MAIL_SMTP_AUTH` | `false` |
+| 메일 | `MAIL_STARTTLS_ENABLE` | `false` |
+| 메일 | `MAIL_CONNECTION_TIMEOUT`, `MAIL_READ_TIMEOUT`, `MAIL_WRITE_TIMEOUT` | `5000` |
+| 메일 | `PASSWORD_RESET_MAIL_FROM` | `no-reply@mopl.local` |
+| 메일 | `PASSWORD_RESET_MAIL_SUBJECT` | `[모두의 플리] 임시 비밀번호 안내` |
+| 이미지 | `IMAGE_STORAGE_ENABLED` | `true` (prod) |
+| 이미지 | `IMAGE_STORAGE_REGION` | `ap-northeast-2` |
+| 이미지 | `IMAGE_STORAGE_PROFILE_PREFIX` | `profile-images` |
+| 이미지 | `IMAGE_STORAGE_THUMBNAIL_PREFIX` | `thumbnails` |
+| 이미지 | `IMAGE_STORAGE_MAX_FILE_SIZE` | `5242880` |
+| Kafka | `KAFKA_TOPIC_VERIFY` | `false` |
+| Kafka | `KAFKA_LISTENER_AUTO_STARTUP` | `true` |
+| Kafka | `KAFKA_DLT_REPLAY_ACK_TIMEOUT` | `10s` |
+| Outbox | `OUTBOX_RELAY_*`, `OUTBOX_RETRY_*`, `OUTBOX_LEASE_DURATION` | 아래 Outbox relay 조정 값 |
+| Outbox | `OUTBOX_CLEANUP_*` | 아래 발행 완료 레코드 정리 |
+| Outbox | `OUTBOX_METRICS_ENABLED`, `OUTBOX_METRICS_REFRESH_INTERVAL` | `true`, `15000` |
+| Kafka 소비 | `PROCESSED_EVENT_CLEANUP_*` | 아래 멱등 처리 기록 정리 |
+| 실시간 | `REALTIME_RELAY_ENABLED` | `true` |
+| 실시간 | `REALTIME_RELAY_SUBSCRIBE_RETRY_INTERVAL` | `30000` |
+| DM | `DIRECT_MESSAGE_PRESENCE_TTL`, `DIRECT_MESSAGE_PRESENCE_RENEW_INTERVAL` | `30s`, `10s` |
+| DM | `DIRECT_MESSAGE_RATE_LIMIT_MAX_MESSAGES`, `DIRECT_MESSAGE_RATE_LIMIT_WINDOW` | `10`, `5s` |
+| 시청 세션 | `WATCHING_SESSION_*` | `application.yml` 참고 |
+
+`KAFKA_TOPIC_AUTO_CREATE`는 `prod`에서 `false`로 고정되어 있어 환경 변수로 켤 수 없습니다. 운영 토픽은 파티션 수 결정이 코드 배포에 묶이지 않도록 미리 준비합니다.
+
+### 운영에서 기본값을 그대로 두면 안 되는 값
+
+`prod` 프로파일이 아래 값을 개발용 기본값에서 떼어 냈습니다. 예전에는 값을 주지 않아도 기동했고, 그 사실이 사용자 신고로만 드러났습니다.
+
+- `MAIL_HOST`, `MAIL_PORT` — 기본 문서의 `localhost:1025`는 로컬 Mailpit 주소입니다. 그대로 두면 비밀번호 초기화 메일이 조용히 실패하고 전체 health도 계속 `DOWN`입니다.
+- `IMAGE_STORAGE_BUCKET`, `IMAGE_STORAGE_PUBLIC_BASE_URL` — `IMAGE_STORAGE_ENABLED`가 `prod`에서 `true`가 기본이므로 이 둘이 필요합니다. 비어 있으면 기동이 실패합니다. 켜 두고 비워 두면 업로드 시점에야 드러나는데, 그때는 이미 사용자가 파일을 고른 뒤입니다.
+
+### 배포 전에 준비할 Kafka 토픽
+
+운영 토픽은 애플리케이션이 만들지 않습니다. 파티션 수 결정이 코드 배포에 묶이지 않아야 하기 때문입니다. 배포 전에 다음 토픽과 DLT를 준비합니다.
 
 ```text
 mopl.follow.events          mopl.follow.events.DLT
@@ -50,6 +123,16 @@ mopl.playlist.events        mopl.playlist.events.DLT
 mopl.premiere.events        mopl.premiere.events.DLT
 mopl.direct-message.events  mopl.direct-message.events.DLT
 ```
+
+`KAFKA_TOPIC_VERIFY=true`로 두면 기동 시 이 토픽이 있는지 확인하고 없으면 기동을 실패시킵니다. 애플리케이션 기동이 Kafka 가용성에 묶이므로 브로커가 보장되는 환경에서만 켭니다. DLT가 없으면 DLT 발행이 실패하면서 원본 처리까지 막히므로, 기동 시점에 드러내는 편이 낫습니다.
+
+### Secret 주입
+
+실제 값은 저장소, 이미지, 로그에 남기지 않습니다. 서버의 환경 파일 하나에 모아 두고 Compose가 읽습니다. 파일 소유자는 배포 계정, 권한은 소유자 읽기·쓰기만 둡니다.
+
+값을 바꾸면 컨테이너를 다시 만들어야 반영됩니다. 재시작만으로는 반영되지 않습니다.
+
+CI smoke가 쓰는 값은 격리된 실행에서만 쓰는 테스트 값입니다. 운영에 쓰지 않습니다.
 
 ### 프로필·콘텐츠 이미지 저장
 

@@ -371,6 +371,11 @@ spring:
     redis:
       host: ${SPRING_DATA_REDIS_HOST}
       port: ${SPRING_DATA_REDIS_PORT}
+  mail:
+    # 운영 SMTP 를 반드시 주입받습니다. 기본 문서의 localhost:1025 는 로컬 Mailpit 주소라,
+    # 그대로 두면 비밀번호 초기화 메일이 조용히 실패하고 전체 health 도 계속 DOWN 입니다.
+    host: ${MAIL_HOST}
+    port: ${MAIL_PORT}
   elasticsearch:
     uris: ${ELASTICSEARCH_URIS}
   jpa:
@@ -396,6 +401,14 @@ server:
   forward-headers-strategy: framework
 
 mopl:
+  storage:
+    image:
+      # 운영에서는 켜는 것이 기본입니다. 끈 채로 배포하면 업로드한 이미지가 저장되지 않고
+      # 깨진 링크만 남습니다. 그 사실이 사용자 신고로만 드러납니다.
+      enabled: ${IMAGE_STORAGE_ENABLED:true}
+      bucket: ${IMAGE_STORAGE_BUCKET}
+      public-base-url: ${IMAGE_STORAGE_PUBLIC_BASE_URL}
+
   kafka:
     topic:
       # 운영 토픽은 미리 준비합니다. 파티션 수 결정이 코드 배포에 묶이지 않게 합니다.
