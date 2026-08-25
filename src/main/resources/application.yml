@@ -272,6 +272,12 @@ mopl:
       # 기동 시점에 Redis 가 준비되지 않았을 때 구독을 다시 시도하는 간격입니다.
       subscribe-retry-interval: ${REALTIME_RELAY_SUBSCRIBE_RETRY_INTERVAL:30000}
 
+  oauth2:
+    authorization-request:
+      # 인가 요청을 Redis 에 두는 기간입니다. 사용자가 Provider 화면에서 로그인을 마치기까지
+      # 걸리는 시간만 덮으면 됩니다. 길게 두면 소비되지 않은 요청이 그만큼 오래 남습니다.
+      time-to-live: ${OAUTH2_AUTHORIZATION_REQUEST_TTL:5m}
+
 app:
   cors:
     # 콤마로 구분한 브라우저 REST API 허용 origin 목록
@@ -358,6 +364,15 @@ spring:
       # 오래된 알림이 한꺼번에 생성됩니다. 과거 이벤트 재처리는 의도적인 replay 로만
       # 수행하고, 평시에는 신규 이벤트만 받습니다.
       auto-offset-reset: latest
+
+server:
+  # 운영에서는 Caddy 와 프론트엔드 Nginx 뒤에 있습니다. 이 설정이 없으면 백엔드가 자기
+  # 주소를 내부 http 주소로 인식해, 절대 URI 로 지정하지 않은 경로에서 외부 host 와 https
+  # scheme 이 사라집니다.
+  #
+  # prod 에서만 켭니다. 프록시가 없는 환경에서 켜면 클라이언트가 직접 보낸 X-Forwarded-*
+  # 를 그대로 믿게 됩니다.
+  forward-headers-strategy: framework
 
 mopl:
   kafka:
