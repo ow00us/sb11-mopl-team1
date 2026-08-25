@@ -21,6 +21,7 @@ import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.ContentChatDto;
 import com.mopl.watchingsession.presence.ContentChatBuffer;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceReader;
+import com.mopl.watchingsession.websocket.relay.publisher.ContentChatRelayPublisher;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -50,6 +51,9 @@ public class ContentChatServiceTest {
 
     @Mock
     private ContentChatBuffer contentChatBuffer;
+
+    @Mock
+    private ContentChatRelayPublisher contentChatRelayPublisher;
 
     @InjectMocks
     private ContentChatService contentChatService;
