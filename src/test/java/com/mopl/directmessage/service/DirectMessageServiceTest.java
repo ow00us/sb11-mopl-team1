@@ -27,6 +27,8 @@ import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.event.EventEnvelope;
+import com.mopl.global.event.KafkaEventContract;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.mopl.global.outbox.OutboxRecorder;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
@@ -824,8 +826,7 @@ class DirectMessageServiceTest {
             return message;
         });
 
-        EventEnvelope envelope =
-            mock(EventEnvelope.class);
+        EventEnvelope envelope = directMessageEnvelope(messageId, createdAt);
 
         when(
             outboxEventFactory.create(
@@ -971,8 +972,7 @@ class DirectMessageServiceTest {
             return message;
         });
 
-        EventEnvelope envelope =
-            mock(EventEnvelope.class);
+        EventEnvelope envelope = directMessageEnvelope(messageId, createdAt);
 
         when(
             outboxEventFactory.create(
@@ -1039,6 +1039,19 @@ class DirectMessageServiceTest {
             outboxEventFactory,
             outboxRecorder,
             eventPublisher
+        );
+    }
+
+    private EventEnvelope directMessageEnvelope(UUID messageId, Instant createdAt) {
+        KafkaEventContract contract = KafkaEventContract.DIRECT_MESSAGE_CREATED;
+        return new EventEnvelope(
+            UUID.randomUUID(),
+            contract.type(),
+            contract.version(),
+            createdAt,
+            messageId,
+            JsonNodeFactory.instance.objectNode()
+                .put("conversationId", CONVERSATION_ID.toString())
         );
     }
 }

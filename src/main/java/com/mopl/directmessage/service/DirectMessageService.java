@@ -14,6 +14,7 @@ import com.mopl.global.common.UserSummary;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.event.EventEnvelope;
+import com.mopl.global.event.KafkaEventContract;
 import com.mopl.global.outbox.OutboxRecorder;
 import java.util.List;
 import java.util.Map;
@@ -384,11 +385,12 @@ public class DirectMessageService {
                 response.receiver().userId()
             );
 
+        KafkaEventContract contract = KafkaEventContract.DIRECT_MESSAGE_CREATED;
         outboxRecorder.record(
             envelope,
-            conversationId.toString(),
-            "conversationId",
-            "direct-message.created:" + savedMessage.getId()
+            contract.partitionKey(envelope),
+            contract.orderingScope(),
+            contract.deduplicationKey(envelope)
         );
 
         eventPublisher.publishEvent(
