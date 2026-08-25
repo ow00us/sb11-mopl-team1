@@ -25,8 +25,6 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class ContentChatService {
 
-    private static final String DESTINATION_TEMPLATE = "/sub/contents/%s/chat";
-
     private final ContentRepository contentRepository;
     private final UserRepository userRepository;
     private final SimpMessagingTemplate messagingTemplate;
