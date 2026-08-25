@@ -10,7 +10,7 @@ import static org.mockito.Mockito.when;
 import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
-import com.mopl.user.service.OAuthUserProvisioningService;
+import com.mopl.user.security.oauth.link.OAuthUserResolutionService;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,7 +39,7 @@ class KakaoOAuth2UserServiceTest {
         );
 
     @Mock
-    OAuthUserProvisioningService provisioningService;
+    OAuthUserResolutionService userResolutionService;
 
     @Mock
     OAuth2UserService<OAuth2UserRequest, OAuth2User> delegate;
@@ -62,7 +62,7 @@ class KakaoOAuth2UserServiceTest {
     void setUp() {
         kakaoOAuth2UserService =
             new KakaoOAuth2UserService(
-                provisioningService,
+                userResolutionService,
                 delegate
             );
     }
@@ -93,7 +93,7 @@ class KakaoOAuth2UserServiceTest {
             .thenReturn(attributes);
 
         when(
-            provisioningService.resolveOrCreate(
+            userResolutionService.resolve(
                 OAuthProvider.KAKAO,
                 "123456789",
                 null,
@@ -135,8 +135,8 @@ class KakaoOAuth2UserServiceTest {
         verify(delegate)
             .loadUser(userRequest);
 
-        verify(provisioningService)
-            .resolveOrCreate(
+        verify(userResolutionService)
+            .resolve(
                 OAuthProvider.KAKAO,
                 "123456789",
                 null,
@@ -173,7 +173,7 @@ class KakaoOAuth2UserServiceTest {
             );
 
         when(
-            provisioningService.resolveOrCreate(
+            userResolutionService.resolve(
                 OAuthProvider.KAKAO,
                 "123456789",
                 null,
@@ -190,8 +190,8 @@ class KakaoOAuth2UserServiceTest {
         );
 
         // then
-        verify(provisioningService)
-            .resolveOrCreate(
+        verify(userResolutionService)
+            .resolve(
                 OAuthProvider.KAKAO,
                 "123456789",
                 null,
@@ -218,7 +218,7 @@ class KakaoOAuth2UserServiceTest {
             );
 
         when(
-            provisioningService.resolveOrCreate(
+            userResolutionService.resolve(
                 OAuthProvider.KAKAO,
                 "123456789",
                 null,
@@ -235,8 +235,8 @@ class KakaoOAuth2UserServiceTest {
         );
 
         // then
-        verify(provisioningService)
-            .resolveOrCreate(
+        verify(userResolutionService)
+            .resolve(
                 OAuthProvider.KAKAO,
                 "123456789",
                 null,
@@ -288,7 +288,7 @@ class KakaoOAuth2UserServiceTest {
                 );
             });
 
-        verifyNoInteractions(provisioningService);
+        verifyNoInteractions(userResolutionService);
     }
 
     @Test
@@ -299,7 +299,7 @@ class KakaoOAuth2UserServiceTest {
         stubValidKakaoUser();
 
         when(
-            provisioningService.resolveOrCreate(
+            userResolutionService.resolve(
                 OAuthProvider.KAKAO,
                 "123456789",
                 null,
@@ -359,7 +359,7 @@ class KakaoOAuth2UserServiceTest {
         verify(delegate, never())
             .loadUser(userRequest);
 
-        verifyNoInteractions(provisioningService);
+        verifyNoInteractions(userResolutionService);
     }
 
     private void stubKakaoRequest() {

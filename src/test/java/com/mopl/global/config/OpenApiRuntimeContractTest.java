@@ -36,6 +36,8 @@ import com.mopl.user.service.AuthService;
 import com.mopl.user.service.PasswordResetService;
 import com.mopl.user.service.UserService;
 import com.mopl.user.service.RefreshTokenService;
+import com.mopl.user.service.OAuthAccountManagementService;
+import com.mopl.user.security.oauth.link.OAuthLinkIntentSessionStore;
 import com.mopl.watchingsession.controller.WatchingSessionController;
 import com.mopl.watchingsession.service.WatchingSessionService;
 import java.io.InputStream;
@@ -113,6 +115,7 @@ class OpenApiRuntimeContractTest {
         "DELETE /api/playlists/{playlistId}/contents/{contentId}",
         "DELETE /api/playlists/{playlistId}/subscription",
         "DELETE /api/reviews/{reviewId}",
+        "DELETE /api/users/{userId}/oauth-accounts/{provider}",
         "GET /api/admin/outbox/failures",
         "GET /api/auth/csrf-token",
         "GET /api/contents",
@@ -138,6 +141,7 @@ class OpenApiRuntimeContractTest {
         "GET /api/users",
         "GET /api/users/{userId}",
         "GET /api/users/{watcherId}/watching-sessions",
+        "GET /api/users/{userId}/oauth-accounts",
         "PATCH /api/contents/{contentId}",
         "PATCH /api/playlists/{playlistId}",
         "PATCH /api/reviews/{reviewId}",
@@ -159,7 +163,8 @@ class OpenApiRuntimeContractTest {
         "POST /api/playlists/{playlistId}/contents/{contentId}",
         "POST /api/playlists/{playlistId}/subscription",
         "POST /api/reviews",
-        "POST /api/users"
+        "POST /api/users",
+        "POST /api/users/{userId}/oauth-accounts/{provider}/link"
     );
     private static Map<String, Object> contract;
 
@@ -207,6 +212,12 @@ class OpenApiRuntimeContractTest {
 
     @MockitoBean
     UserService userService;
+
+    @MockitoBean
+    OAuthAccountManagementService oauthAccountManagementService;
+
+    @MockitoBean
+    OAuthLinkIntentSessionStore oauthLinkIntentSessionStore;
 
     @MockitoBean
     WatchingSessionService watchingSessionService;
@@ -339,6 +350,181 @@ class OpenApiRuntimeContractTest {
                         + ".headers['Set-Cookie']"
                         + ".schema.type"
                 ).value("string")
+            );
+    }
+
+    /**
+     * OAuth 연결 계정 목록 조회와 연결 해제 API의
+     * 응답 스키마 및 PathVariable 계약을 검증
+     */
+    @Test
+    void documentsOAuthAccountManagementContract()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/v3/api-docs")
+            )
+            .andExpect(status().isOk())
+
+            /*
+             * 연결 계정 목록은 OAuthAccountDto 배열을 반환
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts']"
+                        + ".get.responses['200']"
+                        + ".content['*/*'].schema.type"
+                ).value("array")
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts']"
+                        + ".get.responses['200']"
+                        + ".content['*/*'].schema.items['$ref']"
+                ).value(
+                    "#/components/schemas/OAuthAccountDto"
+                )
+            )
+
+            /*
+             * 계정 연결 시작 API는 Provider 인증 시작 경로를 반환
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}/link']"
+                        + ".post.responses['200']"
+                        + ".content['*/*'].schema['$ref']"
+                ).value(
+                    "#/components/schemas/OAuthLinkStartResponse"
+                )
+            )
+            /*
+             * 연결 시작부터 OAuth callback까지 동일한 HTTP 세션을
+             * 유지해야 한다는 프론트엔드 연동 계약을 문서화
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}/link']"
+                        + ".post.description"
+                ).value(
+                    org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString(
+                            "Cookie credentials"
+                        ),
+                        org.hamcrest.Matchers.containsString(
+                            "동일한 세션 쿠키"
+                        ),
+                        org.hamcrest.Matchers.containsString(
+                            "백엔드 Origin"
+                        )
+                    )
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}/link']"
+                        + ".post.parameters[*].name"
+                ).value(
+                    org.hamcrest.Matchers.containsInAnyOrder(
+                        "userId",
+                        "provider"
+                    )
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}/link']"
+                        + ".post.parameters"
+                        + "[?(@.name == 'provider')]"
+                        + ".schema.enum"
+                ).value(
+                    org.hamcrest.Matchers.hasItem(
+                        org.hamcrest.Matchers.containsInAnyOrder(
+                            "GOOGLE",
+                            "KAKAO",
+                            "NAVER"
+                        )
+                    )
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.OAuthLinkStartResponse"
+                        + ".properties.authorizationPath.type"
+                ).value("string")
+            )
+
+            /*
+             * 연결 해제 성공 응답은 본문이 없는 204
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}']"
+                        + ".delete.responses['204']"
+                ).exists()
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}']"
+                        + ".delete.responses['204'].content"
+                ).doesNotExist()
+            )
+
+            /*
+             * Path Parameter 배열의 순서는 Springdoc 내부 구현에 따라
+             * 달라질 수 있으므로 배열 인덱스에 의존하지 않는다.
+             *
+             * provider라는 이름의 Parameter를 필터링한 뒤
+             * 지원하는 OAuthProvider enum이 문서화됐는지 검증
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}']"
+                        + ".delete.parameters[*].name"
+                ).value(
+                    org.hamcrest.Matchers.containsInAnyOrder(
+                        "userId",
+                        "provider"
+                    )
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}']"
+                        + ".delete.parameters"
+                        + "[?(@.name == 'provider')]"
+                        + ".schema.enum"
+                ).value(
+                    org.hamcrest.Matchers.hasItem(
+                        org.hamcrest.Matchers.containsInAnyOrder(
+                            "GOOGLE",
+                            "KAKAO",
+                            "NAVER"
+                        )
+                    )
+                )
+            )
+
+            /*
+             * 공개 응답에는 Provider 내부 사용자 식별자가 없어야 한다.
+             */
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.OAuthAccountDto"
+                        + ".properties.providerUserId"
+                ).doesNotExist()
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.OAuthAccountDto"
+                        + ".properties.accessToken"
+                ).doesNotExist()
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.OAuthAccountDto"
+                        + ".properties.refreshToken"
+                ).doesNotExist()
             );
     }
 

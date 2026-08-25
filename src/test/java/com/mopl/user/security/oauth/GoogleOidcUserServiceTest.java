@@ -10,7 +10,7 @@ import static org.mockito.Mockito.when;
 import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
-import com.mopl.user.service.OAuthUserProvisioningService;
+import com.mopl.user.security.oauth.link.OAuthUserResolutionService;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
@@ -42,7 +42,7 @@ class GoogleOidcUserServiceTest {
         );
 
     @Mock
-    OAuthUserProvisioningService provisioningService;
+    OAuthUserResolutionService userResolutionService;
 
     @Mock
     OAuth2UserService<OidcUserRequest, OidcUser> delegate;
@@ -69,7 +69,7 @@ class GoogleOidcUserServiceTest {
     void setUp() {
         googleOidcUserService =
             new GoogleOidcUserService(
-                provisioningService,
+                userResolutionService,
                 delegate
             );
 
@@ -110,7 +110,7 @@ class GoogleOidcUserServiceTest {
         stubGooglePrincipalData();
 
         when(
-            provisioningService.resolveOrCreate(
+            userResolutionService.resolve(
                 OAuthProvider.GOOGLE,
                 "google-sub-123",
                 "User@Example.Com",
@@ -183,7 +183,7 @@ class GoogleOidcUserServiceTest {
             .thenReturn(null);
 
         when(
-            provisioningService.resolveOrCreate(
+            userResolutionService.resolve(
                 OAuthProvider.GOOGLE,
                 "google-sub-123",
                 "user@example.com",
@@ -219,8 +219,8 @@ class GoogleOidcUserServiceTest {
         );
 
         // then
-        verify(provisioningService)
-            .resolveOrCreate(
+        verify(userResolutionService)
+            .resolve(
                 OAuthProvider.GOOGLE,
                 "google-sub-123",
                 "user@example.com",
@@ -267,7 +267,7 @@ class GoogleOidcUserServiceTest {
                 );
             });
 
-        verifyNoInteractions(provisioningService);
+        verifyNoInteractions(userResolutionService);
     }
 
     @Test
@@ -304,7 +304,7 @@ class GoogleOidcUserServiceTest {
                 );
             });
 
-        verifyNoInteractions(provisioningService);
+        verifyNoInteractions(userResolutionService);
     }
 
     @Test
@@ -349,7 +349,7 @@ class GoogleOidcUserServiceTest {
          * Google 이메일 검증에 실패했으므로
          * MOPL 사용자 조회·생성은 실행되지 않아야 한다.
          */
-        verifyNoInteractions(provisioningService);
+        verifyNoInteractions(userResolutionService);
     }
 
     @Test
@@ -360,7 +360,7 @@ class GoogleOidcUserServiceTest {
         stubValidGoogleUser();
 
         when(
-            provisioningService.resolveOrCreate(
+            userResolutionService.resolve(
                 OAuthProvider.GOOGLE,
                 "google-sub-123",
                 "User@Example.Com",
@@ -419,7 +419,7 @@ class GoogleOidcUserServiceTest {
 
         verify(delegate, never())
             .loadUser(userRequest);
-        verifyNoInteractions(provisioningService);
+        verifyNoInteractions(userResolutionService);
     }
 
     private void stubGoogleRequest() {
