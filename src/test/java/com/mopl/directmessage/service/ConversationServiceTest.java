@@ -681,12 +681,11 @@ class ConversationServiceTest {
     void getConversationWithUser_notFound_fails() {
         // given
         when(
-            participantRepository
-                .findConversationIdsByUserPair(
-                    REQUESTER_ID,
-                    WITH_USER_ID
+            conversationRepository
+                .findByParticipantPairKey(
+                    any(String.class)
                 )
-        ).thenReturn(List.of());
+        ).thenReturn(Optional.empty());
 
         // when & then
         assertThatThrownBy(() ->
@@ -706,9 +705,15 @@ class ConversationServiceTest {
                     )
             );
 
+        verify(
+            conversationRepository
+        ).findByParticipantPairKey(
+            any(String.class)
+        );
+
         verifyNoInteractions(
+            participantRepository,
             userRepository,
-            conversationRepository,
             directMessageRepository
         );
     }
