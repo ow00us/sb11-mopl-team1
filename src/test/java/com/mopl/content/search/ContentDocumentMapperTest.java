@@ -59,7 +59,7 @@ class ContentDocumentMapperTest {
     }
 
     @Test
-    @DisplayName("toUpdateFields()는 watcherCount를 제외한 나머지 필드를 정확히 담는다")
+    @DisplayName("toUpdateFields()는 watcherCount를 제외한 나머지 필드를 정확히 담는다(contentId 포함)")
     void toUpdateFields_mapsRemainingFieldsFromContent() {
         Content content = content();
 
@@ -74,7 +74,7 @@ class ContentDocumentMapperTest {
         assertThat(fields.get("averageRating")).isEqualTo(content.getAverageRating().doubleValue());
         assertThat(fields.get("reviewCount")).isEqualTo(content.getReviewCount().intValue());
         assertThat(fields.get("thumbnailUrl")).isEqualTo(content.getThumbnailUrl());
-        assertThat(fields).doesNotContainKey("contentId");
+        assertThat(fields.get("contentId")).isEqualTo(content.getId().toString());
     }
 
     @Test
