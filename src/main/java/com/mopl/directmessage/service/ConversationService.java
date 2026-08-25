@@ -5,6 +5,7 @@ import com.mopl.directmessage.dto.ConversationCreateResult;
 import com.mopl.directmessage.dto.ConversationDto;
 import com.mopl.directmessage.dto.DirectMessageDto;
 import com.mopl.directmessage.entity.Conversation;
+import com.mopl.directmessage.entity.ConversationPairKey;
 import com.mopl.directmessage.entity.ConversationParticipant;
 import com.mopl.directmessage.entity.DirectMessage;
 import com.mopl.directmessage.entity.ParticipantSlot;
@@ -25,6 +26,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -65,48 +67,68 @@ public class ConversationService {
                 withUserId
             );
 
-        List<UUID> conversationIds =
-            participantRepository
-                .findConversationIdsByUserPair(
-                    requesterId,
-                    withUserId
+        String participantPairKey =
+            ConversationPairKey.create(
+                requesterId,
+                withUserId
+            );
+
+        Optional<Conversation> existingConversation =
+            conversationRepository
+                .findByParticipantPairKey(
+                    participantPairKey
                 );
 
-        if (conversationIds.size() > 1) {
-            throw new BusinessException(
-                ErrorCode.DIRECT_MESSAGE_INVALID_STATE,
-                "동일한 사용자 사이에 대화가 여러 개 존재합니다."
+        if (existingConversation.isPresent()) {
+            return toCreateResult(
+                existingConversation.get(),
+                requesterId,
+                withUserId,
+                users,
+                false
             );
         }
 
-        if (conversationIds.size() == 1) {
+        UUID conversationId =
+            UUID.randomUUID();
+
+        int insertedCount =
+            conversationRepository.insertIfAbsent(
+                conversationId,
+                Instant.now(),
+                participantPairKey
+            );
+
+        if (insertedCount == 0) {
             Conversation conversation =
                 conversationRepository
-                    .findById(conversationIds.get(0))
+                    .findByParticipantPairKey(
+                        participantPairKey
+                    )
                     .orElseThrow(() ->
                         new BusinessException(
                             ErrorCode.DIRECT_MESSAGE_INVALID_STATE,
-                            "참여자 정보에 해당하는 대화가 없습니다."
+                            "동시에 생성된 대화를 찾을 수 없습니다."
                         )
                     );
 
-            ConversationDto response =
-                toDto(
-                    conversation,
-                    requesterId,
-                    withUserId,
-                    users
-                );
-
-            return new ConversationCreateResult(
-                response,
+            return toCreateResult(
+                conversation,
+                requesterId,
+                withUserId,
+                users,
                 false
             );
         }
 
         Conversation conversation =
-            conversationRepository.save(
-                Conversation.create()
+            conversationRepository.findById(
+                conversationId
+            ).orElseThrow(() ->
+                new BusinessException(
+                    ErrorCode.DIRECT_MESSAGE_INVALID_STATE,
+                    "생성된 대화를 찾을 수 없습니다."
+                )
             );
 
         ConversationParticipant requester =
@@ -143,6 +165,27 @@ public class ConversationService {
         return new ConversationCreateResult(
             response,
             true
+        );
+    }
+
+    private ConversationCreateResult toCreateResult(
+        Conversation conversation,
+        UUID requesterId,
+        UUID withUserId,
+        Map<UUID, User> users,
+        boolean created
+    ) {
+        ConversationDto response =
+            toDto(
+                conversation,
+                requesterId,
+                withUserId,
+                users
+            );
+
+        return new ConversationCreateResult(
+            response,
+            created
         );
     }
 
@@ -537,28 +580,17 @@ public class ConversationService {
             withUserId
         );
 
-        List<UUID> conversationIds =
-            participantRepository.findConversationIdsByUserPair(
+        String participantPairKey =
+            ConversationPairKey.create(
                 requesterId,
                 withUserId
             );
 
-        if (conversationIds.isEmpty()) {
-            throw new BusinessException(
-                ErrorCode.RESOURCE_NOT_FOUND
-            );
-        }
-
-        if (conversationIds.size() > 1) {
-            throw new BusinessException(
-                ErrorCode.DIRECT_MESSAGE_INVALID_STATE,
-                "동일한 사용자 사이에 대화가 여러 개 존재합니다."
-            );
-        }
-
         Conversation conversation =
             conversationRepository
-                .findById(conversationIds.get(0))
+                .findByParticipantPairKey(
+                    participantPairKey
+                )
                 .orElseThrow(() ->
                     new BusinessException(
                         ErrorCode.RESOURCE_NOT_FOUND

@@ -56,7 +56,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * 회원가입 HTTP API를 검증하는 Controller 테스트
- * <p>
+ *
  * UserService는 Mock으로 대체 이 테스트는 HTTP 요청, JSON 변환, Bean Validation, HTTP 상태 코드와 응답 형식만 검증
  */
 @WebMvcTest(UserController.class)

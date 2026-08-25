@@ -153,7 +153,7 @@ public class OutboxRelay {
     private boolean send(OutboxEvent event) {
         try {
             EventEnvelope envelope = toEnvelope(event);
-            String topic = EventTopicResolver.resolve(event.getType());
+            String topic = EventTopicResolver.resolve(event.getType(), event.getVersion());
 
             // 확인을 기다립니다. 기다리지 않으면 broker 가 거절해도 완료로 표시됩니다.
             eventKafkaTemplate.send(topic, event.getPartitionKey(), envelope)

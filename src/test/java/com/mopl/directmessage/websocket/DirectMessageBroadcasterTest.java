@@ -73,6 +73,7 @@ class DirectMessageBroadcasterTest {
             Instant.parse(
                 "2026-08-04T01:00:00Z"
             ),
+            1L,
             new UserSummary(
                 senderId,
                 "발신자",

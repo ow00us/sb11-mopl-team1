@@ -163,7 +163,10 @@ class DirectMessageStompIntegrationTest {
 
         Conversation conversation =
             conversationRepository.save(
-                Conversation.create()
+                Conversation.create(
+                    senderId,
+                    receiverId
+                )
             );
 
         conversationId =

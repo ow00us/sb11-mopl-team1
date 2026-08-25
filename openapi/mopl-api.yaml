@@ -1730,7 +1730,12 @@ paths:
       tags:
         - "사용자 관리"
       summary: "OAuth 계정 연결 인증 시작"
-      description: "현재 사용자 본인에게 OAuth Provider 계정을 연결하기 위한 인증 절차를 시작합니다."
+      description: >-
+        현재 사용자 본인에게 OAuth Provider 계정을 연결하기 위한 인증 절차를 시작합니다.
+        연결 의도는 HTTP Session에 저장되므로 클라이언트는 Cookie credentials를 포함해 이 API를 호출하고,
+        응답으로 받은 authorizationPath로 이동할 때도 동일한 세션 쿠키를 유지해야 합니다.
+        세션 쿠키가 유지되지 않으면 OAuth callback이 계정 연결이 아닌 일반 로그인 흐름으로 처리될 수 있습니다.
+        authorizationPath는 백엔드 Origin을 기준으로 이동해야 하는 상대 경로입니다.
       operationId: "startOAuthAccountLink"
       security:
         - BearerAuth: [ ]
@@ -3956,6 +3961,10 @@ components:
           type: "string"
           format: "date-time"
           description: "메시지 생성 시간"
+        messageSequence:
+          type: "integer"
+          format: "int64"
+          description: "대화 안에서 서버가 부여한 메시지 순번"
         sender:
           "$ref": "#/components/schemas/UserSummary"
           description: "발신자 정보"
@@ -3970,6 +3979,7 @@ components:
         - "conversationId"
         - "createdAt"
         - "id"
+        - "messageSequence"
         - "receiver"
         - "sender"
     ContentCreateRequest:

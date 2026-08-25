@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.mopl.global.event.EventContractViolationException;
 import com.mopl.global.event.EventEnvelope;
+import com.mopl.global.event.KafkaEventContract;
 import com.mopl.global.event.ProcessedEvent;
 import com.mopl.global.event.ProcessedEventRepository;
 import java.time.Instant;
@@ -233,6 +234,34 @@ class OutboxRecorderIntegrationTest {
     }
 
     @Test
+    @DisplayName("카탈로그와 다른 파티션 키나 순서 범위는 거부한다")
+    void mismatchedCatalogRouting_isRejected() {
+        EventEnvelope event = envelope();
+
+        assertThatThrownBy(() -> domainCaller.recordWithRouting(event, "wrong-key", "NONE"))
+            .isInstanceOf(EventContractViolationException.class);
+        assertThatThrownBy(() -> domainCaller.recordWithRouting(
+            event, event.aggregateId().toString(), "AGGREGATE"))
+            .isInstanceOf(EventContractViolationException.class);
+
+        assertThat(outboxEventRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("카탈로그에 등록되지 않은 이벤트는 기록하지 않는다")
+    void unregisteredEvent_isRejected() {
+        EventEnvelope event = new EventEnvelope(
+            UUID.randomUUID(), "follow.renamed", 1,
+            Instant.parse("2026-08-14T03:00:00Z"), UUID.randomUUID(),
+            objectMapper.valueToTree(Map.of("followerId", "a", "followeeId", "b")));
+
+        assertThatThrownBy(() -> domainCaller.changeDomainAndRecord(event, false))
+            .isInstanceOf(EventContractViolationException.class);
+
+        assertThat(outboxEventRepository.count()).isZero();
+    }
+
+    @Test
     @DisplayName("envelope payload가 내용 손실 없이 기록된다")
     void payload_isRecordedWithoutLoss() throws Exception {
         EventEnvelope event = envelope();
@@ -350,8 +379,10 @@ class OutboxRecorderIntegrationTest {
             processedEventRepository.save(
                 new ProcessedEvent("domain-change", UUID.randomUUID(), "domain"));
 
-            outboxRecorder.record(envelope, "partition-key", "NONE",
-                envelope.type() + ":" + envelope.aggregateId());
+            KafkaEventContract contract = KafkaEventContract.require(
+                envelope.type(), envelope.version());
+            outboxRecorder.record(envelope, contract.partitionKey(envelope),
+                contract.orderingScope(), envelope.type() + ":" + envelope.aggregateId());
 
             if (failAfterRecord) {
                 throw new IllegalStateException("도메인 처리 실패");
@@ -368,7 +399,10 @@ class OutboxRecorderIntegrationTest {
         /** 중복 판정 키를 테스트가 직접 정하는 경로입니다. */
         @Transactional
         public void recordWithDeduplicationKey(EventEnvelope envelope, String deduplicationKey) {
-            outboxRecorder.record(envelope, "partition-key", "NONE", deduplicationKey);
+            KafkaEventContract contract = KafkaEventContract.require(
+                envelope.type(), envelope.version());
+            outboxRecorder.record(envelope, contract.partitionKey(envelope),
+                contract.orderingScope(), deduplicationKey);
         }
 
         /**
@@ -380,8 +414,12 @@ class OutboxRecorderIntegrationTest {
         public void recordTwice(
             EventEnvelope first, EventEnvelope second, String deduplicationKey
         ) {
-            outboxRecorder.record(first, "partition-key", "NONE", deduplicationKey);
-            outboxRecorder.record(second, "partition-key", "NONE", deduplicationKey);
+            KafkaEventContract contract = KafkaEventContract.require(
+                first.type(), first.version());
+            outboxRecorder.record(first, contract.partitionKey(first),
+                contract.orderingScope(), deduplicationKey);
+            outboxRecorder.record(second, contract.partitionKey(second),
+                contract.orderingScope(), deduplicationKey);
         }
     }
 }
