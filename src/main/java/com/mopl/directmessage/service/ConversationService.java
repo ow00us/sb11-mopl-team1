@@ -580,28 +580,17 @@ public class ConversationService {
             withUserId
         );
 
-        List<UUID> conversationIds =
-            participantRepository.findConversationIdsByUserPair(
+        String participantPairKey =
+            ConversationPairKey.create(
                 requesterId,
                 withUserId
             );
 
-        if (conversationIds.isEmpty()) {
-            throw new BusinessException(
-                ErrorCode.RESOURCE_NOT_FOUND
-            );
-        }
-
-        if (conversationIds.size() > 1) {
-            throw new BusinessException(
-                ErrorCode.DIRECT_MESSAGE_INVALID_STATE,
-                "동일한 사용자 사이에 대화가 여러 개 존재합니다."
-            );
-        }
-
         Conversation conversation =
             conversationRepository
-                .findById(conversationIds.get(0))
+                .findByParticipantPairKey(
+                    participantPairKey
+                )
                 .orElseThrow(() ->
                     new BusinessException(
                         ErrorCode.RESOURCE_NOT_FOUND
