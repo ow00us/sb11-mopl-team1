@@ -51,6 +51,85 @@ mopl.premiere.events        mopl.premiere.events.DLT
 mopl.direct-message.events  mopl.direct-message.events.DLT
 ```
 
+### 프로필·콘텐츠 이미지 저장
+
+사용자가 올린 이미지는 S3에 저장합니다. 애플리케이션 컨테이너의 로컬 파일에 쓰지 않습니다. 인스턴스가 둘이면 A가 저장한 파일을 B가 읽지 못하고, 컨테이너를 다시 만들면 사라집니다.
+
+| 환경 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `IMAGE_STORAGE_ENABLED` | `false` | S3 사용 여부. 운영은 `true` |
+| `IMAGE_STORAGE_BUCKET` | 없음 | 버킷 이름. `true`일 때 필수 |
+| `IMAGE_STORAGE_REGION` | `ap-northeast-2` | 버킷 리전 |
+| `IMAGE_STORAGE_PUBLIC_BASE_URL` | 없음 | 조회 URL의 앞부분. `true`일 때 필수 |
+| `IMAGE_STORAGE_PROFILE_PREFIX` | `profile-images` | 프로필 이미지 객체 키 구분자 |
+| `IMAGE_STORAGE_THUMBNAIL_PREFIX` | `thumbnails` | 콘텐츠 썸네일 객체 키 구분자 |
+| `IMAGE_STORAGE_MAX_FILE_SIZE` | `5242880` | 허용 최대 크기(바이트) |
+
+`IMAGE_STORAGE_ENABLED=false`로 두면 파일을 저장하지 않고 열리지 않는 주소만 돌려주는 구현이 붙습니다. AWS 자격 증명 없이 로컬 개발과 테스트를 돌리기 위한 것입니다. **운영에서 이 값을 켜지 않으면 업로드한 이미지가 조회되지 않습니다.**
+
+#### 자격 증명
+
+액세스 키를 환경 변수나 코드에 두지 않습니다. 기본 자격 증명 체인이 EC2 인스턴스 역할을 먼저 찾으므로, 서버에 장기 자격 증명이 남지 않습니다.
+
+인스턴스 역할에 필요한 권한은 업로드 하나뿐입니다.
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["s3:PutObject"],
+  "Resource": "arn:aws:s3:::<버킷>/*"
+}
+```
+
+조회는 애플리케이션을 거치지 않습니다. 버킷 정책이나 앞단 CDN이 공개 읽기를 담당하므로 `s3:GetObject`는 인스턴스 역할에 주지 않습니다.
+
+#### 검증과 객체 키
+
+- 허용 형식은 `image/jpeg`, `image/png`, `image/webp`, `image/gif`입니다. 형식과 크기를 확인한 뒤에만 올립니다.
+- 객체 키에 원본 파일명을 쓰지 않습니다. 두 사용자가 같은 이름을 올리면 뒤가 앞을 덮고, 이름에 경로 기호가 섞이면 의도한 구분자 밖으로 나갑니다.
+- 확장자는 파일명이 아니라 Content-Type에서 정합니다. 파일명의 확장자는 내용과 무관하게 붙일 수 있습니다.
+- 업로드가 실패하면 예외로 끊습니다. 조용히 넘기면 이미지 없는 레코드가 저장되고 사용자에게는 성공으로 보입니다.
+
+#### 이전 객체 정리
+
+**교체하거나 지운 이미지의 이전 객체를 지우지 않습니다.** 프로필 이미지를 바꾸면 이전 객체가 버킷에 남습니다.
+
+1차 배포 범위에서 제외한 이유는 지우는 시점을 정하려면 그 URL을 아무도 참조하지 않는다는 보장이 필요한데, 지금은 사용자와 콘텐츠 레코드가 URL 문자열만 들고 있어 역참조가 없기 때문입니다. 트랜잭션이 롤백되면 이미 지운 객체를 되돌릴 수도 없습니다.
+
+당장은 버킷 수명 주기 규칙으로 오래된 객체를 정리하고, 참조를 추적하는 정리 경로는 #351에서 다룹니다.
+### OAuth2 로그인과 세션 고정
+
+**로드밸런서 세션 고정을 쓰지 않습니다.** 백엔드 인스턴스가 몇 개든, 어느 인스턴스로 요청이 가든 소셜 로그인이 동작해야 합니다.
+
+OAuth2 로그인은 두 번의 요청으로 나뉩니다. 인가를 시작하는 `/oauth2/authorization/{provider}`와 Provider가 돌려보내는 `/login/oauth2/code/{provider}`입니다. 그 사이에 사용자는 Provider 화면에 다녀오므로 두 요청이 같은 인스턴스로 간다는 보장이 없습니다.
+
+Spring Security 기본 구현은 그 사이의 상태를 HTTP 세션에 둡니다. 세션은 인스턴스 로컬이라 인가를 시작한 인스턴스와 callback을 받은 인스턴스가 다르면 저장한 요청을 찾지 못하고 로그인이 실패합니다. 백엔드가 둘이면 절반 확률로 그렇게 됩니다.
+
+그래서 인가 요청을 Redis에 두고 모든 인스턴스가 함께 봅니다.
+
+| 환경 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `OAUTH2_AUTHORIZATION_REQUEST_TTL` | `5m` | 인가 요청을 Redis에 두는 기간 |
+
+운영에서 알아둘 점이 있습니다.
+
+- Redis가 없으면 소셜 로그인이 동작하지 않습니다. 이메일·비밀번호 로그인은 영향을 받지 않습니다.
+- 키는 `auth:oauth2:authorization-request:{state}`입니다. `state`는 Spring Security가 만들어 Provider로 보내고 callback에 그대로 돌아오는 값입니다.
+- 저장하는 값에 client secret이나 access token은 들어가지 않습니다. 인가 요청을 다시 만들기 위한 값과 PKCE code verifier만 들어갑니다. code verifier는 서버에만 있어야 하는 값이라 클라이언트가 아니라 Redis에 둡니다.
+- callback에서 값을 꺼낼 때 `GETDEL`로 읽으면서 지웁니다. 같은 `state`로 두 번째 요청이 오면 찾지 못하고 실패합니다. 인가 코드 재사용 시도가 여기서 끊깁니다.
+- 사용자가 Provider 화면에서 로그인을 끝내지 않고 떠나면 그 요청은 소비되지 않습니다. `OAUTH2_AUTHORIZATION_REQUEST_TTL`이 지나면 사라집니다. 이 값을 늘리면 소비되지 않은 요청이 그만큼 오래 남습니다.
+- `state`가 없거나, 모르는 값이거나, 만료됐거나, 이미 소비된 요청은 모두 인증 실패입니다. Spring Security가 `authorization_request_not_found`로 처리하고 `OAUTH2_FAILURE_REDIRECT_URI`로 보냅니다.
+
+### 프록시 뒤에서의 host와 scheme
+
+`prod` 프로파일은 `server.forward-headers-strategy: framework`를 켭니다. 운영에서는 백엔드가 Caddy와 프론트엔드 Nginx 뒤에 있으므로, 이 설정이 없으면 백엔드가 자기 주소를 내부 `http` 주소로 인식합니다.
+
+**이 설정은 `prod`에서만 켭니다.** 프록시가 앞에 없는 환경에서 켜면 클라이언트가 직접 보낸 `X-Forwarded-*`를 그대로 믿게 됩니다.
+
+Gateway는 `X-Forwarded-Proto`를 내부 연결 scheme인 `http`로 덮어쓰지 않아야 합니다. 덮어쓰면 백엔드가 외부 요청을 평문으로 인식합니다.
+
+다만 OAuth Callback URI는 이 추론에 기대지 않습니다. `GOOGLE_OAUTH_REDIRECT_URI` 같은 값으로 외부 HTTPS 절대 URI를 직접 받습니다. Provider Console에 등록한 값과 이 환경 변수가 같아야 합니다.
+
 ### Outbox relay 조정 값
 
 도메인 상태 변경과 함께 기록된 이벤트는 Outbox relay가 읽어 Kafka에 발행합니다. 아래 값은 모두 선택이며, 지정하지 않으면 기본값으로 동작합니다.
