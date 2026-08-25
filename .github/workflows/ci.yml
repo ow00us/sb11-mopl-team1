@@ -580,7 +580,7 @@ jobs:
   publish-image:
     name: Publish image
     needs: [build, container-smoke]
-    # main push 와 수동 release 실행에서만 게시합니다. PR 에서는 운영 태그를 만들지
+    # main push 와 main 브랜치의 수동 재게시에서만 게시합니다. PR 에서는 운영 태그를 만들지
     # 않습니다. 검증되지 않은 커밋의 태그가 레지스트리에 남으면 배포 대상을 고를 때
     # 무엇이 검증된 것인지 구분할 수 없습니다.
     #
@@ -588,8 +588,8 @@ jobs:
     # 만듭니다. 그 전까지 main push 마다 실패로 남기지 않기 위한 조건입니다.
     if: >-
       ${{ success()
-      && (github.event_name == 'workflow_dispatch'
-          || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+      && github.ref == 'refs/heads/main'
+      && (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
       && vars.ECR_REPOSITORY != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
