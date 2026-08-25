@@ -590,6 +590,22 @@ Gateway가 두 인스턴스에 분산하며 세션 고정을 쓰지 않습니다
 
 컨테이너 healthcheck는 `/actuator/health/liveness`를 봅니다. 전체 health를 재시작 조건으로 두면 프로세스를 다시 띄운다고 풀리지 않는 상태까지 재시작을 부릅니다.
 
+### 메모리 한도
+
+백엔드 이미지는 `-XX:MaxRAMPercentage=75.0`으로 힙을 잡습니다. 이 값은 **컨테이너 메모리 한도**를 기준으로 계산되므로, 한도가 없으면 JVM 이 호스트 전체 메모리를 기준으로 잡습니다. 인스턴스가 둘이면 합쳐서 호스트보다 큰 힙을 요구하고, 같은 서버의 PostgreSQL·Kafka·Elasticsearch 까지 함께 밀려납니다.
+
+그래서 모든 상태 있는 서비스에 한도를 둡니다. 기본값 합계는 약 7GB 입니다.
+
+| 서비스 | 변수 | 기본값 |
+| --- | --- | --- |
+| 백엔드 A·B | `BACKEND_MEM_LIMIT` | `1536m` 각각 |
+| PostgreSQL | `POSTGRES_MEM_LIMIT` | `1g` |
+| Redis | `REDIS_MEM_LIMIT` | `512m` |
+| Kafka | `KAFKA_MEM_LIMIT` | `1g` |
+| Elasticsearch | `ELASTICSEARCH_MEM_LIMIT` | `1536m` |
+
+**최소 8GB 메모리를 권장합니다.** 7GB 를 컨테이너가 쓰고 나머지가 OS 몫입니다. 여유를 두려면 16GB 를 씁니다.
+
 ### 영속 데이터
 
 `MOPL_DATA_ROOT` 아래에 서비스별로 둡니다. 기본값은 `/srv/mopl/data`입니다.

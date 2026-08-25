@@ -66,6 +66,9 @@ services:
   backend-a:
     image: ${BACKEND_IMAGE}
     restart: unless-stopped
+    # 이미지가 -XX:MaxRAMPercentage 로 힙을 잡습니다. 한도가 없으면 JVM 이 호스트 전체
+    # 메모리를 기준으로 계산해, 인스턴스 둘이 합쳐 호스트보다 큰 힙을 요구합니다.
+    mem_limit: ${BACKEND_MEM_LIMIT}
     environment: &backend-environment
       SPRING_PROFILES_ACTIVE: prod
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
@@ -125,6 +128,7 @@ services:
   backend-b:
     image: ${BACKEND_IMAGE}
     restart: unless-stopped
+    mem_limit: ${BACKEND_MEM_LIMIT}
     environment: *backend-environment
     networks:
       - app
@@ -148,6 +152,7 @@ services:
   postgres:
     image: postgres:16
     restart: unless-stopped
+    mem_limit: ${POSTGRES_MEM_LIMIT}
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -166,6 +171,7 @@ services:
   redis:
     image: redis:7
     restart: unless-stopped
+    mem_limit: ${REDIS_MEM_LIMIT}
     # AOF 를 켭니다. refresh token 세션과 OAuth2 인가 요청이 여기 있어, 재시작으로
     # 사라지면 로그인한 사용자가 모두 끊깁니다.
     command: ["redis-server", "--appendonly", "yes"]
@@ -183,6 +189,7 @@ services:
   kafka:
     image: apache/kafka:3.8.0
     restart: unless-stopped
+    mem_limit: ${KAFKA_MEM_LIMIT}
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -215,6 +222,7 @@ services:
   elasticsearch:
     image: ${ELASTICSEARCH_IMAGE}
     restart: unless-stopped
+    mem_limit: ${ELASTICSEARCH_MEM_LIMIT}
     environment:
       discovery.type: single-node
       xpack.security.enabled: "false"
