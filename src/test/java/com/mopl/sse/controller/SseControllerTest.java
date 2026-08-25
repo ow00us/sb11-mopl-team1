@@ -12,7 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.mopl.sse.service.SseEmitterManager;
+import com.mopl.sse.service.SseReplayService;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,7 +31,7 @@ public class SseControllerTest {
     MockMvc mockMvc;
 
     @MockitoBean
-    SseEmitterManager sseEmitterManager;
+    SseReplayService sseReplayService;
 
     @Test
     @DisplayName("인증 사용자의 ID로 SSE 연결을 생성")
@@ -40,7 +40,10 @@ public class SseControllerTest {
         SseEmitter emitter = new SseEmitter();
 
         when(
-            sseEmitterManager.subscribe(USER_ID)
+            sseReplayService.subscribe(
+                USER_ID,
+                null
+            )
         ).thenReturn(emitter);
 
         // when & then
@@ -53,8 +56,9 @@ public class SseControllerTest {
             .andExpect(status().isOk())
             .andExpect(request().asyncStarted());
 
-        verify(sseEmitterManager).subscribe(
-            USER_ID
+        verify(sseReplayService).subscribe(
+            USER_ID,
+            null
         );
 
         emitter.complete();
@@ -76,7 +80,7 @@ public class SseControllerTest {
             );
 
         verifyNoInteractions(
-            sseEmitterManager
+            sseReplayService
         );
     }
 
@@ -99,7 +103,47 @@ public class SseControllerTest {
             );
 
         verifyNoInteractions(
-            sseEmitterManager
+            sseReplayService
         );
+    }
+
+    @Test
+    @DisplayName("SSE 재연결 요청의 Last-Event-ID를 전달")
+    void subscribe_lastEventId_forwardsHeader()
+        throws Exception {
+
+        // given
+        String lastEventId =
+            "22222222-2222-2222-2222-222222222222";
+
+        SseEmitter emitter = new SseEmitter();
+
+        when(
+            sseReplayService.subscribe(
+                USER_ID,
+                lastEventId
+            )
+        ).thenReturn(emitter);
+
+        // when & then
+        mockMvc.perform(
+                get("/api/sse")
+                    .header(
+                        "Last-Event-ID",
+                        lastEventId
+                    )
+                    .principal(
+                        () -> USER_ID.toString()
+                    )
+            )
+            .andExpect(status().isOk())
+            .andExpect(request().asyncStarted());
+
+        verify(sseReplayService).subscribe(
+            USER_ID,
+            lastEventId
+        );
+
+        emitter.complete();
     }
 }
