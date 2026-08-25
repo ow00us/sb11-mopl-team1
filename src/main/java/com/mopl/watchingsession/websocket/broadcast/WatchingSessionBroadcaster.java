@@ -54,7 +54,7 @@ public class WatchingSessionBroadcaster {
         broadcast(contentId, change);
 
         // 중계 발행 실패는 boolean으로만 알려지고 예외를 던지지 않으므로 이 인스턴스의 브로드캐스트는 계속 성공한다
-        watchingSessionRelayPublisher.publish(contentId, change);
+        watchingSessionRelayPublisher.publish(change);
     }
 
     // 조회가 실패해도 대체 값을 반환해 브로드캐스트 자체는 계속 진행한다

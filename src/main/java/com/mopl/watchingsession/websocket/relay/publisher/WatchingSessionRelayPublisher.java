@@ -13,7 +13,8 @@ public class WatchingSessionRelayPublisher {
 
     private final RealtimeRelayPublisher relayPublisher;
 
-    public boolean publish(UUID contentId, WatchingSessionChange change) {
+    public boolean publish(WatchingSessionChange change) {
+        UUID contentId = change.watchingSessionDto().content().id();
         String destination = WatchingSessionRealtimeContract.getDestination(contentId);
 
         return relayPublisher.publish(

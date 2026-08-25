@@ -34,6 +34,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -124,6 +125,13 @@ class ContentWatchingRelayIntegrationTest {
     private WatchingSessionBroadcaster remoteWatchingBroadcaster;
     private RedisMessageListenerContainer remoteContainer;
 
+    @AfterEach
+    void stopRemoteInstance() throws Exception {
+        if (remoteContainer != null) {
+            remoteContainer.destroy();
+        }
+    }
+
     @BeforeEach
     void startRemoteInstance() {
         remoteChatService = mock(ContentChatService.class);
@@ -174,7 +182,7 @@ class ContentWatchingRelayIntegrationTest {
         WatchingSessionChange change = WatchingSessionChange.join(dtoFixture(), 3L);
 
         // when
-        watchingSessionRelayPublisher.publish(CONTENT_ID, change);
+        watchingSessionRelayPublisher.publish(change);
 
         // then
         await().atMost(TIMEOUT).untilAsserted(() ->
@@ -188,7 +196,7 @@ class ContentWatchingRelayIntegrationTest {
         WatchingSessionChange change = WatchingSessionChange.leave(dtoFixture(), 2L);
 
         // when
-        watchingSessionRelayPublisher.publish(CONTENT_ID, change);
+        watchingSessionRelayPublisher.publish(change);
 
         // then
         await().atMost(TIMEOUT).untilAsserted(() ->
