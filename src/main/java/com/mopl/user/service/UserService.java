@@ -364,6 +364,23 @@ public class UserService {
             );
 
         /*
+         * 비밀번호 변경 API는 이미 등록된 로컬 로그인 수단의
+         * 비밀번호를 변경하는 용도로만 사용
+         *
+         * OAuth 전용 사용자가 이 경로로 passwordHash를 새로 만들면
+         * 이메일 인증 절차를 우회하고, 마지막 OAuth 계정까지 해제한 뒤
+         * 로그인 수단을 잃을 수 있으므로 거부
+         */
+        if (
+            user.getPasswordHash() == null
+                || user.getPasswordHash().isBlank()
+        ) {
+            throw new BusinessException(
+                ErrorCode.LOCAL_CREDENTIAL_NOT_FOUND
+            );
+        }
+
+        /*
          * 비밀번호 원문은 DB에 저장하거나 엔티티에 전달하지 않는다.
          *
          * 회원가입과 로그인에 사용하는 동일한 PasswordEncoder Bean으로

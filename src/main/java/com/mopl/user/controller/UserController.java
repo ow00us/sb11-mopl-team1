@@ -10,9 +10,12 @@ import com.mopl.user.dto.UserRoleUpdateRequest;
 import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.dto.OAuthAccountDto;
 import com.mopl.user.dto.OAuthLinkStartResponse;
+import com.mopl.user.dto.LocalCredentialEmailVerificationRequest;
+import com.mopl.user.dto.LocalCredentialRegistrationRequest;
 import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.service.UserService;
 import com.mopl.user.service.OAuthAccountManagementService;
+import com.mopl.user.service.OAuthLocalCredentialService;
 import com.mopl.user.security.oauth.link.OAuthLinkIntentSessionStore;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -56,6 +59,7 @@ public class UserController {
     private final UserService userService;
     private final OAuthAccountManagementService oauthAccountManagementService;
     private final OAuthLinkIntentSessionStore oauthLinkIntentSessionStore;
+    private final OAuthLocalCredentialService oauthLocalCredentialService;
 
     /**
      * 이메일과 비밀번호를 이용해 사용자를 생성
@@ -305,6 +309,123 @@ public class UserController {
     }
 
     /**
+     * OAuth 전용 사용자가 로컬 로그인 이메일의 인증 코드를 요청
+     *
+     * <p>본인 여부, 계정 잠금 상태, 기존 로컬 로그인 수단 및
+     * 이메일 중복 여부를 확인한 뒤 인증 코드를 발송합니다.</p>
+     *
+     * @param authenticatedUserId JWT에서 복원한 현재 사용자 UUID
+     * @param userId 로컬 로그인 수단을 추가할 사용자 UUID
+     * @param request 인증할 이메일
+     * @return 응답 본문이 없는 204 No Content
+     */
+    @PostMapping(
+        "/{userId}/local-credentials/email-verifications"
+    )
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "204",
+            description = "이메일 인증 코드 발송 성공"
+        ),
+        @ApiResponse(
+            responseCode = "400",
+            description = "잘못된 이메일 요청"
+        ),
+        @ApiResponse(
+            responseCode = "403",
+            description = "본인이 아니거나 잠긴 사용자"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자를 찾을 수 없음"
+        ),
+        @ApiResponse(
+            responseCode = "409",
+            description = "이미 로컬 로그인 수단이 있거나 이메일이 중복됨"
+        ),
+        @ApiResponse(
+            responseCode = "429",
+            description = "인증 코드 재전송 대기 시간이 지나지 않음"
+        )
+    })
+    public ResponseEntity<Void>
+    sendLocalCredentialEmailVerification(
+        @Parameter(hidden = true)
+        @AuthenticationPrincipal
+        UUID authenticatedUserId,
+        @PathVariable
+        UUID userId,
+        @Valid @RequestBody
+        LocalCredentialEmailVerificationRequest request
+    ) {
+        oauthLocalCredentialService
+            .sendVerificationCode(
+                authenticatedUserId,
+                userId,
+                request
+            );
+
+        return ResponseEntity
+            .noContent()
+            .build();
+    }
+
+    /**
+     * 이메일 인증을 완료한 OAuth 전용 사용자에게
+     * 로컬 이메일·비밀번호 로그인 수단을 등록
+     *
+     * @param authenticatedUserId JWT에서 복원한 현재 사용자 UUID
+     * @param userId 로컬 로그인 수단을 추가할 사용자 UUID
+     * @param request 인증 이메일, 인증 코드와 새 비밀번호
+     * @return 응답 본문이 없는 204 No Content
+     */
+    @PostMapping(
+        "/{userId}/local-credentials"
+    )
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "204",
+            description = "로컬 로그인 수단 등록 성공"
+        ),
+        @ApiResponse(
+            responseCode = "400",
+            description = "입력값 또는 이메일 인증 코드가 유효하지 않음"
+        ),
+        @ApiResponse(
+            responseCode = "403",
+            description = "본인이 아니거나 잠긴 사용자"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자를 찾을 수 없음"
+        ),
+        @ApiResponse(
+            responseCode = "409",
+            description = "이미 로컬 로그인 수단이 있거나 이메일이 중복됨"
+        )
+    })
+    public ResponseEntity<Void> registerLocalCredential(
+        @Parameter(hidden = true)
+        @AuthenticationPrincipal
+        UUID authenticatedUserId,
+        @PathVariable
+        UUID userId,
+        @Valid @RequestBody
+        LocalCredentialRegistrationRequest request
+    ) {
+        oauthLocalCredentialService
+            .registerLocalCredential(
+                authenticatedUserId,
+                userId,
+                request
+            );
+
+        return ResponseEntity
+            .noContent()
+            .build();
+    }
+
+    /**
      * 사용자의 프로필 정보를 변경
      *
      * Swagger에 정의된 PATCH /api/users/{userId} 계약을 따르며,
@@ -368,6 +489,10 @@ public class UserController {
         @ApiResponse(
             responseCode = "404",
             description = "사용자를 찾을 수 없음"
+        ),
+        @ApiResponse(
+            responseCode = "409",
+            description = "변경할 로컬 로그인 수단이 없음"
         )
     })
     public ResponseEntity<Void> changePassword(

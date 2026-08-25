@@ -136,7 +136,7 @@ public class AuthController {
     @PostMapping("/reset-password")
     @ApiResponse(
         responseCode = "204",
-        description = "비밀번호 초기화 및 임시 비밀번호 이메일 발송 성공"
+        description = "비밀번호 초기화 요청 접수"
     )
     public ResponseEntity<Void> resetPassword(
         @Valid @RequestBody
