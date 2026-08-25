@@ -3,6 +3,7 @@ package com.mopl.global.outbox;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.mopl.global.event.EventContractViolationException;
 import com.mopl.global.event.EventEnvelope;
+import com.mopl.global.event.KafkaEventContract;
 import java.time.Instant;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -16,9 +17,6 @@ import org.springframework.util.StringUtils;
 @Slf4j
 @Component
 public class OutboxRecorderImpl implements OutboxRecorder {
-
-    /** 현재 지원하는 최소 envelope 버전입니다. 계약상 최초 버전이 1 입니다. */
-    private static final int MINIMUM_SUPPORTED_VERSION = 1;
 
     /** {@code outbox_events.deduplication_key} 컬럼 길이입니다. */
     private static final int MAX_DEDUPLICATION_KEY_LENGTH = 200;
@@ -94,10 +92,18 @@ public class OutboxRecorderImpl implements OutboxRecorder {
         requireText(orderingScope, "orderingScope");
         requireDeduplicationKey(deduplicationKey);
 
-        if (envelope.version() < MINIMUM_SUPPORTED_VERSION) {
+        KafkaEventContract contract = KafkaEventContract.require(
+            envelope.type(), envelope.version());
+        String expectedPartitionKey = contract.partitionKey(envelope);
+        if (!expectedPartitionKey.equals(partitionKey)) {
             throw new EventContractViolationException(
-                "지원하지 않는 envelope version 입니다. 최소 " + MINIMUM_SUPPORTED_VERSION
-                    + ", 실제 " + envelope.version());
+                "카탈로그와 partitionKey가 일치하지 않습니다. 예상 "
+                    + expectedPartitionKey + ", 실제 " + partitionKey);
+        }
+        if (!contract.orderingScope().equals(orderingScope)) {
+            throw new EventContractViolationException(
+                "카탈로그와 orderingScope가 일치하지 않습니다. 예상 "
+                    + contract.orderingScope() + ", 실제 " + orderingScope);
         }
     }
 

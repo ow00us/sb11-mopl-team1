@@ -29,6 +29,9 @@ class MoplOAuth2UserServiceTest {
     KakaoOAuth2UserService kakaoOAuth2UserService;
 
     @Mock
+    NaverOAuth2UserService naverOAuth2UserService;
+
+    @Mock
     OAuth2UserRequest userRequest;
 
     @Mock
@@ -37,13 +40,17 @@ class MoplOAuth2UserServiceTest {
     @Mock
     OAuth2User kakaoUser;
 
+    @Mock
+    OAuth2User naverUser;
+
     MoplOAuth2UserService moplOAuth2UserService;
 
     @BeforeEach
     void setUp() {
         moplOAuth2UserService =
             new MoplOAuth2UserService(
-                kakaoOAuth2UserService
+                kakaoOAuth2UserService,
+                naverOAuth2UserService
             );
     }
 
@@ -72,6 +79,37 @@ class MoplOAuth2UserServiceTest {
 
         verify(kakaoOAuth2UserService)
             .loadUser(userRequest);
+
+        verifyNoInteractions(naverOAuth2UserService);
+    }
+
+    @Test
+    @DisplayName("Naver 요청은 Naver OAuth2 사용자 서비스로 전달한다")
+    void loadUser_routesNaverRequest() {
+        // given
+        when(userRequest.getClientRegistration())
+            .thenReturn(clientRegistration);
+
+        when(clientRegistration.getRegistrationId())
+            .thenReturn("naver");
+
+        when(naverOAuth2UserService.loadUser(userRequest))
+            .thenReturn(naverUser);
+
+        // when
+        OAuth2User result =
+            moplOAuth2UserService.loadUser(
+                userRequest
+            );
+
+        // then
+        assertThat(result)
+            .isSameAs(naverUser);
+
+        verify(naverOAuth2UserService)
+            .loadUser(userRequest);
+
+        verifyNoInteractions(kakaoOAuth2UserService);
     }
 
     @Test
@@ -93,6 +131,9 @@ class MoplOAuth2UserServiceTest {
 
         verify(kakaoOAuth2UserService, never())
             .loadUser(userRequest);
+
+        verify(naverOAuth2UserService, never())
+            .loadUser(userRequest);
     }
 
     @Test
@@ -102,7 +143,10 @@ class MoplOAuth2UserServiceTest {
             moplOAuth2UserService.loadUser(null)
         );
 
-        verifyNoInteractions(kakaoOAuth2UserService);
+        verifyNoInteractions(
+            kakaoOAuth2UserService,
+            naverOAuth2UserService
+        );
     }
 
     @Test
@@ -122,7 +166,10 @@ class MoplOAuth2UserServiceTest {
             )
         );
 
-        verifyNoInteractions(kakaoOAuth2UserService);
+        verifyNoInteractions(
+            kakaoOAuth2UserService,
+            naverOAuth2UserService
+        );
     }
 
     /**

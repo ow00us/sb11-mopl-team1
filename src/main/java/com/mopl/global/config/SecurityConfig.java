@@ -206,7 +206,7 @@ public class SecurityConfig {
                  * Google은 openid scope를 사용하는 OIDC Provider이므로
                  * oidcUserService에 연결
                  *
-                 * Kakao와 이후 Naver 같은 일반 OAuth2 Provider는
+                 * Kakao와 Naver 같은 일반 OAuth2 Provider는
                  * registrationId를 기준으로 분기하는 공통 라우터에 연결
                  */
                 oauth2.userInfoEndpoint(userInfo -> {

@@ -7,6 +7,7 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.ContentChatDto;
+import com.mopl.watchingsession.presence.ContentChatBuffer;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceReader;
 import com.mopl.watchingsession.websocket.relay.contract.ContentChatRealtimeContract;
 import com.mopl.watchingsession.websocket.relay.publisher.ContentChatRelayPublisher;
@@ -23,6 +24,8 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class ContentChatService {
+
+    private static final String DESTINATION_TEMPLATE = "/sub/contents/%s/chat";
 
     private final ContentRepository contentRepository;
     private final UserRepository userRepository;

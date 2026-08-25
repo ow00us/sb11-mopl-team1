@@ -8,6 +8,8 @@ import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.outbox.OutboxRecorder;
+import com.mopl.global.event.EventEnvelope;
+import com.mopl.global.event.KafkaEventContract;
 import com.mopl.global.util.CursorUtils;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
@@ -247,13 +249,14 @@ public class PlaylistServiceImpl implements PlaylistService {
         PlaylistSubscription subscription = subscriptionRepository
                 .findByPlaylistIdAndSubscriberId(playlist.getId(), subscriberId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_ERROR));
-        UUID subscriptionId = subscription.getId();
+        EventEnvelope envelope = playlistSubscriptionEventFactory.createSubscriptionCreatedEnvelope(
+                subscription, playlist.getOwnerId());
+        KafkaEventContract contract = KafkaEventContract.PLAYLIST_SUBSCRIPTION_CREATED;
         outboxRecorder.record(
-                playlistSubscriptionEventFactory.createSubscriptionCreatedEnvelope(
-                        subscription, playlist.getOwnerId()),
-                subscriptionId.toString(),
-                "NONE",
-                "playlist.subscription.created:" + subscriptionId);
+                envelope,
+                contract.partitionKey(envelope),
+                contract.orderingScope(),
+                contract.deduplicationKey(envelope));
     }
 
     @Override

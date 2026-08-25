@@ -3,6 +3,7 @@ package com.mopl.follow.event;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.follow.entity.Follow;
 import com.mopl.global.event.EventEnvelope;
+import com.mopl.global.event.KafkaEventContract;
 import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -17,9 +18,6 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 public class FollowEventFactory {
-
-    private static final String TYPE_FOLLOW_CREATED = "follow.created";
-    private static final int VERSION = 1;
 
     private final ObjectMapper objectMapper;
 
@@ -38,8 +36,8 @@ public class FollowEventFactory {
     public EventEnvelope createFollowCreatedEnvelope(Follow follow) {
         return new EventEnvelope(
                 UUID.randomUUID(),
-                TYPE_FOLLOW_CREATED,
-                VERSION,
+                KafkaEventContract.FOLLOW_CREATED.type(),
+                KafkaEventContract.FOLLOW_CREATED.version(),
                 follow.getCreatedAt(),
                 follow.getId(),
                 objectMapper.valueToTree(Map.of(

@@ -231,6 +231,9 @@ jobs:
             --env KAKAO_OAUTH_CLIENT_ID=mopl-ci-kakao-client-id \
             --env KAKAO_OAUTH_CLIENT_SECRET=mopl-ci-kakao-client-secret \
             --env KAKAO_OAUTH_REDIRECT_URI=http://localhost:8080/login/oauth2/code/kakao \
+            --env NAVER_OAUTH_CLIENT_ID=mopl-ci-naver-client-id \
+            --env NAVER_OAUTH_CLIENT_SECRET=mopl-ci-naver-client-secret \
+            --env NAVER_OAUTH_REDIRECT_URI=http://localhost:8080/login/oauth2/code/naver \
             --env KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092 \
             --env KAFKA_TOPIC_VERIFY=true \
             mopl:ci
@@ -326,6 +329,232 @@ jobs:
           echo "Outbox record did not reach PUBLISHED."
           exit 1
 
+      # 두 번째 인스턴스를 같은 Redis 로 띄웁니다. 기존 통합 테스트는 두 번째 구독자를 테스트
+      # 안에서 직접 구성하므로 전체 애플리케이션의 설정·라우팅·인증 경계는 지나지 않습니다.
+      # host 네트워크를 공유하므로 포트만 다르게 둡니다.
+      - name: Start second application instance
+        run: |
+          docker run --detach \
+            --name mopl-ci-b \
+            --network host \
+            --env SERVER_PORT=8081 \
+            --env SPRING_PROFILES_ACTIVE=prod \
+            --env SPRING_DATASOURCE_URL=jdbc:postgresql://127.0.0.1:5432/mopl \
+            --env SPRING_DATASOURCE_USERNAME=mopl \
+            --env SPRING_DATASOURCE_PASSWORD=mopl \
+            --env SPRING_DATA_REDIS_HOST=127.0.0.1 \
+            --env SPRING_DATA_REDIS_PORT=6379 \
+            --env ELASTICSEARCH_URIS=http://127.0.0.1:9200 \
+            --env MAIL_HOST=127.0.0.1 \
+            --env MAIL_PORT=1025 \
+            --env MAIL_SMTP_AUTH=false \
+            --env MAIL_STARTTLS_ENABLE=false \
+            --env JWT_SECRET=bW9wbC1jaS1zbW9rZS1qd3Qtc2VjcmV0LWtleS0zMi1ieXRlcy1sb25nISE= \
+            --env CORS_ALLOWED_ORIGINS=http://localhost:5173 \
+            --env WS_ALLOWED_ORIGINS=http://localhost:5173 \
+            --env OAUTH2_SUCCESS_REDIRECT_URI=http://localhost:5173/oauth/callback \
+            --env OAUTH2_FAILURE_REDIRECT_URI=http://localhost:5173/sign-in \
+            --env KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092 \
+            --env KAFKA_TOPIC_VERIFY=true \
+            mopl:ci
+
+      - name: Wait for second instance
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for attempt in {1..90}; do
+            container_status="$(docker inspect --format '{{.State.Status}}' mopl-ci-b)"
+
+            if [[ "$container_status" == "exited" || "$container_status" == "dead" ]]; then
+              echo "Second instance stopped before becoming ready."
+              docker logs mopl-ci-b
+              exit 1
+            fi
+
+            if curl --fail --silent http://127.0.0.1:8081/actuator/health/liveness > /dev/null; then
+              echo "Second instance is live."
+              exit 0
+            fi
+
+            echo "Waiting for second instance ($attempt/90): $container_status"
+            sleep 2
+          done
+
+          echo "Second instance did not become ready in time."
+          docker logs mopl-ci-b
+          exit 1
+
+      # Pub/Sub 은 메시지를 보관하지 않습니다. 구독이 붙은 것을 먼저 확인하고 발행해야 초기
+      # 구독 경쟁으로 결과가 흔들리지 않습니다.
+      - name: Verify realtime relay across two instances
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          redis() {
+            docker run --rm --network host redis:7 redis-cli -h 127.0.0.1 "$@"
+          }
+
+          subscriber_count() {
+            redis PUBSUB NUMSUB mopl.realtime.messages | tail -1 | tr -d '\r'
+          }
+
+          wait_for_subscribers() {
+            local expected="$1"
+            for attempt in {1..60}; do
+              if [[ "$(subscriber_count)" == "$expected" ]]; then
+                return 0
+              fi
+              echo "Waiting for $expected relay subscribers ($attempt/60)"
+              sleep 2
+            done
+            echo "Relay subscriber count did not reach $expected."
+            return 1
+          }
+
+          # 지표 경로는 인증이 필요합니다. 공개 회원가입과 로그인 API 만 사용해 토큰을 얻습니다.
+          csrf_token() {
+            curl --fail --silent --cookie-jar /tmp/relay-cookies.txt \
+              --cookie /tmp/relay-cookies.txt \
+              http://127.0.0.1:8081/api/auth/csrf-token > /dev/null
+            awk '$6 == "XSRF-TOKEN" { print $7 }' /tmp/relay-cookies.txt | tail -1
+          }
+
+          email="relay-smoke-$(date +%s)@mopl.test"
+          password='RelaySmoke1!'
+
+          curl --fail --silent --show-error \
+            --cookie-jar /tmp/relay-cookies.txt --cookie /tmp/relay-cookies.txt \
+            --header "Content-Type: application/json" \
+            --header "X-XSRF-TOKEN: $(csrf_token)" \
+            --data "{\"name\":\"relay smoke\",\"email\":\"$email\",\"password\":\"$password\"}" \
+            http://127.0.0.1:8081/api/users > /dev/null
+
+          token="$(curl --fail --silent --show-error \
+            --cookie-jar /tmp/relay-cookies.txt --cookie /tmp/relay-cookies.txt \
+            --header "Content-Type: application/json" \
+            --header "X-XSRF-TOKEN: $(csrf_token)" \
+            --data "{\"email\":\"$email\",\"password\":\"$password\"}" \
+            http://127.0.0.1:8081/api/auth/sign-in | jq --raw-output '.accessToken')"
+
+          test -n "$token"
+          test "$token" != "null"
+
+          metric() {
+            local port="$1"
+            local pattern="$2"
+            curl --fail --silent --header "Authorization: Bearer $token" \
+              "http://127.0.0.1:$port/actuator/prometheus" \
+              | awk -v pattern="$pattern" '
+                  $0 !~ /^#/ && $0 ~ pattern { value = $NF }
+                  END { if (value != "") print value }
+                '
+          }
+
+          # 지표 값은 1 이 아니라 1.0 처럼 나옵니다. 문자열로 비교하면 어긋납니다.
+          assert_number() {
+            awk -v actual="$1" -v expected="$2" -v label="$3" 'BEGIN {
+              if (actual + 0 != expected + 0) {
+                print label " expected " expected " but was " actual
+                exit 1
+              }
+            }'
+          }
+
+          # 이 smoke 는 특정 도메인이 아니라 중계 자체를 봅니다. 그래서 어떤 handler 도
+          # 지원하지 않는 eventType 을 보내고, 인스턴스를 건너와 self·duplicate 필터를
+          # 통과했다는 사실을 no_handler 폐기 지표로 확인합니다. delivered 는 handler 까지
+          # 넘어간 건수라 이 메시지에는 오르지 않습니다.
+          no_handler="mopl_realtime_relay_discarded_messages_total.*no_handler"
+          duplicate="mopl_realtime_relay_discarded_messages_total.*duplicate"
+
+          # 두 인스턴스가 같은 채널을 구독합니다.
+          wait_for_subscribers 2
+
+          # 구독 상태가 각 인스턴스의 지표에도 드러나야 합니다.
+          assert_number "$(metric 8080 '^mopl_realtime_relay_subscribed')" 1 "instance a subscribed"
+          assert_number "$(metric 8081 '^mopl_realtime_relay_subscribed')" 1 "instance b subscribed"
+
+          no_handler_a_before="$(metric 8080 "$no_handler")"
+          no_handler_b_before="$(metric 8081 "$no_handler")"
+          duplicate_b_before="$(metric 8081 "$duplicate")"
+
+          message_id="$(uuidgen)"
+          message="{\"messageId\":\"$message_id\",\"originInstanceId\":\"relay-smoke\","
+          message="$message\"eventType\":\"notification.created\","
+          message="$message\"destination\":\"/topic/user/1\",\"payload\":{\"body\":\"relay smoke\"}}"
+
+          # 같은 messageId 를 두 번 보냅니다. 두 번 전달되면 사용자에게 두 번 갑니다.
+          redis PUBLISH mopl.realtime.messages "$message" > /dev/null
+          redis PUBLISH mopl.realtime.messages "$message" > /dev/null
+
+          for attempt in {1..30}; do
+            no_handler_a="$(metric 8080 "$no_handler")"
+            no_handler_b="$(metric 8081 "$no_handler")"
+            duplicate_b="$(metric 8081 "$duplicate")"
+
+            if [[ "$no_handler_a" != "$no_handler_a_before" \
+              && "$no_handler_b" != "$no_handler_b_before" \
+              && "$duplicate_b" != "$duplicate_b_before" ]]; then
+              break
+            fi
+
+            echo "Waiting for relay delivery ($attempt/30): a=$no_handler_a b=$no_handler_b"
+            sleep 2
+          done
+
+          echo "no handler a: $no_handler_a_before -> $no_handler_a"
+          echo "no handler b: $no_handler_b_before -> $no_handler_b"
+          echo "duplicate b: $duplicate_b_before -> $duplicate_b"
+
+          # 두 번 보냈지만 각 인스턴스에서 한 번만 처리 시도되어야 합니다.
+          assert_number "$no_handler_a" "$((${no_handler_a_before%%.*} + 1))" "instance a no-handler discards"
+          assert_number "$no_handler_b" "$((${no_handler_b_before%%.*} + 1))" "instance b no-handler discards"
+          assert_number "$duplicate_b" "$((${duplicate_b_before%%.*} + 1))" "instance b duplicate discards"
+
+          # 한 인스턴스가 내려가도 남은 인스턴스는 REST 와 자기 구독을 유지해야 합니다.
+          docker stop mopl-ci > /dev/null
+          wait_for_subscribers 1
+          curl --fail --silent http://127.0.0.1:8081/actuator/health/liveness > /dev/null
+
+          docker start mopl-ci > /dev/null
+          wait_for_subscribers 2
+
+          # 구독 연결을 끊습니다. 컨테이너를 재시작하는 것보다 이쪽이 확인하려는 상황에
+          # 가깝습니다. 구독이 다시 붙어야 전달이 이어집니다.
+          redis CLIENT KILL TYPE pubsub > /dev/null
+          wait_for_subscribers 2
+
+          no_handler_b_before="$(metric 8081 "$no_handler")"
+          message="${message/$message_id/$(uuidgen)}"
+          redis PUBLISH mopl.realtime.messages "$message" > /dev/null
+
+          for attempt in {1..30}; do
+            no_handler_b="$(metric 8081 "$no_handler")"
+
+            if [[ "$no_handler_b" != "$no_handler_b_before" ]]; then
+              echo "Relay delivery recovered after Redis restart."
+              exit 0
+            fi
+
+            echo "Waiting for relay recovery ($attempt/30): $no_handler_b"
+            sleep 2
+          done
+          echo "Relay delivery did not recover after Redis restart."
+          exit 1
+
+      - name: Print second instance logs on failure
+        if: failure()
+        run: docker logs mopl-ci-b || true
+
+      - name: Print Redis diagnostics on failure
+        if: failure()
+        run: |
+          docker run --rm --network host redis:7 redis-cli -h 127.0.0.1 \
+            PUBSUB NUMSUB mopl.realtime.messages || true
+          docker run --rm --network host redis:7 redis-cli -h 127.0.0.1 INFO clients || true
+
       - name: Print application logs on failure
         if: failure()
         run: docker logs mopl-ci || true
@@ -339,7 +568,7 @@ jobs:
 
       - name: Remove smoke container
         if: always()
-        run: docker rm --force mopl-ci mopl-ci-kafka || true
+        run: docker rm --force mopl-ci mopl-ci-b mopl-ci-kafka || true
 
       - name: Remove Elasticsearch container
         if: always()

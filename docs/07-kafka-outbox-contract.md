@@ -176,6 +176,11 @@ partition key는 `orderingScope`를 구현하기 위해 선택한다. 화면 정
 
 ## 8. 초기 이벤트 카탈로그
 
+타입·버전·토픽·파티션 키·순서 범위와 최소 payload 필드의 기계 검증 기준은
+[`KafkaEventContract`](../src/main/java/com/mopl/global/event/KafkaEventContract.java)다.
+이 절은 각 값의 업무상 근거를 설명하며, 구현과 CI는 Java 카탈로그와
+[`event-fixtures`](../src/test/resources/event-fixtures)를 기준으로 검증한다.
+
 ### 8.1 `follow.created`
 
 | 항목 | 확정 내용 |
