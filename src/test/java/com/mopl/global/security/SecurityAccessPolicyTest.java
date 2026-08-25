@@ -221,7 +221,11 @@ class SecurityAccessPolicyTest {
     @ParameterizedTest
     @ValueSource(strings = {
         "/oauth2/authorization/google",
-        "/login/oauth2/code/google"
+        "/login/oauth2/code/google",
+        "/oauth2/authorization/kakao",
+        "/login/oauth2/code/kakao",
+        "/oauth2/authorization/naver",
+        "/login/oauth2/code/naver"
     })
     @DisplayName("OAuth2 인증 진입점과 Callback 경로는 JWT 없이 접근할 수 있다")
     void oauth2Paths_withoutJwt_passSecurityFilter(
@@ -538,6 +542,119 @@ class SecurityAccessPolicyTest {
          * JWT 필터가 토큰을 검증한 뒤 Authentication을 생성했는지 확인
          */
         verify(jwtProvider).validate("valid-token");
+        verify(jwtProvider)
+            .getAuthentication("valid-token");
+    }
+
+    @Test
+    @DisplayName("OAuth 계정 연결 시작 API는 인증되지 않은 요청을 401로 거부한다")
+    void startOAuthAccountLink_withoutJwt_returnsUnauthorized()
+        throws Exception {
+
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/oauth-accounts/{provider}/link",
+                    USER_ID,
+                    "GOOGLE"
+                )
+                    .with(csrf())
+            )
+            .andExpect(
+                status().isUnauthorized()
+            )
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_401_1")
+            );
+
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
+    @Test
+    @DisplayName("OAuth 계정 연결 시작 API는 CSRF 토큰이 없으면 403을 반환한다")
+    void startOAuthAccountLink_withoutCsrf_returnsForbidden()
+        throws Exception {
+
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/oauth-accounts/{provider}/link",
+                    USER_ID,
+                    "GOOGLE"
+                )
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer valid-token"
+                    )
+            )
+            .andExpect(
+                status().isForbidden()
+            )
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_403_1")
+            );
+
+        /*
+         * CSRF 필터가 JWT 필터보다 먼저 요청을 차단해야 한다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
+    @Test
+    @DisplayName("OAuth 계정 연결 시작 API는 유효한 JWT와 CSRF 토큰으로 접근할 수 있다")
+    void startOAuthAccountLink_withJwtAndCsrf_passesSecurityFilter()
+        throws Exception {
+
+        var authentication =
+            UsernamePasswordAuthenticationToken
+                .authenticated(
+                    UUID.fromString(USER_ID),
+                    null,
+                    List.of(
+                        new SimpleGrantedAuthority(
+                            "ROLE_USER"
+                        )
+                    )
+                );
+
+        when(jwtProvider.validate("valid-token"))
+            .thenReturn(true);
+
+        when(
+            jwtProvider.getAuthentication(
+                "valid-token"
+            )
+        ).thenReturn(authentication);
+
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/oauth-accounts/{provider}/link",
+                    USER_ID,
+                    "GOOGLE"
+                )
+                    .with(csrf())
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer valid-token"
+                    )
+            )
+            .andExpect(
+                status().isNoContent()
+            );
+
+        verify(jwtProvider)
+            .validate("valid-token");
+
         verify(jwtProvider)
             .getAuthentication("valid-token");
     }

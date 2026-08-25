@@ -1675,6 +1675,205 @@ paths:
             "*/*":
               schema:
                 "$ref": "#/components/schemas/ErrorResponse"
+  "/api/users/{userId}/oauth-accounts":
+    get:
+      tags:
+        - "사용자 관리"
+      summary: "OAuth 연결 계정 목록 조회"
+      description: "현재 사용자 본인에게 연결된 OAuth 계정 목록을 조회합니다."
+      operationId: "getLinkedOAuthAccounts"
+      security:
+        - BearerAuth: [ ]
+      parameters:
+        - name: "userId"
+          in: "path"
+          description: "OAuth 연결 계정을 조회할 사용자 ID"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "200":
+          description: "OAuth 연결 계정 목록 조회 성공"
+          content:
+            "*/*":
+              schema:
+                type: "array"
+                items:
+                  "$ref": "#/components/schemas/OAuthAccountDto"
+        "400":
+          description: "잘못된 사용자 ID"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "다른 사용자의 OAuth 연결 정보를 조회할 권한 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "사용자를 찾을 수 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/users/{userId}/oauth-accounts/{provider}/link":
+    post:
+      tags:
+        - "사용자 관리"
+      summary: "OAuth 계정 연결 인증 시작"
+      description: >-
+        현재 사용자 본인에게 OAuth Provider 계정을 연결하기 위한 인증 절차를 시작합니다.
+        연결 의도는 HTTP Session에 저장되므로 클라이언트는 Cookie credentials를 포함해 이 API를 호출하고,
+        응답으로 받은 authorizationPath로 이동할 때도 동일한 세션 쿠키를 유지해야 합니다.
+        세션 쿠키가 유지되지 않으면 OAuth callback이 계정 연결이 아닌 일반 로그인 흐름으로 처리될 수 있습니다.
+        authorizationPath는 백엔드 Origin을 기준으로 이동해야 하는 상대 경로입니다.
+      operationId: "startOAuthAccountLink"
+      security:
+        - BearerAuth: [ ]
+          CsrfToken: [ ]
+      parameters:
+        - name: "userId"
+          in: "path"
+          description: "OAuth 계정을 연결할 사용자 ID"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+        - name: "provider"
+          in: "path"
+          description: "연결할 OAuth Provider"
+          required: true
+          schema:
+            type: "string"
+            enum:
+              - "GOOGLE"
+              - "KAKAO"
+              - "NAVER"
+      responses:
+        "200":
+          description: "OAuth 계정 연결 인증 시작 성공"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/OAuthLinkStartResponse"
+        "400":
+          description: "잘못된 사용자 ID 또는 OAuth Provider"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "다른 사용자에게 OAuth 계정을 연결할 권한 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "사용자를 찾을 수 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "409":
+          description: "해당 Provider 계정이 이미 연결됨"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+  "/api/users/{userId}/oauth-accounts/{provider}":
+    delete:
+      tags:
+        - "사용자 관리"
+      summary: "OAuth 계정 연결 해제"
+      description: "현재 사용자 본인에게 연결된 OAuth 계정을 해제합니다. 마지막 로그인 수단은 해제할 수 없습니다."
+      operationId: "unlinkOAuthAccount"
+      security:
+        - BearerAuth: [ ]
+          CsrfToken: [ ]
+      parameters:
+        - name: "userId"
+          in: "path"
+          description: "OAuth 연결을 해제할 사용자 ID"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+        - name: "provider"
+          in: "path"
+          description: "연결을 해제할 OAuth Provider"
+          required: true
+          schema:
+            type: "string"
+            enum:
+              - "GOOGLE"
+              - "KAKAO"
+              - "NAVER"
+      responses:
+        "204":
+          description: "OAuth 계정 연결 해제 성공"
+        "400":
+          description: "잘못된 사용자 ID 또는 OAuth Provider"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "다른 사용자의 OAuth 연결을 해제할 권한 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "사용자 또는 OAuth 연결 계정을 찾을 수 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "409":
+          description: "마지막 로그인 수단이어서 연결 해제할 수 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
   "/api/users/{userId}/role":
     patch:
       tags:
@@ -3305,6 +3504,34 @@ components:
         - "locked"
         - "name"
         - "role"
+    OAuthAccountDto:
+      type: "object"
+      description: "사용자에게 연결된 OAuth 계정의 공개 정보"
+      properties:
+        provider:
+          type: "string"
+          description: "OAuth 인증 제공자"
+          enum:
+            - "GOOGLE"
+            - "KAKAO"
+            - "NAVER"
+        connectedAt:
+          type: "string"
+          format: "date-time"
+          description: "OAuth 계정 연결 시각"
+      required:
+        - "provider"
+        - "connectedAt"
+    OAuthLinkStartResponse:
+      type: "object"
+      description: "OAuth 계정 연결을 시작할 서버 인증 경로"
+      properties:
+        authorizationPath:
+          type: "string"
+          description: "Spring Security OAuth2 Provider 인증 시작 경로"
+          example: "/oauth2/authorization/google"
+      required:
+        - "authorizationPath"
     ReviewCreateRequest:
       type: "object"
       properties:
@@ -3601,6 +3828,10 @@ components:
           type: "string"
           format: "date-time"
           description: "메시지 생성 시간"
+        messageSequence:
+          type: "integer"
+          format: "int64"
+          description: "대화 안에서 서버가 부여한 메시지 순번"
         sender:
           "$ref": "#/components/schemas/UserSummary"
           description: "발신자 정보"
@@ -3615,6 +3846,7 @@ components:
         - "conversationId"
         - "createdAt"
         - "id"
+        - "messageSequence"
         - "receiver"
         - "sender"
     ContentCreateRequest:

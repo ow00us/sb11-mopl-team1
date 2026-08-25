@@ -203,6 +203,9 @@ mopl:
     presence:
       ttl: ${DIRECT_MESSAGE_PRESENCE_TTL:30s}
       renew-interval: ${DIRECT_MESSAGE_PRESENCE_RENEW_INTERVAL:10s}
+    rate-limit:
+      max-messages: ${DIRECT_MESSAGE_RATE_LIMIT_MAX_MESSAGES:10}
+      window: ${DIRECT_MESSAGE_RATE_LIMIT_WINDOW:5s}
 
   kafka:
     topic:
@@ -283,6 +286,9 @@ app:
     user-info:
       connect-timeout: ${OAUTH2_USER_INFO_CONNECT_TIMEOUT:3s}
       read-timeout: ${OAUTH2_USER_INFO_READ_TIMEOUT:5s}
+    link:
+      # 로그인된 사용자가 OAuth Provider 인증을 완료할 수 있는 제한 시간
+      intent-expiration: ${OAUTH2_LINK_INTENT_EXPIRATION:5m}
     redirect:
       # OAuth 인증 성공 후 Access Token 복원을 처리할 프론트엔드 화면
       success-uri: ${OAUTH2_SUCCESS_REDIRECT_URI:http://localhost:5173/oauth/callback}

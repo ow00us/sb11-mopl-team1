@@ -1,9 +1,13 @@
 package com.mopl.user.repository;
 
 import com.mopl.user.entity.User;
+import jakarta.persistence.LockModeType;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
 public interface UserRepository extends JpaRepository<User, UUID>, UserRepositoryCustom {
@@ -25,4 +29,23 @@ public interface UserRepository extends JpaRepository<User, UUID>, UserRepositor
     @Transactional(readOnly = true)
     boolean existsByEmail(String email);
 
+    /**
+     * OAuth 연결 해제 정책을 검사할 사용자를 쓰기 잠금으로 조회
+     *
+     * <p>같은 사용자의 OAuth 연결을 동시에 해제하는 요청을 직렬화하여
+     * 두 요청이 모두 마지막 로그인 수단을 삭제하는 경쟁 조건을 막습니다.</p>
+     *
+     * @param userId 잠금과 함께 조회할 사용자 UUID
+     * @return 사용자, 존재하지 않으면 빈 Optional
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query(
+        "SELECT u "
+            + "FROM User u "
+            + "WHERE u.id = :userId"
+    )
+    Optional<User> findByIdForUpdate(
+        @Param("userId")
+        UUID userId
+    );
 }
