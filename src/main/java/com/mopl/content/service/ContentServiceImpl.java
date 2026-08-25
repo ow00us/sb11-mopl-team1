@@ -18,9 +18,7 @@ import com.mopl.global.util.CursorUtils;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.DateTimeException;
 import java.time.Instant;
-import java.time.ZoneOffset;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -173,13 +171,13 @@ public class ContentServiceImpl implements ContentService {
                                 typeEqual, keywordLike, tags, cursorRating, idAfterStr, limit);
             }
 
-            Instant cursorTime = (cursor != null) ? CursorUtils.decodeAsInstant(cursor) : null;
+            Long cursorEpochMicros = (cursor != null) ? CursorUtils.decodeAsLong(cursor) : null;
             return isAsc
                     ? contentSearchExecutor.findByCreatedAtAsc(
-                            typeEqual, keywordLike, tags, cursorTime, idAfterStr, limit)
+                            typeEqual, keywordLike, tags, cursorEpochMicros, idAfterStr, limit)
                     : contentSearchExecutor.findByCreatedAtDesc(
-                            typeEqual, keywordLike, tags, cursorTime, idAfterStr, limit);
-        } catch (IllegalArgumentException | DateTimeException e) {
+                            typeEqual, keywordLike, tags, cursorEpochMicros, idAfterStr, limit);
+        } catch (IllegalArgumentException e) {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
     }
@@ -196,8 +194,9 @@ public class ContentServiceImpl implements ContentService {
             BigDecimal averageRating = BigDecimal.valueOf(last.getAverageRating()).setScale(1, RoundingMode.HALF_UP);
             return CursorUtils.encodeBigDecimal(averageRating);
         }
-        // ContentDocument.createdAt은 UTC 벽시계 LocalDateTime으로 색인돼 있으므로,
-        // systemDefault()가 아니라 ZoneOffset.UTC로 재해석해야 원본 Instant와 어긋나지 않는다.
-        return CursorUtils.encodeInstant(last.getCreatedAt().toInstant(ZoneOffset.UTC));
+        // createdAt(밀리초)이 아니라 createdAtEpochMicros로 정렬·커서를 맞춘다 — Postgres
+        // TIMESTAMP(6)의 마이크로초 정밀도가 createdAt(밀리초 매핑)에서는 잘려서, 같은 밀리초에
+        // 여러 건이 생성돼도(배치 대량 삽입 등) 실제 생성 순서를 구분할 수 없기 때문이다.
+        return CursorUtils.encodeLong(last.getCreatedAtEpochMicros());
     }
 }

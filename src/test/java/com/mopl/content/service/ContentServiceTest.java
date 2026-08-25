@@ -538,6 +538,7 @@ class ContentServiceTest {
     }
 
     private ContentDocument searchDocument(UUID id, String title, long watcherCount, long reviewCount) {
+        Instant now = Instant.now();
         return ContentDocument.builder()
                 .id(id.toString())
                 .contentId(id.toString())
@@ -548,7 +549,8 @@ class ContentServiceTest {
                 .averageRating(0.0)
                 .watcherCount((int) watcherCount)
                 .reviewCount((int) reviewCount)
-                .createdAt(LocalDateTime.now(ZoneOffset.UTC))
+                .createdAt(LocalDateTime.ofInstant(now, ZoneOffset.UTC))
+                .createdAtEpochMicros(now.getEpochSecond() * 1_000_000L + now.getNano() / 1_000)
                 .build();
     }
 }

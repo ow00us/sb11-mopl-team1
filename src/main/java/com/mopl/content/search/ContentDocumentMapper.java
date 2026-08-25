@@ -1,6 +1,7 @@
 package com.mopl.content.search;
 
 import com.mopl.content.entity.Content;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -33,6 +34,7 @@ public class ContentDocumentMapper {
                 .reviewCount(content.getReviewCount().intValue())
                 .thumbnailUrl(content.getThumbnailUrl())
                 .createdAt(LocalDateTime.ofInstant(content.getCreatedAt(), ZoneOffset.UTC))
+                .createdAtEpochMicros(toEpochMicros(content.getCreatedAt()))
                 .watcherCount(0)
                 .build();
     }
@@ -55,6 +57,11 @@ public class ContentDocumentMapper {
         fields.put("thumbnailUrl", content.getThumbnailUrl());
         LocalDateTime createdAt = LocalDateTime.ofInstant(content.getCreatedAt(), ZoneOffset.UTC);
         fields.put("createdAt", CREATED_AT_FORMAT.format(createdAt));
+        fields.put("createdAtEpochMicros", toEpochMicros(content.getCreatedAt()));
         return fields;
+    }
+
+    private long toEpochMicros(Instant instant) {
+        return instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1_000;
     }
 }

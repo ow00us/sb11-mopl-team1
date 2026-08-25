@@ -6,7 +6,6 @@ import co.elastic.clients.elasticsearch._types.query_dsl.BoolQuery;
 import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 import com.mopl.content.entity.ContentType;
 import java.math.BigDecimal;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.data.elasticsearch.client.elc.NativeQuery;
@@ -17,7 +16,7 @@ import org.springframework.stereotype.Component;
  * 콘텐츠 목록 조회를 위한 Elasticsearch 쿼리를 만든다.
  * ContentRepository의 네이티브 쿼리 메서드들과 같은 필터·정렬·커서 계약을 ES 쿼리로 재현한다.
  *
- * <p>주의: 여기서 받는 typeEqual은 ContentRepository의 typeEqual(이미 ContentType enum name으로
+ * 주의: 여기서 받는 typeEqual은 ContentRepository의 typeEqual(이미 ContentType enum name으로
  * 변환된 값, 예: "MOVIE")과 이름은 같지만 의미가 다르다. 이 클래스는 내부에서
  * {@code ContentType.fromApiValue(typeEqual).name()}으로 직접 변환하므로, API 원본 camelCase
  * 값(예: "movie")을 그대로 넘겨야 한다. 이미 변환된 enum name을 넘기면 fromApiValue()가 못 찾아
@@ -30,7 +29,7 @@ public class ContentSearchQueryFactory {
     private static final String FIELD_DESCRIPTION = "description";
     private static final String FIELD_TYPE = "type";
     private static final String FIELD_TAGS = "tags";
-    private static final String FIELD_CREATED_AT = "createdAt";
+    private static final String FIELD_CREATED_AT_EPOCH_MICROS = "createdAtEpochMicros";
     private static final String FIELD_WATCHER_COUNT = "watcherCount";
     private static final String FIELD_REVIEW_COUNT = "reviewCount";
     private static final String FIELD_AVERAGE_RATING = "averageRating";
@@ -43,24 +42,24 @@ public class ContentSearchQueryFactory {
 
     public NativeQuery createByCreatedAtAsc(
             String typeEqual, String keywordLike, List<String> tagsIn,
-            Instant cursorTime, String idAfter, int limit) {
+            Long cursorEpochMicros, String idAfter, int limit) {
         List<SortOptions> sort = List.of(
-                fieldSort(FIELD_CREATED_AT, SortOrder.Asc),
+                fieldSort(FIELD_CREATED_AT_EPOCH_MICROS, SortOrder.Asc),
                 fieldSort(FIELD_CONTENT_ID, SortOrder.Asc));
-        List<Object> searchAfter = cursorTime != null
-                ? List.of(createdAtSortValue(cursorTime), idAfter)
+        List<Object> searchAfter = cursorEpochMicros != null
+                ? List.of(cursorEpochMicros, idAfter)
                 : null;
         return build(typeEqual, keywordLike, tagsIn, sort, searchAfter, limit);
     }
 
     public NativeQuery createByCreatedAtDesc(
             String typeEqual, String keywordLike, List<String> tagsIn,
-            Instant cursorTime, String idAfter, int limit) {
+            Long cursorEpochMicros, String idAfter, int limit) {
         List<SortOptions> sort = List.of(
-                fieldSort(FIELD_CREATED_AT, SortOrder.Desc),
+                fieldSort(FIELD_CREATED_AT_EPOCH_MICROS, SortOrder.Desc),
                 fieldSort(FIELD_CONTENT_ID, SortOrder.Asc));
-        List<Object> searchAfter = cursorTime != null
-                ? List.of(createdAtSortValue(cursorTime), idAfter)
+        List<Object> searchAfter = cursorEpochMicros != null
+                ? List.of(cursorEpochMicros, idAfter)
                 : null;
         return build(typeEqual, keywordLike, tagsIn, sort, searchAfter, limit);
     }
@@ -181,11 +180,5 @@ public class ContentSearchQueryFactory {
 
     private Query termQuery(String field, String value) {
         return Query.of(q -> q.term(t -> t.field(field).value(value)));
-    }
-
-    // ContentDocumentMapper가 createdAt을 ZoneOffset.UTC 기준으로 색인하므로
-    // (zone 없는 문자열은 ES가 UTC로 해석해 doc value를 만든다) 커서 값도 Instant 그대로 쓰면 된다.
-    private long createdAtSortValue(Instant instant) {
-        return instant.toEpochMilli();
     }
 }

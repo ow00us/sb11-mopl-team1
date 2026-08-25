@@ -46,6 +46,7 @@ class ContentDocumentMapperTest {
         assertThat(document.getReviewCount()).isEqualTo(content.getReviewCount().intValue());
         assertThat(document.getContentId()).isEqualTo(content.getId().toString());
         assertThat(document.getThumbnailUrl()).isEqualTo(content.getThumbnailUrl());
+        assertThat(document.getCreatedAtEpochMicros()).isEqualTo(expectedEpochMicros(content.getCreatedAt()));
     }
 
     // ── toUpdateFields ───────────────────────────────────────────────────────
@@ -75,6 +76,7 @@ class ContentDocumentMapperTest {
         assertThat(fields.get("reviewCount")).isEqualTo(content.getReviewCount().intValue());
         assertThat(fields.get("thumbnailUrl")).isEqualTo(content.getThumbnailUrl());
         assertThat(fields.get("contentId")).isEqualTo(content.getId().toString());
+        assertThat(fields.get("createdAtEpochMicros")).isEqualTo(expectedEpochMicros(content.getCreatedAt()));
     }
 
     @Test
@@ -100,6 +102,10 @@ class ContentDocumentMapperTest {
         String expectedText = java.time.format.DateTimeFormatter
                 .ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS").format(expected);
         assertThat(fields.get("createdAt")).isEqualTo(expectedText);
+    }
+
+    private long expectedEpochMicros(Instant instant) {
+        return instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1_000;
     }
 
     private Content content() {

@@ -10,7 +10,6 @@ import co.elastic.clients.elasticsearch._types.query_dsl.MultiMatchQuery;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import java.math.BigDecimal;
-import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -93,19 +92,23 @@ class ContentSearchQueryFactoryTest {
     // ── 정렬 ────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("createByCreatedAtAsc는 createdAt asc, contentId asc 순으로 정렬한다")
-    void createByCreatedAtAsc_sortsByCreatedAtAscThenContentId() {
+    @DisplayName("createByCreatedAtAsc는 createdAtEpochMicros asc, contentId asc 순으로 정렬한다")
+    void createByCreatedAtAsc_sortsByCreatedAtEpochMicrosAscThenContentId() {
         NativeQuery query = factory.createByCreatedAtAsc(null, null, List.of(), null, null, 10);
 
-        assertSort(query, new FieldOrder("createdAt", SortOrder.Asc), new FieldOrder("contentId", SortOrder.Asc));
+        assertSort(query,
+                new FieldOrder("createdAtEpochMicros", SortOrder.Asc),
+                new FieldOrder("contentId", SortOrder.Asc));
     }
 
     @Test
-    @DisplayName("createByCreatedAtDesc는 createdAt desc, contentId asc 순으로 정렬한다")
-    void createByCreatedAtDesc_sortsByCreatedAtDescThenContentId() {
+    @DisplayName("createByCreatedAtDesc는 createdAtEpochMicros desc, contentId asc 순으로 정렬한다")
+    void createByCreatedAtDesc_sortsByCreatedAtEpochMicrosDescThenContentId() {
         NativeQuery query = factory.createByCreatedAtDesc(null, null, List.of(), null, null, 10);
 
-        assertSort(query, new FieldOrder("createdAt", SortOrder.Desc), new FieldOrder("contentId", SortOrder.Asc));
+        assertSort(query,
+                new FieldOrder("createdAtEpochMicros", SortOrder.Desc),
+                new FieldOrder("contentId", SortOrder.Asc));
     }
 
     @Test
@@ -154,13 +157,13 @@ class ContentSearchQueryFactoryTest {
     }
 
     @Test
-    @DisplayName("createdAt 커서는 Instant.toEpochMilli() 값이 idAfter와 함께 그대로 searchAfter에 들어간다")
-    void createdAtCursor_usesEpochMilliDirectly() {
-        Instant cursorTime = Instant.parse("2026-08-10T04:50:16.026Z");
+    @DisplayName("createdAt 커서는 넘긴 epoch micros 값이 idAfter와 함께 그대로 searchAfter에 들어간다")
+    void createdAtCursor_usesEpochMicrosDirectly() {
+        Long cursorEpochMicros = 1786337416026123L;
 
-        NativeQuery query = factory.createByCreatedAtDesc(null, null, List.of(), cursorTime, "id-1", 10);
+        NativeQuery query = factory.createByCreatedAtDesc(null, null, List.of(), cursorEpochMicros, "id-1", 10);
 
-        assertThat(query.getSearchAfter()).containsExactly(cursorTime.toEpochMilli(), "id-1");
+        assertThat(query.getSearchAfter()).containsExactly(cursorEpochMicros, "id-1");
     }
 
     @Test

@@ -1,7 +1,6 @@
 package com.mopl.content.search;
 
 import java.math.BigDecimal;
-import java.time.Instant;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.elasticsearch.client.elc.NativeQuery;
@@ -34,14 +33,16 @@ public class ContentSearchExecutor {
 
     public List<ContentDocument> findByCreatedAtAsc(
             String typeEqual, String keywordLike, List<String> tags,
-            Instant cursorTime, String idAfter, int limit) {
-        return search(queryFactory.createByCreatedAtAsc(typeEqual, keywordLike, tags, cursorTime, idAfter, limit));
+            Long cursorEpochMicros, String idAfter, int limit) {
+        return search(queryFactory.createByCreatedAtAsc(
+                typeEqual, keywordLike, tags, cursorEpochMicros, idAfter, limit));
     }
 
     public List<ContentDocument> findByCreatedAtDesc(
             String typeEqual, String keywordLike, List<String> tags,
-            Instant cursorTime, String idAfter, int limit) {
-        return search(queryFactory.createByCreatedAtDesc(typeEqual, keywordLike, tags, cursorTime, idAfter, limit));
+            Long cursorEpochMicros, String idAfter, int limit) {
+        return search(queryFactory.createByCreatedAtDesc(
+                typeEqual, keywordLike, tags, cursorEpochMicros, idAfter, limit));
     }
 
     public List<ContentDocument> findByWatcherCountAsc(

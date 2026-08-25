@@ -6,7 +6,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
-import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -26,14 +25,14 @@ class ContentSearchExecutorTest {
     @Test
     @DisplayName("findByCreatedAtAsc는 queryFactory가 만든 쿼리로 검색해 ContentDocument 리스트를 순서대로 반환한다")
     void findByCreatedAtAsc_searchesAndExtractsDocumentsInOrder() {
-        Instant cursorTime = Instant.now();
-        when(queryFactory.createByCreatedAtAsc("movie", "키워드", List.of("action"), cursorTime, "id-1", 10))
+        Long cursorEpochMicros = 1786337416026123L;
+        when(queryFactory.createByCreatedAtAsc("movie", "키워드", List.of("action"), cursorEpochMicros, "id-1", 10))
                 .thenReturn(query);
         List<ContentDocument> docs = List.of(document("1"), document("2"));
         mockSearchResult(docs);
 
         List<ContentDocument> result = executor.findByCreatedAtAsc(
-                "movie", "키워드", List.of("action"), cursorTime, "id-1", 10);
+                "movie", "키워드", List.of("action"), cursorEpochMicros, "id-1", 10);
 
         assertThat(result).containsExactlyElementsOf(docs);
     }
@@ -41,14 +40,14 @@ class ContentSearchExecutorTest {
     @Test
     @DisplayName("findByCreatedAtDesc는 queryFactory가 만든 쿼리로 검색해 ContentDocument 리스트를 순서대로 반환한다")
     void findByCreatedAtDesc_searchesAndExtractsDocumentsInOrder() {
-        Instant cursorTime = Instant.now();
-        when(queryFactory.createByCreatedAtDesc("movie", "키워드", List.of("action"), cursorTime, "id-1", 10))
+        Long cursorEpochMicros = 1786337416026123L;
+        when(queryFactory.createByCreatedAtDesc("movie", "키워드", List.of("action"), cursorEpochMicros, "id-1", 10))
                 .thenReturn(query);
         List<ContentDocument> docs = List.of(document("1"), document("2"));
         mockSearchResult(docs);
 
         List<ContentDocument> result = executor.findByCreatedAtDesc(
-                "movie", "키워드", List.of("action"), cursorTime, "id-1", 10);
+                "movie", "키워드", List.of("action"), cursorEpochMicros, "id-1", 10);
 
         assertThat(result).containsExactlyElementsOf(docs);
     }
