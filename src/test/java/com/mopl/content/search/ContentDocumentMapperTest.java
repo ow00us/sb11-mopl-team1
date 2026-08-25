@@ -7,7 +7,7 @@ import com.mopl.content.entity.ContentType;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -42,7 +42,11 @@ class ContentDocumentMapperTest {
         assertThat(document.getTags()).containsExactlyInAnyOrderElementsOf(content.getTags());
         assertThat(document.getAverageRating()).isEqualTo(content.getAverageRating().doubleValue());
         assertThat(document.getCreatedAt())
-                .isEqualTo(LocalDateTime.ofInstant(content.getCreatedAt(), ZoneId.systemDefault()));
+                .isEqualTo(LocalDateTime.ofInstant(content.getCreatedAt(), ZoneOffset.UTC));
+        assertThat(document.getReviewCount()).isEqualTo(content.getReviewCount().intValue());
+        assertThat(document.getContentId()).isEqualTo(content.getId().toString());
+        assertThat(document.getThumbnailUrl()).isEqualTo(content.getThumbnailUrl());
+        assertThat(document.getCreatedAtEpochMicros()).isEqualTo(expectedEpochMicros(content.getCreatedAt()));
     }
 
     // ── toUpdateFields ───────────────────────────────────────────────────────
@@ -56,7 +60,7 @@ class ContentDocumentMapperTest {
     }
 
     @Test
-    @DisplayName("toUpdateFields()는 watcherCount를 제외한 나머지 필드를 정확히 담는다")
+    @DisplayName("toUpdateFields()는 watcherCount를 제외한 나머지 필드를 정확히 담는다(contentId 포함)")
     void toUpdateFields_mapsRemainingFieldsFromContent() {
         Content content = content();
 
@@ -69,6 +73,22 @@ class ContentDocumentMapperTest {
         java.util.List<String> tags = (java.util.List<String>) fields.get("tags");
         assertThat(tags).containsExactlyInAnyOrderElementsOf(content.getTags());
         assertThat(fields.get("averageRating")).isEqualTo(content.getAverageRating().doubleValue());
+        assertThat(fields.get("reviewCount")).isEqualTo(content.getReviewCount().intValue());
+        assertThat(fields.get("thumbnailUrl")).isEqualTo(content.getThumbnailUrl());
+        assertThat(fields.get("contentId")).isEqualTo(content.getId().toString());
+        assertThat(fields.get("createdAtEpochMicros")).isEqualTo(expectedEpochMicros(content.getCreatedAt()));
+    }
+
+    @Test
+    @DisplayName("toUpdateFields()는 thumbnailUrl이 null이어도 예외 없이 null 값을 그대로 담는다")
+    void toUpdateFields_nullThumbnailUrl_mapsNullWithoutException() {
+        Content content = content();
+        ReflectionTestUtils.setField(content, "thumbnailUrl", null);
+
+        Map<String, Object> fields = mapper.toUpdateFields(content);
+
+        assertThat(fields).containsKey("thumbnailUrl");
+        assertThat(fields.get("thumbnailUrl")).isNull();
     }
 
     @Test
@@ -78,10 +98,14 @@ class ContentDocumentMapperTest {
 
         Map<String, Object> fields = mapper.toUpdateFields(content);
 
-        LocalDateTime expected = LocalDateTime.ofInstant(content.getCreatedAt(), ZoneId.systemDefault());
+        LocalDateTime expected = LocalDateTime.ofInstant(content.getCreatedAt(), ZoneOffset.UTC);
         String expectedText = java.time.format.DateTimeFormatter
                 .ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS").format(expected);
         assertThat(fields.get("createdAt")).isEqualTo(expectedText);
+    }
+
+    private long expectedEpochMicros(Instant instant) {
+        return instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1_000;
     }
 
     private Content content() {
@@ -89,12 +113,14 @@ class ContentDocumentMapperTest {
                 .type(ContentType.MOVIE)
                 .title("제목")
                 .description("설명")
+                .thumbnailUrl("https://example.com/thumb.jpg")
                 .build();
         content.addTag("action");
         content.addTag("sf");
         ReflectionTestUtils.setField(content, "id", UUID.randomUUID());
         ReflectionTestUtils.setField(content, "createdAt", Instant.now());
         ReflectionTestUtils.setField(content, "averageRating", new BigDecimal("4.5"));
+        ReflectionTestUtils.setField(content, "reviewCount", 3L);
         return content;
     }
 }

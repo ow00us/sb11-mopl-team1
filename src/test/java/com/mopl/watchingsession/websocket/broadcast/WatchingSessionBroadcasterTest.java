@@ -14,7 +14,7 @@ import com.mopl.global.common.UserSummary;
 import com.mopl.watchingsession.dto.WatchingSessionChange;
 import com.mopl.watchingsession.dto.WatchingSessionDto;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceReader;
-import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
+import com.mopl.watchingsession.websocket.relay.publisher.WatchingSessionRelayPublisher;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -39,6 +39,8 @@ public class WatchingSessionBroadcasterTest {
     @Mock
     private WatchingSessionPresenceReader presenceReader;
 
+    @Mock
+    private WatchingSessionRelayPublisher watchingSessionRelayPublisher;
 
     @InjectMocks
     private WatchingSessionBroadcaster broadcaster;

@@ -1,6 +1,6 @@
 # MOPL 애플리케이션 이미지 실행
 
-이 문서는 Spring Boot 애플리케이션 이미지를 빌드하고 `prod` 프로파일로 실행하는 데 필요한 계약을 정리합니다. 이미지 게시와 실제 배포 자동화는 별도 작업에서 다룹니다.
+이 문서는 Spring Boot 애플리케이션 이미지를 빌드하고 `prod` 프로파일로 실행하는 데 필요한 계약을 정리합니다. 실제 배포 자동화는 별도 작업에서 다룹니다.
 
 외부 HTTPS 진입점, 동일 origin 라우팅, 백엔드 2인스턴스, 내부 네트워크, 영속성, Secret과 복구 책임의 확정 기준은 [ADR-009: MOPL 1차 배포 토폴로지와 운영 경계](docs/19-deployment-topology-adr.md)를 따릅니다.
 
@@ -51,6 +51,85 @@ mopl.playlist.events        mopl.playlist.events.DLT
 mopl.premiere.events        mopl.premiere.events.DLT
 mopl.direct-message.events  mopl.direct-message.events.DLT
 ```
+
+### 프로필·콘텐츠 이미지 저장
+
+사용자가 올린 이미지는 S3에 저장합니다. 애플리케이션 컨테이너의 로컬 파일에 쓰지 않습니다. 인스턴스가 둘이면 A가 저장한 파일을 B가 읽지 못하고, 컨테이너를 다시 만들면 사라집니다.
+
+| 환경 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `IMAGE_STORAGE_ENABLED` | `false` | S3 사용 여부. 운영은 `true` |
+| `IMAGE_STORAGE_BUCKET` | 없음 | 버킷 이름. `true`일 때 필수 |
+| `IMAGE_STORAGE_REGION` | `ap-northeast-2` | 버킷 리전 |
+| `IMAGE_STORAGE_PUBLIC_BASE_URL` | 없음 | 조회 URL의 앞부분. `true`일 때 필수 |
+| `IMAGE_STORAGE_PROFILE_PREFIX` | `profile-images` | 프로필 이미지 객체 키 구분자 |
+| `IMAGE_STORAGE_THUMBNAIL_PREFIX` | `thumbnails` | 콘텐츠 썸네일 객체 키 구분자 |
+| `IMAGE_STORAGE_MAX_FILE_SIZE` | `5242880` | 허용 최대 크기(바이트) |
+
+`IMAGE_STORAGE_ENABLED=false`로 두면 파일을 저장하지 않고 열리지 않는 주소만 돌려주는 구현이 붙습니다. AWS 자격 증명 없이 로컬 개발과 테스트를 돌리기 위한 것입니다. **운영에서 이 값을 켜지 않으면 업로드한 이미지가 조회되지 않습니다.**
+
+#### 자격 증명
+
+액세스 키를 환경 변수나 코드에 두지 않습니다. 기본 자격 증명 체인이 EC2 인스턴스 역할을 먼저 찾으므로, 서버에 장기 자격 증명이 남지 않습니다.
+
+인스턴스 역할에 필요한 권한은 업로드 하나뿐입니다.
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["s3:PutObject"],
+  "Resource": "arn:aws:s3:::<버킷>/*"
+}
+```
+
+조회는 애플리케이션을 거치지 않습니다. 버킷 정책이나 앞단 CDN이 공개 읽기를 담당하므로 `s3:GetObject`는 인스턴스 역할에 주지 않습니다.
+
+#### 검증과 객체 키
+
+- 허용 형식은 `image/jpeg`, `image/png`, `image/webp`, `image/gif`입니다. 형식과 크기를 확인한 뒤에만 올립니다.
+- 객체 키에 원본 파일명을 쓰지 않습니다. 두 사용자가 같은 이름을 올리면 뒤가 앞을 덮고, 이름에 경로 기호가 섞이면 의도한 구분자 밖으로 나갑니다.
+- 확장자는 파일명이 아니라 Content-Type에서 정합니다. 파일명의 확장자는 내용과 무관하게 붙일 수 있습니다.
+- 업로드가 실패하면 예외로 끊습니다. 조용히 넘기면 이미지 없는 레코드가 저장되고 사용자에게는 성공으로 보입니다.
+
+#### 이전 객체 정리
+
+**교체하거나 지운 이미지의 이전 객체를 지우지 않습니다.** 프로필 이미지를 바꾸면 이전 객체가 버킷에 남습니다.
+
+1차 배포 범위에서 제외한 이유는 지우는 시점을 정하려면 그 URL을 아무도 참조하지 않는다는 보장이 필요한데, 지금은 사용자와 콘텐츠 레코드가 URL 문자열만 들고 있어 역참조가 없기 때문입니다. 트랜잭션이 롤백되면 이미 지운 객체를 되돌릴 수도 없습니다.
+
+당장은 버킷 수명 주기 규칙으로 오래된 객체를 정리하고, 참조를 추적하는 정리 경로는 #351에서 다룹니다.
+### OAuth2 로그인과 세션 고정
+
+**로드밸런서 세션 고정을 쓰지 않습니다.** 백엔드 인스턴스가 몇 개든, 어느 인스턴스로 요청이 가든 소셜 로그인이 동작해야 합니다.
+
+OAuth2 로그인은 두 번의 요청으로 나뉩니다. 인가를 시작하는 `/oauth2/authorization/{provider}`와 Provider가 돌려보내는 `/login/oauth2/code/{provider}`입니다. 그 사이에 사용자는 Provider 화면에 다녀오므로 두 요청이 같은 인스턴스로 간다는 보장이 없습니다.
+
+Spring Security 기본 구현은 그 사이의 상태를 HTTP 세션에 둡니다. 세션은 인스턴스 로컬이라 인가를 시작한 인스턴스와 callback을 받은 인스턴스가 다르면 저장한 요청을 찾지 못하고 로그인이 실패합니다. 백엔드가 둘이면 절반 확률로 그렇게 됩니다.
+
+그래서 인가 요청을 Redis에 두고 모든 인스턴스가 함께 봅니다.
+
+| 환경 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `OAUTH2_AUTHORIZATION_REQUEST_TTL` | `5m` | 인가 요청을 Redis에 두는 기간 |
+
+운영에서 알아둘 점이 있습니다.
+
+- Redis가 없으면 소셜 로그인이 동작하지 않습니다. 이메일·비밀번호 로그인은 영향을 받지 않습니다.
+- 키는 `auth:oauth2:authorization-request:{state}`입니다. `state`는 Spring Security가 만들어 Provider로 보내고 callback에 그대로 돌아오는 값입니다.
+- 저장하는 값에 client secret이나 access token은 들어가지 않습니다. 인가 요청을 다시 만들기 위한 값과 PKCE code verifier만 들어갑니다. code verifier는 서버에만 있어야 하는 값이라 클라이언트가 아니라 Redis에 둡니다.
+- callback에서 값을 꺼낼 때 `GETDEL`로 읽으면서 지웁니다. 같은 `state`로 두 번째 요청이 오면 찾지 못하고 실패합니다. 인가 코드 재사용 시도가 여기서 끊깁니다.
+- 사용자가 Provider 화면에서 로그인을 끝내지 않고 떠나면 그 요청은 소비되지 않습니다. `OAUTH2_AUTHORIZATION_REQUEST_TTL`이 지나면 사라집니다. 이 값을 늘리면 소비되지 않은 요청이 그만큼 오래 남습니다.
+- `state`가 없거나, 모르는 값이거나, 만료됐거나, 이미 소비된 요청은 모두 인증 실패입니다. Spring Security가 `authorization_request_not_found`로 처리하고 `OAUTH2_FAILURE_REDIRECT_URI`로 보냅니다.
+
+### 프록시 뒤에서의 host와 scheme
+
+`prod` 프로파일은 `server.forward-headers-strategy: framework`를 켭니다. 운영에서는 백엔드가 Caddy와 프론트엔드 Nginx 뒤에 있으므로, 이 설정이 없으면 백엔드가 자기 주소를 내부 `http` 주소로 인식합니다.
+
+**이 설정은 `prod`에서만 켭니다.** 프록시가 앞에 없는 환경에서 켜면 클라이언트가 직접 보낸 `X-Forwarded-*`를 그대로 믿게 됩니다.
+
+Gateway는 `X-Forwarded-Proto`를 내부 연결 scheme인 `http`로 덮어쓰지 않아야 합니다. 덮어쓰면 백엔드가 외부 요청을 평문으로 인식합니다.
+
+다만 OAuth Callback URI는 이 추론에 기대지 않습니다. `GOOGLE_OAUTH_REDIRECT_URI` 같은 값으로 외부 HTTPS 절대 URI를 직접 받습니다. Provider Console에 등록한 값과 이 환경 변수가 같아야 합니다.
 
 ### Outbox relay 조정 값
 
@@ -343,6 +422,50 @@ curl --fail http://localhost:8080/actuator/health
 ```
 
 정상 응답은 `{"status":"UP"}`입니다. Docker 컨테이너 상태가 `healthy`로 전환되는 기준은 `/actuator/health/liveness`이므로, 컨테이너가 `healthy`인데 위 응답이 `DOWN`일 수 있습니다. 그때는 어떤 component가 내려가 있는지 확인합니다.
+
+## 운영 이미지 게시
+
+배포 서버는 소스를 받아 다시 빌드하지 않습니다. CI가 검증한 commit과 대응하는 이미지를 그대로 내려받습니다. 서버에서 빌드하면 CI가 통과시킨 것과 실제로 도는 것이 같다는 보장이 없습니다.
+
+`main` push와 `main` 브랜치의 수동 재실행에서만 게시합니다. PR이나 다른 브랜치의 수동 실행에서는 운영 태그를 만들지 않습니다. 검증되지 않은 커밋의 태그가 레지스트리에 남거나 다른 브랜치가 `main` 태그를 덮어쓰면 배포 대상을 고를 때 무엇이 검증된 것인지 구분할 수 없습니다.
+
+게시는 `build`와 `Container smoke`가 모두 통과한 뒤에 실행됩니다.
+
+### 태그 두 가지
+
+| 태그 | 성질 | 용도 |
+| --- | --- | --- |
+| `<commit SHA>` | 한 번 붙으면 다른 이미지를 가리키지 않습니다 | 배포와 rollback의 기준 |
+| `main` | 매 배포마다 다른 이미지를 가리킵니다 | 사람이 최신을 확인하는 용도 |
+
+**배포와 rollback은 digest 또는 commit SHA 태그를 씁니다.** `main`만 쓰면 되돌릴 대상을 지목할 수 없습니다. 게시 결과의 태그와 digest는 워크플로 실행 요약에 남으므로 실행 로그를 뒤지지 않고 찾을 수 있습니다.
+
+### 자격 증명
+
+레지스트리 비밀번호를 저장소에 두지 않습니다. GitHub Actions가 OIDC로 IAM 역할을 맡아 ECR에 push하고, 배포 서버는 EC2 인스턴스 역할로 pull합니다. 양쪽 모두 장기 자격 증명이 없습니다.
+
+필요한 저장소 변수는 다음과 같습니다. Secret이 아니라 변수로 둡니다. 셋 다 식별자이고 노출되어도 그 자체로 권한이 생기지 않습니다.
+
+| 변수 | 설명 |
+| --- | --- |
+| `ECR_REPOSITORY` | ECR repository 이름 |
+| `AWS_REGION` | repository가 있는 리전 |
+| `AWS_DEPLOY_ROLE_ARN` | Actions가 OIDC로 맡을 IAM 역할 ARN |
+
+**`ECR_REPOSITORY`가 비어 있으면 게시 job을 건너뜁니다.** AWS 리소스와 OIDC 역할은 #348이 만들므로, 그 전까지 `main` push마다 실패로 남기지 않기 위한 조건입니다. #348이 끝나고 변수를 채우면 그때부터 게시가 시작됩니다.
+
+### 게시 후 확인
+
+게시한 것이 곧 배포할 것입니다. 그래서 로컬 빌드 결과가 아니라 레지스트리에서 digest로 다시 받아 확인합니다.
+
+- 기본 사용자가 비특권 사용자 `mopl`이다.
+- healthcheck 메타데이터가 있고 `/actuator/health/liveness`를 본다.
+
+어느 쪽이든 어긋나면 게시 job이 실패합니다.
+
+### 레이어 캐시
+
+빌드는 GitHub Actions 캐시를 씁니다. 캐시는 각 단계의 입력이 바뀌면 무효화되고, 소스를 복사하는 단계가 커밋마다 달라지므로 그 뒤 단계는 캐시를 쓰지 않습니다. 오래된 소스가 이미지에 남지 않습니다.
 
 ## CI 컨테이너 smoke 검증
 

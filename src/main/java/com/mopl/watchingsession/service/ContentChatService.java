@@ -9,6 +9,8 @@ import com.mopl.user.repository.UserRepository;
 import com.mopl.watchingsession.dto.ContentChatDto;
 import com.mopl.watchingsession.presence.ContentChatBuffer;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceReader;
+import com.mopl.watchingsession.websocket.relay.contract.ContentChatRealtimeContract;
+import com.mopl.watchingsession.websocket.relay.publisher.ContentChatRelayPublisher;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.lang.Nullable;
@@ -23,13 +25,12 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class ContentChatService {
 
-    private static final String DESTINATION_TEMPLATE = "/sub/contents/%s/chat";
-
     private final ContentRepository contentRepository;
     private final UserRepository userRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final WatchingSessionPresenceReader watchingSessionPresenceReader;
     private final ContentChatBuffer contentChatBuffer;
+    private final ContentChatRelayPublisher contentChatRelayPublisher;
 
     public void sendAndBroadcast(UUID senderId, UUID contentId, @Nullable UserSummary sender, String content) {
         // presence 우선 확인 -> 시청 중이 아니면 DB에 닿지 않고 즉시 차단
@@ -40,13 +41,17 @@ public class ContentChatService {
 
         // 브로드캐스트, 실패 시 예외 그대로 전파 (STOMP ERROR 프레임으로 발신자에게 전달되므로 발신자가 실패를 인지할 수 있음)
         ContentChatDto chatDto = new ContentChatDto(actualSender, content);
-        messagingTemplate.convertAndSend(DESTINATION_TEMPLATE.formatted(contentId), chatDto);
+        broadcast(contentId, chatDto);
 
         // 브로드캐스트가 끝난 뒤에만 기록
-        // 기록은 메시지가 처음 들어온 인스턴스에서 1회만 수행한다.
-        // 이후 relay 수신 측이 재브로드캐스트할 때 여기를 다시 타면 같은 메시지가 인스턴스 수만큼 쌓이므로,
-        // relay 경로는 이 메서드가 아니라 broadcaster를 직접 호출해야 한다.
         contentChatBuffer.append(contentId, chatDto);
+
+        // 중계 발행 실패는 boolean으로만 알려지고 예외를 던지지 않으므로 SEND 자체는 계속 성공
+        contentChatRelayPublisher.publish(contentId, chatDto);
+    }
+
+    public void broadcast(UUID contentId, ContentChatDto chatDto) {
+        messagingTemplate.convertAndSend(ContentChatRealtimeContract.getDestination(contentId), chatDto);
     }
 
     private UserSummary getSenderFallback(UUID senderId) {

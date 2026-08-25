@@ -5,6 +5,8 @@ on:
     branches: [ main, develop ]
   push:
     branches: [ main, develop ]
+  # 운영 이미지를 다시 게시해야 할 때 쓰는 수동 실행입니다.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -585,6 +587,107 @@ jobs:
         if: always()
         run: docker rm --force mopl-es-ci || true
 
+
+  publish-image:
+    name: Publish image
+    needs: [build, container-smoke]
+    # main push 와 main 브랜치의 수동 재게시에서만 게시합니다. PR 에서는 운영 태그를 만들지
+    # 않습니다. 검증되지 않은 커밋의 태그가 레지스트리에 남으면 배포 대상을 고를 때
+    # 무엇이 검증된 것인지 구분할 수 없습니다.
+    #
+    # ECR_REPOSITORY 가 비어 있으면 건너뜁니다. AWS 리소스와 OIDC 역할은 #348 이
+    # 만듭니다. 그 전까지 main push 마다 실패로 남기지 않기 위한 조건입니다.
+    if: >-
+      ${{ success()
+      && github.ref == 'refs/heads/main'
+      && (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+      && vars.ECR_REPOSITORY != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # OIDC 로 IAM 역할을 맡습니다. 장기 registry 자격 증명을 저장소에 두지 않습니다.
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 태그를 둘 만듭니다. commit SHA 태그는 한 번 붙으면 다른 이미지를 가리키지 않으므로
+      # 배포와 rollback 이 이 값을 기준으로 삼습니다. main 태그는 사람이 최신을 확인하는
+      # 용도이고 매 배포마다 다른 이미지를 가리킵니다.
+      - name: Build and push image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:main
+          # 레이어 캐시는 입력이 바뀌면 무효화됩니다. 소스를 COPY 하는 단계가 커밋마다
+          # 달라지므로 그 뒤 단계는 캐시를 쓰지 않습니다. 오래된 소스가 남지 않습니다.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+      # 게시한 것이 곧 배포할 것입니다. 로컬 빌드 결과가 아니라 레지스트리에서 digest 로
+      # 다시 받아 확인해야 그 사이에 다른 것이 올라가지 않았음이 드러납니다.
+      - name: Verify published image
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}@${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          docker pull "$IMAGE"
+
+          user="$(docker image inspect --format '{{.Config.User}}' "$IMAGE")"
+          if [[ "$user" != "mopl" ]]; then
+            echo "운영 이미지의 기본 사용자가 비특권 사용자가 아닙니다: '$user'"
+            exit 1
+          fi
+
+          healthcheck="$(docker image inspect --format '{{json .Config.Healthcheck}}' "$IMAGE")"
+          if [[ "$healthcheck" == "null" ]]; then
+            echo "운영 이미지에 healthcheck 메타데이터가 없습니다."
+            exit 1
+          fi
+
+          echo "$healthcheck"
+          grep --quiet "actuator/health/liveness" <<< "$healthcheck"
+
+      # 후속 배포와 rollback 이 이 값을 씁니다. 실행 로그를 뒤지지 않고 찾을 수 있어야
+      # 합니다.
+      - name: Record image reference
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          {
+            echo "### 게시한 운영 이미지"
+            echo
+            echo "| 항목 | 값 |"
+            echo "| --- | --- |"
+            echo "| commit | \`${{ github.sha }}\` |"
+            echo "| 불변 태그 | \`$REGISTRY/$REPOSITORY:${{ github.sha }}\` |"
+            echo "| 이동 태그 | \`$REGISTRY/$REPOSITORY:main\` |"
+            echo "| digest | \`$DIGEST\` |"
+            echo
+            echo "배포와 rollback 은 digest 또는 commit SHA 태그를 사용합니다. \`main\` 태그는 사람이 최신을 확인하는 용도입니다."
+          } >> "$GITHUB_STEP_SUMMARY"
   coverage-upload:
     name: Coverage upload
     needs: [build, container-smoke]
