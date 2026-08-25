@@ -26,6 +26,8 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.oauth2.client.web.AuthorizationRequestRepository;
+import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -35,7 +37,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  *  - JWT 인증 필터를 스프링 시큐리티 체인에 연결
  *  - CSRF를 쿠키 방식으로 설정(쿠키 XSRF-TOKEN / 헤더 X-XSRF-TOKEN — 요구사항 준수)
  *  - JWT SecurityContext는 HTTP 세션에 저장하지 않고 STATELESS로 관리
- *  - OAuth2 인가 요청 정보는 Provider 연동 과정에서 임시 HTTP 세션을 사용할 수 있음
+ *  - OAuth2 인가 요청은 HTTP 세션이 아니라 Redis 에 두어 인스턴스 사이에서 공유
  *
  * 공개 API는 회원가입과 인증 진입점으로 한정합니다.
  * 공개 상태 변경 요청도 CSRF 검증은 그대로 적용합니다.
@@ -147,7 +149,9 @@ public class SecurityConfig {
         ObjectProvider<GoogleOidcUserService>
             googleOidcUserServiceProvider,
         ObjectProvider<MoplOAuth2UserService>
-            moplOAuth2UserServiceProvider
+            moplOAuth2UserServiceProvider,
+        ObjectProvider<AuthorizationRequestRepository<OAuth2AuthorizationRequest>>
+            authorizationRequestRepositoryProvider
     ) throws Exception {
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource))
@@ -201,6 +205,25 @@ public class SecurityConfig {
                 oauth2
                     .successHandler(successHandler)
                     .failureHandler(failureHandler);
+
+                /*
+                 * 인가 요청 저장소를 공유 저장소로 교체
+                 *
+                 * 기본 구현은 인가 요청을 HTTP 세션에 두는데 세션은 인스턴스 로컬이다.
+                 * 백엔드를 두 개 띄우면 인가를 시작한 인스턴스와 Provider가 callback을
+                 * 보낸 인스턴스가 달라져 로그인이 절반 확률로 실패한다.
+                 */
+                AuthorizationRequestRepository<OAuth2AuthorizationRequest>
+                    authorizationRequestRepository =
+                        authorizationRequestRepositoryProvider.getIfAvailable();
+
+                if (authorizationRequestRepository != null) {
+                    oauth2.authorizationEndpoint(authorization ->
+                        authorization.authorizationRequestRepository(
+                            authorizationRequestRepository
+                        )
+                    );
+                }
 
                 /*
                  * Google은 openid scope를 사용하는 OIDC Provider이므로

@@ -3,6 +3,8 @@ package com.mopl.directmessage.service;
 import com.mopl.directmessage.dto.DirectMessageCreatedEvent;
 import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.directmessage.repository.DirectMessageRepository;
+import com.mopl.directmessage.repository.DirectMessageSequenceGenerator;
+import com.mopl.directmessage.ratelimit.DirectMessageRateLimiter;
 import com.mopl.directmessage.entity.ConversationParticipant;
 import com.mopl.directmessage.dto.DirectMessageDto;
 import com.mopl.directmessage.entity.DirectMessage;
@@ -39,6 +41,8 @@ public class DirectMessageService {
     private static final int MAX_LIMIT = 100;
 
     private final DirectMessageRepository directMessageRepository;
+    private final DirectMessageSequenceGenerator sequenceGenerator;
+    private final DirectMessageRateLimiter rateLimiter;
     private final ConversationParticipantRepository participantRepository;
     private final UserRepository userRepository;
     private final ApplicationEventPublisher eventPublisher;
@@ -357,13 +361,23 @@ public class DirectMessageService {
         Map<UUID, UUID> receiverIdBySenderId =
             createReceiverIdMap(participants);
 
+        if (!rateLimiter.tryAcquire(senderId)) {
+            throw new BusinessException(
+                ErrorCode.DIRECT_MESSAGE_RATE_LIMIT_EXCEEDED
+            );
+        }
+
         Map<UUID, UserSummary> userSummaries =
             getUserSummaries(participants);
+
+        long messageSequence =
+            sequenceGenerator.next(conversationId);
 
         DirectMessage directMessage =
             DirectMessage.create(
                 conversationId,
                 senderId,
+                messageSequence,
                 content
             );
 

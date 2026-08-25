@@ -38,6 +38,20 @@ class SecurityPolicyProbeController {
     }
 
     /**
+     * OAuth 계정 연결 시작 API의 JWT 및 CSRF 정책을 검증하기 위한
+     * 테스트 전용 경로
+     *
+     * <p>실제 UserController와 동일한 HTTP 메서드와 경로를 사용하며,
+     * Controller 내부 로직과 데이터베이스에는 의존하지 않습니다.</p>
+     */
+    @PostMapping(
+        "/api/users/{userId}/oauth-accounts/{provider}/link"
+    )
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void startOAuthAccountLink() {
+    }
+
+    /**
      * 관리자 사용자 목록 조회 API의 접근 정책을 검증하기 위한 테스트 전용 경로
      *
      * <p>실제 UserController의 GET /api/users와 동일한 경로를 사용한다.</p>

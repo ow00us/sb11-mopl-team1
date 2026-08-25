@@ -113,6 +113,7 @@ public class DirectMessageRepositoryTest {
         UUID messageId,
         UUID conversationId,
         UUID senderId,
+        long messageSequence,
         Instant createdAt
     ) {
         jdbcTemplate.update(
@@ -123,16 +124,18 @@ public class DirectMessageRepositoryTest {
                 updated_at,
                 conversation_id,
                 sender_id,
+                message_sequence,
                 content,
                 read_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, NULL)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
             """,
             messageId,
             Timestamp.from(createdAt),
             Timestamp.from(createdAt),
             conversationId,
             senderId,
+            messageSequence,
             "테스트 메시지"
         );
     }
@@ -184,6 +187,7 @@ public class DirectMessageRepositoryTest {
         DirectMessage message = DirectMessage.create(
             conversation.getId(),
             USER_ID_1,
+            1L,
             "안녕하세요"
         );
 
@@ -228,6 +232,7 @@ public class DirectMessageRepositoryTest {
                 DirectMessage.create(
                     conversation.getId(),
                     USER_ID_1,
+                    1L,
                     "동시 읽음 테스트"
                 )
             );
@@ -344,6 +349,7 @@ public class DirectMessageRepositoryTest {
         DirectMessage message = DirectMessage.create(
             conversation.getId(),
             USER_ID_2,
+            1L,
             "참여자가 아닌 사용자의 메시지"
         );
 
@@ -399,16 +405,32 @@ public class DirectMessageRepositoryTest {
             UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1");
 
         insertDirectMessage(
-            messageId1, conversation.getId(), USER_ID_1, firstTime
+            messageId1,
+            conversation.getId(),
+            USER_ID_1,
+            1L,
+            firstTime
         );
         insertDirectMessage(
-            messageId2, conversation.getId(), USER_ID_1, secondTime
+            messageId2,
+            conversation.getId(),
+            USER_ID_1,
+            2L,
+            secondTime
         );
         insertDirectMessage(
-            messageId3, conversation.getId(), USER_ID_1, secondTime
+            messageId3,
+            conversation.getId(),
+            USER_ID_1,
+            3L,
+            secondTime
         );
         insertDirectMessage(
-            otherMessageId, otherConversation.getId(), USER_ID_1, secondTime
+            otherMessageId,
+            otherConversation.getId(),
+            USER_ID_1,
+            1L,
+            secondTime
         );
 
         entityManager.clear();
@@ -538,6 +560,7 @@ public class DirectMessageRepositoryTest {
             oldMessageId,
             conversation1.getId(),
             USER_ID_1,
+            1L,
             firstTime
         );
 
@@ -545,6 +568,7 @@ public class DirectMessageRepositoryTest {
             latestMessageId,
             conversation1.getId(),
             USER_ID_2,
+            2L,
             secondTime
         );
 
@@ -552,6 +576,7 @@ public class DirectMessageRepositoryTest {
             secondConversationMessageId,
             conversation2.getId(),
             USER_ID_1,
+            1L,
             secondTime
         );
 

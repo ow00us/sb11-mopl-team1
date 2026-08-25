@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.mopl.user.config.OAuthRedirectProperties;
+import com.mopl.user.security.oauth.link.OAuthLinkIntentSessionStore;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.net.URI;
@@ -34,6 +35,9 @@ class OAuth2AuthenticationFailureHandlerTest {
     OAuthRedirectProperties redirectProperties;
 
     @Mock
+    OAuthLinkIntentSessionStore linkIntentSessionStore;
+
+    @Mock
     HttpServletRequest request;
 
     @Mock
@@ -45,7 +49,8 @@ class OAuth2AuthenticationFailureHandlerTest {
     void setUp() {
         failureHandler =
             new OAuth2AuthenticationFailureHandler(
-                redirectProperties
+                redirectProperties,
+                linkIntentSessionStore
             );
     }
 
@@ -80,6 +85,38 @@ class OAuth2AuthenticationFailureHandlerTest {
             "http://localhost:5173/sign-in"
                 + "?error=oauth_authentication_failed"
         );
+    }
+
+    @Test
+    @DisplayName("OAuth 인증 실패 시 세션에 남은 계정 연결 의도를 제거한다")
+    void authenticationFailure_clearsLinkIntent()
+        throws Exception {
+        // given
+        when(redirectProperties.getFailureUri())
+            .thenReturn(
+                URI.create(
+                    "http://localhost:5173/sign-in"
+                )
+            );
+
+        // when
+        failureHandler.onAuthenticationFailure(
+            request,
+            response,
+            new AuthenticationServiceException(
+                "OAuth 인증 실패"
+            )
+        );
+
+        // then
+        verify(linkIntentSessionStore)
+            .clear(request);
+
+        verify(response)
+            .sendRedirect(
+                "http://localhost:5173/sign-in"
+                    + "?error=oauth_authentication_failed"
+            );
     }
 
     @Test
