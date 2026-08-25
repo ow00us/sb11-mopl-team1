@@ -398,6 +398,28 @@ class OpenApiRuntimeContractTest {
                     "#/components/schemas/OAuthLinkStartResponse"
                 )
             )
+            /*
+             * 연결 시작부터 OAuth callback까지 동일한 HTTP 세션을
+             * 유지해야 한다는 프론트엔드 연동 계약을 문서화
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}/link']"
+                        + ".post.description"
+                ).value(
+                    org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString(
+                            "Cookie credentials"
+                        ),
+                        org.hamcrest.Matchers.containsString(
+                            "동일한 세션 쿠키"
+                        ),
+                        org.hamcrest.Matchers.containsString(
+                            "백엔드 Origin"
+                        )
+                    )
+                )
+            )
             .andExpect(
                 jsonPath(
                     "$.paths['/api/users/{userId}/oauth-accounts/{provider}/link']"

@@ -17,6 +17,7 @@ import com.mopl.user.security.oauth.link.OAuthLinkIntentSessionStore;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.Operation;
 import java.util.UUID;
 import java.util.List;
 import java.util.Locale;
@@ -182,6 +183,17 @@ public class UserController {
      */
     @PostMapping(
         "/{userId}/oauth-accounts/{provider}/link"
+    )
+    @Operation(
+        summary = "OAuth 계정 연결 인증 시작",
+        description = "연결 의도는 HTTP Session에 저장되므로 "
+            + "클라이언트는 Cookie credentials를 포함해 이 API를 호출하고, "
+            + "응답으로 받은 authorizationPath로 이동할 때도 "
+            + "동일한 세션 쿠키를 유지해야 합니다. "
+            + "세션 쿠키가 유지되지 않으면 OAuth callback이 "
+            + "계정 연결이 아닌 일반 로그인 흐름으로 처리될 수 있습니다. "
+            + "authorizationPath는 백엔드 Origin을 기준으로 이동해야 하는 "
+            + "상대 경로입니다."
     )
     @ApiResponses({
         @ApiResponse(
