@@ -556,6 +556,64 @@ curl --fail http://localhost:8080/actuator/health
 ### 레이어 캐시
 
 빌드는 GitHub Actions 캐시를 씁니다. 캐시는 각 단계의 입력이 바뀌면 무효화되고, 소스를 복사하는 단계가 커밋마다 달라지므로 그 뒤 단계는 캐시를 쓰지 않습니다. 오래된 소스가 이미지에 남지 않습니다.
+## 운영 Docker Compose
+
+운영 런타임은 `docker-compose.prod.yml`에 있습니다. 로컬 개발용 `docker-compose.yml`과 분리한 이유는 그쪽이 PostgreSQL, Redis, Kafka 포트를 호스트에 열기 때문입니다. 그대로 운영에 쓰면 인증이 없는 Redis와 Kafka가 공인 IP에 그대로 열립니다.
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file /etc/mopl/prod.env up -d
+```
+
+이미지는 여기서 빌드하지 않고 레지스트리에서 받습니다. 서버에서 빌드하면 CI가 통과시킨 것과 실제로 도는 것이 같다는 보장이 없습니다.
+
+### 서비스 구성
+
+| 서비스 | 이미지 | 호스트 포트 |
+| --- | --- | --- |
+| `caddy` | `caddy:2-alpine` | `80`, `443` |
+| `gateway` | `FRONTEND_IMAGE` | 없음 |
+| `backend-a`, `backend-b` | `BACKEND_IMAGE` | 없음 |
+| `postgres` | `postgres:16` | 없음 |
+| `redis` | `redis:7` | 없음 |
+| `kafka` | `apache/kafka:3.8.0` | 없음 |
+| `elasticsearch` | `ELASTICSEARCH_IMAGE` | 없음 |
+
+**호스트에 포트를 여는 것은 `caddy` 하나뿐입니다.** 나머지는 Compose 네트워크 안에서만 닿습니다. 관리 작업은 SSH로 접속한 뒤 `docker compose exec`로 합니다.
+
+네트워크는 역할별로 나눕니다. `edge`는 Caddy와 Gateway, `app`은 Gateway와 백엔드, `data`는 백엔드와 데이터 서비스입니다. Gateway가 데이터 서비스에 닿을 이유가 없고 Caddy가 백엔드에 직접 닿을 이유도 없습니다.
+
+### 백엔드 두 인스턴스
+
+A와 B는 같은 이미지와 **완전히 같은 환경 변수**를 받습니다. 다른 것은 이름뿐입니다. YAML 앵커로 한 곳에 정의하고 양쪽이 참조하므로 설정이 갈릴 수 없습니다. 갈리면 두 인스턴스가 서로 다르게 동작하고, 그 차이는 요청이 어느 쪽으로 갔는지에 따라 간헐적으로만 드러납니다.
+
+Gateway가 두 인스턴스에 분산하며 세션 고정을 쓰지 않습니다. 근거는 위 OAuth2 절에 있습니다.
+
+컨테이너 healthcheck는 `/actuator/health/liveness`를 봅니다. 전체 health를 재시작 조건으로 두면 프로세스를 다시 띄운다고 풀리지 않는 상태까지 재시작을 부릅니다.
+
+### 영속 데이터
+
+`MOPL_DATA_ROOT` 아래에 서비스별로 둡니다. 기본값은 `/srv/mopl/data`입니다.
+
+| 데이터 | 경로 |
+| --- | --- |
+| PostgreSQL | `${MOPL_DATA_ROOT}/postgres` |
+| Redis | `${MOPL_DATA_ROOT}/redis` |
+| Kafka | `${MOPL_DATA_ROOT}/kafka` |
+| Elasticsearch | `${MOPL_DATA_ROOT}/elasticsearch` |
+
+Redis는 AOF를 켭니다. refresh token 세션과 OAuth2 인가 요청이 여기 있어, 재시작으로 사라지면 로그인한 사용자가 모두 끊깁니다.
+
+Kafka에 볼륨을 두는 이유는 컨테이너를 다시 만들 때 토픽과 소비 offset이 사라지기 때문입니다. `prod`는 `auto-offset-reset`이 `latest`라 offset이 없어지면 그동안의 이벤트를 건너뜁니다.
+
+### 환경 파일
+
+`.env.example`을 복사해 실제 값을 채웁니다. 저장소에는 예시만 두고 실제 파일은 `.gitignore`가 막습니다.
+
+```bash
+sudo install -o deploy -g deploy -m 600 /dev/null /etc/mopl/prod.env
+```
+
+Compose가 `MOPL_DOMAIN` 하나에서 CORS origin, WebSocket origin, OAuth Callback URI를 모두 만듭니다. 도메인을 바꿀 때 한 곳만 고치면 되고, 값들이 서로 어긋날 수 없습니다. 각 Provider Console에 등록한 Callback URI가 이 도메인과 같아야 합니다.
 
 ## CI 컨테이너 smoke 검증
 

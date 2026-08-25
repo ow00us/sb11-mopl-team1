@@ -1,0 +1,20 @@
+# 외부 진입점입니다. TLS 종단과 인증서 발급·갱신만 맡고, 경로 라우팅은 뒤의 프론트엔드
+# Nginx 가 합니다. 인증서 자동화와 정적 자산 배포의 책임을 한 컨테이너에 섞지 않습니다.
+
+{$MOPL_DOMAIN} {
+	encode zstd gzip
+
+	# 원래 요청의 host 와 scheme 을 뒤로 넘깁니다. 이 값이 없으면 백엔드가 자기 주소를
+	# 내부 http 주소로 인식합니다.
+	reverse_proxy gateway:8080 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+
+		# WebSocket 과 SSE 는 오래 열려 있습니다. 기본 제한을 그대로 두면 조용한 연결이
+		# 주기적으로 끊기고, 클라이언트에는 원인 없는 재연결로 보입니다.
+		transport http {
+			read_timeout 1h
+			write_timeout 1h
+		}
+	}
+}
