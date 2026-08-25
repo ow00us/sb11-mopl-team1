@@ -5,30 +5,27 @@ import com.mopl.content.dto.ContentDto;
 import com.mopl.content.dto.ContentUpdateRequest;
 import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentSource;
-import com.mopl.content.entity.ContentType;
 import com.mopl.content.repository.ContentRepository;
+import com.mopl.content.search.ContentDocument;
 import com.mopl.content.search.ContentSearchDeleteEvent;
+import com.mopl.content.search.ContentSearchExecutor;
 import com.mopl.content.search.ContentSearchSyncEvent;
 import com.mopl.content.storage.ThumbnailStorage;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.util.CursorUtils;
-import com.mopl.watchingsession.repository.ContentWatcherCountView;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.math.BigDecimal;
-import java.time.DateTimeException;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -43,6 +40,7 @@ public class ContentServiceImpl implements ContentService {
     private static final String DIRECTION_ASC = "ASCENDING";
 
     private final ContentRepository contentRepository;
+    private final ContentSearchExecutor contentSearchExecutor;
     private final ThumbnailStorage thumbnailStorage;
     private final WatchingSessionSnapshotRepository watchingSessionSnapshotRepository;
     private final ApplicationEventPublisher eventPublisher;
@@ -72,12 +70,7 @@ public class ContentServiceImpl implements ContentService {
         return ContentDto.from(content, liveWatcherCount);
     }
 
-    // 정렬/커서 계산(fetchPage)과 표시용 실시간 시청자 수 집계(countGroupedByContentIds)가
-    // 서로 다른 쿼리라, 기본 READ COMMITTED(문장별 스냅샷)에서는 그 사이 다른 트랜잭션이 커밋한
-    // 시청 세션 변경을 서로 다르게 볼 수 있다. REPEATABLE_READ로 트랜잭션 시작 시점 스냅샷을
-    // 공유시켜 두 쿼리가 같은 시청자 수 기준으로 동작하도록 한다.
     @Override
-    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public CursorResponse<ContentDto> getList(
             String typeEqual, String keywordLike, List<String> tagsIn,
             String cursor, UUID idAfter, int limit, String sortBy, String sortDirection) {
@@ -89,37 +82,26 @@ public class ContentServiceImpl implements ContentService {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
 
-        String typeStr = typeEqual != null ? ContentType.fromApiValue(typeEqual).name() : null;
-        String escapedKeyword = keywordLike != null ? escapeLikePattern(keywordLike) : null;
         List<String> normalizedTags = tagsIn == null ? List.of()
                 : tagsIn.stream().map(Content::normalize).distinct().toList();
-        int tagCount = normalizedTags.size();
-        List<String> tagsForQuery = normalizedTags.isEmpty() ? List.of("") : normalizedTags;
 
-        Instant now = Instant.now();
         int fetchSize = limit + 1;
-        List<Content> rows = fetchPage(
-                typeStr, escapedKeyword, tagsForQuery, tagCount, cursor, idAfter, fetchSize, sortBy, sortDirection, now);
+        List<ContentDocument> rows = fetchPage(
+                typeEqual, keywordLike, normalizedTags, cursor, idAfter, fetchSize, sortBy, sortDirection);
+        long total = contentSearchExecutor.countByFilter(typeEqual, keywordLike, normalizedTags);
 
         boolean hasNext = rows.size() == fetchSize;
-        List<Content> page = hasNext ? rows.subList(0, limit) : rows;
-
-        // sortBy와 무관하게 목록에 노출되는 watcherCount는 항상 실시간 집계값이어야 하므로,
-        // createdAt/averageRating 정렬로 조회했을 때도 이 맵을 채워 ContentDto에 반영함.
-        Map<UUID, Long> liveWatcherCounts = buildLiveWatcherCounts(page, now);
+        List<ContentDocument> page = hasNext ? rows.subList(0, limit) : rows;
 
         String nextCursor = null;
         UUID nextIdAfter = null;
         if (hasNext && !page.isEmpty()) {
-            Content last = page.get(page.size() - 1);
-            nextCursor = buildNextCursor(last, sortBy, sortDirection, liveWatcherCounts);
-            nextIdAfter = last.getId();
+            ContentDocument last = page.get(page.size() - 1);
+            nextCursor = buildNextCursor(last, sortBy, sortDirection);
+            nextIdAfter = UUID.fromString(last.getId());
         }
 
-        List<ContentDto> data = page.stream()
-                .map(content -> ContentDto.from(content, liveWatcherCounts.getOrDefault(content.getId(), 0L)))
-                .toList();
-        long total = contentRepository.countByFilter(typeStr, escapedKeyword, tagsForQuery, tagCount);
+        List<ContentDto> data = page.stream().map(ContentDto::from).toList();
 
         return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, total, sortBy, sortDirection);
     }
@@ -151,16 +133,9 @@ public class ContentServiceImpl implements ContentService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
     }
 
-    private static String escapeLikePattern(String value) {
-        return value
-                .replace("\\", "\\\\")
-                .replace("%", "\\%")
-                .replace("_", "\\_");
-    }
-
-    private List<Content> fetchPage(
-            String typeStr, String keywordLike, List<String> tags, int tagCount,
-            String cursor, UUID idAfter, int limit, String sortBy, String sortDirection, Instant now) {
+    private List<ContentDocument> fetchPage(
+            String typeEqual, String keywordLike, List<String> tags,
+            String cursor, UUID idAfter, int limit, String sortBy, String sortDirection) {
 
         if ((cursor != null) != (idAfter != null)) {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
@@ -173,8 +148,8 @@ public class ContentServiceImpl implements ContentService {
             if (SORT_WATCHER_COUNT.equals(sortBy)) {
                 if (isAsc) {
                     Long cursorCount = (cursor != null) ? CursorUtils.decodeAsLong(cursor) : null;
-                    return contentRepository.findByWatcherCountAsc(
-                            typeStr, keywordLike, tags, tagCount, cursorCount, idAfterStr, now, limit);
+                    return contentSearchExecutor.findByWatcherCountAsc(
+                            typeEqual, keywordLike, tags, cursorCount, idAfterStr, limit);
                 }
                 Long cursorWatcherCount = null;
                 Long cursorReviewCount = null;
@@ -183,51 +158,45 @@ public class ContentServiceImpl implements ContentService {
                     cursorWatcherCount = pair.first();
                     cursorReviewCount = pair.second();
                 }
-                return contentRepository.findByWatcherCountDesc(
-                        typeStr, keywordLike, tags, tagCount,
-                        cursorWatcherCount, cursorReviewCount, idAfterStr, now, limit);
+                return contentSearchExecutor.findByWatcherCountDesc(
+                        typeEqual, keywordLike, tags, cursorWatcherCount, cursorReviewCount, idAfterStr, limit);
             }
 
             if (SORT_AVERAGE_RATING.equals(sortBy)) {
                 BigDecimal cursorRating = (cursor != null) ? CursorUtils.decodeAsBigDecimal(cursor) : null;
                 return isAsc
-                        ? contentRepository.findByAverageRatingAsc(
-                                typeStr, keywordLike, tags, tagCount, cursorRating, idAfterStr, limit)
-                        : contentRepository.findByAverageRatingDesc(
-                                typeStr, keywordLike, tags, tagCount, cursorRating, idAfterStr, limit);
+                        ? contentSearchExecutor.findByAverageRatingAsc(
+                                typeEqual, keywordLike, tags, cursorRating, idAfterStr, limit)
+                        : contentSearchExecutor.findByAverageRatingDesc(
+                                typeEqual, keywordLike, tags, cursorRating, idAfterStr, limit);
             }
 
-            Instant cursorTime = (cursor != null) ? CursorUtils.decodeAsInstant(cursor) : null;
+            Long cursorEpochMicros = (cursor != null) ? CursorUtils.decodeAsLong(cursor) : null;
             return isAsc
-                    ? contentRepository.findByCreatedAtAsc(
-                            typeStr, keywordLike, tags, tagCount, cursorTime, idAfterStr, limit)
-                    : contentRepository.findByCreatedAtDesc(
-                            typeStr, keywordLike, tags, tagCount, cursorTime, idAfterStr, limit);
-        } catch (IllegalArgumentException | DateTimeException e) {
+                    ? contentSearchExecutor.findByCreatedAtAsc(
+                            typeEqual, keywordLike, tags, cursorEpochMicros, idAfterStr, limit)
+                    : contentSearchExecutor.findByCreatedAtDesc(
+                            typeEqual, keywordLike, tags, cursorEpochMicros, idAfterStr, limit);
+        } catch (IllegalArgumentException e) {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
     }
 
-    private String buildNextCursor(Content last, String sortBy, String sortDirection, Map<UUID, Long> liveWatcherCounts) {
+    private String buildNextCursor(ContentDocument last, String sortBy, String sortDirection) {
         if (SORT_WATCHER_COUNT.equals(sortBy)) {
             boolean isAsc = DIRECTION_ASC.equalsIgnoreCase(sortDirection);
-            long watcherCount = liveWatcherCounts.getOrDefault(last.getId(), 0L);
+            long watcherCount = last.getWatcherCount();
             return isAsc
                     ? CursorUtils.encodeLong(watcherCount)
                     : CursorUtils.encodeLongPair(watcherCount, last.getReviewCount());
         }
         if (SORT_AVERAGE_RATING.equals(sortBy)) {
-            return CursorUtils.encodeBigDecimal(last.getAverageRating());
+            BigDecimal averageRating = BigDecimal.valueOf(last.getAverageRating()).setScale(1, RoundingMode.HALF_UP);
+            return CursorUtils.encodeBigDecimal(averageRating);
         }
-        return CursorUtils.encodeInstant(last.getCreatedAt());
-    }
-
-    private Map<UUID, Long> buildLiveWatcherCounts(List<Content> page, Instant now) {
-        if (page.isEmpty()) {
-            return Map.of();
-        }
-        List<UUID> ids = page.stream().map(Content::getId).toList();
-        return watchingSessionSnapshotRepository.countGroupedByContentIds(ids, now).stream()
-                .collect(Collectors.toMap(ContentWatcherCountView::getContentId, ContentWatcherCountView::getWatcherCount));
+        // createdAt(밀리초)이 아니라 createdAtEpochMicros로 정렬·커서를 맞춘다 — Postgres
+        // TIMESTAMP(6)의 마이크로초 정밀도가 createdAt(밀리초 매핑)에서는 잘려서, 같은 밀리초에
+        // 여러 건이 생성돼도(배치 대량 삽입 등) 실제 생성 순서를 구분할 수 없기 때문이다.
+        return CursorUtils.encodeLong(last.getCreatedAtEpochMicros());
     }
 }
