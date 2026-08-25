@@ -14,10 +14,18 @@ public class EventTopicResolverTest {
         String type = "direct-message.created";
 
         // when
-        String result = EventTopicResolver.resolve(type);
+        String result = EventTopicResolver.resolve(type, 1);
 
         // then
         assertThat(result)
             .isEqualTo(MoplTopics.DIRECT_MESSAGE_EVENTS);
+    }
+
+    @Test
+    @DisplayName("카탈로그에 없는 버전은 토픽으로 변환하지 않음")
+    void resolve_unsupportedVersion_fails() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> EventTopicResolver.resolve("direct-message.created", 2)
+        ).isInstanceOf(EventContractViolationException.class);
     }
 }

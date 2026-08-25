@@ -2,6 +2,7 @@ package com.mopl.playlist.event;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.event.EventEnvelope;
+import com.mopl.global.event.KafkaEventContract;
 import com.mopl.playlist.entity.PlaylistSubscription;
 import java.util.Map;
 import java.util.UUID;
@@ -17,9 +18,6 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 public class PlaylistSubscriptionEventFactory {
-
-    private static final String TYPE_PLAYLIST_SUBSCRIPTION_CREATED = "playlist.subscription.created";
-    private static final int VERSION = 1;
 
     private final ObjectMapper objectMapper;
 
@@ -40,8 +38,8 @@ public class PlaylistSubscriptionEventFactory {
         PlaylistSubscription subscription, UUID playlistOwnerId) {
         return new EventEnvelope(
                 UUID.randomUUID(),
-                TYPE_PLAYLIST_SUBSCRIPTION_CREATED,
-                VERSION,
+                KafkaEventContract.PLAYLIST_SUBSCRIPTION_CREATED.type(),
+                KafkaEventContract.PLAYLIST_SUBSCRIPTION_CREATED.version(),
                 subscription.getCreatedAt(),
                 subscription.getId(),
                 objectMapper.valueToTree(Map.of(
