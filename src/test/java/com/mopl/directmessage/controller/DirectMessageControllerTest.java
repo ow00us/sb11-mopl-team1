@@ -69,6 +69,7 @@ class DirectMessageControllerTest {
                 MESSAGE_ID,
                 CONVERSATION_ID,
                 CREATED_AT,
+                1L,
                 new UserSummary(
                     REQUESTER_ID,
                     "발신자",

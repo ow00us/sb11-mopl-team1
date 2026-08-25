@@ -10,6 +10,7 @@ public record DirectMessageDto(
     UUID id,
     UUID conversationId,
     Instant createdAt,
+    long messageSequence,
     UserSummary sender,
     UserSummary receiver,
     String content
@@ -23,6 +24,7 @@ public record DirectMessageDto(
             directMessage.getId(),
             directMessage.getConversationId(),
             directMessage.getCreatedAt(),
+            directMessage.getMessageSequence(),
             sender,
             receiver,
             directMessage.getContent()
