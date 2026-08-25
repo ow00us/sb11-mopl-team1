@@ -209,6 +209,7 @@ class DirectMessageWebSocketControllerTest {
             Instant.parse(
                 "2026-08-04T01:00:00Z"
             ),
+            1L,
             sender,
             receiver,
             "실시간 메시지"
