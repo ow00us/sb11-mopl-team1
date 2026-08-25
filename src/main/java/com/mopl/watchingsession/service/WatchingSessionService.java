@@ -18,6 +18,7 @@ import com.mopl.watchingsession.presence.ContentExistenceCache;
 import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter.DeletedSnapshot;
+import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter.RenewResult;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import java.time.Instant;
 import java.util.List;
@@ -376,12 +377,16 @@ public class WatchingSessionService {
     public void heartbeat(UUID watcherId, UUID contentId, String sessionId, String subscriptionId) {
 
         // 소유권 확인과 presence TTL 연장이 Redis 스크립트 하나로 처리됨 -> watcherLock을 거치지 않는다
-        boolean renewed = watchingSessionPresenceWriter.renewIfOwner(
+        RenewResult renewResult = watchingSessionPresenceWriter.renewIfOwner(
             watcherId, sessionId, subscriptionId, watchingSessionProperties.getPresenceTtl());
 
-        if (!renewed) {
-            log.debug("연장할 활성 세션이 없어 heartbeat 종료: watcherId={}, contentId={}",
-                watcherId, contentId);
+        if (renewResult == RenewResult.KEY_MISSING) {
+            recoverPresenceFromSnapshot(watcherId, contentId, sessionId, subscriptionId);
+            return;
+        }
+        if (renewResult != RenewResult.RENEWED) {
+            log.debug("연장할 활성 세션이 없어 heartbeat 종료: watcherId={}, contentId={}, result={}",
+                watcherId, contentId, renewResult);
             return;
         }
 
@@ -461,6 +466,49 @@ public class WatchingSessionService {
         } catch (RuntimeException retryFailure) {
             retryFailure.addSuppressed(firstFailure);
             throw retryFailure;
+        }
+    }
+
+    /**
+     * heartbeat가 "키 없음(TTL 만료)" 판정을 받았을 때, DB 스냅샷이 여전히 이 콘텐츠를 가리키고
+     * 있다면 그 스냅샷을 기준으로 presence를 다시 세운다.
+     * <p>
+     * start()와 동일한 watcherLock으로 직렬화한다. 락을 얻는 사이 다른 연결이 이미 새 소유권을
+     * 확보했을 수 있으므로, 쓰기 직전 presence 존재 여부를 한 번 더 확인해 그런 경우 덮어쓰지 않고
+     * 포기한다 - 이 확인이 없으면 낡은 heartbeat가 방금 확보된 소유권을 빼앗는다.
+     */
+    private void recoverPresenceFromSnapshot(UUID watcherId, UUID contentId, String sessionId,
+        String subscriptionId) {
+        WatcherLock watcherLock = acquireWatcherLock(watcherId);
+        try {
+            synchronized (watcherLock) {
+                if (!watchingSessionPresenceWriter.findExistingWatcherIds(List.of(watcherId)).isEmpty()) {
+                    log.debug("presence가 이미 다른 연결로 재수립돼 DB 기준 복구를 포기함: watcherId={}",
+                        watcherId);
+                    return;
+                }
+
+                WatchingSessionSnapshot snapshot = watchingSessionSnapshotRepository
+                    .findByWatcherId(watcherId)
+                    .filter(s -> contentId.equals(s.getContentId()))
+                    .filter(s -> !s.isExpired(Instant.now()))
+                    .orElse(null);
+
+                if (snapshot == null) {
+                    // DB에도 이 콘텐츠의 세션이 없음 - 이미 종료됐거나 다른 콘텐츠로 넘어간 것이라 복구 대상 아님
+                    return;
+                }
+
+                watchingSessionPresenceWriter.swap(watcherId, snapshot.getId(), contentId, sessionId,
+                    subscriptionId, snapshot.getCreatedAt(), normalizeToMicros(snapshot.getUpdatedAt()),
+                    watchingSessionProperties.getPresenceTtl());
+                log.debug("TTL 소실 후 DB 스냅샷 기준으로 presence 재수립됨: watcherId={}, contentId={}",
+                    watcherId, contentId);
+            }
+        } catch (RuntimeException e) {
+            log.error("DB 스냅샷 기준 presence 재수립 실패: watcherId={}, contentId={}", watcherId, contentId, e);
+        } finally {
+            releaseWatcherLock(watcherId);
         }
     }
 }
