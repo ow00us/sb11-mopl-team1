@@ -55,8 +55,10 @@ origin 목록은 쉼표로 구분합니다. origin은 scheme과 host까지이며
 | --- | --- |
 | `SPRING_DATASOURCE_PASSWORD` | PostgreSQL 비밀번호 |
 | `JWT_SECRET` | HS256용 32바이트 이상 키를 Base64로 인코딩한 값 |
-| `GOOGLE_OAUTH_CLIENT_ID` | Google Cloud Console에서 발급한 OAuth Client ID |
-| `GOOGLE_OAUTH_CLIENT_SECRET` | Google Cloud Console에서 발급한 Client Secret |
+| `OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_SECRET` | OAuth 사용자의 이메일 인증 코드를 HMAC-SHA256으로 보호하는 32자 이상의 비밀 값 |
+| `GOOGLE_OAUTH_CLIENT_ID` | Google Cloud Console에서 발급한 웹 애플리케이션 OAuth Client ID |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Google Cloud Console에서 발급한 OAuth Client Secret |
+| `GOOGLE_OAUTH_REDIRECT_URI` | Google Cloud Console에 승인된 운영용 Google Callback 절대 URI |
 | `KAKAO_OAUTH_CLIENT_ID` | Kakao Developers에서 발급한 REST API 키 |
 | `KAKAO_OAUTH_CLIENT_SECRET` | Kakao Developers에서 발급하고 활성화한 Client Secret |
 | `NAVER_OAUTH_CLIENT_ID` | Naver Developers에서 발급한 Client ID |
@@ -483,6 +485,7 @@ docker run --rm \
   -e WS_ALLOWED_ORIGINS=<frontend-origin> \
   -e OAUTH2_SUCCESS_REDIRECT_URI=<frontend-origin>/oauth/callback \
   -e OAUTH2_FAILURE_REDIRECT_URI=<frontend-origin>/sign-in \
+  -e OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_SECRET=<32-character-or-longer-secret> \
   -e GOOGLE_OAUTH_CLIENT_ID=<google-oauth-client-id> \
   -e GOOGLE_OAUTH_CLIENT_SECRET=<google-oauth-client-secret> \
   -e GOOGLE_OAUTH_REDIRECT_URI=https://<backend-domain>/login/oauth2/code/google \

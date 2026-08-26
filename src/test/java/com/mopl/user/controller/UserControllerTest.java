@@ -27,10 +27,13 @@ import com.mopl.user.dto.UserLockUpdateRequest;
 import com.mopl.user.dto.UserRoleUpdateRequest;
 import com.mopl.user.dto.ChangePasswordRequest;
 import com.mopl.user.dto.OAuthAccountDto;
+import com.mopl.user.dto.LocalCredentialEmailVerificationRequest;
+import com.mopl.user.dto.LocalCredentialRegistrationRequest;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.service.UserService;
 import com.mopl.user.service.OAuthAccountManagementService;
+import com.mopl.user.service.OAuthLocalCredentialService;
 import com.mopl.user.security.oauth.link.OAuthLinkIntentSessionStore;
 import java.time.Instant;
 import java.util.Map;
@@ -53,7 +56,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * 회원가입 HTTP API를 검증하는 Controller 테스트
- * <p>
+ *
  * UserService는 Mock으로 대체 이 테스트는 HTTP 요청, JSON 변환, Bean Validation, HTTP 상태 코드와 응답 형식만 검증
  */
 @WebMvcTest(UserController.class)
@@ -75,6 +78,9 @@ class UserControllerTest {
     @MockitoBean
     OAuthLinkIntentSessionStore oauthLinkIntentSessionStore;
 
+    @MockitoBean
+    OAuthLocalCredentialService oauthLocalCredentialService;
+
     /**
      * 테스트 종료 후 인증 정보 제거
      *
@@ -87,19 +93,6 @@ class UserControllerTest {
     void clearSecurityContext() {
         SecurityContextHolder.clearContext();
     }
-
-    /*      users/me
-    /**
-     * SecurityContextHolder는 현재 실행 스레드에 인증 정보를 보관
-     *
-     * 테스트가 끝난 뒤 인증 정보를 제거하지 않으면
-     * 다음 테스트가 이전 테스트의 사용자로 인증된 것처럼 동작할 수 있음.
-
-    @AfterEach
-    void clearSecurityContext() {
-        SecurityContextHolder.clearContext();
-    }
-     */
 
     @Test
     @DisplayName("회원가입 성공 시 201과 생성된 사용자 정보를 반환한다")
@@ -1191,6 +1184,160 @@ class UserControllerTest {
          */
         verifyNoInteractions(
             oauthAccountManagementService
+        );
+    }
+
+    @Test
+    @DisplayName("로컬 로그인 이메일 인증 코드를 요청하면 204를 반환한다")
+    void sendLocalCredentialEmailVerification_success()
+        throws Exception {
+
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/local-credentials/email-verifications",
+                    userId
+                )
+                    .contentType("application/json")
+                    .content(
+                        """
+                        {
+                          "email": "user@example.com"
+                        }
+                        """
+                    )
+            )
+            .andExpect(status().isNoContent())
+            .andExpect(content().string(""));
+
+        verify(oauthLocalCredentialService)
+            .sendVerificationCode(
+                eq(userId),
+                eq(userId),
+                eq(
+                    new LocalCredentialEmailVerificationRequest(
+                        "user@example.com"
+                    )
+                )
+            );
+    }
+
+    @Test
+    @DisplayName("인증 코드 요청 이메일 형식이 잘못되면 400을 반환한다")
+    void sendLocalCredentialEmailVerification_fail_whenEmailInvalid()
+        throws Exception {
+
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/local-credentials/email-verifications",
+                    userId
+                )
+                    .contentType("application/json")
+                    .content(
+                        """
+                        {
+                          "email": "invalid-email"
+                        }
+                        """
+                    )
+            )
+            .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(
+            oauthLocalCredentialService
+        );
+    }
+
+    @Test
+    @DisplayName("인증된 이메일과 비밀번호를 등록하면 204를 반환한다")
+    void registerLocalCredential_success()
+        throws Exception {
+
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/local-credentials",
+                    userId
+                )
+                    .contentType("application/json")
+                    .content(
+                        """
+                        {
+                          "email": "user@example.com",
+                          "verificationCode": "123456",
+                          "password": "Password1!"
+                        }
+                        """
+                    )
+            )
+            .andExpect(status().isNoContent())
+            .andExpect(content().string(""));
+
+        verify(oauthLocalCredentialService)
+            .registerLocalCredential(
+                eq(userId),
+                eq(userId),
+                eq(
+                    new LocalCredentialRegistrationRequest(
+                        "user@example.com",
+                        "123456",
+                        "Password1!"
+                    )
+                )
+            );
+    }
+
+    @Test
+    @DisplayName("로컬 로그인 등록 인증 코드 형식이 잘못되면 400을 반환한다")
+    void registerLocalCredential_fail_whenVerificationCodeInvalid()
+        throws Exception {
+
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/local-credentials",
+                    userId
+                )
+                    .contentType("application/json")
+                    .content(
+                        """
+                        {
+                          "email": "user@example.com",
+                          "verificationCode": "12345",
+                          "password": "Password1!"
+                        }
+                        """
+                    )
+            )
+            .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(
+            oauthLocalCredentialService
         );
     }
 

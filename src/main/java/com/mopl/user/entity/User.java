@@ -119,6 +119,52 @@ public class User extends BaseEntity {
     }
 
     /**
+     * OAuth 전용 사용자에게 로컬 이메일·비밀번호 로그인 수단을 등록
+     *
+     * <p>OAuth 전용 사용자의 내부 식별 이메일을 사용자가 인증한
+     * 실제 이메일로 교체하고, PasswordEncoder로 생성된 비밀번호
+     * 해시를 함께 저장합니다.</p>
+     *
+     * <p>이미 passwordHash가 존재하는 사용자에게 다시 호출하면
+     * 이메일 변경 기능으로 오용될 수 있으므로 거부합니다.</p>
+     *
+     * @param normalizedEmail 소유권 인증을 마친 정규화된 실제 이메일
+     * @param encodedPassword PasswordEncoder로 생성한 비밀번호 해시
+     */
+    public void registerLocalCredential(
+        String normalizedEmail,
+        String encodedPassword
+    ) {
+        if (
+            normalizedEmail == null
+                || normalizedEmail.isBlank()
+        ) {
+            throw new IllegalArgumentException(
+                "로컬 로그인 이메일은 비어 있을 수 없습니다."
+            );
+        }
+
+        if (
+            encodedPassword == null
+                || encodedPassword.isBlank()
+        ) {
+            throw new IllegalArgumentException(
+                "로컬 로그인 비밀번호 해시는 비어 있을 수 없습니다."
+            );
+        }
+
+        if (passwordHash != null) {
+            throw new IllegalStateException(
+                "이미 로컬 로그인 수단이 등록되어 있습니다."
+            );
+        }
+
+        this.email = normalizedEmail;
+        this.passwordHash = encodedPassword;
+    }
+
+
+    /**
      * 사용자의 비밀번호 해시를 새로운 값으로 변경
      *
      * User 엔티티에는 비밀번호 원문을 저장하지 않는다.

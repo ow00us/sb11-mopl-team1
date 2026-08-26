@@ -310,6 +310,21 @@ app:
     link:
       # 로그인된 사용자가 OAuth Provider 인증을 완료할 수 있는 제한 시간
       intent-expiration: ${OAUTH2_LINK_INTENT_EXPIRATION:5m}
+    local-credential:
+      # OAuth 전용 사용자의 이메일 소유 확인 코드 유효 시간
+      verification-expiration: ${OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_EXPIRATION:10m}
+      # 인증 메일 반복 요청을 제한하는 최소 대기 시간
+      resend-cooldown: ${OAUTH2_LOCAL_CREDENTIAL_RESEND_COOLDOWN:1m}
+      # 코드 무차별 대입을 막기 위한 최대 검증 실패 횟수
+      max-attempts: ${OAUTH2_LOCAL_CREDENTIAL_MAX_ATTEMPTS:5}
+      # 로컬 개발 전용 기본값이며 운영 프로필에서는 환경변수를 반드시 주입
+      verification-secret: ${OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_SECRET:local-oauth-verification-secret-change-me}
+      mail:
+        # OAuth 전용 사용자의 이메일 소유 확인 메일 발신 주소
+        from-address: ${OAUTH2_LOCAL_CREDENTIAL_MAIL_FROM:no-reply@mopl.local}
+
+        # CR/LF 줄바꿈 문자를 허용하지 않는 인증 메일 제목
+        subject: ${OAUTH2_LOCAL_CREDENTIAL_MAIL_SUBJECT:[모두의 플리] 이메일 인증 코드 안내}
     redirect:
       # OAuth 인증 성공 후 Access Token 복원을 처리할 프론트엔드 화면
       success-uri: ${OAUTH2_SUCCESS_REDIRECT_URI:http://localhost:5173/oauth/callback}
@@ -426,6 +441,9 @@ app:
     # prod는 기본값 없이 강제 - 값이 누락되면 애플리케이션 시작 시점에 실패
     allowed-origins: ${WS_ALLOWED_ORIGINS}
   oauth2:
+    local-credential:
+      # 운영에서는 기본값 없이 Secret 환경변수를 반드시 주입
+      verification-secret: ${OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_SECRET}
     redirect:
       # 운영 환경에서는 실제 프론트엔드 OAuth Callback URI를 반드시 주입
       success-uri: ${OAUTH2_SUCCESS_REDIRECT_URI}

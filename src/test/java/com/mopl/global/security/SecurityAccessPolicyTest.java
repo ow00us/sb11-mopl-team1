@@ -659,6 +659,137 @@ class SecurityAccessPolicyTest {
             .getAuthentication("valid-token");
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "/api/users/11111111-1111-1111-1111-111111111111"
+            + "/local-credentials/email-verifications",
+        "/api/users/11111111-1111-1111-1111-111111111111"
+            + "/local-credentials"
+    })
+    @DisplayName("로컬 로그인 등록 API는 인증되지 않은 잘못된 요청도 401로 거부한다")
+    void localCredentialApi_withoutJwt_returnsUnauthorized(
+        String path
+    ) throws Exception {
+
+        /*
+         * 빈 JSON은 DTO 검증에 실패할 요청이지만,
+         * 유효한 CSRF 토큰을 포함해 인증 실패가 본문 검증보다
+         * 먼저 처리되는지 확인
+         */
+        mockMvc.perform(
+                post(path)
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}")
+            )
+            .andExpect(status().isUnauthorized())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_401_1")
+            );
+
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "/api/users/11111111-1111-1111-1111-111111111111"
+            + "/local-credentials/email-verifications",
+        "/api/users/11111111-1111-1111-1111-111111111111"
+            + "/local-credentials"
+    })
+    @DisplayName("로컬 로그인 등록 API는 CSRF 토큰이 없으면 403을 반환한다")
+    void localCredentialApi_withoutCsrf_returnsForbidden(
+        String path
+    ) throws Exception {
+
+        mockMvc.perform(
+                post(path)
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer valid-token"
+                    )
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}")
+            )
+            .andExpect(status().isForbidden())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_403_1")
+            );
+
+        /*
+         * CSRF 필터가 JWT 필터보다 먼저 요청을 차단
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "/api/users/11111111-1111-1111-1111-111111111111"
+            + "/local-credentials/email-verifications",
+        "/api/users/11111111-1111-1111-1111-111111111111"
+            + "/local-credentials"
+    })
+    @DisplayName("로컬 로그인 등록 API는 유효한 JWT와 CSRF 이후 본문을 검증한다")
+    void localCredentialApi_withJwtAndCsrf_validatesBody(
+        String path
+    ) throws Exception {
+
+        var authentication =
+            UsernamePasswordAuthenticationToken
+                .authenticated(
+                    UUID.fromString(USER_ID),
+                    null,
+                    List.of(
+                        new SimpleGrantedAuthority(
+                            "ROLE_USER"
+                        )
+                    )
+                );
+
+        when(jwtProvider.validate("valid-token"))
+            .thenReturn(true);
+
+        when(
+            jwtProvider.getAuthentication(
+                "valid-token"
+            )
+        ).thenReturn(authentication);
+
+        /*
+         * 보안 필터는 통과하지만 빈 JSON은 DTO의 @NotBlank 등에
+         * 위반되므로 Controller 진입 과정에서 400을 반환해야 한다.
+         */
+        mockMvc.perform(
+                post(path)
+                    .with(csrf())
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer valid-token"
+                    )
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}")
+            )
+            .andExpect(status().isBadRequest());
+
+        verify(jwtProvider)
+            .validate("valid-token");
+
+        verify(jwtProvider)
+            .getAuthentication("valid-token");
+    }
+
     @Test
     @DisplayName("로그아웃은 유효한 JWT가 있어도 CSRF 토큰이 없으면 403을 반환한다")
     void signOut_withoutCsrf_returnsForbidden()

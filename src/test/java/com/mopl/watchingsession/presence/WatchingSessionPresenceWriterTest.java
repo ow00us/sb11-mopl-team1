@@ -11,13 +11,21 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.slf4j.LoggerFactory;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter.DeletedSnapshot;
+import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter.RenewResult;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.RedisCallback;
@@ -38,6 +46,27 @@ public class WatchingSessionPresenceWriterTest {
 
     private static <T> RedisScript<T> anyScript() {
         return any(RedisScript.class);
+    }
+
+    private Logger writerLogger;
+    private Level originalLevel;
+    private ListAppender<ILoggingEvent> logAppender;
+
+    @BeforeEach
+    void attachLogAppender() {
+        writerLogger = (Logger) LoggerFactory.getLogger(WatchingSessionPresenceWriter.class);
+        originalLevel = writerLogger.getLevel();
+        writerLogger.setLevel(Level.DEBUG);
+
+        logAppender = new ListAppender<>();
+        logAppender.start();
+        writerLogger.addAppender(logAppender);
+    }
+
+    @AfterEach
+    void detachLogAppender() {
+        writerLogger.detachAppender(logAppender);
+        writerLogger.setLevel(originalLevel);
     }
 
     @Test
@@ -256,44 +285,119 @@ public class WatchingSessionPresenceWriterTest {
     }
 
     @Test
-    @DisplayName("renewIfOwner()는 스크립트가 1을 반환하면 true")
-    void renewIfOwner_returnsTrue_whenScriptReturnsOne() {
+    @DisplayName("deleteIfOwner()의 소유권 불일치는 WARN으로 기록된다 (구독 단위 종료)")
+    void deleteIfOwner_logsWarn_onOwnerMismatch() {
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(WATCHER_ID.toString())))
+            .thenReturn(List.of("0", "", ""));
+
+        writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(logAppender.list)
+            .anySatisfy(event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getFormattedMessage()).contains("소유권 불일치");
+            });
+    }
+
+    @Test
+    @DisplayName("deleteIfOwnerSession()의 소유권 불일치는 DEBUG로 기록된다 (연결 단위 종료)")
+    void deleteIfOwnerSession_logsDebug_onOwnerMismatch() {
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            eq(SESSION_ID), eq(WATCHER_ID.toString())))
+            .thenReturn(List.of("0", "", ""));
+
+        writer.deleteIfOwnerSession(WATCHER_ID, SESSION_ID);
+
+        assertThat(logAppender.list)
+            .noneSatisfy(event -> assertThat(event.getLevel()).isEqualTo(Level.WARN));
+        assertThat(logAppender.list)
+            .anySatisfy(event -> assertThat(event.getLevel()).isEqualTo(Level.DEBUG));
+    }
+
+    @Test
+    @DisplayName("빈 응답은 ERROR로 기록된다")
+    void deleteIfOwner_logsError_onEmptyResponse() {
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(WATCHER_ID.toString())))
+            .thenReturn(List.of());
+
+        writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(logAppender.list)
+            .anySatisfy(event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+                assertThat(event.getFormattedMessage()).contains("빈 응답");
+            });
+    }
+
+    @Test
+    @DisplayName("필드 누락(응답 길이 부족)은 ERROR로 기록된다")
+    void deleteIfOwner_logsError_onMissingFields() {
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(WATCHER_ID.toString())))
+            .thenReturn(List.of("1", SNAPSHOT_ID.toString())); // snapshotUpdatedAt 필드 누락
+
+        writer.deleteIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(logAppender.list)
+            .anySatisfy(event -> assertThat(event.getLevel()).isEqualTo(Level.ERROR));
+    }
+
+    @Test
+    @DisplayName("renewIfOwner()는 스크립트가 1을 반환하면 RENEWED")
+    void renewIfOwner_returnsRenewed_whenScriptReturnsOne() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
             eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(WATCHER_ID.toString()), anyString()))
             .thenReturn(1L);
 
-        assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60))).isTrue();
+        assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60)))
+            .isEqualTo(RenewResult.RENEWED);
     }
 
     @Test
-    @DisplayName("renewIfOwner()는 소유권 불일치(0)일 때 false")
-    void renewIfOwner_returnsFalse_whenOwnerMismatch() {
+    @DisplayName("renewIfOwner()는 소유권 불일치(0)일 때 OWNER_MISMATCH")
+    void renewIfOwner_returnsOwnerMismatch_whenScriptReturnsZero() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
             eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(WATCHER_ID.toString()), anyString()))
             .thenReturn(0L);
 
-        assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60))).isFalse();
+        assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60)))
+            .isEqualTo(RenewResult.OWNER_MISMATCH);
     }
 
     @Test
-    @DisplayName("renewIfOwner() 도중 Redis 예외가 나면 격리되어 false를 반환한다 (주기 신호라 연결을 끊지 않음)")
-    void renewIfOwner_isolatesRedisFailure() {
+    @DisplayName("renewIfOwner()는 키 없음(-1)일 때 KEY_MISSING")
+    void renewIfOwner_returnsKeyMissing_whenScriptReturnsMinusOne() {
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(WATCHER_ID.toString()), anyString()))
+            .thenReturn(-1L);
+
+        assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60)))
+            .isEqualTo(RenewResult.KEY_MISSING);
+    }
+
+
+    @Test
+    @DisplayName("renewIfOwner() 도중 Redis 예외가 나면 격리되어 FAILED (주기 신호라 연결을 끊지 않음)")
+    void renewIfOwner_returnsFailed_whenRedisThrows() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
             eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(WATCHER_ID.toString()), anyString()))
             .thenThrow(new RuntimeException("Redis 연결 끊김"));
 
-        assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60))).isFalse();
+        assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60)))
+            .isEqualTo(RenewResult.FAILED);
     }
 
     @Test
-    @DisplayName("renewIfOwner()는 스크립트가 null을 반환하면 예외 없이 false (unboxing NPE 방지)")
-    void renewIfOwner_returnsFalse_whenScriptReturnsNull() {
+    @DisplayName("renewIfOwner()는 스크립트가 null을 반환하면 예외 없이 FAILED (unboxing NPE 방지)")
+    void renewIfOwner_returnsFailed_whenScriptReturnsNull() {
         when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
             eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(WATCHER_ID.toString()), anyString()))
             .thenReturn(null);
 
         assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60)))
-            .isFalse();
+            .isEqualTo(RenewResult.FAILED);
     }
 
     @Test
@@ -306,6 +410,17 @@ public class WatchingSessionPresenceWriterTest {
             .thenReturn(1L);
 
         assertThat(writer.updateSnapshotIdIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, newSnapshotId, newSnapshotUpdatedAt)).isTrue();
+    }
+
+    @Test
+    @DisplayName("renewIfOwner()는 규약 밖의 값을 반환하면 방어적으로 FAILED")
+    void renewIfOwner_returnsFailed_whenScriptReturnsUnexpectedCode() {
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(WATCHER_ID.toString()), anyString()))
+            .thenReturn(2L);
+
+        assertThat(writer.renewIfOwner(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID, Duration.ofSeconds(60)))
+            .isEqualTo(RenewResult.FAILED);
     }
 
     @Test
@@ -378,5 +493,47 @@ public class WatchingSessionPresenceWriterTest {
         Set<UUID> result = writer.findExistingWatcherIds(List.of(w1, w2));
 
         assertThat(result).containsExactlyInAnyOrder(w1, w2);
+    }
+
+    @Test
+    @DisplayName("recoverIfAbsent()는 키가 없으면 새 소유자를 기록하고 true를 반환한다")
+    void recoverIfAbsent_writesNewOwner_whenKeyMissing() {
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
+            eq(WATCHER_ID.toString()), anyString()))
+            .thenReturn(1L);
+
+        boolean recovered = writer.recoverIfAbsent(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID,
+            SESSION_ID, SUBSCRIPTION_ID, Instant.now(), Instant.now(), Duration.ofSeconds(60));
+
+        assertThat(recovered).isTrue();
+    }
+
+    @Test
+    @DisplayName("recoverIfAbsent()는 이미 hash로 존재하면(다른 연결이 확보) false를 반환한다")
+    void recoverIfAbsent_returnsFalse_whenHashAlreadyExists() {
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
+            eq(WATCHER_ID.toString()), anyString()))
+            .thenReturn(0L);
+
+        boolean recovered = writer.recoverIfAbsent(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID,
+            SESSION_ID, SUBSCRIPTION_ID, Instant.now(), Instant.now(), Duration.ofSeconds(60));
+
+        assertThat(recovered).isFalse();
+    }
+
+    @Test
+    @DisplayName("recoverIfAbsent() 도중 Redis 예외가 나면 격리되어 false를 반환한다")
+    void recoverIfAbsent_isolatesRedisFailure() {
+        when(stringRedisTemplate.execute(anyScript(), eq(List.of(EXPECTED_KEY)),
+            anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
+            eq(WATCHER_ID.toString()), anyString()))
+            .thenThrow(new RuntimeException("Redis 연결 끊김"));
+
+        boolean recovered = writer.recoverIfAbsent(WATCHER_ID, SNAPSHOT_ID, CONTENT_ID,
+            SESSION_ID, SUBSCRIPTION_ID, Instant.now(), Instant.now(), Duration.ofSeconds(60));
+
+        assertThat(recovered).isFalse();
     }
 }

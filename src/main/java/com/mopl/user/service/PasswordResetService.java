@@ -1,7 +1,5 @@
 package com.mopl.user.service;
 
-import com.mopl.global.exception.BusinessException;
-import com.mopl.global.exception.ErrorCode;
 import com.mopl.user.dto.ResetPasswordRequest;
 import com.mopl.user.entity.User;
 import com.mopl.user.mail.TemporaryPasswordEmailSender;
@@ -25,10 +23,6 @@ import org.springframework.transaction.annotation.Transactional;
  * 예외를 숨기지 않고 전달하므로 SMTP 발송이 실패하면 비밀번호 변경
  * 트랜잭션도 롤백됩니다.</p>
  *
- * <p>현재 OpenAPI 계약은 존재하지 않는 이메일에 404 응답을 정의하므로
- * 사용자가 없으면 {@link ErrorCode#RESOURCE_NOT_FOUND}를 발생시킵니다.
- * 이메일 존재 여부 노출 방지를 위해 항상 같은 응답을 반환하는 정책은
- * 별도의 보안 개선 이슈에서 검토할 수 있습니다.</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -88,8 +82,11 @@ public class PasswordResetService {
      * <p>사용자의 계정 잠금 상태와 권한은 변경하지 않습니다. 잠긴 사용자가
      * 비밀번호를 초기화하더라도 관리자에 의해 잠긴 상태는 그대로 유지됩니다.</p>
      *
+     * <p>공개 API 응답을 통해 사용자 존재 여부나 로그인 방식을
+     * 추측할 수 없도록, 존재하지 않는 사용자와 로컬 로그인 수단이 없는
+     * OAuth 전용 사용자는 작업 없이 정상 종료합니다.</p>
+     *
      * @param request 비밀번호를 초기화할 사용자 이메일
-     * @throws BusinessException 이메일에 해당하는 사용자가 존재하지 않는 경우
      */
     @Transactional
     public void resetPassword(
@@ -107,20 +104,23 @@ public class PasswordResetService {
         /*
          * 비밀번호 초기화 대상 사용자를 한 번만 조회
          *
-         * 현재 OpenAPI 계약에 404가 있으므로 존재하지 않는 이메일은
-         * RESOURCE_NOT_FOUND로 처리
+         * 공개 API를 통해 계정 존재 여부가 노출되지 않도록
+         * 사용자가 없어도 예외를 발생시키지 않는다.
          */
-        User user =
-            userRepository
-                .findByEmail(
-                    normalizedEmail
-                )
-                .orElseThrow(
-                    () ->
-                        new BusinessException(
-                            ErrorCode.RESOURCE_NOT_FOUND
-                        )
-                );
+        User user = userRepository.findByEmail(normalizedEmail)
+            .orElse(null);
+
+        /*
+         * 공개 API 응답만으로 계정 존재 여부나 로그인 방식을
+         * 구분할 수 없도록 실제 처리 대상이 아니면 조용히 종료한다.
+         */
+        if (
+            user == null
+                || user.getPasswordHash() == null
+                || user.getPasswordHash().isBlank()
+        ) {
+            return;
+        }
 
         /*
          * 이메일로 전달할 임시 비밀번호 원문을 생성
