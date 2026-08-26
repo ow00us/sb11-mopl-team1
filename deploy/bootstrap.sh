@@ -122,6 +122,17 @@ else
     note "${MOPL_CONFIG_DIR}/prod.env 를 빈 파일로 만들었습니다. 값은 직접 채웁니다."
 fi
 
+# 배포 기록 파일을 미리 만듭니다. ${MOPL_CONFIG_DIR} 는 group 에 쓰기 권한이 없어
+# deploy 가 새 파일을 만들 수 없습니다. 파일이 있으면 내용만 바꿀 수 있습니다. 배포
+# 스크립트에 sudo 를 주지 않기 위한 것입니다.
+if [[ -e ${MOPL_CONFIG_DIR}/deploy-state.env ]]; then
+    note "${MOPL_CONFIG_DIR}/deploy-state.env 가 이미 있습니다. 그대로 둡니다."
+else
+    install -o "${DEPLOY_USER}" -g "${DEPLOY_USER}" -m 0640 \
+        /dev/null "${MOPL_CONFIG_DIR}/deploy-state.env"
+    note "${MOPL_CONFIG_DIR}/deploy-state.env 를 만들었습니다."
+fi
+
 # 데이터 디렉터리의 소유자를 이미지의 실행 사용자에 맞춥니다.
 #
 # bind mount 는 named volume 과 달리 Docker 가 소유자를 고쳐 주지 않습니다. postgres 와
