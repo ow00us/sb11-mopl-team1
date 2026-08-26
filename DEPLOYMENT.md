@@ -120,6 +120,7 @@ S3 접근에는 자격 증명을 주입하지 않습니다. 기본 자격 증명
 
 - `MAIL_HOST`, `MAIL_PORT` — 기본 문서의 `localhost:1025`는 로컬 Mailpit 주소입니다. 그대로 두면 비밀번호 초기화 메일이 조용히 실패하고 전체 health도 계속 `DOWN`입니다.
 - `IMAGE_STORAGE_BUCKET`, `IMAGE_STORAGE_PUBLIC_BASE_URL` — `IMAGE_STORAGE_ENABLED`가 `prod`에서 `true`가 기본이므로 이 둘이 필요합니다. 비어 있으면 기동이 실패합니다. 켜 두고 비워 두면 업로드 시점에야 드러나는데, 그때는 이미 사용자가 파일을 고른 뒤입니다.
+- `PASSWORD_RESET_MAIL_FROM`, `OAUTH2_LOCAL_CREDENTIAL_MAIL_FROM` — 기본값 `no-reply@mopl.local`은 실제 도메인이 아닙니다. SES는 인증되지 않은 발신 주소를 거부하므로, 기동은 성공하고 메일만 조용히 실패합니다. 비밀번호 초기화와 OAuth 이메일 인증이 둘 다 막히는데 그 사실은 사용자 신고로만 드러납니다.
 
 ### 배포 전에 준비할 Kafka 토픽
 

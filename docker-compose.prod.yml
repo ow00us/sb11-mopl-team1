@@ -59,7 +59,9 @@ services:
       backend-b:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      # Alpine wget은 localhost를 ::1로 먼저 해석하지만 Nginx는 이 이미지에서 IPv4로
+      # 리슨합니다. 127.0.0.1을 명시해 실제 리슨 소켓을 검사합니다.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -88,6 +90,8 @@ services:
       MAIL_PORT: ${MAIL_PORT}
       MAIL_USERNAME: ${MAIL_USERNAME}
       MAIL_PASSWORD: ${MAIL_PASSWORD}
+      PASSWORD_RESET_MAIL_FROM: ${PASSWORD_RESET_MAIL_FROM}
+      OAUTH2_LOCAL_CREDENTIAL_MAIL_FROM: ${OAUTH2_LOCAL_CREDENTIAL_MAIL_FROM}
       MAIL_SMTP_AUTH: ${MAIL_SMTP_AUTH}
       MAIL_STARTTLS_ENABLE: ${MAIL_STARTTLS_ENABLE}
       JWT_SECRET: ${JWT_SECRET}
