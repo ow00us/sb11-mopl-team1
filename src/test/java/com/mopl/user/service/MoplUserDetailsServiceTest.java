@@ -44,7 +44,7 @@ class MoplUserDetailsServiceTest {
             .locked(false)
             .build();
 
-        when(userRepository.findByEmail("user@example.com"))
+        when(userRepository.findByEmailAndDeletedAtIsNull("user@example.com"))
             .thenReturn(Optional.of(user));
 
         // when
@@ -70,7 +70,7 @@ class MoplUserDetailsServiceTest {
             .extracting("authority")
             .containsExactly("ROLE_USER");
 
-        verify(userRepository).findByEmail("user@example.com");
+        verify(userRepository).findByEmailAndDeletedAtIsNull("user@example.com");
     }
 
     @ParameterizedTest
@@ -89,7 +89,7 @@ class MoplUserDetailsServiceTest {
             .locked(false)
             .build();
 
-        when(userRepository.findByEmail("oauth-only@example.com"))
+        when(userRepository.findByEmailAndDeletedAtIsNull("oauth-only@example.com"))
             .thenReturn(Optional.of(oauthOnlyUser));
 
         /*
@@ -104,14 +104,14 @@ class MoplUserDetailsServiceTest {
             .isInstanceOf(UsernameNotFoundException.class);
 
         verify(userRepository)
-            .findByEmail("oauth-only@example.com");
+            .findByEmailAndDeletedAtIsNull("oauth-only@example.com");
     }
 
     @Test
-    @DisplayName("등록되지 않은 이메일이면 인증 사용자 조회에 실패한다")
-    void loadUserByUsername_fail_whenUserDoesNotExist() {
+    @DisplayName("등록되지 않았거나 탈퇴한 이메일이면 인증 사용자 조회에 실패한다")
+    void loadUserByUsername_fail_whenActiveUserDoesNotExist() {
         // given
-        when(userRepository.findByEmail("user@example.com"))
+        when(userRepository.findByEmailAndDeletedAtIsNull("user@example.com"))
             .thenReturn(Optional.empty());
 
         // when & then
@@ -120,7 +120,7 @@ class MoplUserDetailsServiceTest {
         )
             .isInstanceOf(UsernameNotFoundException.class);
 
-        verify(userRepository).findByEmail("user@example.com");
+        verify(userRepository).findByEmailAndDeletedAtIsNull("user@example.com");
     }
 
     @Test
@@ -135,7 +135,7 @@ class MoplUserDetailsServiceTest {
             .locked(true)
             .build();
 
-        when(userRepository.findByEmail("locked@example.com"))
+        when(userRepository.findByEmailAndDeletedAtIsNull("locked@example.com"))
             .thenReturn(Optional.of(user));
 
         // when
