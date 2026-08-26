@@ -955,17 +955,23 @@ repo:OWNER@OWNER_ID/REPO@REPO_ID:ref:refs/heads/main
 gh api repos/ow00us/sb11-mopl-team1/actions/oidc/customization/sub --jq .sub_claim_prefix
 ```
 
-### 서버 접속 Secret
+### 서버에 명령을 보내는 방법
 
-| Secret | 내용 |
+SSH로 붙지 않고 **AWS Systems Manager**로 명령을 보냅니다.
+
+SSH를 쓰려면 22번을 GitHub 러너에게 열어야 하는데, 러너 주소는 고정되지 않아 사실상 넓게 여는 것이 됩니다. 관리 경로를 한 주소로 좁혀 둔 의미가 없어집니다. SSM은 인바운드 포트를 하나도 열지 않고, **저장소에 개인 키를 두지 않아도 됩니다.**
+
+필요한 것은 저장소 변수 하나뿐입니다. Secret이 아닙니다.
+
+| 변수 | 값 |
 | --- | --- |
-| `DEPLOY_HOST` | 배포 서버 주소 |
-| `DEPLOY_USER` | 배포 전용 사용자 |
-| `DEPLOY_SSH_KEY` | 그 사용자의 SSH 개인 키 |
+| `DEPLOY_INSTANCE_ID` | 배포 서버의 EC2 인스턴스 ID |
 
-키는 실행이 끝나면 지웁니다. `BatchMode=yes`로 붙어 자격 증명을 물어보지 않고 실패합니다. 프롬프트가 뜨면 timeout까지 붙잡고 있습니다.
+워크플로는 이미 OIDC로 맡은 역할로 SSM을 호출합니다. 그 역할의 `ssm-deploy` 정책은 이 인스턴스와 `AWS-RunShellScript` 문서로만 범위를 좁혀 두었습니다.
 
 배포 스크립트는 서버에 있는 사본이 아니라 **이번 commit의 것**을 보내 실행합니다. 서버 사본은 언제 갱신됐는지 알 수 없어, 배포되는 코드와 배포하는 절차가 어긋납니다.
+
+SSM은 명령을 root로 실행합니다. 배포 스크립트는 `runuser`로 `deploy` 사용자에게 내려 돌립니다. root로 두면 `sed -i`가 만드는 새 파일이 root 소유가 되어, 다음 배포에서 `deploy`가 환경 파일을 고치지 못합니다.
 
 ### 검증
 
