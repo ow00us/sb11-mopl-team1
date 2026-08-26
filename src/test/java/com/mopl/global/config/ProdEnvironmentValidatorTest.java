@@ -17,17 +17,20 @@ import org.springframework.mock.env.MockEnvironment;
  */
 class ProdEnvironmentValidatorTest {
 
-    private static final Map<String, String> VALID = Map.of(
-        "app.oauth2.redirect.success-uri", "https://mopl.example.com/oauth/callback",
-        "app.oauth2.redirect.failure-uri", "https://mopl.example.com/sign-in",
-        "spring.security.oauth2.client.registration.google.redirect-uri",
-        "https://mopl.example.com/login/oauth2/code/google",
-        "spring.security.oauth2.client.registration.kakao.redirect-uri",
-        "https://mopl.example.com/login/oauth2/code/kakao",
-        "spring.security.oauth2.client.registration.naver.redirect-uri",
-        "https://mopl.example.com/login/oauth2/code/naver",
-        "app.cors.allowed-origins", "https://mopl.example.com",
-        "app.websocket.allowed-origins", "https://mopl.example.com");
+    private static final Map<String, String> VALID = Map.ofEntries(
+        Map.entry("app.oauth2.redirect.success-uri", "https://mopl.example.com/oauth/callback"),
+        Map.entry("app.oauth2.redirect.failure-uri", "https://mopl.example.com/sign-in"),
+        Map.entry("spring.security.oauth2.client.registration.google.redirect-uri",
+            "https://mopl.example.com/login/oauth2/code/google"),
+        Map.entry("spring.security.oauth2.client.registration.kakao.redirect-uri",
+            "https://mopl.example.com/login/oauth2/code/kakao"),
+        Map.entry("spring.security.oauth2.client.registration.naver.redirect-uri",
+            "https://mopl.example.com/login/oauth2/code/naver"),
+        Map.entry("app.cors.allowed-origins", "https://mopl.example.com"),
+        Map.entry("app.websocket.allowed-origins", "https://mopl.example.com"),
+        Map.entry("mopl.storage.image.bucket", "sb11-mopl-team1-images"),
+        Map.entry("mopl.storage.image.public-base-url",
+            "https://sb11-mopl-team1-images.s3.ap-northeast-2.amazonaws.com"));
 
     private static ProdEnvironmentValidator validatorWith(Map<String, String> overrides) {
         MockEnvironment environment = new MockEnvironment();
@@ -105,6 +108,57 @@ class ProdEnvironmentValidatorTest {
             "app.cors.allowed-origins",
             "https://mopl.example.com, https://admin.mopl.example.com")).afterPropertiesSet())
             .doesNotThrowAnyException();
+    }
+
+    /**
+     * 바인딩은 풀리지 않은 {@code ${...}} 를 문자열 그대로 넣습니다. 비어 있는지만 보는 검사는
+     * 통과하므로, 존재하지 않는 버킷 이름을 들고 기동합니다.
+     */
+    @Test
+    @DisplayName("이미지 저장소를 켠 채로 버킷이 비면 기동을 막는다")
+    void rejectsEnabledImageStorageWithoutBucket() {
+        assertThatThrownBy(() -> validatorWith(Map.of("mopl.storage.image.bucket", " "))
+            .afterPropertiesSet())
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("mopl.storage.image.bucket");
+    }
+
+    @Test
+    @DisplayName("이미지 저장소 조회 주소가 절대 URI가 아니면 기동을 막는다")
+    void rejectsRelativeImageStoragePublicBaseUrl() {
+        assertThatThrownBy(() -> validatorWith(Map.of(
+            "mopl.storage.image.public-base-url", "/images")).afterPropertiesSet())
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("mopl.storage.image.public-base-url");
+    }
+
+    /** 명시적으로 끈 경우에는 저장할 곳이 없어도 정상입니다. */
+    @Test
+    @DisplayName("이미지 저장소를 끄면 버킷이 없어도 통과한다")
+    void allowsMissingBucketWhenImageStorageDisabled() {
+        assertThatCode(() -> validatorWith(Map.of(
+            "mopl.storage.image.enabled", "false",
+            "mopl.storage.image.bucket", "",
+            "mopl.storage.image.public-base-url", "")).afterPropertiesSet())
+            .doesNotThrowAnyException();
+    }
+
+    /**
+     * {@code Environment} 는 풀리지 않은 자리표시자를 만나면 그 자리에서 던집니다. 그대로 두면
+     * 뒤에 있는 값은 보지도 못하고, 운영자가 한 번에 하나씩 고치며 다시 띄우게 됩니다.
+     */
+    @Test
+    @DisplayName("환경 변수가 없어 자리표시자가 남으면 다른 문제와 함께 보고한다")
+    void reportsUnresolvedPlaceholderAlongsideOtherProblems() {
+        assertThatThrownBy(() -> validatorWith(Map.of(
+            "spring.security.oauth2.client.registration.google.redirect-uri",
+            "${GOOGLE_OAUTH_REDIRECT_URI}",
+            "app.cors.allowed-origins", "mopl.example.com"))
+            .afterPropertiesSet())
+            .isInstanceOf(IllegalStateException.class)
+            .satisfies(thrown -> assertThat(thrown.getMessage())
+                .contains("google.redirect-uri")
+                .contains("cors.allowed-origins"));
     }
 
     /**

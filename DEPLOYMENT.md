@@ -58,7 +58,6 @@ origin 목록은 쉼표로 구분합니다. origin은 scheme과 host까지이며
 | `OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_SECRET` | OAuth 사용자의 이메일 인증 코드를 HMAC-SHA256으로 보호하는 32자 이상의 비밀 값 |
 | `GOOGLE_OAUTH_CLIENT_ID` | Google Cloud Console에서 발급한 웹 애플리케이션 OAuth Client ID |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Google Cloud Console에서 발급한 OAuth Client Secret |
-| `GOOGLE_OAUTH_REDIRECT_URI` | Google Cloud Console에 승인된 운영용 Google Callback 절대 URI |
 | `KAKAO_OAUTH_CLIENT_ID` | Kakao Developers에서 발급한 REST API 키 |
 | `KAKAO_OAUTH_CLIENT_SECRET` | Kakao Developers에서 발급하고 활성화한 Client Secret |
 | `NAVER_OAUTH_CLIENT_ID` | Naver Developers에서 발급한 Client ID |
@@ -83,11 +82,18 @@ S3 접근에는 자격 증명을 주입하지 않습니다. 기본 자격 증명
 | 인증 | `REFRESH_TOKEN_COOKIE_SAME_SITE` | `Lax` |
 | 인증 | `REFRESH_TOKEN_COOKIE_SECURE` | `true` (prod) |
 | 인증 | `OAUTH2_AUTHORIZATION_REQUEST_TTL` | `5m` |
+| 인증 | `OAUTH2_USER_INFO_CONNECT_TIMEOUT`, `OAUTH2_USER_INFO_READ_TIMEOUT` | `3s`, `5s` |
+| 인증 | `OAUTH2_LINK_INTENT_EXPIRATION` | `5m` |
+| 인증 | `OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_EXPIRATION` | `10m` |
+| 인증 | `OAUTH2_LOCAL_CREDENTIAL_RESEND_COOLDOWN` | `1m` |
+| 인증 | `OAUTH2_LOCAL_CREDENTIAL_MAX_ATTEMPTS` | `5` |
 | 메일 | `MAIL_SMTP_AUTH` | `false` |
 | 메일 | `MAIL_STARTTLS_ENABLE` | `false` |
 | 메일 | `MAIL_CONNECTION_TIMEOUT`, `MAIL_READ_TIMEOUT`, `MAIL_WRITE_TIMEOUT` | `5000` |
 | 메일 | `PASSWORD_RESET_MAIL_FROM` | `no-reply@mopl.local` |
 | 메일 | `PASSWORD_RESET_MAIL_SUBJECT` | `[모두의 플리] 임시 비밀번호 안내` |
+| 메일 | `OAUTH2_LOCAL_CREDENTIAL_MAIL_FROM` | `no-reply@mopl.local` |
+| 메일 | `OAUTH2_LOCAL_CREDENTIAL_MAIL_SUBJECT` | `[모두의 플리] 이메일 인증 코드 안내` |
 | 이미지 | `IMAGE_STORAGE_ENABLED` | `true` (prod) |
 | 이미지 | `IMAGE_STORAGE_REGION` | `ap-northeast-2` |
 | 이미지 | `IMAGE_STORAGE_PROFILE_PREFIX` | `profile-images` |
