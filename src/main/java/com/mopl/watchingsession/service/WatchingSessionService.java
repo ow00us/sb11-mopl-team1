@@ -223,7 +223,7 @@ public class WatchingSessionService {
                 WatchingSessionSnapshot snapshot = watchingSessionSnapshotRepository.findById(snapshotId)
                     .orElse(null);
 
-                int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, snapshotId,  deleted.get().snapshotUpdatedAt());
+                int deletedRows = watchingSessionSnapshotWriter.deleteById(watcherId, snapshotId, deleted.get().snapshotUpdatedAt());
                 if (deletedRows == 0 || snapshot == null) {
                     log.warn("presence 소유권 확인 후 DB 스냅샷이 이미 교체됨, 퇴장 처리 생략: "
                         + "watcherId={}, snapshotId={}", watcherId, snapshotId);
@@ -239,7 +239,7 @@ public class WatchingSessionService {
     // read 성격의 메서드
     public Optional<WatchingSessionDto> get(UUID watcherId) {
         return watchingSessionSnapshotRepository.findByWatcherId(watcherId)
-            .filter(snapshot -> !snapshot.isExpired(Instant.now()))
+            .filter(snapshot -> snapshot.isActiveAt(Instant.now()))
             .map(this::enrich);
     }
 
@@ -477,7 +477,7 @@ public class WatchingSessionService {
                 WatchingSessionSnapshot snapshot = watchingSessionSnapshotRepository
                     .findByWatcherId(watcherId)
                     .filter(s -> contentId.equals(s.getContentId()))
-                    .filter(s -> !s.isExpired(Instant.now()))
+                    .filter(s -> s.isActiveAt(Instant.now()))
                     .orElse(null);
 
                 if (snapshot == null) {
