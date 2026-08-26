@@ -1,0 +1,251 @@
+# MOPL 운영 런타임
+#
+# 로컬 개발용 docker-compose.yml 과 분리합니다. 그쪽은 PostgreSQL, Redis, Kafka 포트를
+# 호스트에 여는데, 그대로 운영에 쓰면 인증이 없는 Redis 와 Kafka 가 공인 IP 에 그대로
+# 열립니다.
+#
+# 이미지는 여기서 빌드하지 않고 레지스트리에서 받습니다. 서버에서 빌드하면 CI 가 통과시킨
+# 것과 실제로 도는 것이 같다는 보장이 없습니다.
+#
+# 실행:
+#   docker compose -f docker-compose.prod.yml --env-file /etc/mopl/prod.env up -d
+#
+# 토폴로지 결정 근거는 docs/19-deployment-topology-adr.md 에 있습니다.
+
+name: mopl
+
+services:
+  # 외부 진입점입니다. TLS 종단과 인증서 발급·갱신을 맡습니다. 호스트 포트를 여는 유일한
+  # 서비스입니다.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      MOPL_DOMAIN: ${MOPL_DOMAIN}
+    networks:
+      - edge
+    depends_on:
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # 정적 자산과 백엔드 라우팅을 맡습니다. 백엔드 A·B 분산도 여기서 합니다.
+  gateway:
+    image: ${FRONTEND_IMAGE}
+    restart: unless-stopped
+    networks:
+      - edge
+      - app
+    depends_on:
+      backend-a:
+        condition: service_healthy
+      backend-b:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # 백엔드 두 인스턴스는 같은 이미지와 같은 설정을 씁니다. 다른 것은 이름뿐입니다.
+  # 설정이 갈리면 두 인스턴스가 서로 다르게 동작하고, 그 차이는 요청이 어느 쪽으로
+  # 갔는지에 따라 간헐적으로만 드러납니다.
+  backend-a:
+    image: ${BACKEND_IMAGE}
+    restart: unless-stopped
+    # 이미지가 -XX:MaxRAMPercentage 로 힙을 잡습니다. 한도가 없으면 JVM 이 호스트 전체
+    # 메모리를 기준으로 계산해, 인스턴스 둘이 합쳐 호스트보다 큰 힙을 요구합니다.
+    mem_limit: ${BACKEND_MEM_LIMIT}
+    environment: &backend-environment
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC_VERIFY: "true"
+      ELASTICSEARCH_URIS: http://elasticsearch:9200
+      MAIL_HOST: ${MAIL_HOST}
+      MAIL_PORT: ${MAIL_PORT}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      MAIL_SMTP_AUTH: ${MAIL_SMTP_AUTH}
+      MAIL_STARTTLS_ENABLE: ${MAIL_STARTTLS_ENABLE}
+      JWT_SECRET: ${JWT_SECRET}
+      OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_SECRET: ${OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_SECRET}
+      CORS_ALLOWED_ORIGINS: https://${MOPL_DOMAIN}
+      WS_ALLOWED_ORIGINS: https://${MOPL_DOMAIN}
+      OAUTH2_SUCCESS_REDIRECT_URI: https://${MOPL_DOMAIN}/oauth/callback
+      OAUTH2_FAILURE_REDIRECT_URI: https://${MOPL_DOMAIN}/sign-in
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
+      GOOGLE_OAUTH_REDIRECT_URI: https://${MOPL_DOMAIN}/login/oauth2/code/google
+      KAKAO_OAUTH_CLIENT_ID: ${KAKAO_OAUTH_CLIENT_ID}
+      KAKAO_OAUTH_CLIENT_SECRET: ${KAKAO_OAUTH_CLIENT_SECRET}
+      KAKAO_OAUTH_REDIRECT_URI: https://${MOPL_DOMAIN}/login/oauth2/code/kakao
+      NAVER_OAUTH_CLIENT_ID: ${NAVER_OAUTH_CLIENT_ID}
+      NAVER_OAUTH_CLIENT_SECRET: ${NAVER_OAUTH_CLIENT_SECRET}
+      NAVER_OAUTH_REDIRECT_URI: https://${MOPL_DOMAIN}/login/oauth2/code/naver
+      IMAGE_STORAGE_BUCKET: ${IMAGE_STORAGE_BUCKET}
+      IMAGE_STORAGE_PUBLIC_BASE_URL: ${IMAGE_STORAGE_PUBLIC_BASE_URL}
+      IMAGE_STORAGE_REGION: ${IMAGE_STORAGE_REGION}
+      TMDB_ACCESS_TOKEN: ${TMDB_ACCESS_TOKEN}
+      SPORTSDB_API_KEY: ${SPORTSDB_API_KEY}
+    networks:
+      - app
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      # liveness 만 봅니다. 전체 health 를 재시작 조건으로 두면 프로세스를 다시 띄운다고
+      # 풀리지 않는 상태까지 재시작을 부릅니다.
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health/liveness"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
+  backend-b:
+    image: ${BACKEND_IMAGE}
+    restart: unless-stopped
+    mem_limit: ${BACKEND_MEM_LIMIT}
+    environment: *backend-environment
+    networks:
+      - app
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health/liveness"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    mem_limit: ${POSTGRES_MEM_LIMIT}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ${MOPL_DATA_ROOT}/postgres:/var/lib/postgresql/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    mem_limit: ${REDIS_MEM_LIMIT}
+    # AOF 를 켭니다. refresh token 세션과 OAuth2 인가 요청이 여기 있어, 재시작으로
+    # 사라지면 로그인한 사용자가 모두 끊깁니다.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ${MOPL_DATA_ROOT}/redis:/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  kafka:
+    image: apache/kafka:3.8.0
+    restart: unless-stopped
+    mem_limit: ${KAFKA_MEM_LIMIT}
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      # 컨테이너 이름으로만 광고합니다. 접근하는 것은 같은 네트워크의 백엔드뿐입니다.
+      # localhost 를 광고하면 백엔드가 메타데이터를 받은 뒤 자기 자신에게 접속을 시도해
+      # 발행과 소비가 모두 실패합니다.
+      KAFKA_LISTENERS: INTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    volumes:
+      # 볼륨 없이 두면 컨테이너를 다시 만들 때 토픽과 소비 offset 이 사라집니다.
+      # prod 는 auto-offset-reset 이 latest 라 그동안의 이벤트를 건너뜁니다.
+      - ${MOPL_DATA_ROOT}/kafka:/var/lib/kafka/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:29092 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  elasticsearch:
+    image: ${ELASTICSEARCH_IMAGE}
+    restart: unless-stopped
+    mem_limit: ${ELASTICSEARCH_MEM_LIMIT}
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: ${ELASTICSEARCH_JAVA_OPTS}
+    volumes:
+      - ${MOPL_DATA_ROOT}/elasticsearch:/usr/share/elasticsearch/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://localhost:9200/_cluster/health >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+# 역할별로 네트워크를 나눕니다. gateway 는 데이터 서비스에 닿을 이유가 없고, caddy 는
+# 백엔드에 직접 닿을 이유가 없습니다.
+networks:
+  edge:
+  app:
+  data:
+
+volumes:
+  caddy-data:
+  caddy-config:

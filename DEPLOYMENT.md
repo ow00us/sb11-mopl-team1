@@ -188,6 +188,34 @@ CI smoke가 쓰는 값은 격리된 실행에서만 쓰는 테스트 값입니�
 1차 배포 범위에서 제외한 이유는 지우는 시점을 정하려면 그 URL을 아무도 참조하지 않는다는 보장이 필요한데, 지금은 사용자와 콘텐츠 레코드가 URL 문자열만 들고 있어 역참조가 없기 때문입니다. 트랜잭션이 롤백되면 이미 지운 객체를 되돌릴 수도 없습니다.
 
 당장은 버킷 수명 주기 규칙으로 오래된 객체를 정리하고, 참조를 추적하는 정리 경로는 #351에서 다룹니다.
+
+#### 버킷 설정
+
+운영 버킷은 `sb11-mopl-team1-images`입니다. 버전 관리와 SSE-S3 암호화를 켰습니다.
+
+수명 주기 규칙은 `deploy/aws/s3-lifecycle.json`에 있습니다.
+
+```bash
+aws s3api put-bucket-lifecycle-configuration --bucket sb11-mopl-team1-images --lifecycle-configuration file://deploy/aws/s3-lifecycle.json
+```
+
+| 규칙 | 대상 | 기간 |
+| --- | --- | --- |
+| `expire-noncurrent-versions` | 이전 버전 | 30일 |
+| `expire-noncurrent-versions` | 미완료 멀티파트 업로드 | 7일 |
+| `expire-delete-markers` | 만료된 삭제 마커 | 즉시 |
+
+버전 관리를 켠 이상 이 규칙이 없으면 안 됩니다. 앱이 이미지를 지워도 삭제 마커만 쌓이고 이전 버전은 영원히 남아, 프로필 사진을 자주 바꾸는 사용자마다 저장 용량이 계속 늘어납니다. 위의 "이전 객체 정리"가 지우지 않는 것을 여기서 받습니다.
+
+퍼블릭 액세스 차단은 ACL 경로만 켭니다. 정책 경로는 열어 두고 버킷 정책이 `s3:GetObject`만 허용합니다. 조회가 애플리케이션을 거치지 않기 때문입니다. ACL 경로를 막아 두면 객체 하나를 실수로 공개 ACL로 올리는 일 자체가 생기지 않고, 공개 경로가 버킷 정책 한 곳으로 모입니다.
+
+| 설정 | 값 |
+| --- | --- |
+| `BlockPublicAcls` | `true` |
+| `IgnorePublicAcls` | `true` |
+| `BlockPublicPolicy` | `false` |
+| `RestrictPublicBuckets` | `false` |
+
 ### OAuth2 로그인과 세션 고정
 
 **로드밸런서 세션 고정을 쓰지 않습니다.** 백엔드 인스턴스가 몇 개든, 어느 인스턴스로 요청이 가든 소셜 로그인이 동작해야 합니다.
@@ -556,6 +584,235 @@ curl --fail http://localhost:8080/actuator/health
 ### 레이어 캐시
 
 빌드는 GitHub Actions 캐시를 씁니다. 캐시는 각 단계의 입력이 바뀌면 무효화되고, 소스를 복사하는 단계가 커밋마다 달라지므로 그 뒤 단계는 캐시를 쓰지 않습니다. 오래된 소스가 이미지에 남지 않습니다.
+
+## 배포 서버 준비
+
+빈 서버를 운영 Compose가 돌 수 있는 상태로 만드는 절차입니다. 콘솔에서 한 번 만지고 끝내지 않습니다. 같은 서버를 다시 만들 일이 생겼을 때 기억에 의존하면 빠뜨린 한 줄이 그날의 장애가 됩니다.
+
+| 산출물 | 하는 일 |
+| --- | --- |
+| `deploy/aws/network.sh` | 보안 그룹과 고정 공인 IP |
+| `deploy/bootstrap.sh` | Docker, 배포 사용자, 디렉터리, 호스트 방화벽 |
+| `.env.example` | 환경 파일 서식 |
+
+둘 다 여러 번 실행해도 결과가 같습니다. 중간에 실패해도 고친 뒤 그대로 다시 돌리면 됩니다.
+
+### 서버 사양
+
+| 항목 | 값 | 근거 |
+| --- | --- | --- |
+| 인스턴스 | `t3.large` (2 vCPU, 8 GiB) | 컨테이너 메모리 한도 합계가 약 7.3GB입니다 |
+| OS | Ubuntu 24.04 LTS | `bootstrap.sh`가 이 배포판을 전제합니다 |
+| 디스크 | gp3 30GB | 아래 계산 |
+| 리전 | `ap-northeast-2` | 이미지 버킷과 ECR이 여기 있습니다 |
+
+프리티어 대상인 `t3.micro`는 메모리가 1GB라 쓸 수 없습니다. 백엔드 한 인스턴스도 올라가지 않습니다.
+
+디스크 30GB의 내역입니다. 이미지 약 4GB, 컨테이너 로그 상한 2GB(8개 서비스 × 250MB), 나머지가 PostgreSQL·Kafka·Elasticsearch 데이터입니다. 로그에 상한을 두지 않으면 이 계산이 의미가 없어집니다. `bootstrap.sh`가 Docker 로그 드라이버에 한도를 겁니다.
+
+### 비용
+
+`ap-northeast-2` 온디맨드 기준입니다. 2026년 8월에 AWS Pricing API에서 받은 값입니다.
+
+| 항목 | 단가 | 월(730시간) |
+| --- | --- | --- |
+| `t3.medium` (2 vCPU, 4 GiB) | `$0.0520`/시간 | `$38.0` |
+| `t3.large` (2 vCPU, 8 GiB) | `$0.1040`/시간 | `$75.9` |
+| `t3.xlarge` (4 vCPU, 16 GiB) | `$0.2080`/시간 | `$151.8` |
+| EBS gp3 30GB | `$0.0912`/GB·월 | `$2.7` |
+| 공인 IPv4 1개 | `$0.0050`/시간 | `$3.7` |
+
+`t3.large`를 계속 켜 두면 월 약 `$82`입니다.
+
+| 운영 방식 | 월 비용 |
+| --- | --- |
+| 24시간 | 약 `$82` |
+| 하루 8시간 | 약 `$31` |
+| 중지 상태 | 약 `$6` |
+
+인스턴스를 중지해도 EBS와 공인 IPv4 요금은 계속 붙습니다. 공인 IPv4는 인스턴스에 붙어 있는지와 무관하게 과금되므로, 서버를 없앨 때 Elastic IP도 함께 release 해야 합니다. 그러지 않으면 쓰지 않는 주소에 매달 `$3.7`이 나갑니다.
+
+크레딧으로 운영한다면 상시 가동은 두 달을 넘기기 어렵습니다. 시연 기간에만 켜는 쪽이 현실적입니다.
+
+### 네트워크 경계
+
+외부에 여는 것은 80과 443뿐입니다.
+
+```bash
+SSH_ALLOWED_CIDR=$(curl -s https://checkip.amazonaws.com)/32 bash deploy/aws/network.sh
+```
+
+| 포트 | 허용 범위 | 이유 |
+| --- | --- | --- |
+| 80 | 전체 | HTTPS 전환과 ACME 인증서 발급 |
+| 443 | 전체 | HTTPS |
+| 22 | 지정한 주소만 | 관리 접속 |
+
+PostgreSQL, Redis, Kafka, Elasticsearch는 규칙을 두지 않습니다. Compose가 호스트 포트를 열지 않으므로 규칙이 없으면 닿을 수 없습니다. Redis와 Kafka에는 인증이 없어서, 한 번 열리면 그 순간 그대로 공개됩니다.
+
+경계는 두 겹입니다. 보안 그룹이 1차, 호스트의 `ufw`가 2차입니다. 보안 그룹을 누가 넓게 고쳐도 호스트에서 한 번 더 막힙니다.
+
+### 호스트 부트스트랩
+
+```bash
+sudo SSH_ALLOWED_CIDR=203.0.113.10/32 bash deploy/bootstrap.sh
+```
+
+`SSH_ALLOWED_CIDR` 없이 실행하면 스크립트가 먼저 멈춥니다. 기본 정책이 deny인 방화벽을 SSH 허용 없이 켜면 지금 붙어 있는 접속까지 끊기고, 다시 들어갈 방법이 콘솔밖에 남지 않습니다.
+
+하는 일은 이렇습니다.
+
+- 배포 전용 사용자 `deploy` 생성. 비밀번호 로그인은 막고 SSH 키로만 접속합니다
+- Docker Engine과 Compose 플러그인 설치. 배포판의 `docker.io`가 아니라 Docker 공식 저장소를 씁니다. Compose v2 플러그인이 배포판 패키지에 없습니다
+- 컨테이너 로그를 서비스당 250MB로 제한
+- 설정과 데이터 디렉터리 생성
+- `ufw`로 80·443·지정한 SSH 범위만 허용
+
+`docker` 그룹은 사실상 root 권한입니다. 배포 사용자에게만 줍니다.
+
+### 디렉터리와 권한
+
+| 경로 | 소유자 | 권한 | 내용 |
+| --- | --- | --- | --- |
+| `/etc/mopl` | `root:deploy` | `0750` | 설정 |
+| `/etc/mopl/prod.env` | `deploy:deploy` | `0600` | 환경 변수와 Secret |
+| `/srv/mopl/app` | `deploy:deploy` | `0755` | Compose 파일과 Caddyfile |
+| `/srv/mopl/data/*` | 각 이미지의 실행 사용자 | `0700` | 영속 데이터 |
+
+운영 환경 파일은 저장소에 두지 않습니다. `.gitignore`가 `.env`와 `.env.*`를 막고 `.env.example`만 남깁니다. 서버에서는 `/etc/mopl/prod.env`에 두고 `deploy`만 읽습니다.
+
+데이터 디렉터리의 소유자는 이미지에서 직접 읽어 맞춥니다. bind mount는 named volume과 달리 Docker가 소유자를 고쳐 주지 않습니다. PostgreSQL과 Redis는 entrypoint가 root로 시작해 스스로 맞추지만, Elasticsearch와 Kafka는 이미지가 실행 사용자를 지정해 두어 처음부터 비특권 사용자로 뜹니다. 소유자가 맞지 않으면 기동하지 못합니다.
+
+UID를 문서에 적어 두지 않는 이유는, 이미지가 올라가면서 값이 바뀌면 적어 둔 쪽이 조용히 틀리기 때문입니다. 그 사실은 다음 서버를 만들 때에야 드러납니다.
+
+Elasticsearch 이미지는 nori 플러그인을 넣어 직접 만든 것이라 ECR 로그인 전에는 받을 수 없습니다. 그때는 기본값을 쓰고, `prod.env`를 채운 뒤 `bootstrap.sh`를 다시 실행하면 실제 이미지에서 읽습니다.
+
+### 도메인과 HTTPS
+
+A 레코드를 Elastic IP로 지정합니다. 인스턴스를 멈췄다 켜면 공인 IP가 바뀌므로 고정 주소가 필요합니다. 바뀐 주소를 모르는 동안에는 인증서 갱신도 실패합니다.
+
+인증서는 Caddy가 기동할 때 Let's Encrypt에서 받고 만료 전에 갱신합니다. 발급에는 80번 포트로 오는 ACME 요청이 필요하므로 80을 닫으면 안 됩니다. HTTP 요청을 HTTPS로 보내는 것도 Caddy가 합니다.
+
+`MOPL_DOMAIN` 하나가 Caddy의 인증서 대상, CORS origin, WebSocket origin, OAuth Callback URI를 모두 만듭니다. 각 Provider Console에 등록한 Callback URI가 이 도메인과 같아야 합니다.
+
+### 최초 기동
+
+서버에는 저장소 전체가 필요하지 않습니다. `docker-compose.prod.yml`과 `deploy/` 두 가지면 됩니다. 아래 2번부터는 그 파일들이 있는 곳에서 실행합니다.
+
+```bash
+# 0. 스크립트와 Compose 파일을 서버로 가져옵니다
+git clone --depth 1 https://github.com/ow00us/sb11-mopl-team1.git ~/mopl && cd ~/mopl
+
+# 1. 네트워크 경계 (로컬에서 AWS CLI 로)
+SSH_ALLOWED_CIDR=$(curl -s https://checkip.amazonaws.com)/32 bash deploy/aws/network.sh
+
+# 2. 인스턴스 생성 후 접속해 부트스트랩
+sudo SSH_ALLOWED_CIDR=203.0.113.10/32 bash deploy/bootstrap.sh
+
+# 3. 환경 파일 작성. .env.example 의 항목을 모두 채웁니다
+sudo -u deploy vi /etc/mopl/prod.env
+
+# 4. Compose 파일 배치
+sudo -u deploy cp docker-compose.prod.yml /srv/mopl/app/
+sudo -u deploy mkdir -p /srv/mopl/app/deploy
+sudo -u deploy cp deploy/Caddyfile /srv/mopl/app/deploy/
+
+# 5. 데이터 디렉터리 소유자를 실제 이미지 기준으로 다시 맞춤
+sudo bash deploy/bootstrap.sh
+
+# 6. ECR 로그인 후 기동
+aws ecr get-login-password --region ap-northeast-2 \
+  | sudo -u deploy docker login --username AWS --password-stdin \
+      "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.ap-northeast-2.amazonaws.com"
+sudo -u deploy docker compose -f /srv/mopl/app/docker-compose.prod.yml \
+  --env-file /etc/mopl/prod.env up -d
+```
+
+기동 후 확인합니다.
+
+```bash
+sudo -u deploy docker compose -f /srv/mopl/app/docker-compose.prod.yml ps
+curl -fsS https://<도메인>/actuator/health/readiness
+```
+
+모든 서비스가 `healthy`여야 합니다. 어느 하나가 계속 재시작한다면 먼저 그 서비스의 로그를 봅니다. Elasticsearch나 Kafka가 권한 오류로 멈춰 있다면 5번을 건너뛴 경우입니다.
+
+기동에 필요한 값이 빠졌다면 백엔드가 뜨지 않고 어떤 값이 문제인지 로그에 남습니다. 형식이 잘못된 값은 `ProdEnvironmentValidator`가 기동 시점에 걸러 내며, 문제가 여럿이면 한 번에 모두 보고합니다.
+
+## 운영 Docker Compose
+
+운영 런타임은 `docker-compose.prod.yml`에 있습니다. 로컬 개발용 `docker-compose.yml`과 분리한 이유는 그쪽이 PostgreSQL, Redis, Kafka 포트를 호스트에 열기 때문입니다. 그대로 운영에 쓰면 인증이 없는 Redis와 Kafka가 공인 IP에 그대로 열립니다.
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file /etc/mopl/prod.env up -d
+```
+
+이미지는 여기서 빌드하지 않고 레지스트리에서 받습니다. 서버에서 빌드하면 CI가 통과시킨 것과 실제로 도는 것이 같다는 보장이 없습니다.
+
+### 서비스 구성
+
+| 서비스 | 이미지 | 호스트 포트 |
+| --- | --- | --- |
+| `caddy` | `caddy:2-alpine` | `80`, `443` |
+| `gateway` | `FRONTEND_IMAGE` | 없음 |
+| `backend-a`, `backend-b` | `BACKEND_IMAGE` | 없음 |
+| `postgres` | `postgres:16` | 없음 |
+| `redis` | `redis:7` | 없음 |
+| `kafka` | `apache/kafka:3.8.0` | 없음 |
+| `elasticsearch` | `ELASTICSEARCH_IMAGE` | 없음 |
+
+**호스트에 포트를 여는 것은 `caddy` 하나뿐입니다.** 나머지는 Compose 네트워크 안에서만 닿습니다. 관리 작업은 SSH로 접속한 뒤 `docker compose exec`로 합니다.
+
+네트워크는 역할별로 나눕니다. `edge`는 Caddy와 Gateway, `app`은 Gateway와 백엔드, `data`는 백엔드와 데이터 서비스입니다. Gateway가 데이터 서비스에 닿을 이유가 없고 Caddy가 백엔드에 직접 닿을 이유도 없습니다.
+
+### 백엔드 두 인스턴스
+
+A와 B는 같은 이미지와 **완전히 같은 환경 변수**를 받습니다. 다른 것은 이름뿐입니다. YAML 앵커로 한 곳에 정의하고 양쪽이 참조하므로 설정이 갈릴 수 없습니다. 갈리면 두 인스턴스가 서로 다르게 동작하고, 그 차이는 요청이 어느 쪽으로 갔는지에 따라 간헐적으로만 드러납니다.
+
+Gateway가 두 인스턴스에 분산하며 세션 고정을 쓰지 않습니다. 근거는 위 OAuth2 절에 있습니다.
+
+컨테이너 healthcheck는 `/actuator/health/liveness`를 봅니다. 전체 health를 재시작 조건으로 두면 프로세스를 다시 띄운다고 풀리지 않는 상태까지 재시작을 부릅니다.
+
+### 메모리 한도
+
+백엔드 이미지는 `-XX:MaxRAMPercentage=75.0`으로 힙을 잡습니다. 이 값은 **컨테이너 메모리 한도**를 기준으로 계산되므로, 한도가 없으면 JVM 이 호스트 전체 메모리를 기준으로 잡습니다. 인스턴스가 둘이면 합쳐서 호스트보다 큰 힙을 요구하고, 같은 서버의 PostgreSQL·Kafka·Elasticsearch 까지 함께 밀려납니다.
+
+그래서 모든 상태 있는 서비스에 한도를 둡니다. 기본값 합계는 약 7GB 입니다.
+
+| 서비스 | 변수 | 기본값 |
+| --- | --- | --- |
+| 백엔드 A·B | `BACKEND_MEM_LIMIT` | `1536m` 각각 |
+| PostgreSQL | `POSTGRES_MEM_LIMIT` | `1g` |
+| Redis | `REDIS_MEM_LIMIT` | `512m` |
+| Kafka | `KAFKA_MEM_LIMIT` | `1g` |
+| Elasticsearch | `ELASTICSEARCH_MEM_LIMIT` | `1536m` |
+
+**최소 8GB 메모리를 권장합니다.** 7GB 를 컨테이너가 쓰고 나머지가 OS 몫입니다. 여유를 두려면 16GB 를 씁니다.
+
+### 영속 데이터
+
+`MOPL_DATA_ROOT` 아래에 서비스별로 둡니다. 기본값은 `/srv/mopl/data`입니다.
+
+| 데이터 | 경로 |
+| --- | --- |
+| PostgreSQL | `${MOPL_DATA_ROOT}/postgres` |
+| Redis | `${MOPL_DATA_ROOT}/redis` |
+| Kafka | `${MOPL_DATA_ROOT}/kafka` |
+| Elasticsearch | `${MOPL_DATA_ROOT}/elasticsearch` |
+
+Redis는 AOF를 켭니다. refresh token 세션과 OAuth2 인가 요청이 여기 있어, 재시작으로 사라지면 로그인한 사용자가 모두 끊깁니다.
+
+Kafka에 볼륨을 두는 이유는 컨테이너를 다시 만들 때 토픽과 소비 offset이 사라지기 때문입니다. `prod`는 `auto-offset-reset`이 `latest`라 offset이 없어지면 그동안의 이벤트를 건너뜁니다.
+
+### 환경 파일
+
+`.env.example`을 복사해 실제 값을 채웁니다. 저장소에는 예시만 두고 실제 파일은 `.gitignore`가 막습니다.
+
+```bash
+sudo install -o deploy -g deploy -m 600 /dev/null /etc/mopl/prod.env
+```
+
+Compose가 `MOPL_DOMAIN` 하나에서 CORS origin, WebSocket origin, OAuth Callback URI를 모두 만듭니다. 도메인을 바꿀 때 한 곳만 고치면 되고, 값들이 서로 어긋날 수 없습니다. 각 Provider Console에 등록한 Callback URI가 이 도메인과 같아야 합니다.
 
 ## CI 컨테이너 smoke 검증
 
