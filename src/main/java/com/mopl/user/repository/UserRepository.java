@@ -30,6 +30,34 @@ public interface UserRepository extends JpaRepository<User, UUID>, UserRepositor
     boolean existsByEmail(String email);
 
     /**
+     * 탈퇴하지 않은 사용자를 정규화된 이메일로 조회
+     *
+     * 로그인·비밀번호 초기화 등 인증 경로에서 사용
+     */
+    @Transactional(readOnly = true)
+    Optional<User> findByEmailAndDeletedAtIsNull(
+        String email
+    );
+
+    /**
+     * 탈퇴하지 않은 사용자를 UUID로 조회
+     *
+     * 토큰 발급·재발급 및 인증 상태 확인에 사용
+     */
+    @Transactional(readOnly = true)
+    Optional<User> findByIdAndDeletedAtIsNull(
+        UUID userId
+    );
+
+    /**
+     * 탈퇴하지 않은 사용자의 존재 여부를 확인
+     */
+    @Transactional(readOnly = true)
+    boolean existsByIdAndDeletedAtIsNull(
+        UUID userId
+    );
+
+    /**
      * OAuth 연결 해제 정책을 검사할 사용자를 쓰기 잠금으로 조회
      *
      * <p>같은 사용자의 OAuth 연결을 동시에 해제하는 요청을 직렬화하여
@@ -42,7 +70,8 @@ public interface UserRepository extends JpaRepository<User, UUID>, UserRepositor
     @Query(
         "SELECT u "
             + "FROM User u "
-            + "WHERE u.id = :userId"
+            + "WHERE u.id = :userId "
+            + "AND u.deletedAt IS NULL"
     )
     Optional<User> findByIdForUpdate(
         @Param("userId")

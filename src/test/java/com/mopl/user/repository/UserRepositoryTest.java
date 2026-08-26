@@ -6,6 +6,8 @@ import com.mopl.global.config.JpaConfig;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import java.util.Optional;
+import java.util.UUID;
+import java.time.Instant;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -121,5 +123,51 @@ class UserRepositoryTest {
         assertThat(foundUser.getId()).isNotNull();
         assertThat(foundUser.getCreatedAt()).isNotNull();
         assertThat(foundUser.getUpdatedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("탈퇴 사용자는 활성 사용자 조회에서 제외하지만 일반 UUID 조회는 유지한다")
+    void activeUserQueries_excludeDeletedUser() {
+        // given
+        User user = User.builder()
+            .email("withdraw@example.com")
+            .passwordHash("encoded-password")
+            .name("탈퇴 전 사용자")
+            .role(UserRole.USER)
+            .locked(false)
+            .build();
+
+        entityManager.persistAndFlush(user);
+
+        UUID userId = user.getId();
+
+        user.withdraw(
+            Instant.parse("2026-08-27T00:00:00Z")
+        );
+
+        entityManager.flush();
+        entityManager.clear();
+
+        String anonymizedEmail =
+            "deleted-" + userId + "@deleted.mopl";
+
+        // when & then
+        assertThat(
+            userRepository.findById(userId)
+        ).isPresent();
+
+        assertThat(
+            userRepository.findByIdAndDeletedAtIsNull(userId)
+        ).isEmpty();
+
+        assertThat(
+            userRepository.existsByIdAndDeletedAtIsNull(userId)
+        ).isFalse();
+
+        assertThat(
+            userRepository.findByEmailAndDeletedAtIsNull(
+                anonymizedEmail
+            )
+        ).isEmpty();
     }
 }
