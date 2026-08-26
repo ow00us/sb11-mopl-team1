@@ -1,11 +1,95 @@
 spring:
   application:
     name: mopl
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_OAUTH_CLIENT_ID}
+            client-secret: ${GOOGLE_OAUTH_CLIENT_SECRET}
+            client-authentication-method: client_secret_basic
+            authorization-grant-type: authorization_code
+            redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
+            scope:
+              - openid
+              - profile
+              - email
+            client-name: Google
+          kakao:
+            client-id: ${KAKAO_OAUTH_CLIENT_ID}
+            client-secret: ${KAKAO_OAUTH_CLIENT_SECRET}
+            client-authentication-method: client_secret_post
+            authorization-grant-type: authorization_code
+            redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
+            scope:
+              - profile_nickname
+              - profile_image
+            client-name: Kakao
+            provider: kakao
+          naver:
+            client-id: ${NAVER_OAUTH_CLIENT_ID}
+            client-secret: ${NAVER_OAUTH_CLIENT_SECRET}
+            client-authentication-method: client_secret_post
+            authorization-grant-type: authorization_code
+            redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
+            client-name: Naver
+            provider: naver
+        provider:
+          kakao:
+            authorization-uri: https://kauth.kakao.com/oauth/authorize
+            token-uri: https://kauth.kakao.com/oauth/token
+            user-info-uri: https://kapi.kakao.com/v2/user/me
+            user-name-attribute: id
+          naver:
+            authorization-uri: https://nid.naver.com/oauth2.0/authorize
+            token-uri: https://nid.naver.com/oauth2.0/token
+            user-info-uri: https://openapi.naver.com/v1/nid/me
+            user-name-attribute: response
+  mail:
+    # 로컬에서는 MailHog 또는 Mailpit SMTP 포트인 1025를 기본값으로 사용
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:1025}
+
+    # 인증이 필요한 운영 SMTP에서는 환경변수로 주입
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+
+    properties:
+      mail:
+        smtp:
+          # 로컬 SMTP 서버는 인증 없이 사용할 수 있도록 false를 기본값으로 설정
+          auth: ${MAIL_SMTP_AUTH:false}
+
+          starttls:
+            # 운영 SMTP 정책에 따라 환경변수로 활성화
+            enable: ${MAIL_STARTTLS_ENABLE:false}
+
+          # SMTP 서버 장애가 요청 스레드를 장시간 점유하지 않도록 제한
+          connectiontimeout: ${MAIL_CONNECTION_TIMEOUT:5000}
+          timeout: ${MAIL_READ_TIMEOUT:5000}
+          writetimeout: ${MAIL_WRITE_TIMEOUT:5000}
   profiles:
     active: dev
   batch:
     job:
       enabled: false
+  task:
+    scheduling:
+      pool:
+        size: 2
+  data:
+    redis:
+      timeout: 2s
+      connect-timeout: 1s
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+  elasticsearch:
+    connection-timeout: 3s
+    socket-timeout: 5s
   jpa:
     hibernate:
       ddl-auto: validate
@@ -13,6 +97,13 @@ spring:
     properties:
       hibernate:
         format_sql: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      # offset 은 소비 결과가 성공한 뒤 컨테이너가 커밋합니다. 자동 커밋을 쓰면
+      # 처리 실패한 레코드의 offset 까지 넘어갑니다.
+      enable-auto-commit: false
+      # auto-offset-reset 은 프로파일별로 다릅니다. 아래 dev·prod 블록을 참고하세요.
   flyway:
     postgresql:
       # V4 의 CREATE INDEX CONCURRENTLY 는 트랜잭션 밖 실행이 필요.
@@ -26,6 +117,15 @@ management:
     web:
       exposure:
         include: health, info, metrics, prometheus
+  endpoint:
+    health:
+      # liveness·readiness group 을 켭니다. Kubernetes 밖에서는 기본으로 꺼져 있습니다.
+      probes:
+        enabled: true
+      # 상세에는 Consumer Group, 토픽과 중지 사유가 들어갑니다. /actuator/health 는 인증
+      # 없이 열려 있으므로 상태만 보이게 하고, 상세는 관리자에게만 보여줍니다.
+      show-details: when-authorized
+      roles: ADMIN
 
 springdoc:
   api-docs:
@@ -38,7 +138,42 @@ springdoc:
 jwt:
   issuer: mopl
   secret: ${JWT_SECRET}
-  access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION:30m}
+  access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION:3h}
+
+refresh-token:
+  expiration: ${REFRESH_TOKEN_EXPIRATION:7d}
+  cookie:
+    # 기존 OpenAPI의 토큰 재발급 Cookie 계약과 동일한 이름
+    name: REFRESH_TOKEN
+
+    # 인증 API에만 Refresh Token Cookie를 전송
+    path: /api/auth
+
+    # 서로 다른 사이트 배포 시 None으로 변경하고 Secure=true와 함께 사용
+    same-site: ${REFRESH_TOKEN_COOKIE_SAME_SITE:Lax}
+
+    # 로컬 HTTP 개발 환경에서는 false
+    secure: ${REFRESH_TOKEN_COOKIE_SECURE:false}
+
+password-reset:
+  mail:
+    # 임시 비밀번호 안내 메일에 표시할 발신 주소
+    from-address: ${PASSWORD_RESET_MAIL_FROM:no-reply@mopl.local}
+
+    # 메일 제목은 환경별로 변경할 수 있지만 줄바꿈 문자는 허용하지 않음
+    subject: ${PASSWORD_RESET_MAIL_SUBJECT:[모두의 플리] 임시 비밀번호 안내}
+
+watching-session:
+  presence-ttl: ${WATCHING_SESSION_PRESENCE_TTL:90s}
+  session-ttl: ${WATCHING_SESSION_SESSION_TTL:120s}
+  heartbeat-interval: ${WATCHING_SESSION_HEARTBEAT_INTERVAL:20s}
+  sweep-interval: ${WATCHING_SESSION_SWEEP_INTERVAL:5m}
+  chat-send-min-interval: ${WATCHING_SESSION_CHAT_SEND_MIN_INTERVAL:500ms}
+  watch-subscribe-min-interval: ${WATCHING_SESSION_WATCH_SUBSCRIBE_MIN_INTERVAL:2s}
+  chat-subscription-limit: ${WATCHING_SESSION_CHAT_SUBSCRIPTION_LIMIT:20}
+  content-existence-cache-ttl: ${WATCHING_SESSION_CONTENT_EXISTENCE_CACHE_TTL:30s}
+  chat-buffer-size: ${WATCHING_SESSION_CHAT_BUFFER_SIZE:10}
+  chat-buffer-ttl: ${WATCHING_SESSION_CHAT_BUFFER_TTL:10m}
 
 tmdb:
   base-url: https://api.themoviedb.org/3
@@ -50,12 +185,116 @@ sportsdb:
   api-key: ${SPORTSDB_API_KEY}
   league-ids: 4569,4328,4335,4331,4332,4334
 
+content-search:
+  watcher-count-refresh-interval-millis: 60000
+  retry:
+    interval-millis: 60000
+    max-attempts: 5
+
 external-content-batch:
   tmdb-max-pages: 5
   sportsdb-past-days: 3
   sportsdb-future-days: 3
   cron: "0 0 4 * * *"
   zone: Asia/Seoul
+
+mopl:
+  storage:
+    image:
+      # 켜면 S3 에 올립니다. 끄면 파일을 저장하지 않는 구현이 붙어 AWS 자격 증명 없이
+      # 로컬 개발과 테스트를 돌릴 수 있습니다.
+      enabled: ${IMAGE_STORAGE_ENABLED:false}
+      bucket: ${IMAGE_STORAGE_BUCKET:}
+      region: ${IMAGE_STORAGE_REGION:ap-northeast-2}
+      # 조회 URL 의 앞부분입니다. 앞에 CDN 을 두면 그 주소를 넣습니다.
+      public-base-url: ${IMAGE_STORAGE_PUBLIC_BASE_URL:}
+      profile-image-prefix: ${IMAGE_STORAGE_PROFILE_PREFIX:profile-images}
+      thumbnail-prefix: ${IMAGE_STORAGE_THUMBNAIL_PREFIX:thumbnails}
+      # 5MB. 요청 본문 제한과 함께 걸어야 실제로 막힙니다.
+      max-file-size: ${IMAGE_STORAGE_MAX_FILE_SIZE:5242880}
+      allowed-content-types: image/jpeg,image/png,image/webp,image/gif
+
+  direct-message:
+    presence:
+      ttl: ${DIRECT_MESSAGE_PRESENCE_TTL:30s}
+      renew-interval: ${DIRECT_MESSAGE_PRESENCE_RENEW_INTERVAL:10s}
+    rate-limit:
+      max-messages: ${DIRECT_MESSAGE_RATE_LIMIT_MAX_MESSAGES:10}
+      window: ${DIRECT_MESSAGE_RATE_LIMIT_WINDOW:5s}
+
+  kafka:
+    topic:
+      # 공통 토픽과 DLT 를 기동 시 선언적으로 생성할지 여부입니다.
+      auto-create: ${KAFKA_TOPIC_AUTO_CREATE:true}
+      # 토픽을 만들지 않는 환경에서 필요한 토픽이 있는지 기동 시 확인할지 여부입니다.
+      # 브로커 없이 개발할 때 기동이 실패하지 않도록 기본값은 false 입니다.
+      verify: ${KAFKA_TOPIC_VERIFY:false}
+    listener:
+      # 로컬에 Kafka 를 띄우지 않고 개발할 때 false 로 두면 연결 경고가 반복되지 않습니다.
+      auto-startup: ${KAFKA_LISTENER_AUTO_STARTUP:true}
+    dlt:
+      # DLT replay 발행 확인을 기다리는 한도입니다. 확인 전에 성공으로 기록하지 않습니다.
+      replay-ack-timeout: ${KAFKA_DLT_REPLAY_ACK_TIMEOUT:10s}
+    processed-event:
+      cleanup:
+        # 멱등 처리 기록 정리 여부입니다.
+        enabled: ${PROCESSED_EVENT_CLEANUP_ENABLED:true}
+        # 이전 실행이 끝난 뒤부터 이 간격만큼 쉬고 다시 돕니다.
+        interval: ${PROCESSED_EVENT_CLEANUP_INTERVAL:3600000}
+        # 기록한 뒤 이 기간이 지나야 지웁니다. Kafka 원본 토픽 보관 기간과 DLT 수동 replay
+        # 가능 기간보다 길어야 합니다. 짧으면 지운 이벤트가 다시 왔을 때 처음 보는 것으로
+        # 판정되어 도메인 부수 효과가 한 번 더 일어납니다.
+        retention: ${PROCESSED_EVENT_CLEANUP_RETENTION:30d}
+        # 한 번의 실행이 지울 최대 건수입니다.
+        batch-size: ${PROCESSED_EVENT_CLEANUP_BATCH_SIZE:1000}
+  outbox:
+    # 선점 유효 기간입니다. 짧으면 발행이 끝나기 전에 다른 인스턴스가 회수해 중복 발행이
+    # 늘고, 길면 relay 가 죽었을 때 회수가 그만큼 지연됩니다.
+    lease-duration: ${OUTBOX_LEASE_DURATION:30s}
+    relay:
+      # 로컬에 Kafka 를 띄우지 않고 개발할 때 false 로 둡니다.
+      enabled: ${OUTBOX_RELAY_ENABLED:true}
+      # 이전 실행이 끝난 뒤부터 이 간격만큼 쉬고 다시 돕니다.
+      interval: ${OUTBOX_RELAY_INTERVAL:1000}
+      batch-size: ${OUTBOX_RELAY_BATCH_SIZE:100}
+      # broker 확인을 기다리는 한도입니다. 넘으면 실패로 보고 다음 주기에 다시 시도합니다.
+      ack-timeout: ${OUTBOX_RELAY_ACK_TIMEOUT:10s}
+    retry:
+      # 이 횟수까지 실패하면 자동 재시도를 멈추고 최종 실패로 남깁니다. 사람이 원인을
+      # 고친 뒤 다시 대기로 돌립니다.
+      max-attempts: ${OUTBOX_RETRY_MAX_ATTEMPTS:10}
+      # 첫 실패 뒤 기다리는 시간입니다. 이후 multiplier 배씩 늘어납니다.
+      initial-backoff: ${OUTBOX_RETRY_INITIAL_BACKOFF:5s}
+      # 간격 상한입니다. 없으면 몇 번 실패한 뒤 다음 시도가 며칠 뒤로 밀립니다.
+      max-backoff: ${OUTBOX_RETRY_MAX_BACKOFF:10m}
+      multiplier: ${OUTBOX_RETRY_MULTIPLIER:2.0}
+    cleanup:
+      # 발행 완료 레코드 정리 여부입니다.
+      enabled: ${OUTBOX_CLEANUP_ENABLED:true}
+      # 이전 실행이 끝난 뒤부터 이 간격만큼 쉬고 다시 돕니다.
+      interval: ${OUTBOX_CLEANUP_INTERVAL:3600000}
+      # 발행을 마친 뒤 이 기간이 지나야 지웁니다. 소비 지연과 재처리 요청이 들어오는
+      # 기간만큼은 남겨야 합니다.
+      retention: ${OUTBOX_CLEANUP_RETENTION:7d}
+      # 한 번의 실행이 지울 최대 건수입니다.
+      batch-size: ${OUTBOX_CLEANUP_BATCH_SIZE:1000}
+    metrics:
+      enabled: ${OUTBOX_METRICS_ENABLED:true}
+      # gauge 값을 다시 집계하는 간격입니다. 짧으면 집계 질의가 그만큼 자주 돕니다.
+      refresh-interval: ${OUTBOX_METRICS_REFRESH_INTERVAL:15000}
+
+  realtime:
+    relay:
+      # Redis 없이 다른 기능을 개발할 때 false 로 두면 구독 재연결이 반복되지 않습니다.
+      enabled: ${REALTIME_RELAY_ENABLED:true}
+      # 기동 시점에 Redis 가 준비되지 않았을 때 구독을 다시 시도하는 간격입니다.
+      subscribe-retry-interval: ${REALTIME_RELAY_SUBSCRIBE_RETRY_INTERVAL:30000}
+
+  oauth2:
+    authorization-request:
+      # 인가 요청을 Redis 에 두는 기간입니다. 사용자가 Provider 화면에서 로그인을 마치기까지
+      # 걸리는 시간만 덮으면 됩니다. 길게 두면 소비되지 않은 요청이 그만큼 오래 남습니다.
+      time-to-live: ${OAUTH2_AUTHORIZATION_REQUEST_TTL:5m}
 
 app:
   cors:
@@ -64,7 +303,39 @@ app:
   websocket:
     # 콤마로 구분하면 String[]으로 자동 바인딩
     allowed-origins: ${WS_ALLOWED_ORIGINS:http://localhost:5173}
+  oauth2:
+    user-info:
+      connect-timeout: ${OAUTH2_USER_INFO_CONNECT_TIMEOUT:3s}
+      read-timeout: ${OAUTH2_USER_INFO_READ_TIMEOUT:5s}
+    link:
+      # 로그인된 사용자가 OAuth Provider 인증을 완료할 수 있는 제한 시간
+      intent-expiration: ${OAUTH2_LINK_INTENT_EXPIRATION:5m}
+    local-credential:
+      # OAuth 전용 사용자의 이메일 소유 확인 코드 유효 시간
+      verification-expiration: ${OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_EXPIRATION:10m}
+      # 인증 메일 반복 요청을 제한하는 최소 대기 시간
+      resend-cooldown: ${OAUTH2_LOCAL_CREDENTIAL_RESEND_COOLDOWN:1m}
+      # 코드 무차별 대입을 막기 위한 최대 검증 실패 횟수
+      max-attempts: ${OAUTH2_LOCAL_CREDENTIAL_MAX_ATTEMPTS:5}
+      # 로컬 개발 전용 기본값이며 운영 프로필에서는 환경변수를 반드시 주입
+      verification-secret: ${OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_SECRET:local-oauth-verification-secret-change-me}
+      mail:
+        # OAuth 전용 사용자의 이메일 소유 확인 메일 발신 주소
+        from-address: ${OAUTH2_LOCAL_CREDENTIAL_MAIL_FROM:no-reply@mopl.local}
 
+        # CR/LF 줄바꿈 문자를 허용하지 않는 인증 메일 제목
+        subject: ${OAUTH2_LOCAL_CREDENTIAL_MAIL_SUBJECT:[모두의 플리] 이메일 인증 코드 안내}
+    redirect:
+      # OAuth 인증 성공 후 Access Token 복원을 처리할 프론트엔드 화면
+      success-uri: ${OAUTH2_SUCCESS_REDIRECT_URI:http://localhost:5173/oauth/callback}
+      # OAuth 인증 실패 후 이동할 프론트엔드 로그인 화면
+      failure-uri: ${OAUTH2_FAILURE_REDIRECT_URI:http://localhost:5173/sign-in}
+
+logging:
+  level:
+    # 감사 로그는 이름을 따로 둡니다. 루트 레벨을 올리더라도 누가 무엇을 했는지는
+    # 계속 남아야 합니다.
+    mopl.audit: info
 ---
 spring:
   config:
@@ -81,19 +352,86 @@ spring:
     redis:
       host: localhost
       port: 6379
+  elasticsearch:
+    uris: http://localhost:9200
   flyway:
     enabled: true
     baseline-on-migrate: true
+  kafka:
+    consumer:
+      # 로컬에서는 브로커를 다시 띄우거나 그룹을 바꿔도 쌓인 이벤트를 처음부터 볼 수
+      # 있어야 디버깅이 됩니다.
+      auto-offset-reset: earliest
 
 ---
 spring:
   config:
     activate:
       on-profile: prod
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            # 운영에서는 프록시 내부 주소가 아니라 Google Console에 등록한
+            # 외부 HTTPS Callback URI를 명시적으로 사용
+            redirect-uri: ${GOOGLE_OAUTH_REDIRECT_URI}
+          kakao:
+            # 운영에서는 Kakao Developers에 등록한 외부 HTTPS Callback URI 사용
+            redirect-uri: ${KAKAO_OAUTH_REDIRECT_URI}
+          naver:
+            # 운영에서는 Naver Developers에 등록한 외부 HTTPS Callback URI 사용
+            redirect-uri: ${NAVER_OAUTH_REDIRECT_URI}
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST}
+      port: ${SPRING_DATA_REDIS_PORT}
+  mail:
+    # 운영 SMTP 를 반드시 주입받습니다. 기본 문서의 localhost:1025 는 로컬 Mailpit 주소라,
+    # 그대로 두면 비밀번호 초기화 메일이 조용히 실패하고 전체 health 도 계속 DOWN 입니다.
+    host: ${MAIL_HOST}
+    port: ${MAIL_PORT}
+  elasticsearch:
+    uris: ${ELASTICSEARCH_URIS}
   jpa:
     properties:
       hibernate:
         format_sql: false
+  kafka:
+    # prod는 기본값 없이 강제 - 값이 누락되면 애플리케이션 시작 시점에 실패
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    consumer:
+      # 새 Consumer Group 이 붙을 때 토픽에 남은 과거 이벤트를 전부 재소비하면
+      # 오래된 알림이 한꺼번에 생성됩니다. 과거 이벤트 재처리는 의도적인 replay 로만
+      # 수행하고, 평시에는 신규 이벤트만 받습니다.
+      auto-offset-reset: latest
+
+server:
+  # 운영에서는 Caddy 와 프론트엔드 Nginx 뒤에 있습니다. 이 설정이 없으면 백엔드가 자기
+  # 주소를 내부 http 주소로 인식해, 절대 URI 로 지정하지 않은 경로에서 외부 host 와 https
+  # scheme 이 사라집니다.
+  #
+  # prod 에서만 켭니다. 프록시가 없는 환경에서 켜면 클라이언트가 직접 보낸 X-Forwarded-*
+  # 를 그대로 믿게 됩니다.
+  forward-headers-strategy: framework
+
+mopl:
+  storage:
+    image:
+      # 운영에서는 켜는 것이 기본입니다. 끈 채로 배포하면 업로드한 이미지가 저장되지 않고
+      # 깨진 링크만 남습니다. 그 사실이 사용자 신고로만 드러납니다.
+      enabled: ${IMAGE_STORAGE_ENABLED:true}
+      bucket: ${IMAGE_STORAGE_BUCKET}
+      public-base-url: ${IMAGE_STORAGE_PUBLIC_BASE_URL}
+
+  kafka:
+    topic:
+      # 운영 토픽은 미리 준비합니다. 파티션 수 결정이 코드 배포에 묶이지 않게 합니다.
+      auto-create: false
+      # verify 는 기본값 false 를 그대로 씁니다. true 로 두면 기동 시 AdminClient 로
+      # 브로커에 접속하므로 애플리케이션 기동이 Kafka 가용성에 묶입니다. 지금은 도메인
+      # 리스너가 없어 그 결합을 만들 이유가 없고, 결합 여부는 운영에서 결정할 사안입니다.
+      # 브로커가 보장되는 환경에서 KAFKA_TOPIC_VERIFY=true 로 켭니다.
 
 app:
   cors:
@@ -102,3 +440,32 @@ app:
   websocket:
     # prod는 기본값 없이 강제 - 값이 누락되면 애플리케이션 시작 시점에 실패
     allowed-origins: ${WS_ALLOWED_ORIGINS}
+  oauth2:
+    local-credential:
+      # 운영에서는 기본값 없이 Secret 환경변수를 반드시 주입
+      verification-secret: ${OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_SECRET}
+    redirect:
+      # 운영 환경에서는 실제 프론트엔드 OAuth Callback URI를 반드시 주입
+      success-uri: ${OAUTH2_SUCCESS_REDIRECT_URI}
+      # 운영 환경에서는 실제 프론트엔드 로그인 실패 URI를 반드시 주입
+      failure-uri: ${OAUTH2_FAILURE_REDIRECT_URI}
+
+refresh-token:
+  cookie:
+    # 운영 환경에서는 별도 설정이 없어도 HTTPS 전용 Cookie를 기본으로 사용
+    secure: ${REFRESH_TOKEN_COOKIE_SECURE:true}
+
+
+---
+spring:
+  config:
+    activate:
+      # 시연·QA용 초기 데이터가 필요한 경우에만 추가로 활성화
+      on-profile: seed
+
+seed:
+  admin:
+    # 실제 관리자 정보는 Git에 기록하지 않고 실행 환경에서 주입
+    name: ${SEED_ADMIN_NAME}
+    email: ${SEED_ADMIN_EMAIL}
+    password: ${SEED_ADMIN_PASSWORD}

@@ -6,7 +6,9 @@ import com.mopl.global.exception.ErrorCode;
 import com.mopl.notification.dto.NotificationDto;
 import com.mopl.notification.entity.Notification;
 import com.mopl.notification.entity.NotificationLevel;
+import com.mopl.notification.entity.NotificationType;
 import com.mopl.notification.event.NotificationCreatedEvent;
+import com.mopl.notification.kafka.NotificationCreateCommand;
 import com.mopl.notification.repository.NotificationRepository;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
@@ -40,9 +42,35 @@ public class NotificationService {
         String content,
         NotificationLevel level
     ) {
+        return create(
+            receiverId,
+            sourceEventId,
+            null,
+            null,
+            null,
+            title,
+            content,
+            level
+        );
+    }
+
+    @Transactional
+    public NotificationDto create(
+        UUID receiverId,
+        UUID sourceEventId,
+        NotificationType type,
+        UUID resourceId,
+        UUID sourceEntityId,
+        String title,
+        String content,
+        NotificationLevel level
+    ) {
         Notification notification = Notification.create(
             receiverId,
             sourceEventId,
+            type,
+            resourceId,
+            sourceEntityId,
             title,
             content,
             level
@@ -61,6 +89,44 @@ public class NotificationService {
         );
 
         return notificationDto;
+    }
+
+    @Transactional
+    public boolean createIfAbsent(NotificationCreateCommand command) {
+        UUID notificationId = UUID.randomUUID();
+        Instant createdAt = Instant.now();
+
+        int insertedCount = notificationRepository.insertIfAbsent(
+                notificationId,
+                createdAt,
+                command.receiverId(),
+                command.sourceEventId(),
+                command.type().name(),
+                command.resourceId(),
+                command.sourceEntityId(),
+                command.title(),
+                command.content(),
+                command.level().name()
+            );
+
+        if (insertedCount == 0) {
+            return false;
+        }
+
+        Notification saved = notificationRepository.findById(notificationId)
+            .orElseThrow(() ->
+                new IllegalStateException(
+                    "저장된 알림을 조회할 수 없습니다."
+                )
+            );
+
+        NotificationDto notificationDto = NotificationDto.from(saved);
+
+        eventPublisher.publishEvent(
+            new NotificationCreatedEvent(notificationDto)
+        );
+
+        return true;
     }
 
     public CursorResponse<NotificationDto> getUnreadNotifications(
@@ -163,19 +229,27 @@ public class NotificationService {
         UUID notificationId,
         UUID receiverId
     ) {
-        Notification notification =
-            notificationRepository
-                .findByIdAndReceiverId(
+        int updatedCount =
+            notificationRepository.markAsReadIfUnread(
+                notificationId,
+                receiverId,
+                Instant.now()
+            );
+
+        if (updatedCount == 0) {
+            boolean isOwner =
+                notificationRepository.findByIdAndReceiverId(
                     notificationId,
                     receiverId
                 )
-                .orElseThrow(() ->
-                    new BusinessException(
-                        ErrorCode.RESOURCE_NOT_FOUND
-                    )
-                );
+                    .isPresent();
 
-        notification.markAsRead(Instant.now());
+            if (!isOwner) {
+                throw new BusinessException(
+                    ErrorCode.RESOURCE_NOT_FOUND
+                );
+            }
+        }
     }
 
     private void validateRequest(

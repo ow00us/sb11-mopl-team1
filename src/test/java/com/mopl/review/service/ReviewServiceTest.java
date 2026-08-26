@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentType;
 import com.mopl.content.repository.ContentRepository;
+import com.mopl.content.search.ContentSearchSyncEvent;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
@@ -38,6 +39,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -53,6 +55,9 @@ class ReviewServiceTest {
 
     @Mock
     UserRepository userRepository;
+
+    @Mock
+    ApplicationEventPublisher eventPublisher;
 
     @InjectMocks
     ReviewServiceImpl reviewService;
@@ -81,6 +86,7 @@ class ReviewServiceTest {
         assertThat(result.author().userId()).isEqualTo(AUTHOR_ID);
         verify(reviewRepository).saveAndFlush(any(Review.class));
         verify(contentRepository).refreshReviewAggregate(CONTENT_ID);
+        verify(eventPublisher).publishEvent(new ContentSearchSyncEvent(CONTENT_ID));
     }
 
     @Test
@@ -126,6 +132,7 @@ class ReviewServiceTest {
                 .extracting("errorCode").isEqualTo(ErrorCode.REVIEW_DUPLICATE);
 
         verify(contentRepository, never()).refreshReviewAggregate(any());
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
@@ -186,6 +193,7 @@ class ReviewServiceTest {
         assertThat(result.rating()).isEqualByComparingTo("4.0");
         verify(reviewRepository).saveAndFlush(review);
         verify(contentRepository).refreshReviewAggregate(CONTENT_ID);
+        verify(eventPublisher).publishEvent(new ContentSearchSyncEvent(CONTENT_ID));
     }
 
     @Test
@@ -227,6 +235,7 @@ class ReviewServiceTest {
         verify(reviewRepository).delete(review);
         verify(reviewRepository).flush();
         verify(contentRepository).refreshReviewAggregate(CONTENT_ID);
+        verify(eventPublisher).publishEvent(new ContentSearchSyncEvent(CONTENT_ID));
     }
 
     @Test
@@ -424,6 +433,46 @@ class ReviewServiceTest {
         assertThat(result.hasNext()).isTrue();
         assertThat(result.nextCursor()).isNotNull();
         assertThat(result.nextIdAfter()).isNotNull();
+    }
+
+    // ── getMyReview ──────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("콘텐츠와 본인 리뷰가 모두 존재하면 ReviewDto를 반환한다")
+    void getMyReview_success() {
+        Review review = savedReview(REVIEW_ID, AUTHOR_ID, CONTENT_ID, "재밌어요", new BigDecimal("4.5"));
+        when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(movie()));
+        when(reviewRepository.findByAuthorIdAndContentId(AUTHOR_ID, CONTENT_ID)).thenReturn(Optional.of(review));
+        when(userRepository.findById(AUTHOR_ID)).thenReturn(Optional.of(savedUser(AUTHOR_ID, "닉네임", null)));
+
+        ReviewDto result = reviewService.getMyReview(CONTENT_ID, AUTHOR_ID);
+
+        assertThat(result.text()).isEqualTo("재밌어요");
+        assertThat(result.rating()).isEqualByComparingTo("4.5");
+        assertThat(result.author().userId()).isEqualTo(AUTHOR_ID);
+    }
+
+    @Test
+    @DisplayName("콘텐츠가 존재하지 않으면 CONTENT_NOT_FOUND 예외가 발생하고, 리뷰 조회는 호출되지 않는다")
+    void getMyReview_fail_contentNotFound() {
+        when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> reviewService.getMyReview(CONTENT_ID, AUTHOR_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.CONTENT_NOT_FOUND);
+
+        verify(reviewRepository, never()).findByAuthorIdAndContentId(any(), any());
+    }
+
+    @Test
+    @DisplayName("콘텐츠는 존재하지만 본인 리뷰가 없으면 REVIEW_NOT_FOUND 예외가 발생한다")
+    void getMyReview_fail_reviewNotFound() {
+        when(contentRepository.findById(CONTENT_ID)).thenReturn(Optional.of(movie()));
+        when(reviewRepository.findByAuthorIdAndContentId(AUTHOR_ID, CONTENT_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> reviewService.getMyReview(CONTENT_ID, AUTHOR_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.REVIEW_NOT_FOUND);
     }
 
     // ── 헬퍼 ─────────────────────────────────────────────────────────────────

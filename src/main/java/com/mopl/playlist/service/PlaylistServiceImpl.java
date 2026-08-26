@@ -7,6 +7,9 @@ import com.mopl.global.common.ContentSummary;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.outbox.OutboxRecorder;
+import com.mopl.global.event.EventEnvelope;
+import com.mopl.global.event.KafkaEventContract;
 import com.mopl.global.util.CursorUtils;
 import com.mopl.playlist.dto.PlaylistCreateRequest;
 import com.mopl.playlist.dto.PlaylistDto;
@@ -16,9 +19,12 @@ import com.mopl.global.common.UserSummary;
 import com.mopl.playlist.entity.Playlist;
 import com.mopl.playlist.entity.PlaylistContent;
 import com.mopl.playlist.entity.PlaylistSubscription;
+import com.mopl.playlist.event.PlaylistSubscriptionEventFactory;
 import com.mopl.playlist.repository.PlaylistContentRepository;
 import com.mopl.playlist.repository.PlaylistRepository;
 import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
+import com.mopl.user.entity.User;
+import com.mopl.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
@@ -28,6 +34,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,13 +50,18 @@ public class PlaylistServiceImpl implements PlaylistService {
     private static final String SORT_UPDATED_AT      = "updatedAt";
     private static final String SORT_SUBSCRIBE_COUNT = "subscriberCount";
     private static final String DIRECTION_ASC        = "ASCENDING";
+    private static final String DIRECTION_DESC       = "DESCENDING";
     private static final String PG_UNIQUE_VIOLATION_SQLSTATE = "23505";
+    private static final String UNKNOWN_USER_NAME = "알 수 없는 사용자";
 
     private final PlaylistRepository playlistRepository;
     private final PlaylistSubscriptionRepository subscriptionRepository;
     private final PlaylistContentRepository playlistContentRepository;
     private final ContentRepository contentRepository;
     private final PlaylistContentSaver playlistContentSaver;
+    private final UserRepository userRepository;
+    private final OutboxRecorder outboxRecorder;
+    private final PlaylistSubscriptionEventFactory playlistSubscriptionEventFactory;
 
     @Override
     @Transactional
@@ -59,7 +71,8 @@ public class PlaylistServiceImpl implements PlaylistService {
                 .title(request.title())
                 .description(request.description())
                 .build();
-        return PlaylistDto.from(playlistRepository.save(playlist));
+        Playlist saved = playlistRepository.save(playlist);
+        return PlaylistDto.from(saved, toOwnerSummary(saved.getOwnerId()), false, List.of());
     }
 
     @Override
@@ -68,7 +81,7 @@ public class PlaylistServiceImpl implements PlaylistService {
         boolean subscribedByMe = requesterId != null &&
                 subscriptionRepository.existsByPlaylistIdAndSubscriberId(playlistId, requesterId);
         List<ContentSummary> contents = loadContents(playlistId);
-        return PlaylistDto.from(playlist, subscribedByMe, contents);
+        return PlaylistDto.from(playlist, toOwnerSummary(playlist.getOwnerId()), subscribedByMe, contents);
     }
 
     @Override
@@ -103,8 +116,14 @@ public class PlaylistServiceImpl implements PlaylistService {
 
         Map<UUID, List<ContentSummary>> contentsByPlaylistId = loadContentsBatch(pageIds);
 
+        Set<UUID> ownerIds = page.stream().map(Playlist::getOwnerId).collect(Collectors.toSet());
+        Map<UUID, UserSummary> ownersById = toUserSummaryMap(ownerIds);
+
         List<PlaylistDto> data = page.stream()
-                .map(p -> PlaylistDto.from(p, finalSubscribedIds.contains(p.getId()),
+                .map(p -> PlaylistDto.from(
+                        p,
+                        ownersById.getOrDefault(p.getOwnerId(), unknownUserSummary(p.getOwnerId())),
+                        finalSubscribedIds.contains(p.getId()),
                         contentsByPlaylistId.getOrDefault(p.getId(), List.of())))
                 .toList();
 
@@ -116,12 +135,80 @@ public class PlaylistServiceImpl implements PlaylistService {
     }
 
     @Override
+    public CursorResponse<PlaylistDto> getPopular(
+            String cursor, UUID idAfter, int limit, UUID requesterId) {
+
+        // cursor·idAfter 는 짝으로만 유효. 한쪽만 있으면 부분 상태 방지 (기존 fetchPage 패턴)
+        if ((cursor != null) != (idAfter != null)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        Long cursorCount = null;
+        Instant cursorUpdatedAt = null;
+        if (cursor != null) {
+            try {
+                CursorUtils.PopularCursor decoded = CursorUtils.decodeAsPopularCursor(cursor);
+                cursorCount = decoded.subscriberCount();
+                cursorUpdatedAt = decoded.updatedAt();
+            } catch (IllegalArgumentException | java.time.format.DateTimeParseException e) {
+                // Instant.parse·Long.parseLong 실패는 잘못된 커서로 400 매핑 (getSubscribers 패턴)
+                throw new BusinessException(ErrorCode.INVALID_INPUT);
+            }
+        }
+
+        int fetchSize = limit + 1;
+        String idAfterStr = idAfter != null ? idAfter.toString() : null;
+        List<Playlist> rows = playlistRepository.findPopular(
+                cursorCount, cursorUpdatedAt, idAfterStr, fetchSize);
+
+        boolean hasNext = rows.size() == fetchSize;
+        List<Playlist> page = hasNext ? rows.subList(0, limit) : rows;
+
+        String nextCursor  = null;
+        UUID   nextIdAfter = null;
+        if (hasNext && !page.isEmpty()) {
+            Playlist last = page.get(page.size() - 1);
+            nextCursor  = CursorUtils.encodePopularCursor(last.getSubscriberCount(), last.getUpdatedAt());
+            nextIdAfter = last.getId();
+        }
+
+        List<UUID> pageIds = page.stream().map(Playlist::getId).toList();
+
+        Set<UUID> subscribedIds = Set.of();
+        if (requesterId != null && !pageIds.isEmpty()) {
+            subscribedIds = subscriptionRepository.findSubscribedPlaylistIds(requesterId, pageIds);
+        }
+        final Set<UUID> finalSubscribedIds = subscribedIds;
+
+        Map<UUID, List<ContentSummary>> contentsByPlaylistId = loadContentsBatch(pageIds);
+
+        Set<UUID> ownerIds = page.stream().map(Playlist::getOwnerId).collect(Collectors.toSet());
+        Map<UUID, UserSummary> ownersById = toUserSummaryMap(ownerIds);
+
+        List<PlaylistDto> data = page.stream()
+                .map(p -> PlaylistDto.from(
+                        p,
+                        ownersById.getOrDefault(p.getOwnerId(), unknownUserSummary(p.getOwnerId())),
+                        finalSubscribedIds.contains(p.getId()),
+                        contentsByPlaylistId.getOrDefault(p.getId(), List.of())))
+                .toList();
+
+        // 인기 랭킹은 필터가 없으므로 전체 카운트를 반환
+        long total = playlistRepository.countByFilter(null, null, null);
+
+        return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, total,
+                SORT_SUBSCRIBE_COUNT, DIRECTION_DESC);
+    }
+
+    @Override
     @Transactional
     public PlaylistDto update(UUID playlistId, PlaylistUpdateRequest request, UUID requesterId) {
         Playlist playlist = findOrThrow(playlistId);
         verifyOwner(playlist, requesterId);
         playlist.update(request.title(), request.description());
-        return PlaylistDto.from(playlistRepository.saveAndFlush(playlist));
+        Playlist saved = playlistRepository.saveAndFlush(playlist);
+        List<ContentSummary> contents = loadContents(saved.getId());
+        return PlaylistDto.from(saved, toOwnerSummary(saved.getOwnerId()), false, contents);
     }
 
     @Override
@@ -148,7 +235,28 @@ public class PlaylistServiceImpl implements PlaylistService {
             // 엔티티 setter/증감 메서드 대신 원자적 SQL UPDATE 로 lost update 를 방지한다.
             // 신규 삽입 경로에서만 카운터를 증가시켜 중복 요청이 재증가시키지 않도록 한다.
             playlistRepository.incrementSubscriberCount(playlistId);
+            recordSubscriptionCreatedEvent(playlist, subscriberId);
         }
+    }
+
+    // 계약 docs/07-kafka-outbox-contract.md §8.2
+    // - envelope 조립은 PlaylistSubscriptionEventFactory 가 담당
+    // - partitionKey: subscriptionId, orderingScope: NONE
+    // - deduplicationKey: playlist.subscription.created:<subscriptionId>
+    // - insertIfAbsent 는 rows 만 반환하므로 aggregateId 확보 위해 재조회한다.
+    //   rows=1 직후 조회가 empty 인 것은 인프라 이상이므로 500 으로 노출한다.
+    private void recordSubscriptionCreatedEvent(Playlist playlist, UUID subscriberId) {
+        PlaylistSubscription subscription = subscriptionRepository
+                .findByPlaylistIdAndSubscriberId(playlist.getId(), subscriberId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_ERROR));
+        EventEnvelope envelope = playlistSubscriptionEventFactory.createSubscriptionCreatedEnvelope(
+                subscription, playlist.getOwnerId());
+        KafkaEventContract contract = KafkaEventContract.PLAYLIST_SUBSCRIPTION_CREATED;
+        outboxRecorder.record(
+                envelope,
+                contract.partitionKey(envelope),
+                contract.orderingScope(),
+                contract.deduplicationKey(envelope));
     }
 
     @Override
@@ -294,6 +402,30 @@ public class PlaylistServiceImpl implements PlaylistService {
         };
     }
 
+    // 단건 owner 조회. 배치 조회 API(findAllById)를 재사용해 진입점을 하나로 유지한다.
+    private UserSummary toOwnerSummary(UUID ownerId) {
+        return userRepository.findAllById(List.of(ownerId)).stream()
+                .findFirst()
+                .map(this::toUserSummary)
+                .orElseGet(() -> unknownUserSummary(ownerId));
+    }
+
+    // 페이지 owner/subscriber 배치 조회. findAllById 1회로 N+1을 방지한다.
+    private Map<UUID, UserSummary> toUserSummaryMap(Collection<UUID> userIds) {
+        if (userIds.isEmpty()) return Map.of();
+        return userRepository.findAllById(userIds).stream()
+                .collect(Collectors.toMap(User::getId, this::toUserSummary));
+    }
+
+    private UserSummary toUserSummary(User user) {
+        return new UserSummary(user.getId(), user.getName(), user.getProfileImageUrl());
+    }
+
+    // owner user 가 조회되지 않은 경우의 대체값 (ReviewServiceImpl 의 UNKNOWN_AUTHOR_NAME 정책과 동일)
+    private UserSummary unknownUserSummary(UUID ownerId) {
+        return new UserSummary(ownerId, UNKNOWN_USER_NAME, null);
+    }
+
     @Override
     @Transactional
     public void addContent(UUID playlistId, UUID contentId, UUID requesterId) {
@@ -370,10 +502,13 @@ public class PlaylistServiceImpl implements PlaylistService {
             nextIdAfter = last.getId();
         }
 
+        Set<UUID> subscriberIds = page.stream().map(PlaylistSubscription::getSubscriberId).collect(Collectors.toSet());
+        Map<UUID, UserSummary> usersById = toUserSummaryMap(subscriberIds);
+
         List<SubscriberItemDto> data = page.stream()
                 .map(s -> new SubscriberItemDto(
                         s.getId(),
-                        new UserSummary(s.getSubscriberId(), null, null),
+                        usersById.getOrDefault(s.getSubscriberId(), unknownUserSummary(s.getSubscriberId())),
                         s.getCreatedAt()))
                 .toList();
 

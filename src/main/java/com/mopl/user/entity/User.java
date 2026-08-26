@@ -28,8 +28,15 @@ public class User extends BaseEntity {
     @Column(nullable = false, length = 255)
     private String email;
 
-    // 인코딩 된 비밀번호
-    @Column(name = "password_hash", nullable = false, length = 255)
+    /*
+     * 로컬 이메일·비밀번호 로그인에 사용하는 BCrypt 비밀번호 해시
+     *
+     * 로컬 회원가입 사용자는 반드시 비밀번호 해시를 저장
+     * OAuth로만 가입한 사용자는 로컬 비밀번호가 없으므로 null일 수 있다.
+     *
+     * 비밀번호 원문은 어떤 경우에도 이 필드에 저장하지 않는다.
+     */
+    @Column(name = "password_hash", length = 255)
     private String passwordHash;
 
     // 서비스 화면에 표시할 사용자 이름
@@ -61,7 +68,7 @@ public class User extends BaseEntity {
      * .name("사용자") .role(UserRole.USER) .locked(false) .build();
      *
      * @param email           정규화된 이메일
-     * @param passwordHash    인코딩된 비밀번호
+     * @param passwordHash    인코딩된 비밀번호, OAuth 전용 사용자는 null
      * @param name            사용자 이름
      * @param profileImageUrl 프로필 이미지 URL, 없으면 null
      * @param role            사용자 권한
@@ -110,6 +117,52 @@ public class User extends BaseEntity {
             this.profileImageUrl = profileImageUrl;
         }
     }
+
+    /**
+     * OAuth 전용 사용자에게 로컬 이메일·비밀번호 로그인 수단을 등록
+     *
+     * <p>OAuth 전용 사용자의 내부 식별 이메일을 사용자가 인증한
+     * 실제 이메일로 교체하고, PasswordEncoder로 생성된 비밀번호
+     * 해시를 함께 저장합니다.</p>
+     *
+     * <p>이미 passwordHash가 존재하는 사용자에게 다시 호출하면
+     * 이메일 변경 기능으로 오용될 수 있으므로 거부합니다.</p>
+     *
+     * @param normalizedEmail 소유권 인증을 마친 정규화된 실제 이메일
+     * @param encodedPassword PasswordEncoder로 생성한 비밀번호 해시
+     */
+    public void registerLocalCredential(
+        String normalizedEmail,
+        String encodedPassword
+    ) {
+        if (
+            normalizedEmail == null
+                || normalizedEmail.isBlank()
+        ) {
+            throw new IllegalArgumentException(
+                "로컬 로그인 이메일은 비어 있을 수 없습니다."
+            );
+        }
+
+        if (
+            encodedPassword == null
+                || encodedPassword.isBlank()
+        ) {
+            throw new IllegalArgumentException(
+                "로컬 로그인 비밀번호 해시는 비어 있을 수 없습니다."
+            );
+        }
+
+        if (passwordHash != null) {
+            throw new IllegalStateException(
+                "이미 로컬 로그인 수단이 등록되어 있습니다."
+            );
+        }
+
+        this.email = normalizedEmail;
+        this.passwordHash = encodedPassword;
+    }
+
 
     /**
      * 사용자의 비밀번호 해시를 새로운 값으로 변경

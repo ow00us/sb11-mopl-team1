@@ -1,6 +1,7 @@
 package com.mopl.review.service;
 
 import com.mopl.content.repository.ContentRepository;
+import com.mopl.content.search.ContentSearchSyncEvent;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.common.UserSummary;
 import com.mopl.global.exception.BusinessException;
@@ -22,6 +23,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -42,6 +44,7 @@ public class ReviewServiceImpl implements ReviewService {
     private final ReviewRepository reviewRepository;
     private final ContentRepository contentRepository;
     private final UserRepository userRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Override
     @Transactional
@@ -135,6 +138,18 @@ public class ReviewServiceImpl implements ReviewService {
         return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext, total, sortBy, sortDirection);
     }
 
+    @Override
+    public ReviewDto getMyReview(UUID contentId, UUID authorId) {
+        contentRepository.findById(contentId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.CONTENT_NOT_FOUND));
+
+        Review review = reviewRepository.findByAuthorIdAndContentId(authorId, contentId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.REVIEW_NOT_FOUND));
+
+        UserSummary author = toUserSummary(authorId);
+        return ReviewDto.from(review, author);
+    }
+
     // ── 내부 헬퍼 ──────────────────────────────────────────────────────────
 
     private Review findOrThrow(UUID reviewId) {
@@ -163,7 +178,10 @@ public class ReviewServiceImpl implements ReviewService {
     // 락 대기 중 커밋된 다른 리뷰까지 정확히 반영된다. ContentRepository.findByIdForUpdateWithLockTimeout 참고.
     private void refreshContentAggregate(UUID contentId) {
         contentRepository.findByIdForUpdateWithLockTimeout(contentId)
-                .ifPresent(content -> contentRepository.refreshReviewAggregate(contentId));
+                .ifPresent(content -> {
+                    contentRepository.refreshReviewAggregate(contentId);
+                    eventPublisher.publishEvent(new ContentSearchSyncEvent(contentId));
+                });
     }
 
     private UserSummary toUserSummary(UUID userId) {

@@ -52,14 +52,31 @@ class SecurityAccessPolicyTest {
     @ParameterizedTest
     @ValueSource(strings = {
         "/api/users",
-        "/api/auth/sign-in"
+        "/api/auth/sign-in",
+        "/api/auth/reset-password",
+        "/api/auth/refresh"
     })
     @DisplayName("공개 POST API는 CSRF 토큰이 있으면 JWT 없이 접근할 수 있다")
     void publicPost_withCsrf_doesNotRequireJwt(String path) throws Exception {
-        mockMvc.perform(post(path).with(csrf()))
-            .andExpect(status().isNoContent());
+        mockMvc.perform(
+                post(path)
+                    .with(csrf())
+            )
+            .andExpect(
+                status().isNoContent()
+            );
 
-        verify(jwtProvider, never()).validate(org.mockito.ArgumentMatchers.anyString());
+        /*
+         * 공개 API이므로 Authorization 헤더가 없는 요청에 대해
+         * JWT 검증을 시도하지 않아야 합니다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers
+                .anyString()
+        );
     }
 
     @Test
@@ -71,10 +88,175 @@ class SecurityAccessPolicyTest {
     }
 
     @Test
+    @DisplayName("비밀번호 초기화 API는 CSRF 토큰이 없으면 403을 반환한다")
+    void resetPassword_withoutCsrf_returnsForbidden()
+        throws Exception {
+
+        /*
+         * 비밀번호 초기화는 Access Token 없이 접근 가능한 공개 API이지만,
+         * 사용자의 비밀번호 상태를 변경하는 POST 요청
+         *
+         * 따라서 공격 사이트에서 사용자의 브라우저를 통해 임의로
+         * 비밀번호 초기화를 요청하지 못하도록 CSRF 검증을 적용
+         */
+        mockMvc.perform(
+                post(
+                    "/api/auth/reset-password"
+                )
+            )
+            .andExpect(
+                status().isForbidden()
+            )
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_403_1")
+            );
+
+        /*
+         * 403은 JWT 인증 실패가 아니라 CSRF 검증 실패로 발생해야 한다.
+         *
+         * reset-password는 공개 경로이므로 JwtProvider가 Access Token을
+         * 검증하려고 호출되어서는 안된다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers
+                .anyString()
+        );
+    }
+
+    @Test
+    @DisplayName("토큰 재발급 API는 CSRF 토큰이 없으면 403을 반환한다")
+    void refresh_withoutCsrf_returnsForbidden()
+        throws Exception {
+
+        /*
+         * /api/auth/refresh는 Access Token 인증이 필요 없는 공개 경로지만
+         * Refresh Token Cookie를 사용하는 상태 변경 POST 요청이므로
+         * CSRF 검증 대상
+         *
+         * SecurityPolicyProbeController를 사용하므로 실제 Refresh Token
+         * Cookie 바인딩이나 재발급 Service 로직에는 진입하지 않는다.
+         */
+        mockMvc.perform(
+                post("/api/auth/refresh")
+            )
+            .andExpect(status().isForbidden())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_403_1")
+            );
+
+        /*
+         * 이번 403은 JWT 인증 실패가 아니라 CSRF 검증 실패로
+         * 발생해야 하므로 JwtProvider는 호출되지 않는다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
+    @Test
+    @DisplayName("토큰 재발급 응답에는 인증 정보 캐시 방지 헤더를 포함한다")
+    void refresh_withCsrf_returnsNoStoreHeaders()
+        throws Exception {
+
+        /*
+         * 토큰 재발급 API는 Access Token과 Refresh Token을 새로 발급하는
+         * 인증 API이므로 응답이 브라우저나 중간 캐시에 저장되면 안 된다.
+         *
+         * SecurityConfig에서 Spring Security 기본 보안 헤더를
+         * 비활성화하지 않았으므로 HeaderWriterFilter가
+         * 캐시 방지 응답 헤더를 추가
+         */
+        mockMvc.perform(
+                post("/api/auth/refresh")
+                    .with(csrf())
+            )
+            .andExpect(status().isNoContent())
+            .andExpect(
+                header().string(
+                    HttpHeaders.CACHE_CONTROL,
+                    org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString(
+                            "no-cache"
+                        ),
+                        org.hamcrest.Matchers.containsString(
+                            "no-store"
+                        )
+                    )
+                )
+            )
+            .andExpect(
+                header().string(
+                    "Pragma",
+                    "no-cache"
+                )
+            );
+
+        /*
+         * 재발급 API는 JWT 없이 접근 가능한 공개 POST 경로이므로
+         * Access Token 검증은 실행되지 않아야 한다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
+    @Test
     @DisplayName("CSRF 토큰 발급 API는 JWT 없이 접근할 수 있다")
     void csrfTokenEndpoint_doesNotRequireJwt() throws Exception {
         mockMvc.perform(get("/api/auth/csrf-token"))
             .andExpect(status().isNoContent());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "/oauth2/authorization/google",
+        "/login/oauth2/code/google",
+        "/oauth2/authorization/kakao",
+        "/login/oauth2/code/kakao",
+        "/oauth2/authorization/naver",
+        "/login/oauth2/code/naver"
+    })
+    @DisplayName("OAuth2 인증 진입점과 Callback 경로는 JWT 없이 접근할 수 있다")
+    void oauth2Paths_withoutJwt_passSecurityFilter(
+        String path
+    ) throws Exception {
+        /*
+         * 현재 테스트 환경에는 실제 OAuth ClientRegistration이 없으므로
+         * OAuth2 Login Filter는 활성화되지 않는다.
+         *
+         * 따라서 공개 보안 경로를 통과한 뒤 요청을 처리할 Controller가 없어
+         * 404가 반환되는 것이 정상이다.
+         * 이 테스트의 목적은 해당 요청이
+         * JWT 부재로 401 또는 403을 반환하지 않는지 확인하는 것이다.
+         */
+        mockMvc.perform(
+                get(path)
+            )
+            .andExpect(
+                status().isNotFound()
+            );
+
+        /*
+         * Authorization 헤더가 없고 OAuth2 공개 경로이므로
+         * JWT Provider가 Access Token 검증을 시도해서는 안된.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
     }
 
     @Test
@@ -314,6 +496,335 @@ class SecurityAccessPolicyTest {
         mockMvc.perform(post("/api/auth/sign-out").with(csrf()))
             .andExpect(status().isUnauthorized())
             .andExpect(jsonPath("$.errorCode").value("COMMON_401_1"));
+    }
+
+    @Test
+    @DisplayName("로그아웃은 유효한 JWT와 CSRF 토큰이 있으면 접근할 수 있다")
+    void signOut_withValidTokenAndCsrf_returnsNoContent()
+        throws Exception {
+
+        /*
+         * 로그아웃 API는 공개 인증 API가 아니라
+         * Access Token 인증이 필요한 보호 API
+         *
+         * JWT에서 복원한 사용자 UUID는 실제 AuthController에서
+         * 현재 사용자의 Refresh Token 세션을 폐기할 때 사용
+         */
+        var authentication =
+            UsernamePasswordAuthenticationToken.authenticated(
+                UUID.fromString(USER_ID),
+                null,
+                List.of(
+                    new SimpleGrantedAuthority("ROLE_USER")
+                )
+            );
+
+        when(jwtProvider.validate("valid-token"))
+            .thenReturn(true);
+        when(jwtProvider.getAuthentication("valid-token"))
+            .thenReturn(authentication);
+
+        /*
+         * POST /api/auth/sign-out은 상태를 변경하는 요청이므로
+         * 유효한 Access Token뿐만 아니라 CSRF 토큰도 필요
+         */
+        mockMvc.perform(
+                post("/api/auth/sign-out")
+                    .with(csrf())
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer valid-token"
+                    )
+            )
+            .andExpect(status().isNoContent());
+
+        /*
+         * JWT 필터가 토큰을 검증한 뒤 Authentication을 생성했는지 확인
+         */
+        verify(jwtProvider).validate("valid-token");
+        verify(jwtProvider)
+            .getAuthentication("valid-token");
+    }
+
+    @Test
+    @DisplayName("OAuth 계정 연결 시작 API는 인증되지 않은 요청을 401로 거부한다")
+    void startOAuthAccountLink_withoutJwt_returnsUnauthorized()
+        throws Exception {
+
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/oauth-accounts/{provider}/link",
+                    USER_ID,
+                    "GOOGLE"
+                )
+                    .with(csrf())
+            )
+            .andExpect(
+                status().isUnauthorized()
+            )
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_401_1")
+            );
+
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
+    @Test
+    @DisplayName("OAuth 계정 연결 시작 API는 CSRF 토큰이 없으면 403을 반환한다")
+    void startOAuthAccountLink_withoutCsrf_returnsForbidden()
+        throws Exception {
+
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/oauth-accounts/{provider}/link",
+                    USER_ID,
+                    "GOOGLE"
+                )
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer valid-token"
+                    )
+            )
+            .andExpect(
+                status().isForbidden()
+            )
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_403_1")
+            );
+
+        /*
+         * CSRF 필터가 JWT 필터보다 먼저 요청을 차단해야 한다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
+    @Test
+    @DisplayName("OAuth 계정 연결 시작 API는 유효한 JWT와 CSRF 토큰으로 접근할 수 있다")
+    void startOAuthAccountLink_withJwtAndCsrf_passesSecurityFilter()
+        throws Exception {
+
+        var authentication =
+            UsernamePasswordAuthenticationToken
+                .authenticated(
+                    UUID.fromString(USER_ID),
+                    null,
+                    List.of(
+                        new SimpleGrantedAuthority(
+                            "ROLE_USER"
+                        )
+                    )
+                );
+
+        when(jwtProvider.validate("valid-token"))
+            .thenReturn(true);
+
+        when(
+            jwtProvider.getAuthentication(
+                "valid-token"
+            )
+        ).thenReturn(authentication);
+
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/oauth-accounts/{provider}/link",
+                    USER_ID,
+                    "GOOGLE"
+                )
+                    .with(csrf())
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer valid-token"
+                    )
+            )
+            .andExpect(
+                status().isNoContent()
+            );
+
+        verify(jwtProvider)
+            .validate("valid-token");
+
+        verify(jwtProvider)
+            .getAuthentication("valid-token");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "/api/users/11111111-1111-1111-1111-111111111111"
+            + "/local-credentials/email-verifications",
+        "/api/users/11111111-1111-1111-1111-111111111111"
+            + "/local-credentials"
+    })
+    @DisplayName("로컬 로그인 등록 API는 인증되지 않은 잘못된 요청도 401로 거부한다")
+    void localCredentialApi_withoutJwt_returnsUnauthorized(
+        String path
+    ) throws Exception {
+
+        /*
+         * 빈 JSON은 DTO 검증에 실패할 요청이지만,
+         * 유효한 CSRF 토큰을 포함해 인증 실패가 본문 검증보다
+         * 먼저 처리되는지 확인
+         */
+        mockMvc.perform(
+                post(path)
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}")
+            )
+            .andExpect(status().isUnauthorized())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_401_1")
+            );
+
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "/api/users/11111111-1111-1111-1111-111111111111"
+            + "/local-credentials/email-verifications",
+        "/api/users/11111111-1111-1111-1111-111111111111"
+            + "/local-credentials"
+    })
+    @DisplayName("로컬 로그인 등록 API는 CSRF 토큰이 없으면 403을 반환한다")
+    void localCredentialApi_withoutCsrf_returnsForbidden(
+        String path
+    ) throws Exception {
+
+        mockMvc.perform(
+                post(path)
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer valid-token"
+                    )
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}")
+            )
+            .andExpect(status().isForbidden())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_403_1")
+            );
+
+        /*
+         * CSRF 필터가 JWT 필터보다 먼저 요청을 차단
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "/api/users/11111111-1111-1111-1111-111111111111"
+            + "/local-credentials/email-verifications",
+        "/api/users/11111111-1111-1111-1111-111111111111"
+            + "/local-credentials"
+    })
+    @DisplayName("로컬 로그인 등록 API는 유효한 JWT와 CSRF 이후 본문을 검증한다")
+    void localCredentialApi_withJwtAndCsrf_validatesBody(
+        String path
+    ) throws Exception {
+
+        var authentication =
+            UsernamePasswordAuthenticationToken
+                .authenticated(
+                    UUID.fromString(USER_ID),
+                    null,
+                    List.of(
+                        new SimpleGrantedAuthority(
+                            "ROLE_USER"
+                        )
+                    )
+                );
+
+        when(jwtProvider.validate("valid-token"))
+            .thenReturn(true);
+
+        when(
+            jwtProvider.getAuthentication(
+                "valid-token"
+            )
+        ).thenReturn(authentication);
+
+        /*
+         * 보안 필터는 통과하지만 빈 JSON은 DTO의 @NotBlank 등에
+         * 위반되므로 Controller 진입 과정에서 400을 반환해야 한다.
+         */
+        mockMvc.perform(
+                post(path)
+                    .with(csrf())
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer valid-token"
+                    )
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{}")
+            )
+            .andExpect(status().isBadRequest());
+
+        verify(jwtProvider)
+            .validate("valid-token");
+
+        verify(jwtProvider)
+            .getAuthentication("valid-token");
+    }
+
+    @Test
+    @DisplayName("로그아웃은 유효한 JWT가 있어도 CSRF 토큰이 없으면 403을 반환한다")
+    void signOut_withoutCsrf_returnsForbidden()
+        throws Exception {
+
+        /*
+         * 유효한 형태의 Bearer Token을 전달하더라도
+         * CSRF 토큰이 없으면 상태 변경 요청을 허용하면 안된다.
+         *
+         * CsrfFilter는 JwtAuthenticationFilter보다 먼저 실행되므로
+         * 요청은 JWT 검증 단계에 도달하기 전에 차단
+         */
+        mockMvc.perform(
+                post("/api/auth/sign-out")
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer valid-token"
+                    )
+            )
+            .andExpect(status().isForbidden())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_403_1")
+            );
+
+        /*
+         * CSRF 검증에서 요청이 차단됐으므로
+         * 불필요한 JWT 검증도 실행되지 않아야 합니다.
+         */
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
     }
 
     @Test

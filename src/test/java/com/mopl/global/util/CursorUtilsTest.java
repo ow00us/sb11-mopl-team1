@@ -51,4 +51,44 @@ class CursorUtilsTest {
         assertThatThrownBy(() -> CursorUtils.decodeAsLongPair(cursor))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    @DisplayName("encodePopularCursor / decodeAsPopularCursor 는 count 와 updatedAt(마이크로초 정밀도) 을 정확히 복원한다")
+    void encodePopularCursor_decodesToOriginalValues() {
+        long subscriberCount = 42L;
+        Instant updatedAt = Instant.parse("2026-08-12T10:30:00.123456Z");
+
+        String cursor = CursorUtils.encodePopularCursor(subscriberCount, updatedAt);
+        CursorUtils.PopularCursor decoded = CursorUtils.decodeAsPopularCursor(cursor);
+
+        assertThat(decoded.subscriberCount()).isEqualTo(subscriberCount);
+        assertThat(decoded.updatedAt()).isEqualTo(updatedAt);
+    }
+
+    @Test
+    @DisplayName("콜론 구분자가 없는 값을 decodeAsPopularCursor 하면 IllegalArgumentException 이 발생한다")
+    void decodeAsPopularCursor_fail_invalidFormat() {
+        String cursor = CursorUtils.encode("no-colon-here");
+
+        assertThatThrownBy(() -> CursorUtils.decodeAsPopularCursor(cursor))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("count 가 숫자가 아닌 값을 decodeAsPopularCursor 하면 NumberFormatException 이 발생한다")
+    void decodeAsPopularCursor_fail_invalidCount() {
+        String cursor = CursorUtils.encode("not-a-number:2026-08-12T10:30:00Z");
+
+        assertThatThrownBy(() -> CursorUtils.decodeAsPopularCursor(cursor))
+                .isInstanceOf(NumberFormatException.class);
+    }
+
+    @Test
+    @DisplayName("updatedAt 이 ISO-8601 형식이 아닌 값을 decodeAsPopularCursor 하면 DateTimeParseException 이 발생한다")
+    void decodeAsPopularCursor_fail_invalidInstant() {
+        String cursor = CursorUtils.encode("42:not-an-instant");
+
+        assertThatThrownBy(() -> CursorUtils.decodeAsPopularCursor(cursor))
+                .isInstanceOf(java.time.format.DateTimeParseException.class);
+    }
 }

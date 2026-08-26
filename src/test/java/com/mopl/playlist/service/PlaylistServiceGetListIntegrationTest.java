@@ -3,9 +3,11 @@ package com.mopl.playlist.service;
 import com.mopl.content.repository.ContentRepository;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.config.JpaConfig;
+import com.mopl.global.outbox.OutboxRecorderImpl;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.entity.Playlist;
 import com.mopl.playlist.entity.PlaylistContent;
+import com.mopl.playlist.event.PlaylistSubscriptionEventFactory;
 import com.mopl.playlist.repository.PlaylistContentRepository;
 import com.mopl.playlist.repository.PlaylistRepository;
 import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
@@ -39,7 +41,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 // getList가 실제 DB에서 페이지 크기·태그 개수와 무관하게 상수 쿼리로 완료되는지 Hibernate Statistics로 고정한다.
 @DataJpaTest
 @ActiveProfiles("test")
-@Import({JpaConfig.class, PlaylistContentSaver.class, PlaylistServiceImpl.class})
+@Import({
+        JpaConfig.class,
+        PlaylistContentSaver.class,
+        PlaylistServiceImpl.class,
+        OutboxRecorderImpl.class,
+        PlaylistSubscriptionEventFactory.class,
+        PlaylistIntegrationTestConfig.class,
+})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Testcontainers
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -79,7 +88,7 @@ class PlaylistServiceGetListIntegrationTest {
     }
 
     @Test
-    @DisplayName("getList는 페이지 크기·콘텐츠 수·태그 수와 무관하게 콘텐츠 로딩 SQL이 상수(playlist_contents 1 + contents+tags 1)로 완료된다")
+    @DisplayName("getList는 페이지 크기·콘텐츠 수·태그 수와 무관하게 콘텐츠·owner 로딩 SQL이 상수(playlist_contents 1 + contents+tags 1 + users 1)로 완료된다")
     void getList_batchQueries_areConstant() {
         int playlistCount = 5;
         int contentsPerPlaylist = 3;
@@ -102,10 +111,11 @@ class PlaylistServiceGetListIntegrationTest {
         //  2) countByFilter
         //  3) playlist_contents 배치 조회
         //  4) contents + content_tags EntityGraph 조인 조회
-        // → 4쿼리 상한 (limit·contents·tags 개수에 비례하지 않음)
+        //  5) users 배치 조회 (toOwnerSummaryMap, distinct ownerIds)
+        // → 5쿼리 상한 (limit·contents·tags 개수에 비례하지 않음)
         assertThat(queryCount)
                 .as("페이지 크기·콘텐츠 수·태그 수와 무관하게 상수 SQL로 완료되어야 한다")
-                .isLessThanOrEqualTo(4);
+                .isLessThanOrEqualTo(5);
 
         assertThat(result.data()).hasSize(playlistCount);
         assertThat(result.data().get(0).contents()).hasSize(contentsPerPlaylist);

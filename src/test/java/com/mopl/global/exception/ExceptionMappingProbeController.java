@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Map;
+
 /**
  * 예외 상태 코드 매핑을 검증하기 위한 테스트 전용 Controller 입니다.
  *
@@ -31,5 +33,23 @@ class ExceptionMappingProbeController {
     @PatchMapping(path = "/json", consumes = MediaType.APPLICATION_JSON_VALUE)
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void json(@RequestBody String body) {
+    }
+
+    /**
+     * JSON 만 생산하므로 Accept 가 JSON 을 허용하지 않으면 406 이 발생합니다.
+     *
+     * produces 를 명시해 생산 가능한 형식을 이 매핑에 고정합니다. 지정하지 않으면
+     * 406 여부와 details.supportedMediaTypes 가 클래스패스의 메시지 컨버터 구성에
+     * 따라 달라져, 검증이 테스트 대상 밖의 변화에 흔들립니다.
+     */
+    @GetMapping(path = "/body", produces = MediaType.APPLICATION_JSON_VALUE)
+    Map<String, String> body() {
+        return Map.of("value", "ok");
+    }
+
+    /** 오류 응답이 Accept 와 무관하게 직렬화되는지 확인하기 위한 경로입니다. */
+    @GetMapping("/business-error")
+    void businessError() {
+        throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
     }
 }

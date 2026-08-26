@@ -7,9 +7,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.mopl.content.repository.ContentRepository;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.security.websocket.StompErrorFrameSender;
+import com.mopl.watchingsession.presence.ContentExistenceCache;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -27,7 +27,7 @@ import org.springframework.messaging.support.MessageBuilder;
 class WatchingSessionSubscribeExistenceInterceptorTest {
 
     @Mock
-    private ContentRepository contentRepository;
+    private ContentExistenceCache contentExistenceCache;
 
     @Mock
     private StompErrorFrameSender errorFrameSender;
@@ -47,7 +47,7 @@ class WatchingSessionSubscribeExistenceInterceptorTest {
     void preSend_passesThrough_whenContentExists() {
         // given
         UUID contentId = UUID.randomUUID();
-        when(contentRepository.existsById(contentId)).thenReturn(true);
+        when(contentExistenceCache.exists(contentId)).thenReturn(true);
         Message<?> message = subscribeMessage("/sub/contents/" + contentId + "/watch");
 
         // when
@@ -62,7 +62,7 @@ class WatchingSessionSubscribeExistenceInterceptorTest {
     void preSend_blocksMessageAndSendsErrorFrame_whenContentDoesNotExist() {
         // given
         UUID contentId = UUID.randomUUID();
-        when(contentRepository.existsById(contentId)).thenReturn(false);
+        when(contentExistenceCache.exists(contentId)).thenReturn(false);
         Message<?> message = subscribeMessage("/sub/contents/" + contentId + "/watch");
 
         // when
@@ -92,7 +92,7 @@ class WatchingSessionSubscribeExistenceInterceptorTest {
 
         // then: 이 인터셉터의 관심사가 아니므로 DB 조회 자체를 하지 않아야 함
         assertThat(result).isSameAs(message);
-        verifyNoInteractions(contentRepository);
+        verifyNoInteractions(contentExistenceCache);
     }
 
     @Test
@@ -109,7 +109,7 @@ class WatchingSessionSubscribeExistenceInterceptorTest {
 
         // then
         assertThat(result).isSameAs(message);
-        verifyNoInteractions(contentRepository);
+        verifyNoInteractions(contentExistenceCache);
     }
 
     @Test
@@ -125,11 +125,48 @@ class WatchingSessionSubscribeExistenceInterceptorTest {
 
         // then: 메시지 전달 중단
         assertThat(result).isNull();
-        verifyNoInteractions(contentRepository);
+        verifyNoInteractions(contentExistenceCache);
 
         // 클라이언트에게는 직접 에러 프레임을 전송해야 함
         verify(errorFrameSender).send(
             same(message),
+            eq("BusinessException"),
+            eq(ErrorCode.CONTENT_NOT_FOUND),
+            eq(ErrorCode.CONTENT_NOT_FOUND.getMessage()),
+            eq(Map.of())
+        );
+    }
+
+    @Test
+    @DisplayName("존재하는 콘텐츠의 chat 토픽 구독 통과")
+    void preSend_passesThrough_whenChatContentExists() {
+        // given
+        UUID contentId = UUID.randomUUID();
+        when(contentExistenceCache.exists(contentId)).thenReturn(true);
+        Message<?> message = subscribeMessage("/sub/contents/" + contentId + "/chat");
+
+        // when
+        Message<?> result = interceptor.preSend(message, null);
+
+        // then
+        assertThat(result).isSameAs(message);
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 콘텐츠의 chat 토픽 구독은 null을 반환해 브로커 전달을 막고 에러프레임 직접 전송")
+    void preSend_blocksMessageAndSendsErrorFrame_whenChatContentDoesNotExist() {
+        // given
+        UUID contentId = UUID.randomUUID();
+        when(contentExistenceCache.exists(contentId)).thenReturn(false);
+        Message<?> message = subscribeMessage("/sub/contents/" + contentId + "/chat");
+
+        // when
+        Message<?> result = interceptor.preSend(message, null);
+
+        // then
+        assertThat(result).isNull();
+        verify(errorFrameSender).send(
+            eq(message),
             eq("BusinessException"),
             eq(ErrorCode.CONTENT_NOT_FOUND),
             eq(ErrorCode.CONTENT_NOT_FOUND.getMessage()),

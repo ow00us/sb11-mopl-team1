@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,6 +17,8 @@ import com.mopl.directmessage.service.ConversationService;
 import com.mopl.directmessage.service.DirectMessageService;
 import com.mopl.follow.controller.FollowController;
 import com.mopl.follow.service.FollowService;
+import com.mopl.global.outbox.OutboxFailureService;
+import com.mopl.global.outbox.controller.OutboxAdminController;
 import com.mopl.global.security.controller.CsrfTokenController;
 import com.mopl.notification.controller.NotificationController;
 import com.mopl.notification.service.NotificationService;
@@ -26,10 +29,16 @@ import com.mopl.review.service.ReviewService;
 import com.mopl.sample.controller.SampleController;
 import com.mopl.sse.controller.SseController;
 import com.mopl.sse.service.SseEmitterManager;
+import com.mopl.user.cookie.RefreshTokenCookieFactory;
 import com.mopl.user.controller.AuthController;
 import com.mopl.user.controller.UserController;
 import com.mopl.user.service.AuthService;
+import com.mopl.user.service.PasswordResetService;
 import com.mopl.user.service.UserService;
+import com.mopl.user.service.RefreshTokenService;
+import com.mopl.user.service.OAuthAccountManagementService;
+import com.mopl.user.service.OAuthLocalCredentialService;
+import com.mopl.user.security.oauth.link.OAuthLinkIntentSessionStore;
 import com.mopl.watchingsession.controller.WatchingSessionController;
 import com.mopl.watchingsession.service.WatchingSessionService;
 import java.io.InputStream;
@@ -74,6 +83,7 @@ import org.yaml.snakeyaml.Yaml;
     DirectMessageController.class,
     FollowController.class,
     NotificationController.class,
+    OutboxAdminController.class,
     SseController.class,
     PlaylistController.class,
     ReviewController.class,
@@ -106,6 +116,8 @@ class OpenApiRuntimeContractTest {
         "DELETE /api/playlists/{playlistId}/contents/{contentId}",
         "DELETE /api/playlists/{playlistId}/subscription",
         "DELETE /api/reviews/{reviewId}",
+        "DELETE /api/users/{userId}/oauth-accounts/{provider}",
+        "GET /api/admin/outbox/failures",
         "GET /api/auth/csrf-token",
         "GET /api/contents",
         "GET /api/contents/{contentId}",
@@ -118,15 +130,19 @@ class OpenApiRuntimeContractTest {
         "GET /api/follows/followed-by-me",
         "GET /api/follows/followers",
         "GET /api/follows/followings",
+        "GET /api/follows/recommendations",
         "GET /api/notifications",
         "GET /api/sse",
         "GET /api/playlists",
+        "GET /api/playlists/popular",
         "GET /api/playlists/{playlistId}",
         "GET /api/playlists/{playlistId}/subscribers",
         "GET /api/reviews",
+        "GET /api/reviews/me",
         "GET /api/users",
         "GET /api/users/{userId}",
         "GET /api/users/{watcherId}/watching-sessions",
+        "GET /api/users/{userId}/oauth-accounts",
         "PATCH /api/contents/{contentId}",
         "PATCH /api/playlists/{playlistId}",
         "PATCH /api/reviews/{reviewId}",
@@ -134,7 +150,12 @@ class OpenApiRuntimeContractTest {
         "PATCH /api/users/{userId}/locked",
         "PATCH /api/users/{userId}/password",
         "PATCH /api/users/{userId}/role",
+        "POST /api/admin/outbox/failures/{eventId}/requeue",
+        "POST /api/admin/outbox/failures/{eventId}/skip",
         "POST /api/auth/sign-in",
+        "POST /api/auth/reset-password",
+        "POST /api/auth/refresh",
+        "POST /api/auth/sign-out",
         "POST /api/contents",
         "POST /api/conversations",
         "POST /api/conversations/{conversationId}/direct-messages/{directMessageId}/read",
@@ -143,7 +164,10 @@ class OpenApiRuntimeContractTest {
         "POST /api/playlists/{playlistId}/contents/{contentId}",
         "POST /api/playlists/{playlistId}/subscription",
         "POST /api/reviews",
-        "POST /api/users"
+        "POST /api/users",
+        "POST /api/users/{userId}/local-credentials",
+        "POST /api/users/{userId}/local-credentials/email-verifications",
+        "POST /api/users/{userId}/oauth-accounts/{provider}/link"
     );
     private static Map<String, Object> contract;
 
@@ -169,6 +193,9 @@ class OpenApiRuntimeContractTest {
     NotificationService notificationService;
 
     @MockitoBean
+    OutboxFailureService outboxFailureService;
+
+    @MockitoBean
     PlaylistService playlistService;
 
     @MockitoBean
@@ -178,7 +205,25 @@ class OpenApiRuntimeContractTest {
     AuthService authService;
 
     @MockitoBean
+    PasswordResetService passwordResetService;
+
+    @MockitoBean
+    RefreshTokenService refreshTokenService;
+
+    @MockitoBean
+    RefreshTokenCookieFactory refreshTokenCookieFactory;
+
+    @MockitoBean
     UserService userService;
+
+    @MockitoBean
+    OAuthAccountManagementService oauthAccountManagementService;
+
+    @MockitoBean
+    OAuthLocalCredentialService oauthLocalCredentialService;
+
+    @MockitoBean
+    OAuthLinkIntentSessionStore oauthLinkIntentSessionStore;
 
     @MockitoBean
     WatchingSessionService watchingSessionService;
@@ -221,6 +266,573 @@ class OpenApiRuntimeContractTest {
             .andExpect(header().string("Location", "/swagger-ui/index.html"));
     }
 
+    /**
+     * 로그인 성공 응답에 Refresh Token Set-Cookie 계약이
+     * 런타임 OpenAPI 문서에도 포함되는지 검증
+     */
+    @Test
+    void documentsRefreshTokenCookieHeaderOnSignInSuccess()
+        throws Exception {
+
+        mockMvc.perform(get("/v3/api-docs"))
+            .andExpect(status().isOk())
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/sign-in']"
+                        + ".post.responses['200']"
+                        + ".headers['Set-Cookie']"
+                        + ".schema.type"
+                ).value("string")
+            );
+    }
+
+    /**
+     * 토큰 재발급 성공 응답에도 교체된 Refresh Token을 전달하는
+     * Set-Cookie 헤더가 런타임 OpenAPI 문서에 포함되는지 검증
+     */
+    @Test
+    void documentsRefreshTokenCookieHeaderOnRefreshSuccess()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/v3/api-docs")
+            )
+            .andExpect(status().isOk())
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/refresh']"
+                        + ".post.responses['200']"
+                        + ".headers['Set-Cookie']"
+                        + ".schema.type"
+                ).value("string")
+            );
+    }
+
+    /**
+     * 로그아웃 요청에서 현재 Refresh Token을 선택적으로 Cookie로 전달하고,
+     * 성공 응답에서 해당 Cookie를 삭제하는 Set-Cookie 헤더가
+     * 런타임 OpenAPI 문서에 포함되는지 검증
+     */
+    @Test
+    void documentsRefreshTokenCookieContractOnSignOut()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/v3/api-docs")
+            )
+            .andExpect(status().isOk())
+
+            /*
+             * 로그아웃할 현재 브라우저의 Refresh Token을
+             * Cookie에서 전달받는 계약인지 확인
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/sign-out']"
+                        + ".post.parameters[0].name"
+                ).value("REFRESH_TOKEN")
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/sign-out']"
+                        + ".post.parameters[0].in"
+                ).value("cookie")
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/sign-out']"
+                        + ".post.parameters[0].schema.type"
+                ).value("string")
+            )
+
+            /*
+             * 로그아웃 성공 시 브라우저의 Refresh Token Cookie를
+             * 제거하는 Set-Cookie 헤더가 문서화됐는지 확인
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/sign-out']"
+                        + ".post.responses['204']"
+                        + ".headers['Set-Cookie']"
+                        + ".schema.type"
+                ).value("string")
+            );
+    }
+
+    /**
+     * OAuth 연결 계정 목록 조회와 연결 해제 API의
+     * 응답 스키마 및 PathVariable 계약을 검증
+     */
+    @Test
+    void documentsOAuthAccountManagementContract()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/v3/api-docs")
+            )
+            .andExpect(status().isOk())
+
+            /*
+             * 연결 계정 목록은 OAuthAccountDto 배열을 반환
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts']"
+                        + ".get.responses['200']"
+                        + ".content['*/*'].schema.type"
+                ).value("array")
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts']"
+                        + ".get.responses['200']"
+                        + ".content['*/*'].schema.items['$ref']"
+                ).value(
+                    "#/components/schemas/OAuthAccountDto"
+                )
+            )
+
+            /*
+             * 계정 연결 시작 API는 Provider 인증 시작 경로를 반환
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}/link']"
+                        + ".post.responses['200']"
+                        + ".content['*/*'].schema['$ref']"
+                ).value(
+                    "#/components/schemas/OAuthLinkStartResponse"
+                )
+            )
+            /*
+             * 연결 시작부터 OAuth callback까지 동일한 HTTP 세션을
+             * 유지해야 한다는 프론트엔드 연동 계약을 문서화
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}/link']"
+                        + ".post.description"
+                ).value(
+                    org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString(
+                            "Cookie credentials"
+                        ),
+                        org.hamcrest.Matchers.containsString(
+                            "동일한 세션 쿠키"
+                        ),
+                        org.hamcrest.Matchers.containsString(
+                            "백엔드 Origin"
+                        )
+                    )
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}/link']"
+                        + ".post.parameters[*].name"
+                ).value(
+                    org.hamcrest.Matchers.containsInAnyOrder(
+                        "userId",
+                        "provider"
+                    )
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}/link']"
+                        + ".post.parameters"
+                        + "[?(@.name == 'provider')]"
+                        + ".schema.enum"
+                ).value(
+                    org.hamcrest.Matchers.hasItem(
+                        org.hamcrest.Matchers.containsInAnyOrder(
+                            "GOOGLE",
+                            "KAKAO",
+                            "NAVER"
+                        )
+                    )
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.OAuthLinkStartResponse"
+                        + ".properties.authorizationPath.type"
+                ).value("string")
+            )
+
+            /*
+             * 연결 해제 성공 응답은 본문이 없는 204
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}']"
+                        + ".delete.responses['204']"
+                ).exists()
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}']"
+                        + ".delete.responses['204'].content"
+                ).doesNotExist()
+            )
+
+            /*
+             * Path Parameter 배열의 순서는 Springdoc 내부 구현에 따라
+             * 달라질 수 있으므로 배열 인덱스에 의존하지 않는다.
+             *
+             * provider라는 이름의 Parameter를 필터링한 뒤
+             * 지원하는 OAuthProvider enum이 문서화됐는지 검증
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}']"
+                        + ".delete.parameters[*].name"
+                ).value(
+                    org.hamcrest.Matchers.containsInAnyOrder(
+                        "userId",
+                        "provider"
+                    )
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/oauth-accounts/{provider}']"
+                        + ".delete.parameters"
+                        + "[?(@.name == 'provider')]"
+                        + ".schema.enum"
+                ).value(
+                    org.hamcrest.Matchers.hasItem(
+                        org.hamcrest.Matchers.containsInAnyOrder(
+                            "GOOGLE",
+                            "KAKAO",
+                            "NAVER"
+                        )
+                    )
+                )
+            )
+
+            /*
+             * 공개 응답에는 Provider 내부 사용자 식별자가 없어야 한다.
+             */
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.OAuthAccountDto"
+                        + ".properties.providerUserId"
+                ).doesNotExist()
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.OAuthAccountDto"
+                        + ".properties.accessToken"
+                ).doesNotExist()
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.OAuthAccountDto"
+                        + ".properties.refreshToken"
+                ).doesNotExist()
+            );
+    }
+
+    /**
+     * OAuth 전용 사용자의 이메일 인증과
+     * 로컬 로그인 수단 등록 계약을 검증
+     */
+    @Test
+    void documentsOAuthLocalCredentialContract()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/v3/api-docs")
+            )
+            .andExpect(status().isOk())
+
+            /*
+             * 이메일 인증 코드 발송 요청 계약
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials/email-verifications']"
+                        + ".post.requestBody.required"
+                ).value(true)
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials/email-verifications']"
+                        + ".post.requestBody"
+                        + ".content['application/json']"
+                        + ".schema['$ref']"
+                ).value(
+                    "#/components/schemas/"
+                        + "LocalCredentialEmailVerificationRequest"
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials/email-verifications']"
+                        + ".post.responses['204']"
+                ).exists()
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials/email-verifications']"
+                        + ".post.responses['204'].content"
+                ).doesNotExist()
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials/email-verifications']"
+                        + ".post.responses['429']"
+                ).exists()
+            )
+
+            /*
+             * 로컬 로그인 수단 등록 요청 계약
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials']"
+                        + ".post.requestBody.required"
+                ).value(true)
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials']"
+                        + ".post.requestBody"
+                        + ".content['application/json']"
+                        + ".schema['$ref']"
+                ).value(
+                    "#/components/schemas/"
+                        + "LocalCredentialRegistrationRequest"
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials']"
+                        + ".post.responses['204']"
+                ).exists()
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/local-credentials']"
+                        + ".post.responses['204'].content"
+                ).doesNotExist()
+            )
+
+            /*
+             * DTO 입력 제약 조건
+             */
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas"
+                        + ".LocalCredentialEmailVerificationRequest"
+                        + ".properties.email.format"
+                ).value("email")
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas"
+                        + ".LocalCredentialEmailVerificationRequest"
+                        + ".properties.email.maxLength"
+                ).value(100)
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas"
+                        + ".LocalCredentialRegistrationRequest"
+                        + ".properties.verificationCode.pattern"
+                ).value("^\\d{6}$")
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas"
+                        + ".LocalCredentialRegistrationRequest"
+                        + ".properties.password.minLength"
+                ).value(8)
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas"
+                        + ".LocalCredentialRegistrationRequest"
+                        + ".properties.password.maxLength"
+                ).value(72)
+            )
+
+            /*
+             * 로컬 로그인 수단이 없는 OAuth 전용 사용자는
+             * 기존 비밀번호 변경 API를 사용할 수 없어야 한다.
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}/password']"
+                        + ".patch.responses['409']"
+                ).exists()
+            );
+    }
+
+    /**
+     * 비밀번호 초기화 API의 요청 DTO, 성공 응답과 보안 요구가
+     * 런타임 OpenAPI 문서에 올바르게 노출되는지 검증
+     *
+     * <p>비밀번호 초기화는 로그인하지 않은 사용자도 호출할 수 있어야 하므로
+     * BearerAuth는 요구하지 않고, 비밀번호 상태를 변경하는 POST 요청이므로
+     * CsrfToken만 요구합니다.</p>
+     */
+    @Test
+    void documentsPasswordResetContract()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/v3/api-docs")
+            )
+            .andExpect(
+                status().isOk()
+            )
+
+            /*
+             * 비밀번호 초기화 요청 본문은 JSON이고,
+             * ResetPasswordRequest 스키마를 사용해야 한다.
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/reset-password']"
+                        + ".post.requestBody"
+                        + ".content['application/json']"
+                        + ".schema['$ref']"
+                ).value(
+                    "#/components/schemas/ResetPasswordRequest"
+                )
+            )
+
+            /*
+             * 기존 OpenAPI 계약대로 성공 상태는
+             * 204 No Content
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/reset-password']"
+                        + ".post.responses['204']"
+                ).exists()
+            )
+
+            /*
+             * 204 응답에 content가 생성되면 응답 본문이 있는 것으로
+             * 오해할 수 있으므로 content 속성이 없어야 한다.
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/reset-password']"
+                        + ".post.responses['204'].content"
+                ).doesNotExist()
+            )
+
+            /*
+             * 계정 존재 여부를 공개 응답으로 구분할 수 없도록
+             * 미존재 사용자에 대한 404 응답을 노출하지 않는다.
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/reset-password']"
+                        + ".post.responses['404']"
+                ).doesNotExist()
+            )
+
+            /*
+             * OAuth 전용 사용자 여부를 공개 응답으로 구분할 수 없도록
+             * 로컬 로그인 수단 미등록에 대한 409 응답을 노출하지 않는다.
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/reset-password']"
+                        + ".post.responses['409']"
+                ).doesNotExist()
+            )
+
+            /*
+             * 공개 API이므로 JWT Bearer 인증은 요구하지 않는다.
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/reset-password']"
+                        + ".post.security[0].BearerAuth"
+                ).doesNotExist()
+            )
+
+            /*
+             * 비밀번호를 변경하는 POST 요청이므로
+             * CSRF 토큰은 필수 보안 요구로 문서화
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/auth/reset-password']"
+                        + ".post.security[0].CsrfToken"
+                ).isArray()
+            )
+
+            /*
+             * DTO의 @Email 제약이 런타임 스키마의
+             * format=email로 반영되는지 확인
+             */
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.ResetPasswordRequest"
+                        + ".properties.email.format"
+                ).value("email")
+            )
+
+            /*
+             * DTO의 @Size(max = 100) 제약이 런타임 스키마의
+             * maxLength=100으로 반영되는지 확인
+             */
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.ResetPasswordRequest"
+                        + ".properties.email.maxLength"
+                ).value(100)
+            )
+
+            /*
+             * email 필드는 선택값이 아니라 필수 요청 필드여야 한다.
+             */
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.ResetPasswordRequest"
+                        + ".required"
+                ).value(
+                    org.hamcrest.Matchers.hasItem(
+                        "email"
+                    )
+                )
+            );
+    }
+
+    /**
+     * 이메일이 없는 OAuth 사용자의 내부 식별 이메일이 외부로 노출되지 않도록
+     * UserDto.email이 null을 허용하는지 검증
+     */
+    @Test
+    void documentsNullableEmailForOAuthUser()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/v3/api-docs")
+            )
+            .andExpect(
+                status().isOk()
+            )
+            .andExpect(
+                jsonPath(
+                    "$.components.schemas.UserDto"
+                        + ".properties.email.type"
+                ).value(
+                    org.hamcrest.Matchers.containsInAnyOrder(
+                        "string",
+                        "null"
+                    )
+                )
+            );
+    }
+
     @Test
     void includesEveryProductionRestController() throws Exception {
         Set<Class<?>> configuredControllers = Set.of(
@@ -250,6 +862,87 @@ class OpenApiRuntimeContractTest {
         assertThat(differences).containsExactly(
             "GET /api/example 정적 계약 204 응답에 본문 content가 문서화됨"
         );
+    }
+
+    /** 런타임이 생성한 OpenAPI 문서를 읽습니다. */
+    private Map<String, Object> fetchRuntimeDocument() throws Exception {
+        String runtimeJson = mockMvc.perform(get("/v3/api-docs"))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+        return objectMapper.readValue(runtimeJson, new TypeReference<>() {
+        });
+    }
+
+    /**
+     * 계약에 있는 operation 이 실제로 제공되는지 확인합니다.
+     *
+     * <p>반대 방향만 검사하면 계약에만 있고 구현이 없는 operation 이 그대로 통과합니다.
+     * 프론트엔드는 계약을 보고 호출하므로, 그 상태가 오래 유지되면 없는 API 를 부르는 코드가
+     * 배포됩니다.
+     *
+     * <p>아직 구현하지 않은 operation 은 계약에 {@code x-implementation-status: planned} 를
+     * 붙여 제외합니다. 계약에서 지우지 않고 남겨 두려면 그 사실이 계약 파일에 드러나야 합니다.
+     */
+    @Test
+    void agreedOperationsAreImplemented() throws Exception {
+        Map<String, Object> runtime = fetchRuntimeDocument();
+
+        List<String> differences = compareAgreedOperations(
+            httpOperations(map(runtime, "paths")), map(contract, "paths"));
+
+        assertThat(differences)
+            .withFailMessage(() -> "계약과 구현 불일치:\n- " + String.join("\n- ", differences))
+            .isEmpty();
+    }
+
+    /**
+     * 계약에 있는 operation 이 런타임에 있는지 대조합니다.
+     *
+     * <p>{@code planned} 로 표시한 operation 은 구현이 없어도 통과시키되, 반대로 구현이
+     * 생겼는데 표시가 남아 있으면 알립니다. 그대로 두면 계약의 표시가 실제와 어긋난 채
+     * 굳습니다.
+     */
+    static List<String> compareAgreedOperations(
+        Set<String> runtimeOperations, Map<String, Object> agreedPaths
+    ) {
+        List<String> differences = new ArrayList<>();
+        agreedOperations(agreedPaths).forEach((operation, planned) -> {
+            if (planned) {
+                if (runtimeOperations.contains(operation)) {
+                    differences.add(operation + " 이(가) 구현되었는데 계약에 planned 로 남아 있음");
+                }
+                return;
+            }
+            if (!runtimeOperations.contains(operation)) {
+                differences.add(operation + " 이(가) 계약에만 있고 구현이 없음");
+            }
+        });
+        return differences;
+    }
+
+    /**
+     * 계약의 operation 과 계획 표시 여부입니다.
+     *
+     * <p>{@code x-implementation-status} 는 OpenAPI 확장 필드입니다. {@code planned} 외의 값은
+     * 오타일 가능성이 커서 구현 대상으로 봅니다. 그래야 값이 틀렸을 때 조용히 제외되지 않고
+     * 검사에 걸립니다.
+     */
+    private static Map<String, Boolean> agreedOperations(Map<String, Object> paths) {
+        Map<String, Boolean> operations = new LinkedHashMap<>();
+        paths.forEach((path, pathValue) -> {
+            if (!path.startsWith("/api/")) {
+                return;
+            }
+            Map<String, Object> pathItem = asMap(pathValue);
+            HTTP_METHODS.stream()
+                .filter(pathItem::containsKey)
+                .forEach(method -> operations.put(
+                    method.toUpperCase() + " " + path,
+                    "planned".equals(asMap(pathItem.get(method)).get("x-implementation-status"))));
+        });
+        return operations;
     }
 
     @Test

@@ -29,6 +29,14 @@ public interface PlaylistService {
             UUID requesterId
     );
 
+    /** 인기 랭킹(subscriber_count DESC → updated_at DESC → id DESC) 전용 목록 조회입니다. 필터 파라미터는 노출하지 않습니다. */
+    CursorResponse<PlaylistDto> getPopular(
+            String cursor,
+            UUID idAfter,
+            int limit,
+            UUID requesterId
+    );
+
     PlaylistDto update(UUID playlistId, PlaylistUpdateRequest request, UUID requesterId);
 
     void delete(UUID playlistId, UUID requesterId);

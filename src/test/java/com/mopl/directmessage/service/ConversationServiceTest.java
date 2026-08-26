@@ -101,7 +101,10 @@ class ConversationServiceTest {
             createUser(WITH_USER_ID, "상대 사용자");
 
         Conversation conversation =
-            Conversation.create();
+            Conversation.create(
+                REQUESTER_ID,
+                WITH_USER_ID
+            );
 
         ReflectionTestUtils.setField(
             conversation,
@@ -116,17 +119,25 @@ class ConversationServiceTest {
         );
 
         when(
-            participantRepository.findConversationIdsByUserPair(
-                REQUESTER_ID,
-                WITH_USER_ID
-            )
-        ).thenReturn(List.of());
+            conversationRepository
+                .findByParticipantPairKey(
+                    any(String.class)
+                )
+        ).thenReturn(Optional.empty());
 
         when(
-            conversationRepository.save(
-                any(Conversation.class)
+            conversationRepository.insertIfAbsent(
+                any(UUID.class),
+                any(Instant.class),
+                any(String.class)
             )
-        ).thenReturn(conversation);
+        ).thenReturn(1);
+
+        when(
+            conversationRepository.findById(
+                any(UUID.class)
+            )
+        ).thenReturn(Optional.of(conversation));
 
         // when
         ConversationCreateResult result =
@@ -225,7 +236,10 @@ class ConversationServiceTest {
             createUser(WITH_USER_ID, "상대 사용자");
 
         Conversation conversation =
-            Conversation.create();
+            Conversation.create(
+                REQUESTER_ID,
+                WITH_USER_ID
+            );
 
         ReflectionTestUtils.setField(
             conversation,
@@ -240,18 +254,10 @@ class ConversationServiceTest {
         );
 
         when(
-            participantRepository.findConversationIdsByUserPair(
-                REQUESTER_ID,
-                WITH_USER_ID
-            )
-        ).thenReturn(
-            List.of(CONVERSATION_ID)
-        );
-
-        when(
-            conversationRepository.findById(
-                CONVERSATION_ID
-            )
+            conversationRepository
+                .findByParticipantPairKey(
+                    any(String.class)
+                )
         ).thenReturn(
             Optional.of(conversation)
         );
@@ -286,7 +292,11 @@ class ConversationServiceTest {
         verify(
             conversationRepository,
             never()
-        ).save(any(Conversation.class));
+        ).insertIfAbsent(
+            any(UUID.class),
+            any(Instant.class),
+            any(String.class)
+        );
 
         verify(
             participantRepository,
@@ -353,8 +363,9 @@ class ConversationServiceTest {
     }
 
     @Test
-    @DisplayName("같은 사용자 쌍의 대화가 여러 개면 데이터 상태 오류")
-    void create_duplicateConversations_fails() {
+    @DisplayName("동시 생성 충돌 시 먼저 생성된 대화를 반환")
+    void create_conflict_returnsExistingConversation() {
+        // given
         ConversationCreateRequest request =
             new ConversationCreateRequest(WITH_USER_ID);
 
@@ -364,6 +375,18 @@ class ConversationServiceTest {
         User withUser =
             createUser(WITH_USER_ID, "상대 사용자");
 
+        Conversation conversation =
+            Conversation.create(
+                REQUESTER_ID,
+                WITH_USER_ID
+            );
+
+        ReflectionTestUtils.setField(
+            conversation,
+            "id",
+            CONVERSATION_ID
+        );
+
         when(
             userRepository.findAllById(anyList())
         ).thenReturn(
@@ -371,31 +394,56 @@ class ConversationServiceTest {
         );
 
         when(
-            participantRepository.findConversationIdsByUserPair(
-                REQUESTER_ID,
-                WITH_USER_ID
-            )
+            conversationRepository
+                .findByParticipantPairKey(
+                    any(String.class)
+                )
         ).thenReturn(
-            List.of(
-                UUID.randomUUID(),
-                UUID.randomUUID()
-            )
+            Optional.empty(),
+            Optional.of(conversation)
         );
 
-        assertThatThrownBy(() ->
+        when(
+            conversationRepository.insertIfAbsent(
+                any(UUID.class),
+                any(Instant.class),
+                any(String.class)
+            )
+        ).thenReturn(0);
+
+        when(
+            directMessageRepository
+                .findFirstByConversationIdOrderByCreatedAtDescIdDesc(
+                    CONVERSATION_ID
+                )
+        ).thenReturn(Optional.empty());
+
+        when(
+            directMessageRepository
+                .existsByConversationIdAndSenderIdNotAndReadAtIsNull(
+                    CONVERSATION_ID,
+                    REQUESTER_ID
+                )
+        ).thenReturn(false);
+
+        // when
+        ConversationCreateResult result =
             conversationService.create(
                 REQUESTER_ID,
                 request
-            )
-        )
-            .isInstanceOfSatisfying(
-                BusinessException.class,
-                exception ->
-                    assertThat(exception.getErrorCode())
-                        .isEqualTo(
-                            ErrorCode.DIRECT_MESSAGE_INVALID_STATE
-                        )
             );
+
+        // then
+        assertThat(result.created())
+            .isFalse();
+
+        assertThat(result.conversation().id())
+            .isEqualTo(CONVERSATION_ID);
+
+        verify(
+            participantRepository,
+            never()
+        ).saveAll(anyList());
     }
 
     @Test
@@ -403,7 +451,10 @@ class ConversationServiceTest {
     void getConversation_participant_returnsConversation() {
         // given
         Conversation conversation =
-            Conversation.create();
+            Conversation.create(
+                REQUESTER_ID,
+                WITH_USER_ID
+            );
 
         ReflectionTestUtils.setField(
             conversation,
@@ -630,12 +681,11 @@ class ConversationServiceTest {
     void getConversationWithUser_notFound_fails() {
         // given
         when(
-            participantRepository
-                .findConversationIdsByUserPair(
-                    REQUESTER_ID,
-                    WITH_USER_ID
+            conversationRepository
+                .findByParticipantPairKey(
+                    any(String.class)
                 )
-        ).thenReturn(List.of());
+        ).thenReturn(Optional.empty());
 
         // when & then
         assertThatThrownBy(() ->
@@ -655,9 +705,15 @@ class ConversationServiceTest {
                     )
             );
 
+        verify(
+            conversationRepository
+        ).findByParticipantPairKey(
+            any(String.class)
+        );
+
         verifyNoInteractions(
+            participantRepository,
             userRepository,
-            conversationRepository,
             directMessageRepository
         );
     }
@@ -744,6 +800,7 @@ class ConversationServiceTest {
             DirectMessage.create(
                 CONVERSATION_ID,
                 WITH_USER_ID,
+                1L,
                 "최근 메시지"
             );
 
@@ -1008,8 +1065,41 @@ class ConversationServiceTest {
     }
 
     @Test
-    @DisplayName("cursor와 idAfter 중 하나만 전달하면 실패")
-    void getConversations_invalidCursorPair_fails() {
+    @DisplayName("cursor만 전달하면 대화 목록 조회에 실패")
+    void getConversations_cursorOnly_fails() {
+        // given
+        String cursor = CursorUtils.encodeInstant(Instant.parse("2026-08-01T01:00:00Z")
+        );
+
+        // when & then
+        assertThatThrownBy(() ->
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                cursor,
+                null,
+                20,
+                "DESCENDING",
+                "createdAt"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT)
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            directMessageRepository,
+            userRepository
+        );
+    }
+
+    @Test
+    @DisplayName("idAfter만 전달하면 대화 목록 조회 실패")
+    void getConversation_idAfterOnly_fails() {
         // when & then
         assertThatThrownBy(() ->
             conversationService.getConversations(
@@ -1025,11 +1115,234 @@ class ConversationServiceTest {
             .isInstanceOfSatisfying(
                 BusinessException.class,
                 exception ->
-                    assertThat(
-                        exception.getErrorCode()
-                    ).isEqualTo(
-                        ErrorCode.INVALID_INPUT
-                    )
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT)
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            directMessageRepository,
+            userRepository
+        );
+    }
+
+    @Test
+    @DisplayName("limit이 1보다 작으면 대화 목록 조회에 실패")
+    void getConversations_limitBelowMinimum_fails() {
+        assertThatThrownBy(() ->
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                null,
+                null,
+                0,
+                "DESCENDING",
+                "createdAt"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT)
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            directMessageRepository,
+            userRepository
+        );
+    }
+
+    @Test
+    @DisplayName("limit이 100보다 크면 대화 목록 조회에 실패")
+    void getConversations_limitAboveMaximum_fails() {
+        assertThatThrownBy(() ->
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                null,
+                null,
+                101,
+                "DESCENDING",
+                "createdAt"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT)
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            directMessageRepository,
+            userRepository
+        );
+    }
+
+    @Test
+    @DisplayName("sortBy가 createdAt이 아니면 대화 목록 조회에 실패")
+    void getConversation_invalidSortBy_fails() {
+        assertThatThrownBy(() ->
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                null,
+                null,
+                20,
+                "DESCENDING",
+                "name"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT)
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            directMessageRepository,
+            userRepository
+        );
+    }
+
+    @Test
+    @DisplayName("지원하지 않는 정렬 방향이면 대화 목록 조회에 실패")
+    void getConversations_invalidSortDirection_fails() {
+        assertThatThrownBy(() ->
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                null,
+                null,
+                20,
+                "INVALID",
+                "createdAt"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT)
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            directMessageRepository,
+            userRepository
+        );
+    }
+
+    @Test
+    @DisplayName("cursor와 idAfter를 함께 전달하면 다음 페이지를 조회")
+    void getConversations_cursorPair_success() {
+        // given
+        Instant cursorInstant =
+            Instant.parse("2026-08-01T01:00:00Z");
+
+        String cursor =
+            CursorUtils.encodeInstant(cursorInstant);
+
+        when(
+            participantRepository.findConversationListDesc(
+                eq(REQUESTER_ID),
+                isNull(),
+                eq(cursorInstant),
+                eq(CONVERSATION_ID),
+                any()
+            )
+        ).thenReturn(List.of());
+
+        when(
+            participantRepository.countConversationList(
+                REQUESTER_ID,
+                null
+            )
+        ).thenReturn(0L);
+
+        // when
+        CursorResponse<ConversationDto> result =
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                cursor,
+                CONVERSATION_ID,
+                20,
+                "DESCENDING",
+                "createdAt"
+            );
+
+        // then
+        assertThat(result.data()).isEmpty();
+        assertThat(result.hasNext()).isFalse();
+
+        verify(participantRepository)
+            .findConversationListDesc(
+                eq(REQUESTER_ID),
+                isNull(),
+                eq(cursorInstant),
+                eq(CONVERSATION_ID),
+                any()
+            );
+    }
+
+    @Test
+    @DisplayName("Base64 형식이 잘못된 커서면 대화 목록 조회에 실패")
+    void getConversations_invalidBase64Cursor_fails() {
+        assertThatThrownBy(() ->
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                "%%%",
+                CONVERSATION_ID,
+                20,
+                "DESCENDING",
+                "createdAt"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT)
+            );
+
+        verifyNoInteractions(
+            participantRepository,
+            directMessageRepository,
+            userRepository
+        );
+    }
+
+    @Test
+    @DisplayName("날짜 형식이 잘못된 커서면 대화 목록 조회에 실패")
+    void getConversations_invalidCursorDate_fails() {
+        // given
+        String cursor =
+            CursorUtils.encode("not-an-instant");
+
+        // when & then
+        assertThatThrownBy(() ->
+            conversationService.getConversations(
+                REQUESTER_ID,
+                null,
+                cursor,
+                CONVERSATION_ID,
+                20,
+                "DESCENDING",
+                "createdAt"
+            )
+        )
+            .isInstanceOfSatisfying(
+                BusinessException.class,
+                exception ->
+                    assertThat(exception.getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT)
             );
 
         verifyNoInteractions(

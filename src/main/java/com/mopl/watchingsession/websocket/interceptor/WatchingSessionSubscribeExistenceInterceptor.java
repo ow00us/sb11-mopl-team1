@@ -1,8 +1,8 @@
 package com.mopl.watchingsession.websocket.interceptor;
 
-import com.mopl.content.repository.ContentRepository;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.security.websocket.StompErrorFrameSender;
+import com.mopl.watchingsession.presence.ContentExistenceCache;
 import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Matcher;
@@ -17,7 +17,7 @@ import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.stereotype.Component;
 
 /**
- * watch 토픽 SUBSCRIBE 시점에 콘텐츠 존재 여부를 preSend()에서 미리 검증한다.
+ * watch·chat 토픽 SUBSCRIBE 시점에 콘텐츠 존재 여부를 preSend()에서 미리 검증한다.
  *
  * 이 인터셉터는 "존재 검증(existence check)"만 수행하며 "인가(authorization)"는
  * 하지 않는다 - 요청자가 누구인지는 검사하지 않고, 콘텐츠 자체가 있는지만 확인한다.
@@ -36,11 +36,11 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class WatchingSessionSubscribeExistenceInterceptor implements ChannelInterceptor {
 
-    private static final Pattern WATCH_DESTINATION_PATTERN =
-        Pattern.compile("^/sub/contents/([^/]+)/watch$");
+    private static final Pattern CONTENT_SUBSCRIBE_DESTINATION_PATTERN =
+        Pattern.compile("^/sub/contents/([^/]+)/(?:watch|chat)$");
 
-    private final ContentRepository contentRepository;
     private final StompErrorFrameSender errorFrameSender;
+    private final ContentExistenceCache contentExistenceCache;
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -55,14 +55,14 @@ public class WatchingSessionSubscribeExistenceInterceptor implements ChannelInte
             return message;
         }
 
-        Matcher matcher = WATCH_DESTINATION_PATTERN.matcher(destination);
+        Matcher matcher = CONTENT_SUBSCRIBE_DESTINATION_PATTERN.matcher(destination);
         if (!matcher.matches()) {
             return message;
         }
 
         UUID contentId = parseContentId(matcher.group(1));
 
-        if (contentId != null && contentRepository.existsById(contentId)) {
+        if (contentId != null && contentExistenceCache.exists(contentId)) {
             return message;
         }
 

@@ -4,6 +4,7 @@ import com.mopl.directmessage.websocket.DirectMessageAuthorizationInterceptor;
 import com.mopl.global.security.websocket.StompAuthChannelInterceptor;
 import com.mopl.global.security.websocket.StompDestinationAuthorizationInterceptor;
 import com.mopl.global.security.websocket.WebSocketStompErrorHandler;
+import com.mopl.watchingsession.websocket.interceptor.WatchingSessionRateLimitInterceptor;
 import com.mopl.watchingsession.websocket.stompsession.ChatSenderCacheInitializer;
 import com.mopl.watchingsession.websocket.interceptor.WatchingSessionSubscribeExistenceInterceptor;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final DirectMessageAuthorizationInterceptor directMessageAuthorizationInterceptor;
     private final ChatSenderCacheInitializer chatSenderCachingInitializer;
     private final WatchingSessionSubscribeExistenceInterceptor watchingSessionSubscribeExistenceInterceptor;
+    private final WatchingSessionRateLimitInterceptor watchingSessionRateLimitInterceptor;
 
     @Value("${app.websocket.allowed-origins}")
     private String[] allowedOrigins;
@@ -55,6 +57,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         registration.interceptors(
             stompAuthChannelInterceptor,
             stompDestinationAuthorizationInterceptor,
+            watchingSessionRateLimitInterceptor,
             watchingSessionSubscribeExistenceInterceptor,
             chatSenderCachingInitializer,
             directMessageAuthorizationInterceptor

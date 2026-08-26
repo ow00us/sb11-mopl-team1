@@ -4,8 +4,11 @@ import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -24,6 +27,9 @@ import java.util.Map;
 /**
  * 애플리케이션 어디서 예외가 발생하든 한곳에서 받아, 항상 ErrorResponse 형태로 바꿔 응답합니다.
  * 덕분에 도메인마다 에러 응답 형식이 제각각이 되는 일을 막을 수 있습니다.
+ *
+ * 오류 응답은 요청의 Accept 헤더와 무관하게 항상 JSON 으로 내보냅니다. 이유는
+ * {@link #jsonError(ErrorCode, ErrorResponse, HttpHeaders)} 에 적어 두었습니다.
  */
 @Slf4j
 @RestControllerAdvice
@@ -35,7 +41,7 @@ public class GlobalExceptionHandler {
         log.warn("BusinessException: {} - {}", code.getCode(), e.getMessage());
         ErrorResponse body = ErrorResponse.of(
                 e.getClass().getSimpleName(), code, e.getMessage(), e.getDetails());
-        return ResponseEntity.status(code.getStatus()).body(body);
+        return jsonError(code, body);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -47,7 +53,7 @@ public class GlobalExceptionHandler {
         ErrorCode code = ErrorCode.INVALID_INPUT;
         ErrorResponse body = ErrorResponse.of(
                 e.getClass().getSimpleName(), code, code.getMessage(), details);
-        return ResponseEntity.status(code.getStatus()).body(body);
+        return jsonError(code, body);
     }
 
     @ExceptionHandler(ConstraintViolationException.class)
@@ -61,7 +67,7 @@ public class GlobalExceptionHandler {
         ErrorCode code = ErrorCode.INVALID_INPUT;
         ErrorResponse body = ErrorResponse.of(
                 e.getClass().getSimpleName(), code, code.getMessage(), details);
-        return ResponseEntity.status(code.getStatus()).body(body);
+        return jsonError(code, body);
     }
 
     @ExceptionHandler(MissingServletRequestPartException.class)
@@ -72,7 +78,7 @@ public class GlobalExceptionHandler {
         ErrorCode code = ErrorCode.INVALID_INPUT;
         ErrorResponse body = ErrorResponse.of(
                 e.getClass().getSimpleName(), code, code.getMessage(), details);
-        return ResponseEntity.status(code.getStatus()).body(body);
+        return jsonError(code, body);
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
@@ -81,7 +87,7 @@ public class GlobalExceptionHandler {
         ErrorCode code = ErrorCode.INVALID_INPUT;
         ErrorResponse body = ErrorResponse.of(
                 e.getClass().getSimpleName(), code, "요청 본문을 파싱할 수 없습니다. 형식을 확인해주세요.", new HashMap<>());
-        return ResponseEntity.status(code.getStatus()).body(body);
+        return jsonError(code, body);
     }
 
     /**
@@ -96,7 +102,7 @@ public class GlobalExceptionHandler {
         log.warn("NoResourceFound: {} {}", e.getHttpMethod(), e.getResourcePath());
         ErrorResponse body = ErrorResponse.of(
                 e.getClass().getSimpleName(), code, code.getMessage(), new HashMap<>());
-        return ResponseEntity.status(code.getStatus()).body(body);
+        return jsonError(code, body);
     }
 
     /**
@@ -115,7 +121,7 @@ public class GlobalExceptionHandler {
         }
         ErrorResponse body = ErrorResponse.of(
                 e.getClass().getSimpleName(), code, code.getMessage(), details);
-        return ResponseEntity.status(code.getStatus()).headers(e.getHeaders()).body(body);
+        return jsonError(code, body, e.getHeaders());
     }
 
     /**
@@ -133,7 +139,30 @@ public class GlobalExceptionHandler {
         }
         ErrorResponse body = ErrorResponse.of(
                 e.getClass().getSimpleName(), code, code.getMessage(), details);
-        return ResponseEntity.status(code.getStatus()).headers(e.getHeaders()).body(body);
+        return jsonError(code, body, e.getHeaders());
+    }
+
+    /**
+     * 서버가 만들 수 없는 표현을 Accept 로 요청한 경우입니다.
+     *
+     * 핸들러가 없으면 DefaultHandlerExceptionResolver 가 본문 없이 sendError 로
+     * 처리하고, 그 뒤 컨테이너 오류 디스패치에서 다시 인증 검사가 돌아 상태 코드가
+     * 401 로 바뀝니다. 원인과 무관한 상태 코드는 클라이언트가 토큰 만료로 오인해
+     * 재로그인하게 만들므로 여기서 406 으로 확정합니다.
+     *
+     * 생산 가능한 표현을 details 로 알려 클라이언트가 Accept 를 고칠 수 있게 합니다.
+     */
+    @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
+    public ResponseEntity<ErrorResponse> handleMediaTypeNotAcceptable(HttpMediaTypeNotAcceptableException e) {
+        ErrorCode code = ErrorCode.NOT_ACCEPTABLE;
+        log.warn("HttpMediaTypeNotAcceptable: supported={}", e.getSupportedMediaTypes());
+        Map<String, String> details = new HashMap<>();
+        if (!e.getSupportedMediaTypes().isEmpty()) {
+            details.put("supportedMediaTypes", e.getSupportedMediaTypes().toString());
+        }
+        ErrorResponse body = ErrorResponse.of(
+                e.getClass().getSimpleName(), code, code.getMessage(), details);
+        return jsonError(code, body);
     }
 
     @ExceptionHandler(Exception.class)
@@ -142,7 +171,7 @@ public class GlobalExceptionHandler {
         ErrorCode code = ErrorCode.INTERNAL_ERROR;
         ErrorResponse body = ErrorResponse.of(
                 e.getClass().getSimpleName(), code, code.getMessage(), new HashMap<>());
-        return ResponseEntity.status(code.getStatus()).body(body);
+        return jsonError(code, body);
     }
 
     @ExceptionHandler(HandlerMethodValidationException.class)
@@ -158,7 +187,7 @@ public class GlobalExceptionHandler {
         });
         ErrorCode code = ErrorCode.INVALID_INPUT;
         ErrorResponse body = ErrorResponse.of(e.getClass().getSimpleName(), code, code.getMessage(), details);
-        return ResponseEntity.status(code.getStatus()).body(body);
+        return jsonError(code, body);
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)
@@ -166,7 +195,7 @@ public class GlobalExceptionHandler {
         log.warn("DataIntegrityViolationException", e);
         ErrorCode code = ErrorCode.REQUEST_CONFLICT;
         ErrorResponse body = ErrorResponse.of(e.getClass().getSimpleName(), code, code.getMessage(), new HashMap<>());
-        return ResponseEntity.status(code.getStatus()).body(body);
+        return jsonError(code, body);
     }
 
     @ExceptionHandler(MissingServletRequestParameterException.class)
@@ -177,7 +206,7 @@ public class GlobalExceptionHandler {
         ErrorCode code = ErrorCode.INVALID_INPUT;
         ErrorResponse body = ErrorResponse.of(
             e.getClass().getSimpleName(), code, code.getMessage(), details);
-        return ResponseEntity.status(code.getStatus()).body(body);
+        return jsonError(code, body);
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
@@ -188,6 +217,27 @@ public class GlobalExceptionHandler {
         ErrorCode code = ErrorCode.INVALID_INPUT;
         ErrorResponse body = ErrorResponse.of(
             e.getClass().getSimpleName(), code, code.getMessage(), details);
-        return ResponseEntity.status(code.getStatus()).body(body);
+        return jsonError(code, body);
+    }
+
+    private ResponseEntity<ErrorResponse> jsonError(ErrorCode code, ErrorResponse body) {
+        return jsonError(code, body, HttpHeaders.EMPTY);
+    }
+
+    /**
+     * 오류 응답을 만듭니다. Content-Type 을 JSON 으로 못박는 것이 핵심입니다.
+     *
+     * Content-Type 을 지정하지 않으면 응답 직렬화가 요청의 Accept 협상을 다시
+     * 거칩니다. 클라이언트가 JSON 을 허용하지 않는 Accept 를 보내면 ErrorResponse 를
+     * 만들 수 있는 표현이 없어 예외가 이 핸들러 밖으로 빠져나가고, 컨테이너 오류
+     * 디스패치로 넘어가면서 상태 코드가 원인과 무관하게 바뀝니다.
+     *
+     * 오류 응답은 협상 대상이 아니라 진단 정보이므로 항상 JSON 으로 내보냅니다.
+     */
+    private ResponseEntity<ErrorResponse> jsonError(ErrorCode code, ErrorResponse body, HttpHeaders headers) {
+        return ResponseEntity.status(code.getStatus())
+            .headers(headers)
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(body);
     }
 }

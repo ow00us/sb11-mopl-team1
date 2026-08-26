@@ -1,32 +1,47 @@
 package com.mopl.follow.service;
 
 import com.mopl.follow.dto.FollowDto;
+import com.mopl.follow.dto.FollowRecommendationItemDto;
 import com.mopl.follow.dto.FollowUserItemDto;
 import com.mopl.follow.entity.Follow;
+import com.mopl.follow.event.FollowEventFactory;
+import com.mopl.follow.repository.FollowRecommendationRow;
 import com.mopl.follow.repository.FollowRepository;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.common.UserSummary;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.outbox.OutboxRecorder;
+import com.mopl.global.event.EventEnvelope;
+import com.mopl.global.event.KafkaEventContract;
 import com.mopl.global.util.CursorUtils;
+import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class FollowService {
 
+    private static final String UNKNOWN_USER_NAME = "알 수 없는 사용자";
+
     private final FollowRepository followRepository;
     private final UserRepository userRepository;
+    private final OutboxRecorder outboxRecorder;
+    private final FollowEventFactory followEventFactory;
 
     @Transactional
     public FollowResult follow(UUID followerId, UUID followeeId) {
@@ -53,6 +68,9 @@ public class FollowService {
                 Follow refetched = followRepository
                         .findByFollowerIdAndFolloweeId(followerId, followeeId)
                         .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_ERROR));
+                if (retryInserted == 1) {
+                    recordFollowCreatedEvent(refetched);
+                }
                 return new FollowResult(FollowDto.from(refetched), retryInserted == 1);
             }
             // inserted=1 인데 조회가 비어 있으면 방금 넣은 것이 사라진 셈이라
@@ -60,7 +78,25 @@ public class FollowService {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR);
         }
 
-        return new FollowResult(FollowDto.from(found.get()), inserted == 1);
+        Follow follow = found.get();
+        if (inserted == 1) {
+            recordFollowCreatedEvent(follow);
+        }
+        return new FollowResult(FollowDto.from(follow), inserted == 1);
+    }
+
+    // 계약 docs/07-kafka-outbox-contract.md §8.1
+    // - envelope 조립은 FollowEventFactory 가 담당
+    // - partitionKey: followId, orderingScope: NONE
+    // - deduplicationKey: follow.created:<followId>
+    private void recordFollowCreatedEvent(Follow follow) {
+        EventEnvelope envelope = followEventFactory.createFollowCreatedEnvelope(follow);
+        KafkaEventContract contract = KafkaEventContract.FOLLOW_CREATED;
+        outboxRecorder.record(
+                envelope,
+                contract.partitionKey(envelope),
+                contract.orderingScope(),
+                contract.deduplicationKey(envelope));
     }
 
     @Transactional
@@ -112,6 +148,59 @@ public class FollowService {
     }
 
     /**
+     * 친구의 친구(FoF) 기반 팔로우 추천.
+     * <p>Repository 결과의 사용자 ID 를 배치 조회로 UserSummary 채우고 무한 스크롤 방식으로 반환한다.
+     * totalCount 는 정확 집계 비용이 크고 UI 요구가 무한 스크롤이라 현재 페이지 크기로 대체한다.
+     */
+    public CursorResponse<FollowRecommendationItemDto> getRecommendations(
+            UUID requesterId, String cursor, UUID idAfter,
+            int limit, String sortBy, String sortDirection) {
+
+        if ((cursor != null) != (idAfter != null)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        Long cursorCount;
+        try {
+            cursorCount = (cursor != null) ? CursorUtils.decodeAsLong(cursor) : null;
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        int fetchSize = limit + 1;
+        List<FollowRecommendationRow> rows = followRepository.findRecommendations(
+                requesterId.toString(),
+                cursorCount,
+                idAfter != null ? idAfter.toString() : null,
+                fetchSize);
+
+        boolean hasNext = rows.size() == fetchSize;
+        List<FollowRecommendationRow> page = hasNext ? rows.subList(0, limit) : rows;
+
+        String nextCursor = null;
+        UUID   nextIdAfter = null;
+        if (hasNext && !page.isEmpty()) {
+            FollowRecommendationRow last = page.get(page.size() - 1);
+            nextCursor  = CursorUtils.encodeLong(last.getCommonCount());
+            nextIdAfter = last.getUserId();
+        }
+
+        Set<UUID> userIds = page.stream()
+                .map(FollowRecommendationRow::getUserId)
+                .collect(Collectors.toSet());
+        Map<UUID, UserSummary> usersById = toUserSummaryMap(userIds);
+
+        List<FollowRecommendationItemDto> data = page.stream()
+                .map(r -> new FollowRecommendationItemDto(
+                        usersById.getOrDefault(r.getUserId(), unknownUserSummary(r.getUserId())),
+                        r.getCommonCount()))
+                .toList();
+
+        return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext,
+                data.size(), sortBy, sortDirection);
+    }
+
+    /**
      * 팔로워/팔로잉 목록에 공통으로 쓰이는 커서 페이지네이션 조립 로직.
      * userIdExtractor 로 팔로우 관계에서 응답에 노출할 사용자 ID를 선택한다.
      */
@@ -146,14 +235,33 @@ public class FollowService {
             nextIdAfter = last.getId();
         }
 
+        // 페이지 내 user ID 중복 제거는 Set 로 확보한다 (page 순서는 하단에서 별도 유지).
+        Set<UUID> userIds = page.stream().map(userIdExtractor).collect(Collectors.toSet());
+        Map<UUID, UserSummary> usersById = toUserSummaryMap(userIds);
+
         List<FollowUserItemDto> data = page.stream()
-                .map(f -> new FollowUserItemDto(
-                        f.getId(),
-                        new UserSummary(userIdExtractor.apply(f), null, null),
-                        f.getCreatedAt()))
+                .map(f -> {
+                    UUID userId = userIdExtractor.apply(f);
+                    return new FollowUserItemDto(
+                            f.getId(),
+                            usersById.getOrDefault(userId, unknownUserSummary(userId)),
+                            f.getCreatedAt());
+                })
                 .toList();
 
         return CursorResponse.of(data, nextCursor, nextIdAfter, hasNext,
                 totalCounter.getAsLong(), sortBy, sortDirection);
+    }
+
+    // 페이지 user ID 배치 조회로 N+1 을 방지한다. userRepository.findAllById 1회.
+    private Map<UUID, UserSummary> toUserSummaryMap(Collection<UUID> userIds) {
+        if (userIds.isEmpty()) return Map.of();
+        return userRepository.findAllById(userIds).stream()
+                .collect(Collectors.toMap(User::getId,
+                        u -> new UserSummary(u.getId(), u.getName(), u.getProfileImageUrl())));
+    }
+
+    private UserSummary unknownUserSummary(UUID userId) {
+        return new UserSummary(userId, UNKNOWN_USER_NAME, null);
     }
 }

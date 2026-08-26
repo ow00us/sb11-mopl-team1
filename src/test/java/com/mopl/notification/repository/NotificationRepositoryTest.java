@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.mopl.global.config.JpaConfig;
 import com.mopl.notification.entity.Notification;
 import com.mopl.notification.entity.NotificationLevel;
+import com.mopl.notification.entity.NotificationType;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
@@ -132,6 +133,56 @@ class NotificationRepositoryTest {
     }
 
     @Test
+    @DisplayName("알림 유형과 대상 정보를 저장하고 조회")
+    void saveAndFindByTargetInformation_success() {
+        // given
+        UUID sourceEventId = UUID.fromString(
+            "33333333-3333-3333-3333-333333333333"
+        );
+
+        UUID resourceId = UUID.fromString(
+            "44444444-4444-4444-4444-444444444444"
+        );
+
+        UUID sourceEntityId = UUID.fromString(
+            "55555555-5555-5555-5555-555555555555"
+        );
+
+        Notification notification = Notification.create(
+            RECEIVER_ID,
+            sourceEventId,
+            NotificationType.DIRECT_MESSAGE,
+            resourceId,
+            sourceEntityId,
+            "새로운 DM",
+            "메시지가 도착했습니다.",
+            NotificationLevel.INFO
+        );
+
+        Notification saved = notificationRepository.saveAndFlush(notification);
+
+        UUID notificationId = saved.getId();
+        entityManager.clear();
+
+        // when
+        Notification result = notificationRepository.findById(notificationId)
+            .orElseThrow();
+
+        // then
+        assertThat(result.getSourceEventId())
+            .isEqualTo(sourceEventId);
+
+        assertThat(result.getType())
+            .isEqualTo(NotificationType.DIRECT_MESSAGE);
+
+        assertThat(result.getResourceId())
+            .isEqualTo(resourceId);
+
+        assertThat(result.getSourceEntityId())
+            .isEqualTo(sourceEntityId);
+    }
+
+    @Test
     @DisplayName("알림 ID와 수신자 ID가 모두 일치하는 경우에만 조회")
     void findByIdAndReceiverId_matchesOwner() {
         // given
@@ -163,6 +214,63 @@ class NotificationRepositoryTest {
         // then
         assertThat(ownerResult).isPresent();
         assertThat(otherResult).isEmpty();
+    }
+
+    @Test
+    @DisplayName("알림 읽음 처리를 반복하면 최초 readAt을 유지")
+    void markAsReadIfUnread_repeated_preservesFirstReadAt() {
+        // given
+        Notification saved =
+            notificationRepository.saveAndFlush(
+                Notification.create(
+                    RECEIVER_ID,
+                    null,
+                    "알림 제목",
+                    "알림 내용",
+                    NotificationLevel.INFO
+                )
+            );
+
+        Instant firstReadAt =
+            Instant.parse("2026-08-13T01:00:00Z");
+
+        Instant secondReadAt =
+            Instant.parse("2026-08-13T02:00:00Z");
+
+        // when
+        int firstUpdatedCount =
+            notificationRepository.markAsReadIfUnread(
+                saved.getId(),
+                RECEIVER_ID,
+                firstReadAt
+            );
+
+        int secondUpdatedCount =
+            notificationRepository.markAsReadIfUnread(
+                saved.getId(),
+                RECEIVER_ID,
+                secondReadAt
+            );
+
+        entityManager.clear();
+
+        Notification result =
+            notificationRepository.findById(
+                saved.getId()
+            ).orElseThrow();
+
+        // then
+        assertThat(firstUpdatedCount)
+            .isEqualTo(1);
+
+        assertThat(secondUpdatedCount)
+            .isZero();
+
+        assertThat(result.getReadAt())
+            .isEqualTo(firstReadAt);
+
+        assertThat(result.getUpdatedAt())
+            .isEqualTo(firstReadAt);
     }
 
     @Test
@@ -397,6 +505,158 @@ class NotificationRepositoryTest {
                 NOTIFICATION_ID_3,
                 NOTIFICATION_ID_5
             );
+    }
+
+    @Test
+    @DisplayName("같은 이벤트와 수신자의 알림은 한 번만 저장")
+    void insertIfAbsent_duplicateEventAndReceiver_insertsOnce() {
+        // given
+        UUID sourceEventId = UUID.fromString(
+            "33333333-3333-3333-3333-333333333333"
+        );
+
+        UUID resourceId = UUID.fromString(
+            "44444444-4444-4444-4444-444444444444"
+        );
+
+        UUID sourceEntityId = UUID.fromString(
+            "55555555-5555-5555-5555-555555555555"
+        );
+
+        Instant firstCreatedAt =
+            Instant.parse("2026-08-14T01:00:00Z");
+
+        Instant secondCreatedAt =
+            Instant.parse("2026-08-14T02:00:00Z");
+
+        // when
+        int firstInsertedCount =
+            notificationRepository.insertIfAbsent(
+                NOTIFICATION_ID_1,
+                firstCreatedAt,
+                RECEIVER_ID,
+                sourceEventId,
+                "DIRECT_MESSAGE",
+                resourceId,
+                sourceEntityId,
+                "[DM] 발신자",
+                "첫 번째 알림",
+                "INFO"
+            );
+
+        int secondInsertedCount =
+            notificationRepository.insertIfAbsent(
+                NOTIFICATION_ID_2,
+                secondCreatedAt,
+                RECEIVER_ID,
+                sourceEventId,
+                "DIRECT_MESSAGE",
+                resourceId,
+                sourceEntityId,
+                "[DM] 발신자",
+                "중복 알림",
+                "INFO"
+            );
+
+        // then
+        assertThat(firstInsertedCount)
+            .isEqualTo(1);
+
+        assertThat(secondInsertedCount)
+            .isZero();
+
+        assertThat(
+            notificationRepository.findById(
+                NOTIFICATION_ID_1
+            )
+        ).isPresent();
+
+        assertThat(
+            notificationRepository.findById(
+                NOTIFICATION_ID_2
+            )
+        ).isEmpty();
+
+        Integer savedCount =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM notifications
+                WHERE source_event_id = ?
+                    AND receiver_id = ?
+                """,
+                Integer.class,
+                sourceEventId,
+                RECEIVER_ID
+            );
+
+        assertThat(savedCount)
+            .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("수신자가 없으면 알림을 저장하지 않음")
+    void insertIfAbsent_receiverMissing_skips() {
+        // given
+        UUID missingReceiverId = UUID.fromString(
+            "99999999-9999-9999-9999-999999999999"
+        );
+
+        UUID sourceEventId = UUID.fromString(
+            "33333333-3333-3333-3333-333333333333"
+        );
+
+        UUID resourceId = UUID.fromString(
+            "44444444-4444-4444-4444-444444444444"
+        );
+
+        UUID sourceEntityId = UUID.fromString(
+            "55555555-5555-5555-5555-555555555555"
+        );
+
+        Instant createdAt =
+            Instant.parse("2026-08-14T01:00:00Z");
+
+        // when
+        int insertedCount =
+            notificationRepository.insertIfAbsent(
+                NOTIFICATION_ID_1,
+                createdAt,
+                missingReceiverId,
+                sourceEventId,
+                "DIRECT_MESSAGE",
+                resourceId,
+                sourceEntityId,
+                "[DM] 발신자",
+                "안녕하세요",
+                "INFO"
+            );
+
+        // then
+        assertThat(insertedCount)
+            .isZero();
+
+        assertThat(
+            notificationRepository.findById(
+                NOTIFICATION_ID_1
+            )
+        ).isEmpty();
+
+        Integer savedCount =
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM notifications
+                WHERE source_event_id = ?
+                    AND receiver_id = ?
+                """,
+                Integer.class,
+                sourceEventId,
+                missingReceiverId
+            );
+
+        assertThat(savedCount)
+            .isZero();
     }
 
     private PageRequest firstPage(Sort.Direction direction) {

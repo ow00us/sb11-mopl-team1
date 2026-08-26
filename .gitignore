@@ -30,6 +30,8 @@ out/
 
 ### Env / Secrets ###
 .env
+.env.*
+!.env.example
 *.local
 application-local.yml
 
@@ -37,6 +39,7 @@ application-local.yml
 docs/
 !docs/
 docs/*
+!docs/19-deployment-topology-adr.md
 !docs/erd/
 docs/erd/*
 !docs/erd/index.html

@@ -2,6 +2,8 @@ package com.mopl.global.security;
 
 import com.mopl.user.dto.UserLockUpdateRequest;
 import com.mopl.user.dto.UserRoleUpdateRequest;
+import com.mopl.user.dto.LocalCredentialEmailVerificationRequest;
+import com.mopl.user.dto.LocalCredentialRegistrationRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,10 +31,58 @@ class SecurityPolicyProbeController {
     @PostMapping({
         "/api/users",
         "/api/auth/sign-in",
+        "/api/auth/reset-password",
+        "/api/auth/refresh",
         "/api/auth/sign-out"
     })
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void publicOrAuthenticationApi() {
+    }
+
+    /**
+     * OAuth 계정 연결 시작 API의 JWT 및 CSRF 정책을 검증하기 위한
+     * 테스트 전용 경로
+     *
+     * <p>실제 UserController와 동일한 HTTP 메서드와 경로를 사용하며,
+     * Controller 내부 로직과 데이터베이스에는 의존하지 않습니다.</p>
+     */
+    @PostMapping(
+        "/api/users/{userId}/oauth-accounts/{provider}/link"
+    )
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void startOAuthAccountLink() {
+    }
+
+    /**
+     * 로컬 로그인 이메일 인증 코드 발송 API의
+     * JWT, CSRF 및 요청 본문 검증 순서를 확인하는 테스트 전용 경로
+     *
+     * @param request 인증할 이메일 요청
+     */
+    @PostMapping(
+        "/api/users/{userId}/local-credentials/email-verifications"
+    )
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void sendLocalCredentialEmailVerification(
+        @Valid @RequestBody
+        LocalCredentialEmailVerificationRequest request
+    ) {
+    }
+
+    /**
+     * OAuth 전용 사용자의 로컬 로그인 수단 등록 API에 대한
+     * JWT, CSRF 및 요청 본문 검증 순서를 확인하는 테스트 전용 경로
+     *
+     * @param request 이메일 인증 코드와 새 비밀번호 요청
+     */
+    @PostMapping(
+        "/api/users/{userId}/local-credentials"
+    )
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void registerLocalCredential(
+        @Valid @RequestBody
+        LocalCredentialRegistrationRequest request
+    ) {
     }
 
     /**

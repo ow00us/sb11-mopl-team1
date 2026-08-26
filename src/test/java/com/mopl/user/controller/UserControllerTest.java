@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -12,6 +13,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.exception.BusinessException;
@@ -24,12 +26,20 @@ import com.mopl.user.dto.UserUpdateRequest;
 import com.mopl.user.dto.UserLockUpdateRequest;
 import com.mopl.user.dto.UserRoleUpdateRequest;
 import com.mopl.user.dto.ChangePasswordRequest;
+import com.mopl.user.dto.OAuthAccountDto;
+import com.mopl.user.dto.LocalCredentialEmailVerificationRequest;
+import com.mopl.user.dto.LocalCredentialRegistrationRequest;
 import com.mopl.user.entity.UserRole;
+import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.service.UserService;
+import com.mopl.user.service.OAuthAccountManagementService;
+import com.mopl.user.service.OAuthLocalCredentialService;
+import com.mopl.user.security.oauth.link.OAuthLinkIntentSessionStore;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import java.util.List;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterEach;
@@ -46,7 +56,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * 회원가입 HTTP API를 검증하는 Controller 테스트
- * <p>
+ *
  * UserService는 Mock으로 대체 이 테스트는 HTTP 요청, JSON 변환, Bean Validation, HTTP 상태 코드와 응답 형식만 검증
  */
 @WebMvcTest(UserController.class)
@@ -62,6 +72,15 @@ class UserControllerTest {
     @MockitoBean
     UserService userService;
 
+    @MockitoBean
+    OAuthAccountManagementService oauthAccountManagementService;
+
+    @MockitoBean
+    OAuthLinkIntentSessionStore oauthLinkIntentSessionStore;
+
+    @MockitoBean
+    OAuthLocalCredentialService oauthLocalCredentialService;
+
     /**
      * 테스트 종료 후 인증 정보 제거
      *
@@ -74,19 +93,6 @@ class UserControllerTest {
     void clearSecurityContext() {
         SecurityContextHolder.clearContext();
     }
-
-    /*      users/me
-    /**
-     * SecurityContextHolder는 현재 실행 스레드에 인증 정보를 보관
-     *
-     * 테스트가 끝난 뒤 인증 정보를 제거하지 않으면
-     * 다음 테스트가 이전 테스트의 사용자로 인증된 것처럼 동작할 수 있음.
-
-    @AfterEach
-    void clearSecurityContext() {
-        SecurityContextHolder.clearContext();
-    }
-     */
 
     @Test
     @DisplayName("회원가입 성공 시 201과 생성된 사용자 정보를 반환한다")
@@ -968,6 +974,371 @@ class UserControllerTest {
          * Service는 호출되지 않는다.
          */
         verifyNoInteractions(userService);
+    }
+
+    @Test
+    @DisplayName("본인의 OAuth 연결 계정 목록을 조회하면 200과 공개 정보를 반환한다")
+    void getLinkedOAuthAccounts_success()
+        throws Exception {
+
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        Instant googleConnectedAt =
+            Instant.parse("2026-08-01T01:00:00Z");
+
+        Instant naverConnectedAt =
+            Instant.parse("2026-08-02T01:00:00Z");
+
+        setAuthenticatedUser(userId);
+
+        when(
+            oauthAccountManagementService
+                .getLinkedAccounts(
+                    userId,
+                    userId
+                )
+        ).thenReturn(
+            List.of(
+                new OAuthAccountDto(
+                    OAuthProvider.GOOGLE,
+                    googleConnectedAt
+                ),
+                new OAuthAccountDto(
+                    OAuthProvider.NAVER,
+                    naverConnectedAt
+                )
+            )
+        );
+
+        mockMvc.perform(
+                get(
+                    "/api/users/{userId}/oauth-accounts",
+                    userId
+                )
+            )
+            .andExpect(status().isOk())
+            .andExpect(content().contentType("application/json"))
+            .andExpect(jsonPath("$[0].provider")
+                .value("GOOGLE"))
+            .andExpect(jsonPath("$[0].connectedAt")
+                .value(googleConnectedAt.toString()))
+            .andExpect(jsonPath("$[1].provider")
+                .value("NAVER"))
+            .andExpect(jsonPath("$[1].connectedAt")
+                .value(naverConnectedAt.toString()))
+            .andExpect(jsonPath("$[0].providerUserId")
+                .doesNotExist())
+            .andExpect(jsonPath("$[0].accessToken")
+                .doesNotExist())
+            .andExpect(jsonPath("$[0].refreshToken")
+                .doesNotExist());
+
+        verify(oauthAccountManagementService)
+            .getLinkedAccounts(
+                userId,
+                userId
+            );
+    }
+
+    @Test
+    @DisplayName("OAuth 계정 연결 시작 시 인증 경로를 반환한다")
+    void startOAuthAccountLink_success()
+        throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        // when & then
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/oauth-accounts/{provider}/link",
+                    userId,
+                    OAuthProvider.GOOGLE
+                )
+            )
+            .andExpect(status().isOk())
+            .andExpect(
+                jsonPath("$.authorizationPath")
+                    .value(
+                        "/oauth2/authorization/google"
+                    )
+            );
+
+        verify(oauthAccountManagementService)
+            .validateLinkStart(
+                userId,
+                userId,
+                OAuthProvider.GOOGLE
+            );
+
+        verify(oauthLinkIntentSessionStore)
+            .save(
+                any(HttpServletRequest.class),
+                eq(userId),
+                eq(OAuthProvider.GOOGLE)
+            );
+    }
+
+    @Test
+    @DisplayName("연결 시작 검증에 실패하면 세션에 연결 의도를 저장하지 않는다")
+    void startOAuthAccountLink_fail_doesNotStoreIntent()
+        throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        doThrow(
+            new BusinessException(
+                ErrorCode.OAUTH_ACCOUNT_CONFLICT
+            )
+        ).when(
+            oauthAccountManagementService
+        ).validateLinkStart(
+            userId,
+            userId,
+            OAuthProvider.KAKAO
+        );
+
+        // when & then
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/oauth-accounts/{provider}/link",
+                    userId,
+                    OAuthProvider.KAKAO
+                )
+            )
+            .andExpect(status().isConflict());
+
+        verifyNoInteractions(
+            oauthLinkIntentSessionStore
+        );
+    }
+
+    @Test
+    @DisplayName("본인의 OAuth 연결 계정을 해제하면 204를 반환한다")
+    void unlinkOAuthAccount_success()
+        throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        // when & then
+        mockMvc.perform(
+                delete(
+                    "/api/users/{userId}/oauth-accounts/{provider}",
+                    userId,
+                    OAuthProvider.GOOGLE
+                )
+            )
+            .andExpect(status().isNoContent())
+            .andExpect(content().string(""));
+
+        verify(oauthAccountManagementService)
+            .unlinkAccount(
+                userId,
+                userId,
+                OAuthProvider.GOOGLE
+            );
+    }
+
+    @Test
+    @DisplayName("지원하지 않는 OAuth Provider이면 400을 반환한다")
+    void unlinkOAuthAccount_fail_whenProviderIsInvalid()
+        throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        // when & then
+        mockMvc.perform(
+                delete(
+                    "/api/users/{userId}/oauth-accounts/{provider}",
+                    userId,
+                    "FACEBOOK"
+                )
+            )
+            .andExpect(status().isBadRequest());
+
+        /*
+         * PathVariable을 OAuthProvider로 변환하는 과정에서 실패하므로
+         * Controller 메서드와 Service는 실행되지 않는다.
+         */
+        verifyNoInteractions(
+            oauthAccountManagementService
+        );
+    }
+
+    @Test
+    @DisplayName("로컬 로그인 이메일 인증 코드를 요청하면 204를 반환한다")
+    void sendLocalCredentialEmailVerification_success()
+        throws Exception {
+
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/local-credentials/email-verifications",
+                    userId
+                )
+                    .contentType("application/json")
+                    .content(
+                        """
+                        {
+                          "email": "user@example.com"
+                        }
+                        """
+                    )
+            )
+            .andExpect(status().isNoContent())
+            .andExpect(content().string(""));
+
+        verify(oauthLocalCredentialService)
+            .sendVerificationCode(
+                eq(userId),
+                eq(userId),
+                eq(
+                    new LocalCredentialEmailVerificationRequest(
+                        "user@example.com"
+                    )
+                )
+            );
+    }
+
+    @Test
+    @DisplayName("인증 코드 요청 이메일 형식이 잘못되면 400을 반환한다")
+    void sendLocalCredentialEmailVerification_fail_whenEmailInvalid()
+        throws Exception {
+
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/local-credentials/email-verifications",
+                    userId
+                )
+                    .contentType("application/json")
+                    .content(
+                        """
+                        {
+                          "email": "invalid-email"
+                        }
+                        """
+                    )
+            )
+            .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(
+            oauthLocalCredentialService
+        );
+    }
+
+    @Test
+    @DisplayName("인증된 이메일과 비밀번호를 등록하면 204를 반환한다")
+    void registerLocalCredential_success()
+        throws Exception {
+
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/local-credentials",
+                    userId
+                )
+                    .contentType("application/json")
+                    .content(
+                        """
+                        {
+                          "email": "user@example.com",
+                          "verificationCode": "123456",
+                          "password": "Password1!"
+                        }
+                        """
+                    )
+            )
+            .andExpect(status().isNoContent())
+            .andExpect(content().string(""));
+
+        verify(oauthLocalCredentialService)
+            .registerLocalCredential(
+                eq(userId),
+                eq(userId),
+                eq(
+                    new LocalCredentialRegistrationRequest(
+                        "user@example.com",
+                        "123456",
+                        "Password1!"
+                    )
+                )
+            );
+    }
+
+    @Test
+    @DisplayName("로컬 로그인 등록 인증 코드 형식이 잘못되면 400을 반환한다")
+    void registerLocalCredential_fail_whenVerificationCodeInvalid()
+        throws Exception {
+
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        mockMvc.perform(
+                post(
+                    "/api/users/{userId}/local-credentials",
+                    userId
+                )
+                    .contentType("application/json")
+                    .content(
+                        """
+                        {
+                          "email": "user@example.com",
+                          "verificationCode": "12345",
+                          "password": "Password1!"
+                        }
+                        """
+                    )
+            )
+            .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(
+            oauthLocalCredentialService
+        );
     }
 
     /**

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -15,6 +16,8 @@ import com.mopl.notification.dto.NotificationDto;
 import com.mopl.notification.event.NotificationCreatedEvent;
 import com.mopl.notification.entity.Notification;
 import com.mopl.notification.entity.NotificationLevel;
+import com.mopl.notification.entity.NotificationType;
+import com.mopl.notification.kafka.NotificationCreateCommand;
 import com.mopl.notification.repository.NotificationRepository;
 import java.time.Instant;
 import java.util.List;
@@ -121,6 +124,120 @@ class NotificationServiceTest {
 
         assertThat(publishedNotification.receiverId())
             .isEqualTo(RECEIVER_ID);
+    }
+
+    @Test
+    @DisplayName("대상 정보를 포함한 알림을 생성하고 이벤트를 발행")
+    void create_withTargetInformation_success() {
+        // given
+        UUID sourceEventId = UUID.fromString(
+            "33333333-3333-3333-3333-333333333333"
+        );
+
+        UUID resourceId = UUID.fromString(
+            "44444444-4444-4444-4444-444444444444"
+        );
+
+        UUID sourceEntityId = UUID.fromString(
+            "55555555-5555-5555-5555-555555555555"
+        );
+
+        Instant createdAt =
+            Instant.parse("2026-08-13T01:00:00Z");
+
+        when(
+            notificationRepository.save(
+                any(Notification.class)
+            )
+        ).thenAnswer(invocation -> {
+            Notification notification =
+                invocation.getArgument(0);
+
+            ReflectionTestUtils.setField(
+                notification,
+                "id",
+                NOTIFICATION_ID
+            );
+
+            ReflectionTestUtils.setField(
+                notification,
+                "createdAt",
+                createdAt
+            );
+
+            return notification;
+        });
+
+        // when
+        NotificationDto result =
+            notificationService.create(
+                RECEIVER_ID,
+                sourceEventId,
+                NotificationType.DIRECT_MESSAGE,
+                resourceId,
+                sourceEntityId,
+                "새로운 DM",
+                "메시지가 도착했습니다.",
+                NotificationLevel.INFO
+            );
+
+        // then
+        assertThat(result.id())
+            .isEqualTo(NOTIFICATION_ID);
+
+        assertThat(result.type())
+            .isEqualTo(
+                NotificationType.DIRECT_MESSAGE
+            );
+
+        assertThat(result.resourceId())
+            .isEqualTo(resourceId);
+
+        ArgumentCaptor<Notification> notificationCaptor =
+            ArgumentCaptor.forClass(
+                Notification.class
+            );
+
+        verify(notificationRepository).save(
+            notificationCaptor.capture()
+        );
+
+        Notification saved =
+            notificationCaptor.getValue();
+
+        assertThat(saved.getSourceEventId())
+            .isEqualTo(sourceEventId);
+
+        assertThat(saved.getType())
+            .isEqualTo(
+                NotificationType.DIRECT_MESSAGE
+            );
+
+        assertThat(saved.getResourceId())
+            .isEqualTo(resourceId);
+
+        assertThat(saved.getSourceEntityId())
+            .isEqualTo(sourceEntityId);
+
+        ArgumentCaptor<NotificationCreatedEvent> eventCaptor =
+            ArgumentCaptor.forClass(
+                NotificationCreatedEvent.class
+            );
+
+        verify(eventPublisher).publishEvent(
+            eventCaptor.capture()
+        );
+
+        NotificationDto published =
+            eventCaptor.getValue().notification();
+
+        assertThat(published.type())
+            .isEqualTo(
+                NotificationType.DIRECT_MESSAGE
+            );
+
+        assertThat(published.resourceId())
+            .isEqualTo(resourceId);
     }
 
     @Test
@@ -291,8 +408,35 @@ class NotificationServiceTest {
     }
 
     @Test
-    @DisplayName("본인의 알림을 읽음 처리")
+    @DisplayName("읽지 않은 본인의 알림을 읽음 처리")
     void read_success() {
+        // given
+        when(
+            notificationRepository.markAsReadIfUnread(
+                eq(NOTIFICATION_ID),
+                eq(RECEIVER_ID),
+                any(Instant.class)
+            )
+        ).thenReturn(1);
+
+        // when
+        notificationService.read(
+            NOTIFICATION_ID,
+            RECEIVER_ID
+        );
+
+        // then
+        verify(notificationRepository)
+            .markAsReadIfUnread(
+                eq(NOTIFICATION_ID),
+                eq(RECEIVER_ID),
+                any(Instant.class)
+            );
+    }
+
+    @Test
+    @DisplayName("이미 읽은 본인 알림을 다시 읽음 처리하면 성공")
+    void read_alreadyRead_success() {
         // given
         Notification notification = Notification.create(
             RECEIVER_ID,
@@ -302,12 +446,27 @@ class NotificationServiceTest {
             NotificationLevel.INFO
         );
 
+        Instant firstReadAt =
+            Instant.parse("2026-08-13T01:00:00Z");
+
+        notification.markAsRead(firstReadAt);
+
+        when(
+            notificationRepository.markAsReadIfUnread(
+                eq(NOTIFICATION_ID),
+                eq(RECEIVER_ID),
+                any(Instant.class)
+            )
+        ).thenReturn(0);
+
         when(
             notificationRepository.findByIdAndReceiverId(
                 NOTIFICATION_ID,
                 RECEIVER_ID
             )
-        ).thenReturn(Optional.of(notification));
+        ).thenReturn(
+            Optional.of(notification)
+        );
 
         // when
         notificationService.read(
@@ -316,7 +475,8 @@ class NotificationServiceTest {
         );
 
         // then
-        assertThat(notification.getReadAt()).isNotNull();
+        assertThat(notification.getReadAt())
+            .isEqualTo(firstReadAt);
 
         verify(notificationRepository)
             .findByIdAndReceiverId(
@@ -329,6 +489,14 @@ class NotificationServiceTest {
     @DisplayName("본인이 소유한 알림이 없으면 읽음 처리에 실패")
     void read_notificationNotFound_throwsException() {
         // given
+        when(
+            notificationRepository.markAsReadIfUnread(
+                eq(NOTIFICATION_ID),
+                eq(RECEIVER_ID),
+                any(Instant.class)
+            )
+        ).thenReturn(0);
+
         when(
             notificationRepository.findByIdAndReceiverId(
                 NOTIFICATION_ID,
@@ -415,5 +583,212 @@ class NotificationServiceTest {
             .isEqualTo(ErrorCode.INVALID_INPUT);
 
         verifyNoInteractions(notificationRepository);
+    }
+
+    @Test
+    @DisplayName("Kafka 알림을 처음 소비하면 저장하고 이벤트를 발행")
+    void createIfAbsent_newEvent_savesAndPublishes() {
+        // given
+        UUID sourceEventId = UUID.fromString(
+            "33333333-3333-3333-3333-333333333333"
+        );
+
+        UUID resourceId = UUID.fromString(
+            "44444444-4444-4444-4444-444444444444"
+        );
+
+        UUID sourceEntityId = UUID.fromString(
+            "55555555-5555-5555-5555-555555555555"
+        );
+
+        NotificationCreateCommand command =
+            createCommand(
+                sourceEventId,
+                resourceId,
+                sourceEntityId
+            );
+
+        when(
+            notificationRepository.insertIfAbsent(
+                any(UUID.class),
+                any(Instant.class),
+                eq(RECEIVER_ID),
+                eq(sourceEventId),
+                eq("DIRECT_MESSAGE"),
+                eq(resourceId),
+                eq(sourceEntityId),
+                eq("[DM] 발신자"),
+                eq("안녕하세요"),
+                eq("INFO")
+            )
+        ).thenReturn(1);
+
+        Notification saved = Notification.create(
+            RECEIVER_ID,
+            sourceEventId,
+            NotificationType.DIRECT_MESSAGE,
+            resourceId,
+            sourceEntityId,
+            "[DM] 발신자",
+            "안녕하세요",
+            NotificationLevel.INFO
+        );
+
+        ReflectionTestUtils.setField(
+            saved,
+            "id",
+            NOTIFICATION_ID
+        );
+
+        ReflectionTestUtils.setField(
+            saved,
+            "createdAt",
+            Instant.parse("2026-08-14T01:00:00Z")
+        );
+
+        when(
+            notificationRepository.findById(
+                any(UUID.class)
+            )
+        ).thenReturn(Optional.of(saved));
+
+        // when
+        boolean result =
+            notificationService.createIfAbsent(command);
+
+        // then
+        assertThat(result).isTrue();
+
+        verify(notificationRepository)
+            .findById(any(UUID.class));
+
+        ArgumentCaptor<NotificationCreatedEvent> eventCaptor =
+            ArgumentCaptor.forClass(
+                NotificationCreatedEvent.class
+            );
+
+        verify(eventPublisher).publishEvent(
+            eventCaptor.capture()
+        );
+
+        NotificationDto published =
+            eventCaptor.getValue().notification();
+
+        assertThat(published.id())
+            .isEqualTo(NOTIFICATION_ID);
+
+        assertThat(published.type())
+            .isEqualTo(NotificationType.DIRECT_MESSAGE);
+
+        assertThat(published.resourceId())
+            .isEqualTo(resourceId);
+    }
+
+    @Test
+    @DisplayName("같은 Kafka 알림을 다시 소비하면 저장과 이벤트 발행을 생략")
+    void createIfAbsent_duplicateEvent_skips() {
+        // given
+        NotificationCreateCommand command =
+            createCommand(
+                UUID.fromString(
+                    "33333333-3333-3333-3333-333333333333"
+                ),
+                UUID.fromString(
+                    "44444444-4444-4444-4444-444444444444"
+                ),
+                UUID.fromString(
+                    "55555555-5555-5555-5555-555555555555"
+                )
+            );
+
+        when(
+            notificationRepository.insertIfAbsent(
+                any(UUID.class),
+                any(Instant.class),
+                eq(command.receiverId()),
+                eq(command.sourceEventId()),
+                eq("DIRECT_MESSAGE"),
+                eq(command.resourceId()),
+                eq(command.sourceEntityId()),
+                eq(command.title()),
+                eq(command.content()),
+                eq("INFO")
+            )
+        ).thenReturn(0);
+
+        // when
+        boolean result =
+            notificationService.createIfAbsent(command);
+
+        // then
+        assertThat(result).isFalse();
+
+        verify(notificationRepository, never())
+            .findById(any(UUID.class));
+
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    @DisplayName("Kafka 알림 저장에 실패하면 예외를 전파하고 이벤트를 발행하지 않음")
+    void createIfAbsent_saveFailure_propagatesException() {
+        // given
+        NotificationCreateCommand command =
+            createCommand(
+                UUID.fromString(
+                    "33333333-3333-3333-3333-333333333333"
+                ),
+                UUID.fromString(
+                    "44444444-4444-4444-4444-444444444444"
+                ),
+                UUID.fromString(
+                    "55555555-5555-5555-5555-555555555555"
+                )
+            );
+
+        when(
+            notificationRepository.insertIfAbsent(
+                any(UUID.class),
+                any(Instant.class),
+                eq(command.receiverId()),
+                eq(command.sourceEventId()),
+                eq("DIRECT_MESSAGE"),
+                eq(command.resourceId()),
+                eq(command.sourceEntityId()),
+                eq(command.title()),
+                eq(command.content()),
+                eq("INFO")
+            )
+        ).thenThrow(
+            new IllegalStateException(
+                "일시적인 DB 오류입니다."
+            )
+        );
+
+        // when & then
+        assertThatThrownBy(() ->
+            notificationService.createIfAbsent(command)
+        )
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("일시적인 DB 오류입니다.");
+
+        verifyNoInteractions(eventPublisher);
+    }
+
+    private NotificationCreateCommand createCommand(
+        UUID sourceEventId,
+        UUID resourceId,
+        UUID sourceEntityId
+    ) {
+        return new NotificationCreateCommand(
+            RECEIVER_ID,
+            sourceEventId,
+            NotificationType.DIRECT_MESSAGE,
+            resourceId,
+            sourceEntityId,
+            "[DM] 발신자",
+            "안녕하세요",
+            NotificationLevel.INFO
+        );
     }
 }

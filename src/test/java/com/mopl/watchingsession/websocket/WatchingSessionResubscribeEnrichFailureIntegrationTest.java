@@ -12,6 +12,7 @@ import com.mopl.content.entity.ContentType;
 import com.mopl.content.repository.ContentRepository;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.security.JwtProvider;
+import com.mopl.support.websocket.StompTestCleanup;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
@@ -22,6 +23,7 @@ import jakarta.annotation.Nullable;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -35,7 +37,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.messaging.MessageDeliveryException;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.converter.MappingJackson2MessageConverter;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
@@ -51,9 +53,11 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
 @Testcontainers
 @ActiveProfiles("test")
@@ -66,6 +70,11 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
     @Container
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16");
+
+    @Container
+    @ServiceConnection(name = "redis")
+    static GenericContainer<?> redis = new GenericContainer<>(DockerImageName.parse("redis:7"))
+        .withExposedPorts(6379);
 
     @LocalServerPort
     private int port;
@@ -81,6 +90,9 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
     private ContentRepository contentRepository;
     @Autowired
     private WatchingSessionSnapshotRepository snapshotRepository;
+
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     private WebSocketStompClient stompClient;
     private ThreadPoolTaskScheduler taskScheduler;
@@ -121,18 +133,13 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        disconnectQuietly(session);
-        disconnectQuietly(observerSession);
-
-        if (stompClient != null) {
-            stompClient.stop();
+        try {
+            StompTestCleanup.closeAll(stompClient, taskScheduler, session, observerSession);
+        } finally {
+            snapshotRepository.deleteAll();
+            contentRepository.deleteAll();
+            userRepository.deleteAll();
         }
-        if (taskScheduler != null) {
-            taskScheduler.shutdown();
-        }
-        snapshotRepository.deleteAll();
-        contentRepository.deleteAll();
-        userRepository.deleteAll();
     }
 
     private WebSocketStompClient createNativeStompClient() {
@@ -155,14 +162,8 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
         return scheduler;
     }
 
-    private void disconnectQuietly(StompSession target) {
-        if (target != null && target.isConnected()) {
-            try {
-                target.disconnect();
-            } catch (MessageDeliveryException ignored) {
-                // ERROR 프레임 처리 직후 서버가 먼저 연결을 닫을 수 있습니다.
-            }
-        }
+    private String presenceKey(UUID watcherId) {
+        return "mopl:presence:watcher:" + watcherId;
     }
 
     private String wsUrl() {
@@ -248,6 +249,14 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
         await().atMost(5, TimeUnit.SECONDS).pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isPresent());
 
+        await().atMost(5, TimeUnit.SECONDS)
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .untilAsserted(() -> {
+                Map<Object, Object> presenceOnA = stringRedisTemplate.opsForHash().entries(presenceKey(watcherId));
+                assertThat(presenceOnA).isNotEmpty();
+                assertThat(presenceOnA.get("contentId")).isEqualTo(contentAId.toString());
+            });
+
         // when: 콘텐츠 B로 재구독. enrich(userRepository.findById)만 실패하도록 유도
         User realWatcher = userRepository.findById(watcherId).orElseThrow();
         doReturn(Optional.of(realWatcher))  // 1번째 호출: previous(A) 조회용 enrich - 성공
@@ -271,6 +280,12 @@ class WatchingSessionResubscribeEnrichFailureIntegrationTest {
         // then: 보상 삭제로 DB 세션 소멸 + A를 보던 관찰자는 LEAVE 수신
         await().atMost(5, TimeUnit.SECONDS).pollInterval(100, TimeUnit.MILLISECONDS)
             .untilAsserted(() -> assertThat(snapshotRepository.findByWatcherId(watcherId)).isEmpty());
+
+        // 보상삭제로 presence도 함께 삭제됐는지 확인
+        await().atMost(5, TimeUnit.SECONDS)
+            .pollInterval(100, TimeUnit.MILLISECONDS)
+            .untilAsserted(() ->
+                assertThat(stringRedisTemplate.hasKey(presenceKey(watcherId))).isFalse());
 
         WatchingSessionChange leaveChange = leaveOnA.get(5, TimeUnit.SECONDS);
         assertThat(leaveChange.watchingSessionDto().watcher().userId()).isEqualTo(watcherId);

@@ -8,11 +8,24 @@ import com.mopl.user.dto.UserLockUpdateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserRoleUpdateRequest;
 import com.mopl.user.dto.ChangePasswordRequest;
+import com.mopl.user.dto.OAuthAccountDto;
+import com.mopl.user.dto.OAuthLinkStartResponse;
+import com.mopl.user.dto.LocalCredentialEmailVerificationRequest;
+import com.mopl.user.dto.LocalCredentialRegistrationRequest;
+import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.service.UserService;
+import com.mopl.user.service.OAuthAccountManagementService;
+import com.mopl.user.service.OAuthLocalCredentialService;
+import com.mopl.user.security.oauth.link.OAuthLinkIntentSessionStore;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.Operation;
 import java.util.UUID;
+import java.util.List;
+import java.util.Locale;
 import jakarta.validation.Valid;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.HttpStatus;
@@ -24,6 +37,7 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -43,6 +57,9 @@ import org.springframework.web.bind.annotation.ModelAttribute;
 public class UserController {
 
     private final UserService userService;
+    private final OAuthAccountManagementService oauthAccountManagementService;
+    private final OAuthLinkIntentSessionStore oauthLinkIntentSessionStore;
+    private final OAuthLocalCredentialService oauthLocalCredentialService;
 
     /**
      * 이메일과 비밀번호를 이용해 사용자를 생성
@@ -111,29 +128,302 @@ public class UserController {
         return ResponseEntity.ok(response);
     }
 
-    /* 추후 선택기능 개발 과정에서 살릴 부분 /api/users/me
     /**
-     * 현재 인증된 사용자의 프로필을 조회
+     * 현재 사용자에게 연결된 OAuth 계정 목록을 조회
      *
-     * 클라이언트가 사용자 ID를 path나 request body로 전달하지 않음.
-     * JwtAuthenticationFilter가 유효한 액세스 토큰에서 복원한 사용자 UUID를
-     * Spring Security의 Authentication principal에서 가져옴
+     * <p>JWT 인증 정보의 사용자 UUID와 URL 경로의 사용자 UUID를
+     * Service에 전달하여 본인의 연결 정보만 조회할 수 있도록 합니다.</p>
      *
-     * 이를 통해 다른 사용자의 UUID를 요청값으로 전달해
-     * 자신의 프로필인 것처럼 조회하는 문제를 방지
+     * <p>Provider 사용자 ID와 OAuth Token은 응답에 포함하지 않습니다.</p>
      *
-     * @param userId JWT subject에서 복원된 현재 인증 사용자의 UUID
-     * @return 현재 사용자의 프로필 정보와 200 OK
-
-    @GetMapping("/me")
-    public ResponseEntity<UserDto> getMyProfile(
-        @AuthenticationPrincipal UUID userId
+     * @param authenticatedUserId JWT에서 복원한 현재 사용자 UUID
+     * @param userId OAuth 연결 계정을 조회할 대상 사용자 UUID
+     * @return 연결된 OAuth 계정 목록과 200 OK 응답
+     */
+    @GetMapping("/{userId}/oauth-accounts")
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "200",
+            description = "OAuth 연결 계정 목록 조회 성공"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자를 찾을 수 없음"
+        )
+    })
+    public ResponseEntity<List<OAuthAccountDto>>
+    getLinkedOAuthAccounts(
+        @Parameter(hidden = true)
+        @AuthenticationPrincipal
+        UUID authenticatedUserId,
+        @PathVariable
+        UUID userId
     ) {
-        UserDto response = userService.getMyProfile(userId);
+        List<OAuthAccountDto> response =
+            oauthAccountManagementService
+                .getLinkedAccounts(
+                    authenticatedUserId,
+                    userId
+                );
 
         return ResponseEntity.ok(response);
     }
-    */
+
+    /**
+     * 현재 사용자의 OAuth 계정 연결 인증을 시작
+     *
+     * <p>본인 여부와 기존 연결 상태를 확인한 뒤 OAuth 연결 의도를
+     * 현재 브라우저의 임시 세션에 저장합니다.</p>
+     *
+     * <p>사용자 입력 URL을 Redirect 대상으로 사용하지 않습니다.
+     * Provider enum으로부터 서버 내부의 고정 OAuth 시작 경로만
+     * 생성하여 Open Redirect를 방지합니다.</p>
+     *
+     * @param authenticatedUserId JWT에서 복원한 현재 사용자 UUID
+     * @param userId OAuth 계정을 연결할 사용자 UUID
+     * @param provider 연결할 OAuth Provider
+     * @param request 현재 HTTP 요청
+     * @return 프론트엔드가 이동할 OAuth 인증 시작 경로
+     */
+    @PostMapping(
+        "/{userId}/oauth-accounts/{provider}/link"
+    )
+    @Operation(
+        summary = "OAuth 계정 연결 인증 시작",
+        description = "연결 의도는 HTTP Session에 저장되므로 "
+            + "클라이언트는 Cookie credentials를 포함해 이 API를 호출하고, "
+            + "응답으로 받은 authorizationPath로 이동할 때도 "
+            + "동일한 세션 쿠키를 유지해야 합니다. "
+            + "세션 쿠키가 유지되지 않으면 OAuth callback이 "
+            + "계정 연결이 아닌 일반 로그인 흐름으로 처리될 수 있습니다. "
+            + "authorizationPath는 백엔드 Origin을 기준으로 이동해야 하는 "
+            + "상대 경로입니다."
+    )
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "200",
+            description = "OAuth 계정 연결 인증 시작 성공"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자를 찾을 수 없음"
+        ),
+        @ApiResponse(
+            responseCode = "409",
+            description = "해당 Provider 계정이 이미 연결됨"
+        )
+    })
+    public ResponseEntity<OAuthLinkStartResponse>
+    startOAuthAccountLink(
+        @Parameter(hidden = true)
+        @AuthenticationPrincipal
+        UUID authenticatedUserId,
+        @PathVariable
+        UUID userId,
+        @PathVariable
+        OAuthProvider provider,
+        @Parameter(hidden = true)
+        HttpServletRequest request
+    ) {
+        /*
+         * 검증에 실패하면 세션에 연결 의도를 남기지 않는다.
+         */
+        oauthAccountManagementService
+            .validateLinkStart(
+                authenticatedUserId,
+                userId,
+                provider
+            );
+
+        oauthLinkIntentSessionStore.save(
+            request,
+            userId,
+            provider
+        );
+
+        String authorizationPath =
+            "/oauth2/authorization/"
+                + provider
+                .name()
+                .toLowerCase(
+                    Locale.ROOT
+                );
+
+        return ResponseEntity.ok(
+            new OAuthLinkStartResponse(
+                authorizationPath
+            )
+        );
+    }
+
+    /**
+     * 현재 사용자에게 연결된 OAuth 계정을 해제
+     *
+     * <p>JWT 인증 사용자 UUID와 URL의 사용자 UUID를 Service에 전달하여
+     * 본인의 OAuth 연결만 해제할 수 있도록 합니다.</p>
+     *
+     * <p>로컬 비밀번호가 없는 OAuth 전용 사용자는 마지막으로 남은
+     * OAuth 로그인 수단을 해제할 수 없습니다.</p>
+     *
+     * @param authenticatedUserId JWT에서 복원한 현재 사용자 UUID
+     * @param userId OAuth 연결을 해제할 대상 사용자 UUID
+     * @param provider 연결을 해제할 OAuth Provider
+     * @return 응답 본문이 없는 204 No Content
+     */
+    @DeleteMapping(
+        "/{userId}/oauth-accounts/{provider}"
+    )
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "204",
+            description = "OAuth 계정 연결 해제 성공"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자 또는 OAuth 연결 계정을 찾을 수 없음"
+        ),
+        @ApiResponse(
+            responseCode = "409",
+            description = "마지막 로그인 수단이어서 연결 해제할 수 없음"
+        )
+    })
+    public ResponseEntity<Void> unlinkOAuthAccount(
+        @Parameter(hidden = true)
+        @AuthenticationPrincipal
+        UUID authenticatedUserId,
+        @PathVariable
+        UUID userId,
+        @PathVariable
+        OAuthProvider provider
+    ) {
+        oauthAccountManagementService
+            .unlinkAccount(
+                authenticatedUserId,
+                userId,
+                provider
+            );
+
+        return ResponseEntity
+            .noContent()
+            .build();
+    }
+
+    /**
+     * OAuth 전용 사용자가 로컬 로그인 이메일의 인증 코드를 요청
+     *
+     * <p>본인 여부, 계정 잠금 상태, 기존 로컬 로그인 수단 및
+     * 이메일 중복 여부를 확인한 뒤 인증 코드를 발송합니다.</p>
+     *
+     * @param authenticatedUserId JWT에서 복원한 현재 사용자 UUID
+     * @param userId 로컬 로그인 수단을 추가할 사용자 UUID
+     * @param request 인증할 이메일
+     * @return 응답 본문이 없는 204 No Content
+     */
+    @PostMapping(
+        "/{userId}/local-credentials/email-verifications"
+    )
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "204",
+            description = "이메일 인증 코드 발송 성공"
+        ),
+        @ApiResponse(
+            responseCode = "400",
+            description = "잘못된 이메일 요청"
+        ),
+        @ApiResponse(
+            responseCode = "403",
+            description = "본인이 아니거나 잠긴 사용자"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자를 찾을 수 없음"
+        ),
+        @ApiResponse(
+            responseCode = "409",
+            description = "이미 로컬 로그인 수단이 있거나 이메일이 중복됨"
+        ),
+        @ApiResponse(
+            responseCode = "429",
+            description = "인증 코드 재전송 대기 시간이 지나지 않음"
+        )
+    })
+    public ResponseEntity<Void>
+    sendLocalCredentialEmailVerification(
+        @Parameter(hidden = true)
+        @AuthenticationPrincipal
+        UUID authenticatedUserId,
+        @PathVariable
+        UUID userId,
+        @Valid @RequestBody
+        LocalCredentialEmailVerificationRequest request
+    ) {
+        oauthLocalCredentialService
+            .sendVerificationCode(
+                authenticatedUserId,
+                userId,
+                request
+            );
+
+        return ResponseEntity
+            .noContent()
+            .build();
+    }
+
+    /**
+     * 이메일 인증을 완료한 OAuth 전용 사용자에게
+     * 로컬 이메일·비밀번호 로그인 수단을 등록
+     *
+     * @param authenticatedUserId JWT에서 복원한 현재 사용자 UUID
+     * @param userId 로컬 로그인 수단을 추가할 사용자 UUID
+     * @param request 인증 이메일, 인증 코드와 새 비밀번호
+     * @return 응답 본문이 없는 204 No Content
+     */
+    @PostMapping(
+        "/{userId}/local-credentials"
+    )
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "204",
+            description = "로컬 로그인 수단 등록 성공"
+        ),
+        @ApiResponse(
+            responseCode = "400",
+            description = "입력값 또는 이메일 인증 코드가 유효하지 않음"
+        ),
+        @ApiResponse(
+            responseCode = "403",
+            description = "본인이 아니거나 잠긴 사용자"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자를 찾을 수 없음"
+        ),
+        @ApiResponse(
+            responseCode = "409",
+            description = "이미 로컬 로그인 수단이 있거나 이메일이 중복됨"
+        )
+    })
+    public ResponseEntity<Void> registerLocalCredential(
+        @Parameter(hidden = true)
+        @AuthenticationPrincipal
+        UUID authenticatedUserId,
+        @PathVariable
+        UUID userId,
+        @Valid @RequestBody
+        LocalCredentialRegistrationRequest request
+    ) {
+        oauthLocalCredentialService
+            .registerLocalCredential(
+                authenticatedUserId,
+                userId,
+                request
+            );
+
+        return ResponseEntity
+            .noContent()
+            .build();
+    }
 
     /**
      * 사용자의 프로필 정보를 변경
@@ -199,6 +489,10 @@ public class UserController {
         @ApiResponse(
             responseCode = "404",
             description = "사용자를 찾을 수 없음"
+        ),
+        @ApiResponse(
+            responseCode = "409",
+            description = "변경할 로컬 로그인 수단이 없음"
         )
     })
     public ResponseEntity<Void> changePassword(

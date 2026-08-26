@@ -3,9 +3,11 @@ package com.mopl.playlist.service;
 import com.mopl.content.repository.ContentRepository;
 import com.mopl.global.common.ContentSummary;
 import com.mopl.global.config.JpaConfig;
+import com.mopl.global.outbox.OutboxRecorderImpl;
 import com.mopl.playlist.dto.PlaylistDto;
 import com.mopl.playlist.entity.Playlist;
 import com.mopl.playlist.entity.PlaylistContent;
+import com.mopl.playlist.event.PlaylistSubscriptionEventFactory;
 import com.mopl.playlist.repository.PlaylistContentRepository;
 import com.mopl.playlist.repository.PlaylistRepository;
 import com.mopl.playlist.repository.PlaylistSubscriptionRepository;
@@ -40,7 +42,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 // loadContentsBatch(목록 조회 경로)와 loadContents(단건 조회 경로)의 태그 로딩 방식을 통일하는 회귀 방지 테스트.
 @DataJpaTest
 @ActiveProfiles("test")
-@Import({JpaConfig.class, PlaylistContentSaver.class, PlaylistServiceImpl.class})
+@Import({
+        JpaConfig.class,
+        PlaylistContentSaver.class,
+        PlaylistServiceImpl.class,
+        OutboxRecorderImpl.class,
+        PlaylistSubscriptionEventFactory.class,
+        PlaylistIntegrationTestConfig.class,
+})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Testcontainers
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -80,7 +89,7 @@ class PlaylistServiceGetIntegrationTest {
     }
 
     @Test
-    @DisplayName("단건 조회는 콘텐츠 수·태그 수와 무관하게 콘텐츠 로딩 SQL이 상수(playlist 1 + playlist_contents 1 + contents+tags 1)로 완료된다")
+    @DisplayName("단건 조회는 콘텐츠 수·태그 수와 무관하게 콘텐츠 로딩 SQL이 상수(playlist 1 + playlist_contents 1 + contents+tags 1 + users 1)로 완료된다")
     void get_batchQueries_areConstant() {
         int contentsPerPlaylist = 5;
         int tagsPerContent = 3;
@@ -101,10 +110,11 @@ class PlaylistServiceGetIntegrationTest {
         //  1) playlist 단건 조회 (findOrThrow)
         //  2) playlist_contents 조회 (loadContents)
         //  3) contents + content_tags EntityGraph 조인 조회
-        // → 3쿼리 상한 (콘텐츠·태그 개수에 비례하지 않음)
+        //  4) users 배치 조회 (toOwnerSummary)
+        // → 4쿼리 상한 (콘텐츠·태그 개수에 비례하지 않음)
         assertThat(queryCount)
                 .as("콘텐츠 수·태그 수와 무관하게 상수 SQL로 완료되어야 한다 (실제 %d)", queryCount)
-                .isLessThanOrEqualTo(3);
+                .isLessThanOrEqualTo(4);
 
         assertThat(result.contents()).hasSize(contentsPerPlaylist);
         assertThat(result.contents())

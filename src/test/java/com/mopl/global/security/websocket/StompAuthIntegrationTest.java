@@ -6,10 +6,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mopl.content.entity.Content;
+import com.mopl.content.entity.ContentType;
+import com.mopl.content.repository.ContentRepository;
 import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.exception.ErrorResponse;
 import com.mopl.global.security.JwtProvider;
+import com.mopl.support.websocket.StompTestCleanup;
 import java.io.IOException;
 import java.lang.reflect.Type;
 import java.util.List;
@@ -27,7 +31,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.converter.StringMessageConverter;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.simp.stomp.ConnectionLostException;
@@ -39,6 +42,7 @@ import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
@@ -46,11 +50,13 @@ import org.springframework.web.socket.messaging.WebSocketStompClient;
 import org.springframework.web.socket.sockjs.client.SockJsClient;
 import org.springframework.web.socket.sockjs.client.Transport;
 import org.springframework.web.socket.sockjs.client.WebSocketTransport;
+import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers
+@ActiveProfiles("test")
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
 public class StompAuthIntegrationTest {
 
@@ -79,6 +85,9 @@ public class StompAuthIntegrationTest {
 
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
+
+    @Autowired
+    private ContentRepository contentRepository;
 
     @BeforeEach
     void setUp() {
@@ -112,19 +121,7 @@ public class StompAuthIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        if (session != null && session.isConnected()) {
-            try {
-                session.disconnect();
-            } catch (MessageDeliveryException ignored) {
-                // ERROR 프레임 처리 직후 서버가 먼저 연결을 닫을 수 있습니다.
-            }
-        }
-        if (stompClient != null) {
-            stompClient.stop();
-        }
-        if (taskScheduler != null) {
-            taskScheduler.shutdown();
-        }
+        StompTestCleanup.closeAll(stompClient, taskScheduler, session);
     }
 
     @Test
@@ -136,6 +133,14 @@ public class StompAuthIntegrationTest {
         when(jwtProvider.validate(token)).thenReturn(true);
         when(jwtProvider.getAuthentication(token)).thenReturn(authentication);
 
+        // 이 테스트는 콘텐츠 존재 검증이 아니라 CONNECT->SUBSCRIBE->메시지 수신이라는
+        // 일반 STOMP 배선을 확인하는 것이 목적이므로, 실제 존재하는 콘텐츠가 필요하다.
+        Content content = contentRepository.save(Content.builder()
+            .type(ContentType.MOVIE)
+            .title("STOMP 인증 테스트용 콘텐츠")
+            .description("설명")
+            .build());
+
         StompHeaders connectHeaders = new StompHeaders();
         connectHeaders.add("Authorization", "Bearer " + token);
 
@@ -145,22 +150,21 @@ public class StompAuthIntegrationTest {
 
         assertThat(session.isConnected()).isTrue();
 
-        String destination = "/sub/contents/00000000-0000-0000-0000-000000000000/chat";
+        String destination = "/sub/contents/" + content.getId() + "/chat";
         CompletableFuture<String> received = new CompletableFuture<>();
 
         session.subscribe(destination, new StompFrameHandler() {
-                @Override
-                public Type getPayloadType(StompHeaders headers) {
-                    return String.class;
-                }
+            @Override
+            public Type getPayloadType(StompHeaders headers) {
+                return String.class;
+            }
 
-                @Override
-                public void handleFrame(StompHeaders headers, @Nullable Object payload) {
-                    received.complete((String) payload);
-                }
-            });
+            @Override
+            public void handleFrame(StompHeaders headers, @Nullable Object payload) {
+                received.complete((String) payload);
+            }
+        });
 
-        // 등록될 때까지 짧은 간격으로 재발행하며 첫 수신 대기
         long deadline = System.currentTimeMillis() + 5000;
         while (!received.isDone() && System.currentTimeMillis() < deadline) {
             messagingTemplate.convertAndSend(destination, "hello");
