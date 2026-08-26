@@ -48,6 +48,8 @@ ERD는 `src/main/resources/db/migration`에 정의된 실제 Flyway 스키마를
 
 **[상세 ERD 열기](https://ow00us.github.io/sb11-mopl-team1/erd/)**
 
+로컬에서는 `docs/erd/index.html`을 브라우저로 열어 확인합니다.
+
 주요 무결성 규칙은 다음과 같습니다.
 
 - 사용자는 같은 콘텐츠에 리뷰를 하나만 작성할 수 있습니다.
@@ -236,6 +238,8 @@ Windows:
 | 테스트 결과 | `build/reports/tests/test/index.html` |
 | JaCoCo HTML | `build/reports/jacoco/test/html/index.html` |
 | JaCoCo XML | `build/reports/jacoco/test/jacocoTestReport.xml` |
+
+README의 커버리지 배지는 `main` 브랜치에서 성공한 CI의 JaCoCo 결과만 표시합니다. PR이나 실패한 CI 실행은 `main` 배지 값을 갱신하지 않습니다.
 
 ## CI 파이프라인
 
