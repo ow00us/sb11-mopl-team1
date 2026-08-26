@@ -22,6 +22,7 @@
       --playlist: #aaaab1;
       --message: #ccccd6;
       --presence: #ce0045;
+      --infra: #4fb0a5;
       --radius: 16px;
       --shadow: 0 16px 36px rgb(0 0 0 / 32%);
     }
@@ -139,12 +140,15 @@
     }
     .domain[data-domain="message"] { grid-column: span 6; }
     .domain[data-domain="presence"] { grid-column: span 6; }
+    .domain[data-domain="content"] { grid-column: span 6; }
+    .domain[data-domain="playlist"] { grid-column: span 6; }
+    .domain[data-domain="social"] { grid-column: span 6; }
+    .domain[data-domain="infra"] { grid-column: span 6; }
     .domain-head { display: flex; justify-content: space-between; align-items: end; margin-bottom: 14px; }
     .domain-title { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 15px; }
     .domain-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--domain-color); }
     .domain-count { color: var(--muted); font-size: 11px; }
     .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-    .domain[data-domain="social"] .cards,
     .domain[data-domain="presence"] .cards { grid-template-columns: 1fr; }
 
     .table-card {
@@ -154,6 +158,15 @@
       border-radius: var(--radius);
       background: var(--surface);
       transition: opacity .18s ease, border-color .18s ease, transform .18s ease, box-shadow .18s ease;
+      scroll-margin-top: 100px;
+    }
+    @keyframes card-flash {
+      0% { box-shadow: 0 0 0 2px rgb(255 74 100 / 20%), var(--shadow); border-color: var(--accent); }
+      60% { box-shadow: 0 0 0 2px rgb(255 74 100 / 20%), var(--shadow); border-color: var(--accent); }
+      100% { box-shadow: none; border-color: var(--line); }
+    }
+    .table-card.flash {
+      animation: card-flash 2.5s ease-out;
     }
     .table-card:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--domain-color) 52%, var(--line)); }
     .table-card.selected { border-color: var(--domain-color); box-shadow: 0 0 0 2px color-mix(in srgb, var(--domain-color) 16%, transparent), var(--shadow); }
@@ -167,7 +180,7 @@
     .fields { margin: 0; padding: 7px 0; list-style: none; }
     .field { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; min-height: 29px; padding: 5px 12px; }
     .field + .field { border-top: 1px solid rgb(41 50 69 / 48%); }
-    .field-main { min-width: 0; }
+    .field-main { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .field-name { font: 600 11px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace; }
     .field-type { margin-left: 5px; color: var(--muted); font-size: 9px; text-transform: uppercase; }
     .keys { display: flex; gap: 3px; }
@@ -191,13 +204,13 @@
     body.embed .overview { margin: 0; }
 
     @media (max-width: 1250px) {
-      .domain, .domain[data-domain="message"], .domain[data-domain="presence"] { grid-column: span 6; }
+      .domain, .domain[data-domain="message"], .domain[data-domain="presence"], .domain[data-domain="content"], .domain[data-domain="playlist"], .domain[data-domain="social"], .domain[data-domain="infra"] { grid-column: span 6; }
     }
     @media (max-width: 820px) {
       .shell { width: min(100% - 24px, 720px); }
       .topbar { height: 64px; }
       .hero { padding-top: 36px; }
-      .domain, .domain[data-domain="message"], .domain[data-domain="presence"] { grid-column: 1 / -1; }
+      .domain, .domain[data-domain="message"], .domain[data-domain="presence"], .domain[data-domain="content"], .domain[data-domain="playlist"], .domain[data-domain="social"], .domain[data-domain="infra"] { grid-column: 1 / -1; }
       .toolbar { top: 6px; }
     }
     @media (max-width: 520px) {
@@ -228,10 +241,10 @@
     <h1>데이터베이스 구조</h1>
     <p>Flyway 마이그레이션을 기준으로 정리한 MOPL의 관계형 데이터 모델입니다. 테이블을 선택하면 연결된 관계를 확인할 수 있고, FK 필드를 누르면 참조 대상 테이블로 이동합니다.</p>
     <div class="summary" aria-label="스키마 요약">
-      <span class="metric"><strong>13</strong> tables</span>
-      <span class="metric"><strong>5</strong> domains</span>
+      <span class="metric"><strong>17</strong> tables</span>
+      <span class="metric"><strong>6</strong> domains</span>
       <span class="metric"><strong>PostgreSQL</strong> schema</span>
-      <span class="metric"><strong>Flyway V4</strong> baseline</span>
+      <span class="metric"><strong>Flyway V20</strong> baseline</span>
     </div>
   </header>
 
@@ -252,23 +265,26 @@
             <path class="edge" d="M500 111 C540 111 540 221 580 221"/>
             <path class="edge" d="M680 140 L680 190"/>
             <path class="edge" d="M220 231 C390 231 410 331 580 331"/>
-            <path class="edge" d="M220 270 L220 300"/>
+            <path class="edge" d="M130 252 L130 300"/>
             <path class="edge strong" d="M220 201 C570 201 550 221 900 221"/>
             <path class="edge" d="M1000 140 L1000 190"/>
             <path class="edge strong" d="M1100 221 L1180 221"/>
-            <path class="edge" d="M1100 111 C1210 111 1210 190 1280 190"/>
+            <path class="edge" d="M1100 111 C1210 111 1210 190 1270 190"/>
             <path class="edge" d="M220 241 C560 241 560 351 900 351"/>
             <path class="edge" d="M220 251 C260 251 260 351 300 351"/>
             <path class="edge strong" d="M500 121 C550 121 550 351 500 351"/>
+            <path class="edge" d="M220 221 C250 221 250 441 220 441"/>
           </g>
 
           <a class="node" href="#users"><rect x="40" y="190" width="180" height="62"/><circle class="node-dot" cx="57" cy="208" r="4" fill="#ff4a64"/><text x="70" y="213">users</text><text class="node-meta" x="57" y="235">사용자·인증 중심</text></a>
           <a class="node" href="#follows"><rect x="40" y="300" width="180" height="62"/><circle class="node-dot" cx="57" cy="318" r="4" fill="#ff4a64"/><text x="70" y="323">follows</text><text class="node-meta" x="57" y="345">사용자 관계</text></a>
+          <a class="node" href="#oauth_accounts"><rect x="40" y="410" width="180" height="62"/><circle class="node-dot" cx="57" cy="428" r="4" fill="#ff4a64"/><text x="70" y="433">oauth_accounts</text><text class="node-meta" x="57" y="455">OAuth 연동 계정</text></a>
 
           <a class="node" href="#content_tags"><rect x="300" y="0" width="200" height="58"/><circle class="node-dot" cx="317" cy="18" r="4" fill="#ff687e"/><text x="330" y="23">content_tags</text><text class="node-meta" x="317" y="43">콘텐츠 태그</text></a>
           <a class="node" href="#contents"><rect x="300" y="80" width="200" height="62"/><circle class="node-dot" cx="317" cy="98" r="4" fill="#ff687e"/><text x="330" y="103">contents</text><text class="node-meta" x="317" y="125">콘텐츠·집계 중심</text></a>
           <a class="node" href="#reviews"><rect x="300" y="180" width="200" height="62"/><circle class="node-dot" cx="317" cy="198" r="4" fill="#ff687e"/><text x="330" y="203">reviews</text><text class="node-meta" x="317" y="225">사용자 콘텐츠 평가</text></a>
           <a class="node" href="#watching_session_snapshots"><rect x="300" y="320" width="200" height="62"/><circle class="node-dot" cx="317" cy="338" r="4" fill="#ce0045"/><text x="330" y="343">watching_sessions</text><text class="node-meta" x="317" y="365">활성 시청 스냅샷</text></a>
+          <a class="node" href="#content_search_retries"><rect x="300" y="410" width="200" height="62"/><circle class="node-dot" cx="317" cy="428" r="4" fill="#ff687e"/><text x="330" y="433">content_search_retries</text><text class="node-meta" x="317" y="455">검색 동기화 재시도</text></a>
 
           <a class="node" href="#playlists"><rect x="580" y="80" width="200" height="62"/><circle class="node-dot" cx="597" cy="98" r="4" fill="#aaaab1"/><text x="610" y="103">playlists</text><text class="node-meta" x="597" y="125">사용자 컬렉션</text></a>
           <a class="node" href="#playlist_contents"><rect x="580" y="190" width="200" height="62"/><circle class="node-dot" cx="597" cy="208" r="4" fill="#aaaab1"/><text x="610" y="213">playlist_contents</text><text class="node-meta" x="597" y="235">플레이리스트 콘텐츠</text></a>
@@ -278,6 +294,8 @@
           <a class="node" href="#conversation_participants"><rect x="900" y="190" width="200" height="62"/><circle class="node-dot" cx="917" cy="208" r="4" fill="#ccccd6"/><text x="930" y="213">conversation_participants</text><text class="node-meta" x="917" y="235">대화 참여자</text></a>
           <a class="node" href="#notifications"><rect x="900" y="320" width="200" height="62"/><circle class="node-dot" cx="917" cy="338" r="4" fill="#ccccd6"/><text x="930" y="343">notifications</text><text class="node-meta" x="917" y="365">사용자 알림</text></a>
           <a class="node" href="#direct_messages"><rect x="1180" y="190" width="180" height="62"/><circle class="node-dot" cx="1197" cy="208" r="4" fill="#ccccd6"/><text x="1210" y="213">direct_messages</text><text class="node-meta" x="1197" y="235">대화 메시지</text></a>
+          <a class="node" href="#outbox_events"><rect x="1180" y="320" width="200" height="62"/><circle class="node-dot" cx="1197" cy="338" r="4" fill="#4fb0a5"/><text x="1210" y="343">outbox_events</text><text class="node-meta" x="1197" y="365">Kafka 발행 대기열</text></a>
+          <a class="node" href="#processed_events"><rect x="1180" y="410" width="200" height="62"/><circle class="node-dot" cx="1197" cy="428" r="4" fill="#4fb0a5"/><text x="1210" y="433">processed_events</text><text class="node-meta" x="1197" y="455">Consumer 멱등 기록</text></a>
         </svg>
       </div>
     </section>
@@ -291,6 +309,7 @@
         <button class="filter" data-filter="playlist" type="button" aria-pressed="false">플레이리스트</button>
         <button class="filter" data-filter="message" type="button" aria-pressed="false">메시징</button>
         <button class="filter" data-filter="presence" type="button" aria-pressed="false">시청 세션</button>
+        <button class="filter" data-filter="infra" type="button" aria-pressed="false">인프라</button>
       </div>
     </section>
 
@@ -304,9 +323,9 @@
 
     <div id="domains" class="domain-grid">
       <section class="domain" data-domain="social" style="--domain-color: var(--social)">
-        <div class="domain-head"><h2 class="domain-title"><span class="domain-dot"></span>사용자·소셜</h2><span class="domain-count">2 tables</span></div>
+        <div class="domain-head"><h2 class="domain-title"><span class="domain-dot"></span>사용자·소셜</h2><span class="domain-count">3 tables</span></div>
         <div class="cards">
-          <article class="table-card" id="users" data-table="users" data-relations="reviews playlists playlist_subscriptions follows conversation_participants notifications watching_session_snapshots">
+          <article class="table-card" id="users" data-table="users" data-relations="reviews playlists playlist_subscriptions follows conversation_participants notifications watching_session_snapshots oauth_accounts">
             <button class="table-head" type="button"><span class="table-name">users</span><span class="table-note">계정과 권한의 루트</span></button>
             <ul class="fields">
               <li class="field"><span class="field-main"><span class="field-name">id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span></span></li>
@@ -327,11 +346,21 @@
               <li class="field"><span class="field-main"><a class="field-name relation" href="#users">followee_id</a><span class="field-type">uuid</span></span><span class="keys"><span class="key fk">FK</span><span class="key uk">UK</span></span></li>
             </ul>
           </article>
+
+          <article class="table-card" id="oauth_accounts" data-table="oauth_accounts" data-relations="users">
+            <button class="table-head" type="button"><span class="table-name">oauth_accounts</span><span class="table-note">OAuth 제공자 계정 연결, provider당 1계정</span></button>
+            <ul class="fields">
+              <li class="field"><span class="field-main"><span class="field-name">id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span></span></li>
+              <li class="field"><span class="field-main"><a class="field-name relation" href="#users">user_id</a><span class="field-type">uuid</span></span><span class="keys"><span class="key fk">FK</span><span class="key uk">UK</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">provider</span><span class="field-type">google | kakao | naver</span></span><span class="keys"><span class="key uk">UK</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">provider_user_id</span><span class="field-type">varchar</span></span><span class="keys"><span class="key uk">UK</span></span></li>
+            </ul>
+          </article>
         </div>
       </section>
 
       <section class="domain" data-domain="content" style="--domain-color: var(--content)">
-        <div class="domain-head"><h2 class="domain-title"><span class="domain-dot"></span>콘텐츠·리뷰</h2><span class="domain-count">3 tables</span></div>
+        <div class="domain-head"><h2 class="domain-title"><span class="domain-dot"></span>콘텐츠·리뷰</h2><span class="domain-count">4 tables</span></div>
         <div class="cards">
           <article class="table-card" id="contents" data-table="contents" data-relations="content_tags reviews playlist_contents watching_session_snapshots">
             <button class="table-head" type="button"><span class="table-name">contents</span><span class="table-note">탐색과 집계의 중심</span></button>
@@ -364,6 +393,16 @@
               <li class="field"><span class="field-main"><a class="field-name relation" href="#contents">content_id</a><span class="field-type">uuid</span></span><span class="keys"><span class="key fk">FK</span><span class="key uk">UK</span></span></li>
               <li class="field"><span class="field-main"><span class="field-name">text</span><span class="field-type">text</span></span></li>
               <li class="field"><span class="field-main"><span class="field-name">rating</span><span class="field-type">numeric 0..5</span></span></li>
+            </ul>
+          </article>
+
+          <article class="table-card" id="content_search_retries" data-table="content_search_retries">
+            <button class="table-head" type="button"><span class="table-name">content_search_retries</span><span class="table-note">검색 동기화 재시도 대기열 · content_id는 애플리케이션 레벨 참조(DB FK 아님) · claim 구조는 outbox_events와 동일 패턴</span></button>
+            <ul class="fields">
+              <li class="field"><span class="field-main"><span class="field-name">id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">content_id</span><span class="field-type">uuid</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">event_type</span><span class="field-type">sync | delete</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">status</span><span class="field-type">pending | completed | failed</span></span></li>
             </ul>
           </article>
         </div>
@@ -409,7 +448,11 @@
         <div class="cards">
           <article class="table-card" id="conversations" data-table="conversations" data-relations="conversation_participants direct_messages">
             <button class="table-head" type="button"><span class="table-name">conversations</span><span class="table-note">1:1 대화의 루트</span></button>
-            <ul class="fields"><li class="field"><span class="field-main"><span class="field-name">id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span></span></li></ul>
+            <ul class="fields">
+              <li class="field"><span class="field-main"><span class="field-name">id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">participant_pair_key</span><span class="field-type">varchar</span></span><span class="keys"><span class="key uk">UK</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">next_message_sequence</span><span class="field-type">bigint</span></span></li>
+            </ul>
           </article>
 
           <article class="table-card" id="conversation_participants" data-table="conversation_participants" data-relations="conversations users direct_messages">
@@ -429,6 +472,7 @@
               <li class="field"><span class="field-main"><a class="field-name relation" href="#conversation_participants">conversation_id</a><span class="field-type">uuid</span></span><span class="keys"><span class="key fk">FK*</span></span></li>
               <li class="field"><span class="field-main"><a class="field-name relation" href="#conversation_participants">sender_id</a><span class="field-type">uuid</span></span><span class="keys"><span class="key fk">FK*</span></span></li>
               <li class="field"><span class="field-main"><span class="field-name">content</span><span class="field-type">text</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">message_sequence</span><span class="field-type">bigint</span></span><span class="keys"><span class="key uk">UK</span></span></li>
               <li class="field"><span class="field-main"><span class="field-name">read_at</span><span class="field-type">timestamptz?</span></span></li>
             </ul>
             <p class="table-note" style="padding: 0 12px 12px; margin: 0;">(conversation_id, sender_id) → conversation_participants(conversation_id, user_id)</p>
@@ -461,6 +505,35 @@
           </article>
         </div>
       </section>
+
+      <section class="domain" data-domain="infra" style="--domain-color: var(--infra)">
+        <div class="domain-head"><h2 class="domain-title"><span class="domain-dot"></span>인프라</h2><span class="domain-count">2 tables</span></div>
+        <div class="cards">
+          <article class="table-card" id="outbox_events" data-table="outbox_events">
+            <button class="table-head" type="button"><span class="table-name">outbox_events</span><span class="table-note">Kafka 발행 대기열 · 전체 재시도·claim 계약은 docs/07-kafka-outbox-contract.md 참고</span></button>
+            <ul class="fields">
+              <li class="field"><span class="field-main"><span class="field-name">id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">event_id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key uk">UK</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">type</span><span class="field-type">varchar</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">aggregate_id</span><span class="field-type">uuid</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">partition_key</span><span class="field-type">varchar</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">ordering_scope</span><span class="field-type">varchar</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">status</span><span class="field-type">pending | published | failed | expired | skipped</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">deduplication_key</span><span class="field-type">varchar</span></span><span class="keys"><span class="key uk">UK</span></span></li>
+            </ul>
+          </article>
+
+          <article class="table-card" id="processed_events" data-table="processed_events">
+            <button class="table-head" type="button"><span class="table-name">processed_events</span><span class="table-note">Kafka Consumer 멱등 처리 기록</span></button>
+            <ul class="fields">
+              <li class="field"><span class="field-main"><span class="field-name">id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">consumer_name</span><span class="field-type">varchar</span></span><span class="keys"><span class="key uk">UK</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">event_id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key uk">UK</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">event_type</span><span class="field-type">varchar</span></span></li>
+            </ul>
+          </article>
+        </div>
+      </section>
     </div>
 
     <p id="empty" class="empty">조건에 맞는 테이블이나 필드가 없습니다.</p>
@@ -480,6 +553,19 @@
     const empty = document.querySelector('#empty');
     let activeDomain = 'all';
     let selected = null;
+
+    document.querySelectorAll('.overview .node').forEach(node => {
+      node.addEventListener('click', () => {
+        const id = node.getAttribute('href')?.slice(1);
+        const target = id && document.getElementById(id);
+        if (!target) return;
+
+        target.classList.remove('flash');
+        void target.offsetWidth; // 같은 노드를 연달아 클릭해도 애니메이션이 다시 시작되게 강제 reflow
+        target.classList.add('flash');
+        target.addEventListener('animationend', () => target.classList.remove('flash'), { once: true });
+      });
+    });
 
     function clearRelations() {
       selected = null;

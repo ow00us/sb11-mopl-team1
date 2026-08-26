@@ -1,5 +1,6 @@
 package com.mopl.watchingsession.repository;
 
+import static com.mopl.global.util.InstantPrecisionUtils.normalizeToMicros;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -173,6 +174,33 @@ public class WatchingSessionSnapshotRepositoryTest {
             repository.deleteByWatcherId(watcherIdWithoutSession);
             entityManager.flush();
         }).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("renewExpiresAt(heartbeat) 이후에도 시작 시점 토큰으로 조건부 삭제(deleteByWatcherIdAndId)가 성공한다 - "
+        + "renewExpiresAt이 updated_at을 건드리면 이 테스트가 실패")
+    void deleteByWatcherIdAndId_succeeds_withStartTimeToken_afterRenewExpiresAt() {
+        // given: 세션 시작 시점의 스냅샷을 저장하고, presence가 들고 갈 세대 토큰을 그 시점 값으로 고정한다
+        UUID watcherId = insertUser();
+        UUID contentId = insertContent();
+        Instant now = Instant.now();
+        WatchingSessionSnapshot original = persistSnapshot(watcherId, contentId, now, now.plusSeconds(60));
+        Instant startTimeToken = normalizeToMicros(original.getUpdatedAt());
+        entityManager.clear();
+
+        // when: heartbeat 경로와 동일하게 renewExpiresAt으로 만료 시각만 연장한다
+        int renewed = repository.renewExpiresAt(watcherId, contentId, now.plus(30, ChronoUnit.MINUTES));
+        entityManager.clear();
+        assertThat(renewed).isEqualTo(1);
+
+        // then: heartbeat 이후에도 시작 시점 토큰이 여전히 유효해 조건부 삭제가 성공해야 한다.
+        // renewExpiresAt이 updated_at을 갱신하도록 바뀌면 startTimeToken이 더 이상 행의 updated_at과
+        // 일치하지 않아 아래 delete가 0을 반환하며 이 테스트가 실패한다.
+        int deleted = repository.deleteByWatcherIdAndId(watcherId, original.getId(), startTimeToken);
+        entityManager.clear();
+
+        assertThat(deleted).isEqualTo(1);
+        assertThat(repository.findByWatcherId(watcherId)).isEmpty();
     }
 
     @Test
