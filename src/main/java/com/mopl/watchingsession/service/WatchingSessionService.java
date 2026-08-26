@@ -239,7 +239,7 @@ public class WatchingSessionService {
     // read 성격의 메서드
     public Optional<WatchingSessionDto> get(UUID watcherId) {
         return watchingSessionSnapshotRepository.findByWatcherId(watcherId)
-            .filter(snapshot -> !snapshot.isExpired(Instant.now()))
+            .filter(snapshot -> snapshot.isActiveAt(Instant.now()))
             .map(this::enrich);
     }
 
@@ -477,7 +477,7 @@ public class WatchingSessionService {
                 WatchingSessionSnapshot snapshot = watchingSessionSnapshotRepository
                     .findByWatcherId(watcherId)
                     .filter(s -> contentId.equals(s.getContentId()))
-                    .filter(s -> !s.isExpired(Instant.now()))
+                    .filter(s -> !s.isActiveAt(Instant.now()))
                     .orElse(null);
 
                 if (snapshot == null) {
