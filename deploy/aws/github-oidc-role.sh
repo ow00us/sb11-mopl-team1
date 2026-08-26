@@ -9,13 +9,22 @@
 #   bash deploy/aws/github-oidc-role.sh            # 정책을 만들어 보여주기만 합니다
 #   APPLY=true bash deploy/aws/github-oidc-role.sh # 역할에 실제로 적용합니다
 #
+# 인자로 저장소를 주면 그것만 씁니다. 주지 않으면 백엔드와 프론트엔드 둘 다 넣습니다.
+#
 # 필요한 것: aws CLI 자격 증명, gh CLI 로그인
 
 set -euo pipefail
 
 ROLE_NAME="${ROLE_NAME:-sb11-mopl-team1-github-actions}"
-GITHUB_REPO="${GITHUB_REPO:-ow00us/sb11-mopl-team1}"
 DEPLOY_REF="${DEPLOY_REF:-refs/heads/main}"
+
+# 백엔드와 프론트엔드가 같은 역할을 씁니다. 저장소마다 역할을 따로 두면 ECR 권한과
+# 신뢰 조건이 두 벌이 되고, 한쪽만 고쳐 둔 채로 다른 쪽이 조용히 틀어집니다.
+# 권한 범위는 역할에 붙은 정책이 리포지토리 단위로 제한합니다.
+GITHUB_REPOS=("${@:-}")
+if [[ -z ${GITHUB_REPOS[0]:-} ]]; then
+    GITHUB_REPOS=(ow00us/sb11-mopl-team1 ow00us/sb11-mopl-team1-fe)
+fi
 
 log()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
@@ -35,24 +44,33 @@ ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 # AssumeRoleWithWebIdentity 가 거부됩니다. 그 사실은 배포가 처음 돌 때에야 드러납니다.
 # 둘 다 받습니다. 불변 ID 형식이 더 안전한데, 저장소 이름이 바뀌어도 다른 저장소가
 # 이 역할을 가로챌 수 없기 때문입니다.
-OWNER="${GITHUB_REPO%%/*}"
-REPO="${GITHUB_REPO##*/}"
-OWNER_ID="$(gh api "users/${OWNER}" --jq .id)"
-REPO_ID="$(gh api "repos/${GITHUB_REPO}" --jq .id)"
-
-SUB_PLAIN="repo:${GITHUB_REPO}:ref:${DEPLOY_REF}"
-SUB_IMMUTABLE="repo:${OWNER}@${OWNER_ID}/${REPO}@${REPO_ID}:ref:${DEPLOY_REF}"
-
 log "확인한 값"
-note "계정          ${ACCOUNT_ID}"
-note "역할          ${ROLE_NAME}"
-note "허용할 subject"
-note "  ${SUB_PLAIN}"
-note "  ${SUB_IMMUTABLE}"
+note "계정   ${ACCOUNT_ID}"
+note "역할   ${ROLE_NAME}"
 
-# 저장소가 지금 어느 형식을 쓰는지 알려 줍니다. 맞지 않으면 여기서 드러납니다.
-CURRENT_PREFIX="$(gh api "repos/${GITHUB_REPO}/actions/oidc/customization/sub" --jq .sub_claim_prefix 2>/dev/null || true)"
-[[ -n ${CURRENT_PREFIX} ]] && note "저장소가 보고하는 prefix: ${CURRENT_PREFIX}"
+SUBS=()
+for repo in "${GITHUB_REPOS[@]}"; do
+    owner="${repo%%/*}"
+    name="${repo##*/}"
+    owner_id="$(gh api "users/${owner}" --jq .id)"
+    repo_id="$(gh api "repos/${repo}" --jq .id)"
+
+    SUBS+=("repo:${owner}@${owner_id}/${name}@${repo_id}:ref:${DEPLOY_REF}")
+    SUBS+=("repo:${repo}:ref:${DEPLOY_REF}")
+
+    note ""
+    note "${repo}"
+    note "  repo:${owner}@${owner_id}/${name}@${repo_id}:ref:${DEPLOY_REF}"
+    note "  repo:${repo}:ref:${DEPLOY_REF}"
+
+    # 저장소가 지금 어느 형식을 쓰는지 알려 줍니다. 맞지 않으면 여기서 드러납니다.
+    prefix="$(gh api "repos/${repo}/actions/oidc/customization/sub" --jq .sub_claim_prefix 2>/dev/null || true)"
+    [[ -n ${prefix} ]] && note "  저장소가 보고하는 prefix: ${prefix}"
+done
+
+# 마지막 항목의 쉼표를 뺍니다. JSON 은 trailing comma 를 허용하지 않습니다.
+SUB_JSON="$(printf '            "%s",
+' "${SUBS[@]}" | sed '$ s/,$//')"
 
 TRUST_POLICY="$(cat <<EOF
 {
@@ -68,8 +86,7 @@ TRUST_POLICY="$(cat <<EOF
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
           "token.actions.githubusercontent.com:sub": [
-            "${SUB_IMMUTABLE}",
-            "${SUB_PLAIN}"
+${SUB_JSON}
           ]
         }
       }

@@ -921,6 +921,14 @@ APPLY=true bash deploy/aws/github-oidc-role.sh
 
 계정 ID와 저장소 ID를 파일에 적어 두지 않고 실행 시점에 조회합니다. 적어 두면 다른 계정에서 그대로 쓸 수 없고, 틀린 값을 넣어도 적용할 때까지 드러나지 않습니다.
 
+백엔드와 프론트엔드가 같은 역할을 씁니다. 저장소마다 역할을 따로 두면 ECR 권한과 신뢰 조건이 두 벌이 되고, 한쪽만 고쳐 둔 채로 다른 쪽이 조용히 틀어집니다. 나눠야 한다면 인자로 저장소를 주고 `ROLE_NAME`을 바꿔 실행합니다.
+
+```bash
+ROLE_NAME=sb11-mopl-team1-fe-github-actions   bash deploy/aws/github-oidc-role.sh ow00us/sb11-mopl-team1-fe
+```
+
+한 역할을 함께 쓰면 프론트엔드 워크플로도 백엔드 ECR에 밀어 넣을 수 있습니다. 두 저장소를 같은 사람들이 관리하는 동안은 그 범위를 받아들이고, 관리 주체가 갈리면 그때 나눕니다.
+
 GitHub은 OIDC subject를 두 형태로 낼 수 있습니다.
 
 ```
