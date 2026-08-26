@@ -23,6 +23,8 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
 
     // 조건부 삭제 (다중 인스턴스 세대 레이스 방지용) - 다른 인스턴스가 만든 새 세대는 건드리지 않음
     // expectedUpdatedAt이 null이면(구버전 presence 폴백) 세대 비교를 건너뜀
+    // @Modifying 벌크 쿼리라 트랜잭션 안에서만 실행 가능
+    @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             DELETE FROM WatchingSessionSnapshot s

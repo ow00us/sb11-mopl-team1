@@ -79,8 +79,8 @@ public class WatchingSessionPresenceWriter {
     // 쓰기 자체는 레거시 키 위에서도 안전하다.
     private static final String SWAP_LUA = """
         local key = KEYS[1]
-        local watcherId = ARGV[7]
         local newContentId = ARGV[2]
+        local watcherId = ARGV[7]
         local expiresAt = ARGV[8]
         local previous = {}
         if redis.call('TYPE', key)['ok'] == 'hash' then
