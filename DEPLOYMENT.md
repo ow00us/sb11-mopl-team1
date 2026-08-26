@@ -189,6 +189,33 @@ CI smoke가 쓰는 값은 격리된 실행에서만 쓰는 테스트 값입니�
 
 당장은 버킷 수명 주기 규칙으로 오래된 객체를 정리하고, 참조를 추적하는 정리 경로는 #351에서 다룹니다.
 
+#### 버킷 설정
+
+운영 버킷은 `sb11-mopl-team1-images`입니다. 버전 관리와 SSE-S3 암호화를 켰습니다.
+
+수명 주기 규칙은 `deploy/aws/s3-lifecycle.json`에 있습니다.
+
+```bash
+aws s3api put-bucket-lifecycle-configuration --bucket sb11-mopl-team1-images --lifecycle-configuration file://deploy/aws/s3-lifecycle.json
+```
+
+| 규칙 | 대상 | 기간 |
+| --- | --- | --- |
+| `expire-noncurrent-versions` | 이전 버전 | 30일 |
+| `expire-noncurrent-versions` | 미완료 멀티파트 업로드 | 7일 |
+| `expire-delete-markers` | 만료된 삭제 마커 | 즉시 |
+
+버전 관리를 켠 이상 이 규칙이 없으면 안 됩니다. 앱이 이미지를 지워도 삭제 마커만 쌓이고 이전 버전은 영원히 남아, 프로필 사진을 자주 바꾸는 사용자마다 저장 용량이 계속 늘어납니다. 위의 "이전 객체 정리"가 지우지 않는 것을 여기서 받습니다.
+
+퍼블릭 액세스 차단은 ACL 경로만 켭니다. 정책 경로는 열어 두고 버킷 정책이 `s3:GetObject`만 허용합니다. 조회가 애플리케이션을 거치지 않기 때문입니다. ACL 경로를 막아 두면 객체 하나를 실수로 공개 ACL로 올리는 일 자체가 생기지 않고, 공개 경로가 버킷 정책 한 곳으로 모입니다.
+
+| 설정 | 값 |
+| --- | --- |
+| `BlockPublicAcls` | `true` |
+| `IgnorePublicAcls` | `true` |
+| `BlockPublicPolicy` | `false` |
+| `RestrictPublicBuckets` | `false` |
+
 ### OAuth2 로그인과 세션 고정
 
 **로드밸런서 세션 고정을 쓰지 않습니다.** 백엔드 인스턴스가 몇 개든, 어느 인스턴스로 요청이 가든 소셜 로그인이 동작해야 합니다.
