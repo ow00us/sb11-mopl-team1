@@ -2666,12 +2666,12 @@ paths:
       operationId: "subscribe"
       parameters:
         -
-          name: "LastEventId"
-          in: "query"
+          name: "Last-Event-ID"
+          in: "header"
           required: false
+          description: "마지막으로 수신한 SSE 이벤트 ID"
           schema:
             type: "string"
-            format: "uuid"
       responses:
         "200":
           description: "OK"

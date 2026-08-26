@@ -615,4 +615,107 @@ public class DirectMessageRepositoryTest {
                 conversation1.getId()
             );
     }
+
+    @Test
+    @DisplayName("마지막 SSE 이벤트 이후 수신한 DM만 Replay 대상으로 조회")
+    void findAllReceivedForReplay_returnsReceivedMessages() {
+        // given
+        Conversation conversation =
+            conversationRepository.saveAndFlush(
+                Conversation.create(
+                    USER_ID_1,
+                    USER_ID_2
+                )
+            );
+
+        participantRepository.saveAllAndFlush(
+            List.of(
+                ConversationParticipant.create(
+                    conversation.getId(),
+                    USER_ID_1,
+                    ParticipantSlot.FIRST
+                ),
+                ConversationParticipant.create(
+                    conversation.getId(),
+                    USER_ID_2,
+                    ParticipantSlot.SECOND
+                )
+            )
+        );
+
+        UUID cursorId =
+            UUID.fromString(
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"
+            );
+
+        UUID receivedMessageId =
+            UUID.fromString(
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2"
+            );
+
+        UUID sentMessageId =
+            UUID.fromString(
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3"
+            );
+
+        Instant cursor =
+            Instant.parse("2026-08-24T01:00:00Z");
+
+        Instant later =
+            Instant.parse("2026-08-24T02:00:00Z");
+
+        insertDirectMessage(
+            cursorId,
+            conversation.getId(),
+            USER_ID_2,
+            1L,
+            cursor
+        );
+
+        insertDirectMessage(
+            receivedMessageId,
+            conversation.getId(),
+            USER_ID_2,
+            2L,
+            later
+        );
+
+        insertDirectMessage(
+            sentMessageId,
+            conversation.getId(),
+            USER_ID_1,
+            3L,
+            later
+        );
+
+        entityManager.clear();
+
+        // when
+        List<DirectMessageReplayProjection> result =
+            directMessageRepository
+                .findAllReceivedForReplay(
+                    USER_ID_1,
+                    cursor,
+                    cursorId,
+                    PageRequest.of(0, 10)
+                );
+
+        // then
+        assertThat(result).hasSize(1);
+
+        DirectMessageReplayProjection message =
+            result.get(0);
+
+        assertThat(message.getId())
+            .isEqualTo(receivedMessageId);
+
+        assertThat(message.getSenderId())
+            .isEqualTo(USER_ID_2);
+
+        assertThat(message.getReceiverId())
+            .isEqualTo(USER_ID_1);
+
+        assertThat(message.getMessageSequence())
+            .isEqualTo(2L);
+    }
 }

@@ -659,6 +659,66 @@ class NotificationRepositoryTest {
             .isZero();
     }
 
+    @Test
+    @DisplayName("마지막 SSE 이벤트 이후의 수신 알림을 오래된 순으로 조회")
+    void findAllForReplay_returnsEventsAfterCursor() {
+        // given
+        Instant cursor =
+            Instant.parse("2026-08-24T01:00:00Z");
+
+        Instant later =
+            Instant.parse("2026-08-24T02:00:00Z");
+
+        insertNotification(
+            NOTIFICATION_ID_1,
+            RECEIVER_ID,
+            "마지막 수신 알림",
+            cursor,
+            null
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_2,
+            RECEIVER_ID,
+            "같은 시각의 다음 알림",
+            cursor,
+            null
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_3,
+            RECEIVER_ID,
+            "읽은 누락 알림",
+            later,
+            later
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_4,
+            OTHER_RECEIVER_ID,
+            "다른 사용자의 알림",
+            later,
+            null
+        );
+
+        // when
+        List<Notification> result =
+            notificationRepository.findAllForReplay(
+                RECEIVER_ID,
+                cursor,
+                NOTIFICATION_ID_1,
+                PageRequest.of(0, 10)
+            );
+
+        // then
+        assertThat(result)
+            .extracting(Notification::getId)
+            .containsExactly(
+                NOTIFICATION_ID_2,
+                NOTIFICATION_ID_3
+            );
+    }
+
     private PageRequest firstPage(Sort.Direction direction) {
         Sort sort = Sort.by(direction, "createdAt")
             .and(Sort.by(direction, "id"));

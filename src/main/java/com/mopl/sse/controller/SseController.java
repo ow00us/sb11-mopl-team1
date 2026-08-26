@@ -2,13 +2,10 @@ package com.mopl.sse.controller;
 
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
-import com.mopl.sse.service.SseEmitterManager;
+import com.mopl.sse.service.SseReplayService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.security.Principal;
@@ -19,21 +16,22 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class SseController {
 
-    private final SseEmitterManager sseEmitterManager;
+    private final SseReplayService sseReplayService;
 
     @GetMapping(produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter subscribe(
-        @RequestParam(
-            name = "LastEventId",
+        @RequestHeader(
+            name = "Last-Event-ID",
             required = false
         )
-        UUID lastEventId,
+        String lastEventId,
         Principal principal
     ) {
         UUID userId = getUserId(principal);
 
-        return sseEmitterManager.subscribe(
-            userId
+        return sseReplayService.subscribe(
+            userId,
+            lastEventId
         );
     }
 

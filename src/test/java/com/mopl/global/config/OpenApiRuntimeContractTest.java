@@ -28,7 +28,7 @@ import com.mopl.review.controller.ReviewController;
 import com.mopl.review.service.ReviewService;
 import com.mopl.sample.controller.SampleController;
 import com.mopl.sse.controller.SseController;
-import com.mopl.sse.service.SseEmitterManager;
+import com.mopl.sse.service.SseReplayService;
 import com.mopl.user.cookie.RefreshTokenCookieFactory;
 import com.mopl.user.controller.AuthController;
 import com.mopl.user.controller.UserController;
@@ -229,7 +229,7 @@ class OpenApiRuntimeContractTest {
     WatchingSessionService watchingSessionService;
 
     @MockitoBean
-    SseEmitterManager sseEmitterManager;
+    SseReplayService sseReplayService;
 
     @BeforeAll
     static void loadContract() throws Exception {
