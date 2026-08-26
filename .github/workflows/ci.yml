@@ -237,6 +237,8 @@ jobs:
             --env NAVER_OAUTH_CLIENT_ID=mopl-ci-naver-client-id \
             --env NAVER_OAUTH_CLIENT_SECRET=mopl-ci-naver-client-secret \
             --env NAVER_OAUTH_REDIRECT_URI=http://localhost:8080/login/oauth2/code/naver \
+            --env IMAGE_STORAGE_BUCKET=mopl-ci-images \
+            --env IMAGE_STORAGE_PUBLIC_BASE_URL=http://127.0.0.1:9000/mopl-ci-images \
             --env KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092 \
             --env KAFKA_TOPIC_VERIFY=true \
             mopl:ci
@@ -367,6 +369,8 @@ jobs:
             --env NAVER_OAUTH_CLIENT_ID=mopl-ci-naver-client-id \
             --env NAVER_OAUTH_CLIENT_SECRET=mopl-ci-naver-client-secret \
             --env NAVER_OAUTH_REDIRECT_URI=http://localhost:8081/login/oauth2/code/naver \
+            --env IMAGE_STORAGE_BUCKET=mopl-ci-images \
+            --env IMAGE_STORAGE_PUBLIC_BASE_URL=http://127.0.0.1:9000/mopl-ci-images \
             --env KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092 \
             --env KAFKA_TOPIC_VERIFY=true \
             mopl:ci
