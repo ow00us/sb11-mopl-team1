@@ -1,4 +1,3 @@
-// src/main/java/com/mopl/global/util/DbConflictUtils.java
 package com.mopl.global.util;
 
 import java.sql.SQLException;
