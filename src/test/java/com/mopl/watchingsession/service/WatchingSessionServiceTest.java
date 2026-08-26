@@ -28,6 +28,7 @@ import com.mopl.watchingsession.entity.WatchingSessionSnapshot;
 import com.mopl.watchingsession.presence.ContentExistenceCache;
 import com.mopl.watchingsession.presence.WatchingPresence;
 import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter;
+import com.mopl.watchingsession.presence.WatchingSessionPresenceWriter.RenewResult;
 import com.mopl.watchingsession.repository.WatchingSessionSnapshotRepository;
 import com.mopl.watchingsession.service.WatchingSessionSnapshotWriter.UpsertResult;
 import java.math.BigDecimal;
@@ -40,6 +41,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -149,11 +151,13 @@ public class WatchingSessionServiceTest {
                 String sessionId = invocation.getArgument(1);
                 String subscriptionId = invocation.getArgument(2);
                 WatchingPresence current = presenceStore.get(watcherId);
+
                 if (current == null) {
-                    return false;
+                    return RenewResult.KEY_MISSING;
                 }
-                return current.sessionId().equals(sessionId)
-                    && Objects.equals(current.subscriptionId(), subscriptionId);
+                boolean ownerMatches = current.sessionId().equals(sessionId)
+                    && current.subscriptionId().equals(subscriptionId);
+                return ownerMatches ? RenewResult.RENEWED : RenewResult.OWNER_MISMATCH;
             });
     }
 
@@ -456,6 +460,31 @@ public class WatchingSessionServiceTest {
         boolean actuallyDeleted = watchingSessionService.end(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
         assertThat(actuallyDeleted).isFalse();
         verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("heartbeat가 한 번 이상 발생한 뒤에도 end()는 true를 반환하고, "
+        + "삭제 조건에 쓰이는 세대 토큰은 heartbeat 이전 값 그대로다 "
+        + "(renewExpiresAt이 updated_at을 건드리면 이 테스트가 깨진다)")
+    void end_stillSucceeds_afterOneOrMoreHeartbeats() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(1);
+
+        // heartbeat 한 번 이상 (연속 두 번)
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        boolean ended = watchingSessionService.end(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(ended).isTrue();
+        assertThat(presenceStore).doesNotContainKey(WATCHER_ID);
+        // heartbeat가 반복돼도 presence가 들고 있던 세대 토큰은 start() 시점 값(FIRST_CREATED_AT) 그대로여야 한다.
+        // renewExpiresAt이 updated_at을 갱신하도록 바뀌면 이 토큰이 어긋나 실제 DB에서는
+        // 조건부 삭제가 0행으로 실패하게 된다.
+        verify(watchingSessionSnapshotWriter).deleteById(eq(WATCHER_ID), eq(SNAPSHOT_ID), eq(FIRST_CREATED_AT));
     }
 
     /* --- endByConnection() 메서드 검증 --- */
@@ -957,6 +986,11 @@ public class WatchingSessionServiceTest {
     @Test
     @DisplayName("활성 세션이 없으면 DB를 전혀 건드리지 않는다")
     void heartbeat_skipsDbUpdate_whenNoActiveSession() {
+        when(watchingSessionPresenceWriter.findExistingWatcherIds(List.of(WATCHER_ID)))
+            .thenReturn(Set.of());
+        when(watchingSessionSnapshotRepository.findByWatcherId(WATCHER_ID))
+            .thenReturn(Optional.empty());
+
         watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
 
         verify(watchingSessionSnapshotWriter, never()).renewExpiresAt(any(), any(), any());
@@ -1152,5 +1186,74 @@ public class WatchingSessionServiceTest {
             eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), eq(recovered.getId()), tokenCaptor.capture());
 
         assertThat(tokenCaptor.getValue()).isEqualTo(Instant.parse("2026-08-19T00:00:00.987654Z"));
+    }
+
+    @Test
+    @DisplayName("heartbeat가 KEY_MISSING을 받으면 DB 스냅샷과 일치하는 경우 presence를 재수립한다")
+    void heartbeat_recoversPresence_whenKeyMissingAndDbSnapshotMatchesContent() {
+        when(watchingSessionPresenceWriter.renewIfOwner(eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), any()))
+            .thenReturn(RenewResult.KEY_MISSING);
+        WatchingSessionSnapshot existing = createSnapshotFixture(
+            SNAPSHOT_ID, WATCHER_ID, CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT,
+            Instant.now().plus(1, ChronoUnit.HOURS));
+        when(watchingSessionSnapshotRepository.findByWatcherId(WATCHER_ID))
+            .thenReturn(Optional.of(existing));
+        when(watchingSessionPresenceWriter.recoverIfAbsent(
+            eq(WATCHER_ID), eq(existing.getId()), eq(CONTENT_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID),
+            any(), any(), any()))
+            .thenReturn(true);
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionPresenceWriter).recoverIfAbsent(
+            eq(WATCHER_ID), eq(existing.getId()), eq(CONTENT_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID),
+            any(), any(), any());
+        verify(watchingSessionSnapshotWriter, never()).renewExpiresAt(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("recoverIfAbsent가 거부되면(다른 연결이 이미 확보) 그 외 아무것도 하지 않는다")
+    void heartbeat_backsOff_whenRecoverIfAbsentIsRefused() {
+        when(watchingSessionPresenceWriter.renewIfOwner(eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), any()))
+            .thenReturn(RenewResult.KEY_MISSING);
+        WatchingSessionSnapshot existing = createSnapshotFixture(
+            SNAPSHOT_ID, WATCHER_ID, CONTENT_ID, FIRST_CREATED_AT, FIRST_CREATED_AT,
+            Instant.now().plus(1, ChronoUnit.HOURS));
+        when(watchingSessionSnapshotRepository.findByWatcherId(WATCHER_ID))
+            .thenReturn(Optional.of(existing));
+        when(watchingSessionPresenceWriter.recoverIfAbsent(any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenReturn(false);
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionSnapshotWriter, never()).renewExpiresAt(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("KEY_MISSING인데 DB 스냅샷도 없거나 다른 콘텐츠면 recoverIfAbsent를 호출하지 않는다")
+    void heartbeat_backsOff_whenNoMatchingDbSnapshot() {
+        when(watchingSessionPresenceWriter.renewIfOwner(eq(WATCHER_ID), eq(SESSION_ID), eq(SUBSCRIPTION_ID), any()))
+            .thenReturn(RenewResult.KEY_MISSING);
+        when(watchingSessionSnapshotRepository.findByWatcherId(WATCHER_ID))
+            .thenReturn(Optional.empty());
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionPresenceWriter, never())
+            .recoverIfAbsent(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("정상 heartbeat 경로(RENEWED)에서는 재수립 관련 호출이 전혀 일어나지 않는다")
+    void heartbeat_normalPath_neverTouchesRecoveryPath() {
+        when(watchingSessionPresenceWriter.renewIfOwner(any(), any(), any(), any()))
+            .thenReturn(RenewResult.RENEWED);
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(1);
+
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        verify(watchingSessionPresenceWriter, never())
+            .recoverIfAbsent(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(watchingSessionSnapshotRepository, never()).findByWatcherId(any());
     }
 }

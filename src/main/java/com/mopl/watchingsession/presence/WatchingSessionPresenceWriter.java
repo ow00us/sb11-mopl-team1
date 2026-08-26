@@ -42,7 +42,31 @@ public class WatchingSessionPresenceWriter {
 
     }
 
-    private static final String KEY_TEMPLATE = "mopl:presence:watcher:%s";
+    /**
+     * presence TTL 갱신 시도의 판정 결과.
+     * <p>
+     * 호출자가 "재수립해도 되는 실패"와 "재수립하면 안 되는 실패"를 구분할 수 있어야 하므로 boolean 대신 네 갈래로 반환한다. RENEWED 외에는 모두 갱신이
+     * 일어나지 않은 상태다.
+     */
+    public enum RenewResult {
+        /**
+         * 소유권이 일치해 TTL이 연장됨
+         */
+        RENEWED,
+        /**
+         * presence 키 자체가 없음(TTL 만료) 또는 레거시 문자열 키 - DB 기준 재수립 후보
+         */
+        KEY_MISSING,
+        /**
+         * 키는 살아있으나 소유자가 다른 연결/구독 - 재수립하면 남의 소유권을 빼앗게 됨
+         */
+        OWNER_MISMATCH,
+        /**
+         * Redis 실패·예상 못한 응답. 현재 소유 상태를 알 수 없으므로 아무것도 하지 않는다
+         */
+        FAILED
+    }
+
     private static final String FIELD_SNAPSHOT_ID = "snapshotId";
     private static final String FIELD_CONTENT_ID = "contentId";
     private static final String FIELD_SESSION_ID = "sessionId";
@@ -55,8 +79,8 @@ public class WatchingSessionPresenceWriter {
     // 쓰기 자체는 레거시 키 위에서도 안전하다.
     private static final String SWAP_LUA = """
         local key = KEYS[1]
-        local watcherId = ARGV[7]
         local newContentId = ARGV[2]
+        local watcherId = ARGV[7]
         local expiresAt = ARGV[8]
         local previous = {}
         if redis.call('TYPE', key)['ok'] == 'hash' then
@@ -92,9 +116,47 @@ public class WatchingSessionPresenceWriter {
         return previous
         """;
 
+    // 복구 전용: 키가 없거나(TTL 만료) 레거시 타입일 때만 새 소유자를 기록한다. 이미 hash로
+    // 살아있는 presence가 있으면(다른 연결이 그 사이 확보한 소유권) 쓰지 않고 거부한다.
+    // 확인과 쓰기가 하나의 스크립트 안에서 원자적으로 실행되므로, findExistingWatcherIds()와
+    // swap()을 별도 호출로 나누던 이전 방식과 달리 그 사이 다른 인스턴스가 끼어들 창이 없다.
+    private static final String RECOVER_IF_ABSENT_LUA = """
+        local key = KEYS[1]
+        local type = redis.call('TYPE', key)['ok']
+        if type == 'hash' then
+          return 0
+        end
+        if type ~= 'none' then
+          redis.call('DEL', key)
+        end
+
+        local newContentId = ARGV[2]
+        local watcherId = ARGV[7]
+        local expiresAt = ARGV[8]
+
+        redis.call('HSET', key,
+          'snapshotId', ARGV[1], 'contentId', ARGV[2],
+          'sessionId', ARGV[3], 'subscriptionId', ARGV[4], 'startedAt', ARGV[5],
+           'snapshotUpdatedAt', ARGV[6])
+        redis.call('PEXPIREAT', key, expiresAt)
+
+        local contentKey = 'mopl:presence:content:' .. newContentId
+        redis.call('ZADD', contentKey, expiresAt, watcherId)
+        local newMax = redis.call('ZREVRANGE', contentKey, 0, 0, 'WITHSCORES')
+        if newMax[2] then
+          redis.call('PEXPIREAT', contentKey, newMax[2])
+        end
+
+        return 1
+        """;
+
+    private static final RedisScript<Long> RECOVER_IF_ABSENT_SCRIPT = new DefaultRedisScript<>(
+        RECOVER_IF_ABSENT_LUA, Long.class);
+
     // 키가 없으면 HGET이 false를 반환해 문자열 비교가 실패
-    // 반환: {'1', snapshotId} 삭제됨 / {'0', ''} 소유권 불일치(이상 신호) /
-    //       {'-1', ''} 활성 세션 없음(hash 아님 포함, 정상 흐름)
+    // 반환: {'1', snapshotId, snapshotUpdatedAt} 삭제됨(snapshotUpdatedAt은 presence 세대 토큰, 없으면 '') /
+    //             {'0', '', ''} 소유권 불일치(이상 신호) /
+    //             {'-1', '', ''} 활성 세션 없음(hash 아님 포함, 정상 흐름)
     private static final String DELETE_IF_OWNER_LUA = """
         if redis.call('TYPE', KEYS[1])['ok'] ~= 'hash' then
           return {'-1', '', ''}
@@ -143,7 +205,8 @@ public class WatchingSessionPresenceWriter {
         return {'0', '', ''}
         """;
 
-    // PEXPIRE는 키가 있을 때만 1을 반환하고 키를 새로 만들지 않아 이미 만료된 presence를 heartbeat가 되살리지 않는다
+    // PEXPIREAT는 키가 있을 때만 1을 반환하고 키를 새로 만들지 않아 이미 만료된 presence를 heartbeat가 되살리지 않는다
+    // 반환: 1 연장됨 / 0 소유권 불일치 / -1 활성 presence 없음(hash 아님 포함, TTL 만료가 주 원인)
     private static final String RENEW_IF_OWNER_LUA = """
         if redis.call('TYPE', KEYS[1])['ok'] ~= 'hash' then
           return -1
@@ -228,7 +291,7 @@ public class WatchingSessionPresenceWriter {
                 List.of(key(watcherId)), nullSafe(sessionId), nullSafe(subscriptionId),
                 watcherId.toString());
 
-            return parseDeleteResult(watcherId, result);
+            return parseDeleteResult(watcherId, result, true); // 구독 단위 종료: 불일치는 경고
         } catch (RuntimeException e) {
             log.error("Presence 소유권 삭제 실패: watcherId={}", watcherId, e);
             return Optional.empty();
@@ -249,7 +312,7 @@ public class WatchingSessionPresenceWriter {
             List<String> result = stringRedisTemplate.execute(DELETE_IF_OWNER_SESSION_SCRIPT,
                 List.of(key(watcherId)), nullSafe(sessionId), watcherId.toString());
 
-            return parseDeleteResult(watcherId, result);
+            return parseDeleteResult(watcherId, result, false); // 연결 단위 종료(DISCONNECT): 불일치는 디버그
         } catch (RuntimeException e) {
             log.error("Presence 세션 단위 소유권 삭제 실패: watcherId={}", watcherId, e);
             return Optional.empty();
@@ -259,10 +322,10 @@ public class WatchingSessionPresenceWriter {
     /**
      * 요청자가 현재 소유자일 때만 presence TTL을 재설정한다.
      *
-     * @return 실제로 연장했으면 true. 소유권 불일치·키 없음·Redis 실패는 모두 false.
+     * @return 갱신 성공/키 없음/소유권 불일치/실패를 구분하는 판정 결과. KEY_MISSING만이 DB 스냅샷 기준 재수립의 대상이다.
      */
     @SuppressWarnings("ConstantConditions")
-    public boolean renewIfOwner(UUID watcherId, String sessionId, String subscriptionId,
+    public RenewResult renewIfOwner(UUID watcherId, String sessionId, String subscriptionId,
         Duration ttl) {
         try {
             Instant expiresAt = Instant.now().plus(ttl);
@@ -273,15 +336,27 @@ public class WatchingSessionPresenceWriter {
 
             if (result == null) {
                 log.error("Presence TTL 갱신 스크립트가 예상 못한 null을 반환함: watcherId={}", watcherId);
-                return false;
+                return RenewResult.FAILED;
             }
-            if (Long.valueOf(0L).equals(result)) {
+
+            long code = result;
+            if (code == 1L) {
+                return RenewResult.RENEWED;
+            }
+            if (code == 0L) {
                 log.warn("Presence 소유권 불일치로 TTL 연장 거부: watcherId={}", watcherId);
+                return RenewResult.OWNER_MISMATCH;
             }
-            return Long.valueOf(1L).equals(result);
+            if (code == -1L) {
+                return RenewResult.KEY_MISSING;
+            }
+
+            log.error("Presence TTL 갱신 스크립트가 규약 밖의 값을 반환함: watcherId={}, result={}",
+                watcherId, code);
+            return RenewResult.FAILED;
         } catch (RuntimeException e) {
             log.error("Presence TTL 갱신 실패: watcherId={}", watcherId, e);
-            return false;
+            return RenewResult.FAILED;
         }
     }
 
@@ -364,6 +439,31 @@ public class WatchingSessionPresenceWriter {
         }
     }
 
+    /**
+     * heartbeat의 DB 기준 재수립 전용. presence 키가 없거나(TTL 만료) 레거시 타입일 때만
+     * 새 소유자를 기록한다.
+     *
+     * @return 실제로 기록했으면 true. 이미 hash로 살아있는 presence가 있으면(다른 연결이
+     *         이미 확보한 소유권) false, Redis 실패도 false.
+     */
+    public boolean recoverIfAbsent(UUID watcherId, UUID snapshotId, UUID contentId,
+        String sessionId, String subscriptionId, Instant startedAt, Instant snapshotUpdatedAt,
+        Duration ttl) {
+        try {
+            Instant expiresAt = Instant.now().plus(ttl);
+
+            Long result = stringRedisTemplate.execute(RECOVER_IF_ABSENT_SCRIPT, List.of(key(watcherId)),
+                snapshotId.toString(), contentId.toString(), nullSafe(sessionId),
+                nullSafe(subscriptionId), startedAt.toString(), snapshotUpdatedAt.toString(),
+                watcherId.toString(), String.valueOf(expiresAt.toEpochMilli()));
+
+            return Long.valueOf(1L).equals(result);
+        } catch (RuntimeException e) {
+            log.error("Presence DB 기준 재수립 실패: watcherId={}", watcherId, e);
+            return false;
+        }
+    }
+
     // DISCONNECT는 프레임에 subscriptionId가 없어 null이 넘어올 수 있음 -> 빈 문자열로 바꿔 넘기면 안전하게 무동작이 됨
     private String nullSafe(String value) {
         return (value == null) ? "" : value;
@@ -374,18 +474,37 @@ public class WatchingSessionPresenceWriter {
     }
 
     @SuppressWarnings("ConstantConditions")
-    private Optional<DeletedSnapshot> parseDeleteResult(UUID watcherId, List<String> result) {
-        if (result == null || result.size() < 3 || !"1".equals(result.get(0))) {
+    private Optional<DeletedSnapshot> parseDeleteResult(UUID watcherId, List<String> result,
+        boolean mismatchAsWarn) {
+        if (result == null || result.isEmpty()) {
+            log.error("Presence 삭제 스크립트가 빈 응답을 반환함: watcherId={}", watcherId);
+            return Optional.empty();
+        }
+
+        String code = result.get(0);
+        if ("-1".equals(code)) {
+            return Optional.empty(); // 활성 세션 없음(TTL 만료 등) - 정상 경로, 로그 없음
+        }
+        if ("0".equals(code)) {
+            if (mismatchAsWarn) {
+                log.warn("Presence 소유권 불일치로 삭제 거부: watcherId={}", watcherId);
+            } else {
+                log.debug("Presence 소유권 불일치로 삭제 거부: watcherId={}", watcherId);
+            }
+            return Optional.empty();
+        }
+        if (!"1".equals(code) || result.size() < 3) {
+            log.error("Presence 삭제 스크립트 응답 필드가 부족하거나 예상 밖 코드: watcherId={}, result={}",
+                watcherId, result);
             return Optional.empty();
         }
         try {
             UUID snapshotId = UUID.fromString(result.get(1));
-            // 구버전 presence(토큰 없이 기록된 레코드)는 빈 문자열 - 세대 미검증 폴백으로 null 유지
             Instant snapshotUpdatedAt =
                 result.get(2).isEmpty() ? null : Instant.parse(result.get(2));
             return Optional.of(new DeletedSnapshot(snapshotId, snapshotUpdatedAt));
         } catch (RuntimeException e) {
-            log.warn("Presence 삭제 결과 파싱 실패, 방어적으로 빈 Optional 반환: watcherId={}", watcherId, e);
+            log.error("Presence 삭제 결과 필드 파싱 실패: watcherId={}", watcherId, e);
             return Optional.empty();
         }
     }

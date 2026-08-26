@@ -30,6 +30,8 @@ out/
 
 ### Env / Secrets ###
 .env
+.env.*
+!.env.example
 *.local
 application-local.yml
 

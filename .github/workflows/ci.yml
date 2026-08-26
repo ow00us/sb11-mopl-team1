@@ -227,6 +227,7 @@ jobs:
             --env WS_ALLOWED_ORIGINS=http://localhost:5173 \
             --env OAUTH2_SUCCESS_REDIRECT_URI=http://localhost:5173/oauth/callback \
             --env OAUTH2_FAILURE_REDIRECT_URI=http://localhost:5173/sign-in \
+            --env OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_SECRET=mopl-ci-oauth-local-credential-verification-secret \
             --env GOOGLE_OAUTH_CLIENT_ID=mopl-ci-google-client-id \
             --env GOOGLE_OAUTH_CLIENT_SECRET=mopl-ci-google-client-secret \
             --env GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8080/login/oauth2/code/google \
@@ -236,6 +237,8 @@ jobs:
             --env NAVER_OAUTH_CLIENT_ID=mopl-ci-naver-client-id \
             --env NAVER_OAUTH_CLIENT_SECRET=mopl-ci-naver-client-secret \
             --env NAVER_OAUTH_REDIRECT_URI=http://localhost:8080/login/oauth2/code/naver \
+            --env IMAGE_STORAGE_BUCKET=mopl-ci-images \
+            --env IMAGE_STORAGE_PUBLIC_BASE_URL=http://127.0.0.1:9000/mopl-ci-images \
             --env KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092 \
             --env KAFKA_TOPIC_VERIFY=true \
             mopl:ci
@@ -356,6 +359,18 @@ jobs:
             --env WS_ALLOWED_ORIGINS=http://localhost:5173 \
             --env OAUTH2_SUCCESS_REDIRECT_URI=http://localhost:5173/oauth/callback \
             --env OAUTH2_FAILURE_REDIRECT_URI=http://localhost:5173/sign-in \
+            --env OAUTH2_LOCAL_CREDENTIAL_VERIFICATION_SECRET=mopl-ci-oauth-local-credential-verification-secret \
+            --env GOOGLE_OAUTH_CLIENT_ID=mopl-ci-google-client-id \
+            --env GOOGLE_OAUTH_CLIENT_SECRET=mopl-ci-google-client-secret \
+            --env GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8081/login/oauth2/code/google \
+            --env KAKAO_OAUTH_CLIENT_ID=mopl-ci-kakao-client-id \
+            --env KAKAO_OAUTH_CLIENT_SECRET=mopl-ci-kakao-client-secret \
+            --env KAKAO_OAUTH_REDIRECT_URI=http://localhost:8081/login/oauth2/code/kakao \
+            --env NAVER_OAUTH_CLIENT_ID=mopl-ci-naver-client-id \
+            --env NAVER_OAUTH_CLIENT_SECRET=mopl-ci-naver-client-secret \
+            --env NAVER_OAUTH_REDIRECT_URI=http://localhost:8081/login/oauth2/code/naver \
+            --env IMAGE_STORAGE_BUCKET=mopl-ci-images \
+            --env IMAGE_STORAGE_PUBLIC_BASE_URL=http://127.0.0.1:9000/mopl-ci-images \
             --env KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092 \
             --env KAFKA_TOPIC_VERIFY=true \
             mopl:ci
