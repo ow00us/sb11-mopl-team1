@@ -18,6 +18,8 @@ PREFLIGHT_ONLY=false
 RESTORE_SERVICES=false
 POSTGRES_CONTAINER=
 CONTAINER_DATASET_PREPARED=false
+HOST_BULK_FILE=
+ELASTICSEARCH_CONTAINER=
 
 usage() {
     cat <<'EOF'
@@ -70,6 +72,13 @@ env_value() {
 cleanup() {
     if [[ -n ${POSTGRES_CONTAINER} && ${CONTAINER_DATASET_PREPARED} == true ]]; then
         docker exec "${POSTGRES_CONTAINER}" rm -rf "${CONTAINER_DATASET_DIR}" >/dev/null 2>&1 || true
+    fi
+    if [[ -n ${ELASTICSEARCH_CONTAINER} ]]; then
+        docker exec --user 0 "${ELASTICSEARCH_CONTAINER}" \
+            rm -f /tmp/mopl-contents.ndjson >/dev/null 2>&1 || true
+    fi
+    if [[ -n ${HOST_BULK_FILE} ]]; then
+        rm -f -- "${HOST_BULK_FILE}" >/dev/null 2>&1 || true
     fi
     if [[ ${RESTORE_SERVICES} == true ]]; then
         compose up -d backend-a backend-b >/dev/null 2>&1 || true
@@ -161,6 +170,8 @@ CONTAINER_DATASET_PREPARED=true
 docker cp "${DATASET_DIR}/." "${POSTGRES_CONTAINER}:${CONTAINER_DATASET_DIR}"
 docker cp "${SCRIPT_DIR}/import.sql" "${POSTGRES_CONTAINER}:${CONTAINER_DATASET_DIR}/import.sql"
 docker cp "${SCRIPT_DIR}/verify.sql" "${POSTGRES_CONTAINER}:${CONTAINER_DATASET_DIR}/verify.sql"
+docker cp "${SCRIPT_DIR}/backfill-elasticsearch.sql" \
+    "${POSTGRES_CONTAINER}:${CONTAINER_DATASET_DIR}/backfill-elasticsearch.sql"
 
 log "PostgreSQL 단일 트랜잭션 주입"
 docker exec -i "${POSTGRES_CONTAINER}" psql -v ON_ERROR_STOP=1 \
@@ -178,15 +189,50 @@ compose up -d backend-a backend-b >/dev/null
 DB_CONTENT_COUNT=$(compose exec -T postgres psql -v ON_ERROR_STOP=1 \
     -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -Atc 'SELECT COUNT(*) FROM contents')
 
+INDEX_READY=false
+for _ in $(seq 1 30); do
+    status=$(compose exec -T elasticsearch sh -c \
+        "curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:9200/contents" \
+        2>/dev/null || true)
+    if [[ ${status} == 200 ]]; then
+        INDEX_READY=true
+        break
+    fi
+    sleep 2
+done
+[[ ${INDEX_READY} == true ]] || fail "Elasticsearch contents 인덱스가 생성되지 않았습니다."
+
+log "PostgreSQL 콘텐츠를 Elasticsearch Bulk 형식으로 변환"
+HOST_BULK_FILE=$(mktemp /tmp/mopl-contents.XXXXXX.ndjson)
+docker exec -i "${POSTGRES_CONTAINER}" psql -v ON_ERROR_STOP=1 \
+    -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -At \
+    -f "${CONTAINER_DATASET_DIR}/backfill-elasticsearch.sql" > "${HOST_BULK_FILE}"
+[[ -s ${HOST_BULK_FILE} ]] || fail "Elasticsearch Bulk 파일이 비어 있습니다."
+
+ELASTICSEARCH_CONTAINER=$(compose ps -q elasticsearch)
+[[ -n ${ELASTICSEARCH_CONTAINER} ]] || fail "Elasticsearch 컨테이너가 실행 중이 아닙니다."
+docker cp "${HOST_BULK_FILE}" "${ELASTICSEARCH_CONTAINER}:/tmp/mopl-contents.ndjson"
+BULK_RESULT=$(compose exec -T elasticsearch sh -c \
+    "curl --silent --show-error --fail \
+      --header 'Content-Type: application/x-ndjson' \
+      --data-binary @/tmp/mopl-contents.ndjson \
+      'http://localhost:9200/_bulk?refresh=true&filter_path=errors'")
+[[ ${BULK_RESULT} == *'"errors":false'* ]] \
+    || fail "Elasticsearch Bulk 색인에 실패했습니다: ${BULK_RESULT}"
+docker exec --user 0 "${ELASTICSEARCH_CONTAINER}" rm -f /tmp/mopl-contents.ndjson
+ELASTICSEARCH_CONTAINER=
+rm -f -- "${HOST_BULK_FILE}"
+HOST_BULK_FILE=
+
 ES_CONTENT_COUNT=-1
-for _ in $(seq 1 90); do
+for _ in $(seq 1 30); do
     ES_CONTENT_COUNT=$(compose exec -T elasticsearch sh -c \
         "curl --silent --fail http://localhost:9200/contents/_count" 2>/dev/null \
         | sed -n 's/.*"count":\([0-9][0-9]*\).*/\1/p' || true)
     if [[ ${ES_CONTENT_COUNT:-} == "${DB_CONTENT_COUNT}" ]]; then
         break
     fi
-    sleep 5
+    sleep 2
 done
 [[ ${ES_CONTENT_COUNT:-} == "${DB_CONTENT_COUNT}" ]] \
     || fail "Elasticsearch 백필 수가 일치하지 않습니다. db=${DB_CONTENT_COUNT} es=${ES_CONTENT_COUNT:-unknown}"

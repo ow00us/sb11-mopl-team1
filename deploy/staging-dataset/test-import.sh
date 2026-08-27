@@ -6,6 +6,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 IMPORT_SCRIPT=${SCRIPT_DIR}/import.sh
 IMPORT_SQL=${SCRIPT_DIR}/import.sql
 VERIFY_SQL=${SCRIPT_DIR}/verify.sql
+BACKFILL_SQL=${SCRIPT_DIR}/backfill-elasticsearch.sql
 
 fail() {
     printf 'FAIL: %s\n' "$*" >&2
@@ -46,5 +47,15 @@ for key in \
     dm_sender_mismatches dm_sequence_mismatches notification_mapping_mismatches; do
     grep -q "${key}" "${VERIFY_SQL}" || fail "${key} 검증이 없습니다."
 done
+
+for field in \
+    contentId title description type tags averageRating watcherCount reviewCount \
+    thumbnailUrl createdAt createdAtEpochMicros; do
+    grep -q "'${field}'" "${BACKFILL_SQL}" \
+        || fail "Elasticsearch 문서에 ${field} 필드가 없습니다."
+done
+
+grep -q "'_index', 'contents'" "${BACKFILL_SQL}" \
+    || fail "Elasticsearch Bulk index action이 없습니다."
 
 printf 'PASS: staging dataset import safety checks\n'

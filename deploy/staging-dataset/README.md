@@ -37,7 +37,7 @@ sudo bash deploy/staging-dataset/import.sh \
   --confirm RESET-STAGING
 ```
 
-실행 중에는 외부 요청을 막기 위해 Caddy·gateway·백엔드를 잠시 내립니다. PostgreSQL 주입 후 Redis를 비우고 `contents` 인덱스를 삭제한 다음 백엔드를 재기동하여 전체 콘텐츠를 다시 색인합니다.
+실행 중에는 외부 요청을 막기 위해 Caddy·gateway·백엔드를 잠시 내립니다. PostgreSQL 주입 후 Redis를 비우고 `contents` 인덱스를 다시 만듭니다. 백엔드 초기 백필이 실패하더라도 결과가 달라지지 않도록 PostgreSQL에서 동일한 검색 문서를 NDJSON으로 생성해 Elasticsearch Bulk API로 색인합니다.
 
 ## 결과와 복구
 
