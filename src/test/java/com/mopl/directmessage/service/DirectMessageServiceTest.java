@@ -551,17 +551,26 @@ class DirectMessageServiceTest {
         );
 
         // then
+        ArgumentCaptor<Instant> readAtCaptor =
+            ArgumentCaptor.forClass(Instant.class);
         verify(directMessageRepository)
             .markAsReadIfUnread(
                 eq(message.getId()),
                 eq(CONVERSATION_ID),
-                any(Instant.class)
+                readAtCaptor.capture()
             );
 
+        ArgumentCaptor<DirectMessageReadEvent> eventCaptor =
+            ArgumentCaptor.forClass(DirectMessageReadEvent.class);
         verify(eventPublisher)
             .publishEvent(
-                any(DirectMessageReadEvent.class)
+                eventCaptor.capture()
             );
+
+        Instant storedReadAt = readAtCaptor.getValue();
+        assertThat(storedReadAt.getNano() % 1_000).isZero();
+        assertThat(eventCaptor.getValue().readAt())
+            .isEqualTo(storedReadAt);
     }
 
     @Test
