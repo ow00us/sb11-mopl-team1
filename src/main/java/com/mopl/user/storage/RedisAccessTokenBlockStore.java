@@ -2,6 +2,7 @@ package com.mopl.user.storage;
 
 import java.time.Duration;
 import java.util.UUID;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
@@ -22,6 +23,9 @@ public class RedisAccessTokenBlockStore
     private static final String BLOCKED_VALUE =
         "1";
 
+    private static final String ALLOWED_VALUE =
+        "0";
+
     private final StringRedisTemplate redisTemplate;
 
     @Override
@@ -41,15 +45,48 @@ public class RedisAccessTokenBlockStore
     }
 
     @Override
-    public boolean isBlocked(
+    public Optional<Boolean> findBlocked(
         UUID userId
     ) {
         validateUserId(userId);
 
-        return BLOCKED_VALUE.equals(
+        String value =
             redisTemplate.opsForValue()
-                .get(key(userId))
-        );
+                .get(key(userId));
+
+        if (value == null) {
+            return Optional.empty();
+        }
+
+        if (BLOCKED_VALUE.equals(value)) {
+            return Optional.of(true);
+        }
+
+        if (ALLOWED_VALUE.equals(value)) {
+            return Optional.of(false);
+        }
+
+        /*
+         * 예상하지 못한 값은 인증 허용으로 해석하지 않고
+         * DB 재확인이 필요한 캐시 미스로 처리
+         */
+        return Optional.empty();
+    }
+
+    @Override
+    public void allowIfAbsent(
+        UUID userId,
+        Duration expiration
+    ) {
+        validateUserId(userId);
+        validateExpiration(expiration);
+
+        redisTemplate.opsForValue()
+            .setIfAbsent(
+                key(userId),
+                ALLOWED_VALUE,
+                expiration
+            );
     }
 
     @Override

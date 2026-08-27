@@ -113,24 +113,91 @@ class RedisAccessTokenBlockStoreTest {
     }
 
     @Test
-    @DisplayName("저장된 차단 상태를 조회한다")
-    void isBlocked_returnsStoredState() {
-        // given
+    @DisplayName("저장된 상태가 없으면 캐시 미스를 반환한다")
+    void findBlocked_returnsEmptyWhenStateDoesNotExist() {
         assertThat(
-            blockStore.isBlocked(USER_ID)
-        ).isFalse();
+            blockStore.findBlocked(USER_ID)
+        ).isEmpty();
+    }
 
+    @Test
+    @DisplayName("저장된 차단 상태를 반환한다")
+    void findBlocked_returnsBlockedState() {
+        // given
         blockStore.block(
             USER_ID,
             Duration.ofHours(3)
         );
 
         // when
-        boolean blocked =
-            blockStore.isBlocked(USER_ID);
+        var blocked =
+            blockStore.findBlocked(USER_ID);
 
         // then
-        assertThat(blocked).isTrue();
+        assertThat(blocked)
+            .contains(true);
+    }
+
+    @Test
+    @DisplayName("캐시가 없으면 허용 상태를 TTL과 함께 저장한다")
+    void allowIfAbsent_storesAllowedStateWithTtl() {
+        // given
+        Duration expiration =
+            Duration.ofHours(3);
+
+        // when
+        blockStore.allowIfAbsent(
+            USER_ID,
+            expiration
+        );
+
+        // then
+        assertThat(
+            blockStore.findBlocked(USER_ID)
+        ).contains(false);
+
+        assertThat(
+            redisTemplate.opsForValue()
+                .get(BLOCK_KEY)
+        ).isEqualTo("0");
+
+        Long ttl =
+            redisTemplate.getExpire(
+                BLOCK_KEY,
+                TimeUnit.MILLISECONDS
+            );
+
+        assertThat(ttl)
+            .isPositive()
+            .isLessThanOrEqualTo(
+                expiration.toMillis()
+            );
+    }
+
+    @Test
+    @DisplayName("허용 상태는 기존 차단 상태를 덮어쓰지 않는다")
+    void allowIfAbsent_doesNotOverwriteBlockedState() {
+        // given
+        blockStore.block(
+            USER_ID,
+            Duration.ofHours(3)
+        );
+
+        // when
+        blockStore.allowIfAbsent(
+            USER_ID,
+            Duration.ofHours(3)
+        );
+
+        // then
+        assertThat(
+            blockStore.findBlocked(USER_ID)
+        ).contains(true);
+
+        assertThat(
+            redisTemplate.opsForValue()
+                .get(BLOCK_KEY)
+        ).isEqualTo("1");
     }
 
     @Test
@@ -147,8 +214,8 @@ class RedisAccessTokenBlockStoreTest {
 
         // then
         assertThat(
-            blockStore.isBlocked(USER_ID)
-        ).isFalse();
+            blockStore.findBlocked(USER_ID)
+        ).isEmpty();
 
         assertThat(
             redisTemplate.hasKey(BLOCK_KEY)
@@ -187,5 +254,21 @@ class RedisAccessTokenBlockStoreTest {
             .hasMessage(
                 "사용자 UUID는 필수입니다."
             );
+    }
+
+    @Test
+    @DisplayName("알 수 없는 저장값은 인증 허용이 아닌 캐시 미스로 처리한다")
+    void findBlocked_returnsEmptyForUnknownValue() {
+        // given
+        redisTemplate.opsForValue()
+            .set(
+                BLOCK_KEY,
+                "unexpected"
+            );
+
+        // when & then
+        assertThat(
+            blockStore.findBlocked(USER_ID)
+        ).isEmpty();
     }
 }
