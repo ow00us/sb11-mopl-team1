@@ -17,6 +17,7 @@ import static org.mockito.Mockito.when;
 
 import com.mopl.directmessage.dto.DirectMessageCreatedEvent;
 import com.mopl.directmessage.dto.DirectMessageDto;
+import com.mopl.directmessage.dto.DirectMessageReadEvent;
 import com.mopl.directmessage.entity.ConversationParticipant;
 import com.mopl.directmessage.entity.DirectMessage;
 import com.mopl.directmessage.entity.ParticipantSlot;
@@ -550,12 +551,26 @@ class DirectMessageServiceTest {
         );
 
         // then
+        ArgumentCaptor<Instant> readAtCaptor =
+            ArgumentCaptor.forClass(Instant.class);
         verify(directMessageRepository)
             .markAsReadIfUnread(
                 eq(message.getId()),
                 eq(CONVERSATION_ID),
-                any(Instant.class)
+                readAtCaptor.capture()
             );
+
+        ArgumentCaptor<DirectMessageReadEvent> eventCaptor =
+            ArgumentCaptor.forClass(DirectMessageReadEvent.class);
+        verify(eventPublisher)
+            .publishEvent(
+                eventCaptor.capture()
+            );
+
+        Instant storedReadAt = readAtCaptor.getValue();
+        assertThat(storedReadAt.getNano() % 1_000).isZero();
+        assertThat(eventCaptor.getValue().readAt())
+            .isEqualTo(storedReadAt);
     }
 
     @Test
@@ -614,6 +629,11 @@ class DirectMessageServiceTest {
             eq(CONVERSATION_ID),
             any(Instant.class)
         );
+
+        verify(eventPublisher)
+            .publishEvent(
+                any(DirectMessageReadEvent.class)
+            );
     }
 
     @Test

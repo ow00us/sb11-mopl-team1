@@ -41,10 +41,10 @@ public class WatchingSessionSnapshot extends BaseEntity {
         this.expiresAt = expiresAt;
     }
 
-    // 만료 확인 메서드
-    public boolean isExpired(Instant now) {
-        return !now.isBefore(this.expiresAt);
+    // 지정 시각 기준으로 아직 활성인지 확인
+    // 경계 규약: expiresAt과 정확히 같은 시각은 비활성으로 본다.
+    // 이 부등호는 조회 쿼리의 `s.expiresAt > :now`와 반드시 같은 판정이어야 하므로 한쪽만 바꾸면 안 된다.
+    public boolean isActiveAt(Instant now) {
+        return now.isBefore(this.expiresAt);
     }
-
-
 }

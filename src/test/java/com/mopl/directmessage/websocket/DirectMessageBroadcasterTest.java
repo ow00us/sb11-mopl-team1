@@ -1,8 +1,12 @@
 package com.mopl.directmessage.websocket;
 
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 
 import com.mopl.directmessage.dto.DirectMessageDto;
+import com.mopl.directmessage.dto.DirectMessageReadEvent;
+import com.mopl.directmessage.dto.DirectMessageRealtimeEvent;
+import com.mopl.directmessage.dto.DirectMessageRealtimeEventType;
 import com.mopl.global.common.UserSummary;
 import java.time.Instant;
 import java.util.UUID;
@@ -49,9 +53,62 @@ class DirectMessageBroadcasterTest {
         // then
         verify(messagingTemplate)
             .convertAndSend(
-                destination,
-                message
+                eq(destination),
+                org.mockito.ArgumentMatchers.<Object>argThat(payload ->
+                    payload instanceof DirectMessageRealtimeEvent<?> event
+                        && event.type()
+                            == DirectMessageRealtimeEventType
+                                .DIRECT_MESSAGE_CREATED
+                        && event.data().equals(message)
+                )
             );
+    }
+
+    @Test
+    @DisplayName("DM 읽음 상태를 해당 대화방 구독 경로로 전송한다")
+    void broadcastRead_success() {
+        // given
+        DirectMessageReadEvent readEvent =
+            createReadEvent();
+
+        String destination =
+            "/sub/conversations/"
+                + CONVERSATION_ID
+                + "/direct-messages";
+
+        // when
+        broadcaster.broadcastRead(
+            CONVERSATION_ID,
+            readEvent
+        );
+
+        // then
+        verify(messagingTemplate)
+            .convertAndSend(
+                eq(destination),
+                org.mockito.ArgumentMatchers.<Object>argThat(payload ->
+                    payload instanceof DirectMessageRealtimeEvent<?> event
+                        && event.type()
+                            == DirectMessageRealtimeEventType
+                                .DIRECT_MESSAGE_READ
+                        && event.data().equals(readEvent)
+                )
+            );
+    }
+
+    private DirectMessageReadEvent createReadEvent() {
+        return new DirectMessageReadEvent(
+            CONVERSATION_ID,
+            UUID.fromString(
+                "22222222-2222-2222-2222-222222222222"
+            ),
+            UUID.fromString(
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            ),
+            Instant.parse(
+                "2026-08-27T01:00:00Z"
+            )
+        );
     }
 
     private DirectMessageDto createMessageDto() {

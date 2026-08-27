@@ -13,10 +13,12 @@ import com.mopl.content.entity.Content;
 import com.mopl.content.entity.ContentSource;
 import com.mopl.content.entity.ContentType;
 import com.mopl.content.repository.ContentRepository;
+import com.mopl.content.search.ContentSearchSyncEvent;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,6 +27,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -37,6 +40,9 @@ class ContentUpsertServiceTest {
 
     @Mock
     ContentInsertExecutor contentInsertExecutor;
+
+    @Mock
+    ApplicationEventPublisher eventPublisher;
 
     @InjectMocks
     ContentUpsertService contentUpsertService;
@@ -79,7 +85,7 @@ class ContentUpsertServiceTest {
         assertThat(result.getTitle()).isEqualTo("제목");
         assertThat(result.getDescription()).isEqualTo("줄거리");
         assertThat(result.getThumbnailUrl()).isEqualTo("https://thumb.jpg");
-        assertThat(result.getTags()).containsExactly("action");
+        assertThat(result.getTags()).containsExactly("Action");
     }
 
     @Test
@@ -94,7 +100,7 @@ class ContentUpsertServiceTest {
         assertThat(existing.getTitle()).isEqualTo("제목");
         assertThat(existing.getDescription()).isEqualTo("줄거리");
         assertThat(existing.getThumbnailUrl()).isEqualTo("https://thumb.jpg");
-        assertThat(existing.getTags()).containsExactly("action");
+        assertThat(existing.getTags()).containsExactly("Action");
         verify(contentInsertExecutor, never()).insert(any());
     }
 
@@ -144,13 +150,55 @@ class ContentUpsertServiceTest {
         verify(contentInsertExecutor, never()).insert(any());
     }
 
+    @Test
+    @DisplayName("새 콘텐츠를 생성하면 검색 동기화 이벤트를 발행한다")
+    void upsert_newContent_publishesSearchSyncEvent() {
+        when(contentRepository.findBySourceAndExternalId(ContentSource.TMDB, "1")).thenReturn(Optional.empty());
+        when(contentInsertExecutor.insert(any(ExternalContentDraft.class)))
+                .thenAnswer(invocation -> movie());
+
+        Content result = contentUpsertService.upsert(DRAFT).orElseThrow();
+
+        ArgumentCaptor<ContentSearchSyncEvent> captor = ArgumentCaptor.forClass(ContentSearchSyncEvent.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        assertThat(captor.getValue().contentId()).isEqualTo(result.getId());
+    }
+
+    @Test
+    @DisplayName("기존 콘텐츠를 갱신해도 검색 동기화 이벤트를 발행한다")
+    void upsert_existingContent_publishesSearchSyncEvent() {
+        Content existing = movie();
+        when(contentRepository.findBySourceAndExternalId(ContentSource.TMDB, "1")).thenReturn(Optional.of(existing));
+
+        contentUpsertService.upsert(DRAFT);
+
+        ArgumentCaptor<ContentSearchSyncEvent> captor = ArgumentCaptor.forClass(ContentSearchSyncEvent.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        assertThat(captor.getValue().contentId()).isEqualTo(existing.getId());
+    }
+
+    @Test
+    @DisplayName("이미 삭제된 콘텐츠면 검색 동기화 이벤트를 발행하지 않는다")
+    void upsert_alreadyDeletedContent_doesNotPublishSearchSyncEvent() {
+        Content deleted = movie();
+        ReflectionTestUtils.setField(deleted, "deletedAt", Instant.now());
+        when(contentRepository.findBySourceAndExternalIdIncludingDeleted(ContentSource.TMDB.name(), "1"))
+                .thenReturn(Optional.of(deleted));
+
+        contentUpsertService.upsert(DRAFT);
+
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
     private Content movie() {
-        return Content.builder()
+        Content content = Content.builder()
                 .type(ContentType.MOVIE)
                 .source(ContentSource.TMDB)
                 .externalId("1")
                 .title("기존 제목")
                 .description("기존 줄거리")
                 .build();
+        ReflectionTestUtils.setField(content, "id", UUID.randomUUID());
+        return content;
     }
 }

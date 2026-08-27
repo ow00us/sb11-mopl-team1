@@ -19,7 +19,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.common.CursorResponse;
+import com.mopl.global.common.UserSummary;
 import com.mopl.user.dto.UserListRequest;
+import com.mopl.user.dto.UserSearchRequest;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserUpdateRequest;
@@ -237,6 +239,70 @@ class UserControllerTest {
             .andExpect(jsonPath("$.sortDirection").value("ASCENDING"));
 
         verify(userService).findUsers(request);
+    }
+
+    @Test
+    @DisplayName("인증된 사용자는 이름으로 DM 대상 사용자를 검색할 수 있다")
+    void searchUsers_success() throws Exception {
+        UUID requesterId = UUID.fromString(
+            "11111111-1111-1111-1111-111111111111"
+        );
+        UUID searchedUserId = UUID.fromString(
+            "22222222-2222-2222-2222-222222222222"
+        );
+        setAuthenticatedUser(requesterId);
+
+        UserSearchRequest request = new UserSearchRequest(
+            "홍길동",
+            null,
+            null,
+            20
+        );
+        CursorResponse<UserSummary> response = CursorResponse.of(
+            List.of(new UserSummary(
+                searchedUserId,
+                "홍길동",
+                "https://example.com/profile.png"
+            )),
+            null,
+            null,
+            false,
+            1L,
+            "name",
+            "ASCENDING"
+        );
+        when(userService.searchUsers(requesterId, request))
+            .thenReturn(response);
+
+        mockMvc.perform(
+                get("/api/users/search")
+                    .param("keywordLike", "홍길동")
+                    .param("limit", "20")
+            )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data[0].userId")
+                .value(searchedUserId.toString()))
+            .andExpect(jsonPath("$.data[0].name").value("홍길동"))
+            .andExpect(jsonPath("$.data[0].email").doesNotExist())
+            .andExpect(jsonPath("$.hasNext").value(false))
+            .andExpect(jsonPath("$.totalCount").value(1));
+
+        verify(userService).searchUsers(requesterId, request);
+    }
+
+    @Test
+    @DisplayName("DM 대상 검색어가 비어 있으면 400을 반환한다")
+    void searchUsers_fail_whenKeywordIsBlank() throws Exception {
+        setAuthenticatedUser(UUID.randomUUID());
+
+        mockMvc.perform(
+                get("/api/users/search")
+                    .param("keywordLike", " ")
+                    .param("limit", "20")
+            )
+            .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(userService);
     }
 
     /**

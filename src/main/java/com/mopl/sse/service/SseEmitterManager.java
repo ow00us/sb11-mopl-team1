@@ -18,15 +18,29 @@ public class SseEmitterManager {
     private static final long TIMEOUT_MILLIS =
         30 * 60 * 1000L;
 
+    private static final int RECENT_EVENT_CAPACITY =
+        1000;
+
     private final Map<
         UUID,
         Map<UUID, SseEmitter>
         > emitters = new ConcurrentHashMap<>();
 
+    private final Map<UUID, SseRecentEventIds>
+        recentEventIdsByEmitter =
+            new ConcurrentHashMap<>();
+
     public SseEmitter subscribe(
         UUID userId
     ) {
         UUID emitterId = UUID.randomUUID();
+
+        recentEventIdsByEmitter.put(
+            emitterId,
+            new SseRecentEventIds(
+                RECENT_EVENT_CAPACITY
+            )
+        );
 
         SseEmitter emitter =
             new SseEmitter(
@@ -112,6 +126,36 @@ public class SseEmitterManager {
         );
     }
 
+    public void send(
+        UUID userId,
+        SseEmitter targetEmitter,
+        UUID eventId,
+        String eventName,
+        Object data
+    ) {
+        Map<UUID, SseEmitter> userEmitters =
+            emitters.get(userId);
+
+        if (userEmitters == null) {
+            return;
+        }
+
+        userEmitters.forEach(
+            (emitterId, emitter) -> {
+                if (emitter == targetEmitter) {
+                    sendEvent(
+                        userId,
+                        emitterId,
+                        emitter,
+                        eventId,
+                        eventName,
+                        data
+                    );
+                }
+            }
+        );
+    }
+
     @Scheduled(
         fixedDelayString =
             "${mopl.sse.heartbeat-interval-millis:20000}"
@@ -138,6 +182,17 @@ public class SseEmitterManager {
         String eventName,
         Object data
     ) {
+        SseRecentEventIds recentEventIds =
+            recentEventIdsByEmitter.get(
+                emitterId
+            );
+
+        if (recentEventIds != null
+            && !recentEventIds.markSeen(eventId)) {
+
+            return;
+        }
+
         try {
             emitter.send(
                 SseEmitter.event()
@@ -259,6 +314,10 @@ public class SseEmitterManager {
         UUID emitterId,
         SseEmitter emitter
     ) {
+        recentEventIdsByEmitter.remove(
+            emitterId
+        );
+
         emitters.computeIfPresent(
             userId,
             (id, userEmitters) -> {

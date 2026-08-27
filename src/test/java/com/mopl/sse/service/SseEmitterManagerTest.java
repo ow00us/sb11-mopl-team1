@@ -305,4 +305,91 @@ class SseEmitterManagerTest {
             );
         }
     }
+
+    @Test
+    @DisplayName("Replay 이벤트를 새로 생성한 SSE 연결에만 전송")
+    void send_targetEmitter_sendsOnlyTargetConnection()
+        throws Exception {
+
+        try (
+            MockedConstruction<SseEmitter> construction =
+                mockConstruction(SseEmitter.class)
+        ) {
+            SseEmitterManager manager =
+                new SseEmitterManager();
+
+            SseEmitter first =
+                manager.subscribe(USER_ID);
+
+            manager.subscribe(USER_ID);
+
+            SseEmitter second =
+                construction.constructed().get(1);
+
+            // when
+            manager.send(
+                USER_ID,
+                first,
+                EVENT_ID,
+                "notifications",
+                "Replay 알림"
+            );
+
+            // then
+            verify(first, times(2)).send(
+                any(SseEmitter.SseEventBuilder.class)
+            );
+
+            verify(second, times(1)).send(
+                any(SseEmitter.SseEventBuilder.class)
+            );
+        }
+    }
+
+    @Test
+    @DisplayName("Replay와 실시간 이벤트 ID가 같으면 연결별로 한 번만 전송")
+    void send_sameEventId_sendsOncePerConnection()
+        throws Exception {
+
+        try (
+            MockedConstruction<SseEmitter> construction =
+                mockConstruction(SseEmitter.class)
+        ) {
+            SseEmitterManager manager =
+                new SseEmitterManager();
+
+            SseEmitter first =
+                manager.subscribe(USER_ID);
+
+            manager.subscribe(USER_ID);
+
+            SseEmitter second =
+                construction.constructed().get(1);
+
+            manager.send(
+                USER_ID,
+                first,
+                EVENT_ID,
+                "notifications",
+                "Replay 알림"
+            );
+
+            // when
+            manager.send(
+                USER_ID,
+                EVENT_ID,
+                "notifications",
+                "실시간 알림"
+            );
+
+            // then
+            verify(first, times(2)).send(
+                any(SseEmitter.SseEventBuilder.class)
+            );
+
+            verify(second, times(2)).send(
+                any(SseEmitter.SseEventBuilder.class)
+            );
+        }
+    }
 }
