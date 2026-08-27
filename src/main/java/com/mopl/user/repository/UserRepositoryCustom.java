@@ -3,6 +3,7 @@ package com.mopl.user.repository;
 import com.mopl.user.dto.UserListRequest;
 import com.mopl.user.entity.User;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * 관리자 사용자 목록 조회에 필요한 동적 쿼리를 정의
@@ -35,4 +36,17 @@ public interface UserRepositoryCustom {
      * @return 필터에 해당하는 전체 사용자 수
      */
     long countUsers(UserListRequest request);
+
+    List<User> searchUsersByName(
+        UUID requesterId,
+        String keyword,
+        String cursorName,
+        UUID idAfter,
+        int limit
+    );
+
+    long countSearchUsersByName(
+        UUID requesterId,
+        String keyword
+    );
 }

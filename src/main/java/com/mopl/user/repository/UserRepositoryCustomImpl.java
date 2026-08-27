@@ -8,6 +8,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.TypedQuery;
 import jakarta.persistence.criteria.CriteriaBuilder;
 import jakarta.persistence.criteria.CriteriaQuery;
+import jakarta.persistence.criteria.Expression;
 import jakarta.persistence.criteria.Path;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
@@ -143,6 +144,94 @@ public class UserRepositoryCustomImpl implements UserRepositoryCustom {
         return entityManager
             .createQuery(countQuery)
             .getSingleResult();
+    }
+
+    @Override
+    public List<User> searchUsersByName(
+        UUID requesterId,
+        String keyword,
+        String cursorName,
+        UUID idAfter,
+        int limit
+    ) {
+        validateCursorPair(cursorName, idAfter);
+
+        CriteriaBuilder builder = entityManager.getCriteriaBuilder();
+        CriteriaQuery<User> query = builder.createQuery(User.class);
+        Root<User> user = query.from(User.class);
+        Expression<String> normalizedName = builder.lower(user.get("name"));
+        List<Predicate> predicates = buildSearchPredicates(
+            builder,
+            user,
+            requesterId,
+            keyword
+        );
+
+        if (cursorName != null) {
+            predicates.add(
+                builder.or(
+                    builder.greaterThan(normalizedName, cursorName),
+                    builder.and(
+                        builder.equal(normalizedName, cursorName),
+                        builder.greaterThan(user.<UUID>get("id"), idAfter)
+                    )
+                )
+            );
+        }
+
+        query.select(user)
+            .where(predicates.toArray(Predicate[]::new))
+            .orderBy(
+                builder.asc(normalizedName),
+                builder.asc(user.get("id"))
+            );
+
+        return entityManager.createQuery(query)
+            .setMaxResults(limit + 1)
+            .getResultList();
+    }
+
+    @Override
+    public long countSearchUsersByName(
+        UUID requesterId,
+        String keyword
+    ) {
+        CriteriaBuilder builder = entityManager.getCriteriaBuilder();
+        CriteriaQuery<Long> query = builder.createQuery(Long.class);
+        Root<User> user = query.from(User.class);
+
+        query.select(builder.count(user))
+            .where(
+                buildSearchPredicates(
+                    builder,
+                    user,
+                    requesterId,
+                    keyword
+                ).toArray(Predicate[]::new)
+            );
+
+        return entityManager.createQuery(query).getSingleResult();
+    }
+
+    private List<Predicate> buildSearchPredicates(
+        CriteriaBuilder builder,
+        Root<User> user,
+        UUID requesterId,
+        String keyword
+    ) {
+        String escapedKeyword = escapeLikePattern(
+            keyword.strip().toLowerCase(Locale.ROOT)
+        );
+
+        return new ArrayList<>(List.of(
+            builder.notEqual(user.get("id"), requesterId),
+            builder.isFalse(user.get("locked")),
+            builder.like(
+                builder.lower(user.get("name")),
+                "%" + escapedKeyword + "%",
+                '\\'
+            )
+        ));
     }
 
     /**
@@ -312,6 +401,17 @@ public class UserRepositoryCustomImpl implements UserRepositoryCustom {
         boolean hasIdAfter = request.idAfter() != null;
 
         if (hasCursor != hasIdAfter) {
+            throw new IllegalArgumentException(
+                "cursor와 idAfter는 함께 전달해야 합니다."
+            );
+        }
+    }
+
+    private void validateCursorPair(
+        String cursorName,
+        UUID idAfter
+    ) {
+        if ((cursorName == null) != (idAfter == null)) {
             throw new IllegalArgumentException(
                 "cursor와 idAfter는 함께 전달해야 합니다."
             );
