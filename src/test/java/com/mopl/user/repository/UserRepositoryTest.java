@@ -169,5 +169,9 @@ class UserRepositoryTest {
                 anonymizedEmail
             )
         ).isEmpty();
+
+        assertThat(
+            userRepository.findByIdForUpdate(userId)
+        ).isEmpty();
     }
 }
