@@ -463,6 +463,14 @@ class ContentRepositoryTest {
         assertThat(dtos).allSatisfy(dto -> assertThat(dto.tags()).containsExactlyInAnyOrder("action", "sf"));
     }
 
+    @Test
+    @DisplayName("findAllWithTagsByIdIn에 빈 컬렉션을 넘기면 빈 리스트를 반환한다")
+    void findAllWithTagsByIdIn_emptyIds_returnsEmptyList() {
+        List<Content> result = contentRepository.findAllWithTagsByIdIn(List.of());
+
+        assertThat(result).isEmpty();
+    }
+
     private UUID insertContent(
             String title, BigDecimal averageRating, long watcherCount, Instant createdAt, String type) {
         return insertContent(title, averageRating, watcherCount, 0, createdAt, type);
