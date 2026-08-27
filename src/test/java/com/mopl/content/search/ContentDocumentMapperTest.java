@@ -39,7 +39,8 @@ class ContentDocumentMapperTest {
         assertThat(document.getTitle()).isEqualTo(content.getTitle());
         assertThat(document.getDescription()).isEqualTo(content.getDescription());
         assertThat(document.getType()).isEqualTo(content.getType().name());
-        assertThat(document.getTags()).containsExactlyInAnyOrderElementsOf(content.getTags());
+        assertThat(document.getTags()).containsExactlyInAnyOrderElementsOf(content.getNormalizedTags());
+        assertThat(document.getDisplayTags()).containsExactlyInAnyOrderElementsOf(content.getTags());
         assertThat(document.getAverageRating()).isEqualTo(content.getAverageRating().doubleValue());
         assertThat(document.getCreatedAt())
                 .isEqualTo(LocalDateTime.ofInstant(content.getCreatedAt(), ZoneOffset.UTC));
@@ -71,7 +72,10 @@ class ContentDocumentMapperTest {
         assertThat(fields.get("type")).isEqualTo(content.getType().name());
         @SuppressWarnings("unchecked")
         java.util.List<String> tags = (java.util.List<String>) fields.get("tags");
-        assertThat(tags).containsExactlyInAnyOrderElementsOf(content.getTags());
+        assertThat(tags).containsExactlyInAnyOrderElementsOf(content.getNormalizedTags());
+        @SuppressWarnings("unchecked")
+        java.util.List<String> displayTags = (java.util.List<String>) fields.get("displayTags");
+        assertThat(displayTags).containsExactlyInAnyOrderElementsOf(content.getTags());
         assertThat(fields.get("averageRating")).isEqualTo(content.getAverageRating().doubleValue());
         assertThat(fields.get("reviewCount")).isEqualTo(content.getReviewCount().intValue());
         assertThat(fields.get("thumbnailUrl")).isEqualTo(content.getThumbnailUrl());
@@ -115,8 +119,8 @@ class ContentDocumentMapperTest {
                 .description("설명")
                 .thumbnailUrl("https://example.com/thumb.jpg")
                 .build();
-        content.addTag("action");
-        content.addTag("sf");
+        content.addTag("Action");
+        content.addTag("SF");
         ReflectionTestUtils.setField(content, "id", UUID.randomUUID());
         ReflectionTestUtils.setField(content, "createdAt", Instant.now());
         ReflectionTestUtils.setField(content, "averageRating", new BigDecimal("4.5"));

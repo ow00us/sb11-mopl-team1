@@ -24,6 +24,7 @@ class ContentDtoTest {
                 .description("설명")
                 .type(ContentType.TV_SERIES.name())
                 .tags(List.of("action", "sf"))
+                .displayTags(List.of("Action", "SF"))
                 .averageRating(3.5)
                 .reviewCount(3)
                 .watcherCount(7)
@@ -38,7 +39,7 @@ class ContentDtoTest {
         assertThat(dto.title()).isEqualTo("제목");
         assertThat(dto.description()).isEqualTo("설명");
         assertThat(dto.thumbnailUrl()).isEqualTo("https://example.com/thumb.jpg");
-        assertThat(dto.tags()).containsExactlyInAnyOrder("action", "sf");
+        assertThat(dto.tags()).containsExactlyInAnyOrder("Action", "SF");
         assertThat(dto.averageRating()).isEqualByComparingTo("3.5");
         assertThat(dto.averageRating().scale()).isEqualTo(1);
         assertThat(dto.reviewCount()).isEqualTo(3L);
@@ -66,6 +67,7 @@ class ContentDtoTest {
                 .description("설명")
                 .type(ContentType.MOVIE.name())
                 .tags(List.of())
+                .displayTags(List.of())
                 .averageRating(0.0)
                 .reviewCount(0)
                 .watcherCount(0)

@@ -455,7 +455,7 @@ class ContentServiceTest {
         contentService.update(
                 CONTENT_ID, new ContentUpdateRequest(null, null, List.of("Action", " SF ")), null);
 
-        assertThat(content.getTags()).containsExactlyInAnyOrder("action", "sf");
+        assertThat(content.getTags()).containsExactlyInAnyOrder("Action", "SF");
     }
 
     @Test
@@ -546,6 +546,7 @@ class ContentServiceTest {
                 .description("설명")
                 .type(ContentType.MOVIE.name())
                 .tags(List.of())
+                .displayTags(List.of())
                 .averageRating(0.0)
                 .watcherCount((int) watcherCount)
                 .reviewCount((int) reviewCount)
