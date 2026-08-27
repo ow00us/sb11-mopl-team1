@@ -3,8 +3,10 @@ package com.mopl.user.service;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.common.CursorResponse;
+import com.mopl.global.common.UserSummary;
 import com.mopl.global.util.CursorUtils;
 import com.mopl.user.dto.UserListRequest;
+import com.mopl.user.dto.UserSearchRequest;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserUpdateRequest;
@@ -219,6 +221,65 @@ public class UserService {
             totalCount,
             request.sortBy(),
             request.sortDirection()
+        );
+    }
+
+    public CursorResponse<UserSummary> searchUsers(
+        UUID requesterId,
+        UserSearchRequest request
+    ) {
+        if ((request.cursor() == null) != (request.idAfter() == null)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        String cursorName = null;
+        if (request.cursor() != null) {
+            try {
+                cursorName = CursorUtils.decode(request.cursor());
+            } catch (IllegalArgumentException exception) {
+                throw new BusinessException(ErrorCode.INVALID_INPUT);
+            }
+        }
+
+        String keyword = request.keywordLike().strip();
+        List<User> rows = userRepository.searchUsersByName(
+            requesterId,
+            keyword,
+            cursorName,
+            request.idAfter(),
+            request.limit()
+        );
+        boolean hasNext = rows.size() > request.limit();
+        List<User> page = hasNext
+            ? rows.subList(0, request.limit())
+            : rows;
+
+        String nextCursor = null;
+        UUID nextIdAfter = null;
+        if (hasNext && !page.isEmpty()) {
+            User last = page.get(page.size() - 1);
+            nextCursor = CursorUtils.encode(
+                last.getName().toLowerCase(Locale.ROOT)
+            );
+            nextIdAfter = last.getId();
+        }
+
+        List<UserSummary> data = page.stream()
+            .map(user -> new UserSummary(
+                user.getId(),
+                user.getName(),
+                user.getProfileImageUrl()
+            ))
+            .toList();
+
+        return CursorResponse.of(
+            data,
+            nextCursor,
+            nextIdAfter,
+            hasNext,
+            userRepository.countSearchUsersByName(requesterId, keyword),
+            "name",
+            "ASCENDING"
         );
     }
 

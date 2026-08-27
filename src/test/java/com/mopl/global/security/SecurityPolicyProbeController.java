@@ -102,6 +102,11 @@ class SecurityPolicyProbeController {
     void findUsers() {
     }
 
+    @GetMapping("/api/users/search")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void searchUsers() {
+    }
+
     @GetMapping("/api/security-policy/protected")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void protectedApi() {
