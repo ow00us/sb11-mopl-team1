@@ -25,5 +25,7 @@ public interface DirectMessageReplayProjection {
 
     String getReceiverProfileImageUrl();
 
+    Instant getReadAt();
+
     String getContent();
 }

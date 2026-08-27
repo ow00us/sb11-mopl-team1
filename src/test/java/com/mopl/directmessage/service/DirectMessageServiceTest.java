@@ -17,6 +17,7 @@ import static org.mockito.Mockito.when;
 
 import com.mopl.directmessage.dto.DirectMessageCreatedEvent;
 import com.mopl.directmessage.dto.DirectMessageDto;
+import com.mopl.directmessage.dto.DirectMessageReadEvent;
 import com.mopl.directmessage.entity.ConversationParticipant;
 import com.mopl.directmessage.entity.DirectMessage;
 import com.mopl.directmessage.entity.ParticipantSlot;
@@ -556,6 +557,11 @@ class DirectMessageServiceTest {
                 eq(CONVERSATION_ID),
                 any(Instant.class)
             );
+
+        verify(eventPublisher)
+            .publishEvent(
+                any(DirectMessageReadEvent.class)
+            );
     }
 
     @Test
@@ -614,6 +620,11 @@ class DirectMessageServiceTest {
             eq(CONVERSATION_ID),
             any(Instant.class)
         );
+
+        verify(eventPublisher)
+            .publishEvent(
+                any(DirectMessageReadEvent.class)
+            );
     }
 
     @Test
