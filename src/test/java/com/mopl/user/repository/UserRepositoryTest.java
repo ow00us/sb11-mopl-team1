@@ -174,4 +174,80 @@ class UserRepositoryTest {
             userRepository.findByIdForUpdate(userId)
         ).isEmpty();
     }
+
+    @Test
+    @DisplayName("Access Token 인증은 활성 상태이며 잠기지 않은 사용자에게만 허용한다")
+    void accessTokenAuthenticationQuery_allowsOnlyActiveUnlockedUser() {
+        // given
+        User activeUser = User.builder()
+            .email("active-auth@example.com")
+            .passwordHash("encoded-password")
+            .name("활성 사용자")
+            .role(UserRole.USER)
+            .locked(false)
+            .build();
+
+        User lockedUser = User.builder()
+            .email("locked-auth@example.com")
+            .passwordHash("encoded-password")
+            .name("잠긴 사용자")
+            .role(UserRole.USER)
+            .locked(true)
+            .build();
+
+        User deletedUser = User.builder()
+            .email("deleted-auth@example.com")
+            .passwordHash("encoded-password")
+            .name("탈퇴 예정 사용자")
+            .role(UserRole.USER)
+            .locked(false)
+            .build();
+
+        entityManager.persist(activeUser);
+        entityManager.persist(lockedUser);
+        entityManager.persist(deletedUser);
+        entityManager.flush();
+
+        UUID activeUserId = activeUser.getId();
+        UUID lockedUserId = lockedUser.getId();
+        UUID deletedUserId = deletedUser.getId();
+
+        deletedUser.withdraw(
+            Instant.parse(
+                "2026-08-27T00:00:00Z"
+            )
+        );
+
+        entityManager.flush();
+        entityManager.clear();
+
+        // when & then
+        assertThat(
+            userRepository
+                .existsByIdAndLockedFalseAndDeletedAtIsNull(
+                    activeUserId
+                )
+        ).isTrue();
+
+        assertThat(
+            userRepository
+                .existsByIdAndLockedFalseAndDeletedAtIsNull(
+                    lockedUserId
+                )
+        ).isFalse();
+
+        assertThat(
+            userRepository
+                .existsByIdAndLockedFalseAndDeletedAtIsNull(
+                    deletedUserId
+                )
+        ).isFalse();
+
+        assertThat(
+            userRepository
+                .existsByIdAndLockedFalseAndDeletedAtIsNull(
+                    UUID.randomUUID()
+                )
+        ).isFalse();
+    }
 }

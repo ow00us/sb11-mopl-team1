@@ -50,6 +50,20 @@ public interface UserRepository extends JpaRepository<User, UUID>, UserRepositor
     );
 
     /**
+     * Access Token 인증을 계속 허용할 수 있는 사용자 여부를 확인
+     *
+     * <p>탈퇴했거나 관리자가 잠근 사용자는 JWT의 서명과 만료 시각이
+     * 유효하더라도 기존 Access Token으로 인증할 수 없습니다.</p>
+     *
+     * @param userId Access Token의 subject에 저장된 사용자 UUID
+     * @return 탈퇴하지 않았고 잠기지 않은 사용자이면 true
+     */
+    @Transactional(readOnly = true)
+    boolean existsByIdAndLockedFalseAndDeletedAtIsNull(
+        UUID userId
+    );
+
+    /**
      * 탈퇴하지 않은 사용자의 존재 여부를 확인
      */
     @Transactional(readOnly = true)
