@@ -170,4 +170,51 @@ public interface DirectMessageRepository
         @Param("requesterId")
         UUID requesterId
     );
+
+    @Query("""
+        SELECT
+            message.id AS id,
+            message.conversationId AS conversationId,
+            message.createdAt AS createdAt,
+            message.messageSequence AS messageSequence,
+            sender.id AS senderId,
+            sender.name AS senderName,
+            sender.profileImageUrl AS senderProfileImageUrl,
+            receiver.id AS receiverId,
+            receiver.name AS receiverName,
+            receiver.profileImageUrl AS receiverProfileImageUrl,
+            message.content AS content
+        FROM DirectMessage message,
+             ConversationParticipant participant,
+             User sender,
+             User receiver
+        WHERE participant.conversationId =
+                message.conversationId
+            AND participant.userId = :receiverId
+            AND message.senderId <> :receiverId
+            AND sender.id = message.senderId
+            AND receiver.id = :receiverId
+            AND (
+                message.createdAt > :cursor
+                OR (
+                    message.createdAt = :cursor
+                    AND message.id > :idAfter
+                )
+            )
+        ORDER BY message.createdAt ASC,
+                 message.id ASC
+        """)
+    List<DirectMessageReplayProjection>
+        findAllReceivedForReplay(
+            @Param("receiverId")
+            UUID receiverId,
+
+            @Param("cursor")
+            Instant cursor,
+
+            @Param("idAfter")
+            UUID idAfter,
+
+            Pageable pageable
+        );
 }

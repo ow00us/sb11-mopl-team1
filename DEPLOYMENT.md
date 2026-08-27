@@ -120,6 +120,7 @@ S3 접근에는 자격 증명을 주입하지 않습니다. 기본 자격 증명
 
 - `MAIL_HOST`, `MAIL_PORT` — 기본 문서의 `localhost:1025`는 로컬 Mailpit 주소입니다. 그대로 두면 비밀번호 초기화 메일이 조용히 실패하고 전체 health도 계속 `DOWN`입니다.
 - `IMAGE_STORAGE_BUCKET`, `IMAGE_STORAGE_PUBLIC_BASE_URL` — `IMAGE_STORAGE_ENABLED`가 `prod`에서 `true`가 기본이므로 이 둘이 필요합니다. 비어 있으면 기동이 실패합니다. 켜 두고 비워 두면 업로드 시점에야 드러나는데, 그때는 이미 사용자가 파일을 고른 뒤입니다.
+- `PASSWORD_RESET_MAIL_FROM`, `OAUTH2_LOCAL_CREDENTIAL_MAIL_FROM` — 기본값 `no-reply@mopl.local`은 실제 도메인이 아닙니다. SES는 인증되지 않은 발신 주소를 거부하므로, 기동은 성공하고 메일만 조용히 실패합니다. 비밀번호 초기화와 OAuth 이메일 인증이 둘 다 막히는데 그 사실은 사용자 신고로만 드러납니다.
 
 ### 배포 전에 준비할 Kafka 토픽
 
@@ -545,7 +546,7 @@ curl --fail http://localhost:8080/actuator/health
 
 배포 서버는 소스를 받아 다시 빌드하지 않습니다. CI가 검증한 commit과 대응하는 이미지를 그대로 내려받습니다. 서버에서 빌드하면 CI가 통과시킨 것과 실제로 도는 것이 같다는 보장이 없습니다.
 
-`main` push와 `main` 브랜치의 수동 재실행에서만 게시합니다. PR이나 다른 브랜치의 수동 실행에서는 운영 태그를 만들지 않습니다. 검증되지 않은 커밋의 태그가 레지스트리에 남거나 다른 브랜치가 `main` 태그를 덮어쓰면 배포 대상을 고를 때 무엇이 검증된 것인지 구분할 수 없습니다.
+`main`과 `develop` push, 그리고 두 브랜치의 수동 재실행에서만 게시합니다. PR이나 다른 브랜치의 수동 실행에서는 태그를 만들지 않습니다. `main`은 production용 역할을, `develop`은 production SSM 권한이 없는 staging 전용 역할을 맡습니다. 검증되지 않은 커밋의 태그가 레지스트리에 남거나 staging 코드가 production 권한을 얻지 않도록 게시 경계를 분리합니다.
 
 게시는 `build`와 `Container smoke`가 모두 통과한 뒤에 실행됩니다.
 
@@ -554,9 +555,10 @@ curl --fail http://localhost:8080/actuator/health
 | 태그 | 성질 | 용도 |
 | --- | --- | --- |
 | `<commit SHA>` | 한 번 붙으면 다른 이미지를 가리키지 않습니다 | 배포와 rollback의 기준 |
-| `main` | 매 배포마다 다른 이미지를 가리킵니다 | 사람이 최신을 확인하는 용도 |
+| `main` | main 게시마다 다른 이미지를 가리킵니다 | production 최신 확인용 |
+| `develop` | develop 게시마다 다른 이미지를 가리킵니다 | staging 최신 확인용 |
 
-**배포와 rollback은 digest 또는 commit SHA 태그를 씁니다.** `main`만 쓰면 되돌릴 대상을 지목할 수 없습니다. 게시 결과의 태그와 digest는 워크플로 실행 요약에 남으므로 실행 로그를 뒤지지 않고 찾을 수 있습니다.
+**배포와 rollback은 digest 또는 commit SHA 태그를 씁니다.** `main`이나 `develop` 이동 태그만 쓰면 되돌릴 대상을 지목할 수 없습니다. 게시 결과의 태그와 digest는 워크플로 실행 요약에 남으므로 실행 로그를 뒤지지 않고 찾을 수 있습니다.
 
 ### 자격 증명
 
@@ -569,8 +571,9 @@ curl --fail http://localhost:8080/actuator/health
 | `ECR_REPOSITORY` | ECR repository 이름 |
 | `AWS_REGION` | repository가 있는 리전 |
 | `AWS_DEPLOY_ROLE_ARN` | Actions가 OIDC로 맡을 IAM 역할 ARN |
+| `AWS_STAGING_PUBLISH_ROLE_ARN` | develop 게시가 맡을 staging 전용 IAM 역할 ARN. production SSM 권한을 포함하지 않습니다 |
 
-**`ECR_REPOSITORY`가 비어 있으면 게시 job을 건너뜁니다.** AWS 리소스와 OIDC 역할은 #348이 만들므로, 그 전까지 `main` push마다 실패로 남기지 않기 위한 조건입니다. #348이 끝나고 변수를 채우면 그때부터 게시가 시작됩니다.
+**`ECR_REPOSITORY`가 비어 있으면 게시 job을 건너뜁니다.** develop은 `AWS_STAGING_PUBLISH_ROLE_ARN`도 비어 있으면 건너뜁니다. staging 역할은 `refs/heads/develop`만 신뢰하고 ECR 게시 권한만 가져야 하며, 기존 production 역할에 develop 신뢰를 추가하지 않습니다.
 
 ### 게시 후 확인
 
@@ -765,6 +768,16 @@ docker compose -f docker-compose.prod.yml --env-file /etc/mopl/prod.env up -d
 
 네트워크는 역할별로 나눕니다. `edge`는 Caddy와 Gateway, `app`은 Gateway와 백엔드, `data`는 백엔드와 데이터 서비스입니다. Gateway가 데이터 서비스에 닿을 이유가 없고 Caddy가 백엔드에 직접 닿을 이유도 없습니다.
 
+### 백엔드 두 인스턴스로 보내기
+
+`backend-a`와 `backend-b`는 `app` 네트워크에서 **`backend`라는 별칭을 공유**합니다. Docker 내장 DNS가 이 이름 하나에 두 컨테이너 주소를 모두 돌려줍니다.
+
+Gateway의 Nginx는 `BACKEND_UPSTREAM=http://backend:8080`으로 요청 시점마다 다시 조회하므로, 인스턴스를 새로 만들어 주소가 바뀌어도 재시작 없이 따라갑니다.
+
+별칭이 없으면 인스턴스 하나를 직접 가리켜야 합니다. 나머지 하나는 요청을 받지 못하고, 가리킨 쪽이 내려가면 전체가 `502`입니다. 배포 중 한 인스턴스씩 교체하는 순서도 의미가 없어집니다.
+
+`BACKEND_UPSTREAM`은 Compose가 명시합니다. 프론트엔드 이미지의 기본값에 기대면, 이미지가 바뀔 때 기본값이 달라져도 배포가 조용히 틀어집니다.
+
 ### 백엔드 두 인스턴스
 
 A와 B는 같은 이미지와 **완전히 같은 환경 변수**를 받습니다. 다른 것은 이름뿐입니다. YAML 앵커로 한 곳에 정의하고 양쪽이 참조하므로 설정이 갈릴 수 없습니다. 갈리면 두 인스턴스가 서로 다르게 동작하고, 그 차이는 요청이 어느 쪽으로 갔는지에 따라 간헐적으로만 드러납니다.
@@ -810,9 +823,196 @@ Kafka에 볼륨을 두는 이유는 컨테이너를 다시 만들 때 토픽과 
 
 ```bash
 sudo install -o deploy -g deploy -m 600 /dev/null /etc/mopl/prod.env
+sudo install -o deploy -g deploy -m 600 /dev/null /etc/mopl/staging.env
 ```
 
+production 서버는 `prod.env`, staging 서버는 `staging.env`를 사용합니다. 두 파일을 같은
+서버에서 함께 쓰는 구성이 아니라, 같은 배포 스크립트가 대상 환경에 맞는 파일을 고르는
+계약입니다.
+
 Compose가 `MOPL_DOMAIN` 하나에서 CORS origin, WebSocket origin, OAuth Callback URI를 모두 만듭니다. 도메인을 바꿀 때 한 곳만 고치면 되고, 값들이 서로 어긋날 수 없습니다. 각 Provider Console에 등록한 Callback URI가 이 도메인과 같아야 합니다.
+
+## 배포와 rollback
+
+배포는 자동으로 돌지 않습니다. `Deploy` 워크플로를 사람이 실행합니다. `main` push마다 운영에 나가면 되돌릴 판단을 할 사람이 없는 시간에도 배포가 일어납니다.
+
+| 산출물 | 하는 일 |
+| --- | --- |
+| `.github/workflows/deploy.yml` | 승인 경계, 마이그레이션 확인, 서버 호출 |
+| `deploy/deploy.sh` | 서버에서 이미지를 교체하고 실패하면 되돌립니다 |
+| `deploy/check-destructive-migration.sh` | 되돌릴 수 없는 스키마 변경을 배포 전에 막습니다 |
+| `deploy/test-deploy.sh` | 성공·실패·rollback 경로 검증 |
+
+서버의 배포 스크립트는 환경을 명시해서 실행합니다.
+
+```bash
+bash deploy/deploy.sh --environment production --backend-image <digest-or-sha>
+bash deploy/deploy.sh --environment staging --backend-image <digest-or-sha>
+```
+
+`--environment production`은 `/etc/mopl/prod.env`, `--environment staging`은
+`/etc/mopl/staging.env`를 선택합니다. 기본값은 기존 운영 호출과의 호환을 위해
+`production`입니다. 배포 기록에는 선택한 환경도 함께 남습니다.
+
+### 실행
+
+Actions 탭의 `Deploy` 워크플로를 실행합니다.
+
+| 입력 | 설명 |
+| --- | --- |
+| `target_environment` | `production` 또는 `staging`. 기본값은 `production`입니다 |
+| `backend_image` | digest 또는 commit SHA 태그 |
+| `frontend_image` | 비우면 지금 것을 그대로 둡니다 |
+| `allow_destructive_migration` | 아래 "되돌릴 수 없는 변경" 참고 |
+
+**이동 태그는 거부됩니다.** `main`, `develop`, `latest`는 나중에 다른 이미지를 가리키므로, 무엇이 배포됐는지 지목할 수 없고 되돌릴 대상도 정해지지 않습니다.
+
+선택한 값과 같은 이름의 GitHub environment를 씁니다. `production`과 `staging`의 승인자,
+대상 브랜치, AWS 역할, EC2 instance ID, 도메인은 저장소 설정에서 분리합니다. 같은 환경에
+배포가 겹치지 않도록 environment별 concurrency를 걸었고, 진행 중인 배포를 취소하지
+않습니다. 배포 도중 취소는 절반만 교체된 상태를 남깁니다.
+
+### 교체 순서
+
+```
+A 교체 → A health 확인 → B 교체 → B health 확인 → gateway
+```
+
+백엔드를 한 번에 둘 다 바꾸지 않습니다. Flyway는 애플리케이션 기동 시점에 돌므로 마이그레이션은 **A가 적용**하고 B는 이미 적용된 스키마 위에서 뜹니다.
+
+A가 health를 통과하지 못하면 **B는 건드리지 않습니다.** B가 이전 이미지로 계속 요청을 받습니다.
+
+교체 전에 `docker compose config`와 이미지 pull을 먼저 확인합니다. 설정이 깨진 채로 컨테이너를 교체하면 멀쩡히 돌던 것까지 내려갑니다.
+
+### health 판정
+
+| 대상 | 쓰는 곳 | 이유 |
+| --- | --- | --- |
+| `/actuator/health/liveness` | 컨테이너 재시작 조건 | 프로세스가 살아 있는지만 봅니다 |
+| `/actuator/health/readiness` | 배포 성공 판정 | 요청을 받을 준비가 됐는지가 교체 기준입니다 |
+| `/actuator/health` | 참고 기록 | DB·Kafka·SMTP까지 포함합니다 |
+
+전체 health를 재시작 조건으로 두면, 프로세스를 다시 띄운다고 풀리지 않는 상태에서 재시작만 반복합니다. 배포 판정에도 쓰지 않습니다 — 외부 의존 하나가 내려간 것과 새 이미지가 잘못된 것은 다른 문제입니다. 전체 health가 `UP`이 아니면 기록만 남기고 진행합니다.
+
+기본 대기 시간은 180초입니다. `HEALTH_TIMEOUT`으로 조정합니다.
+
+### rollback
+
+health가 시간 안에 통과하지 않으면 환경 파일을 이전 이미지로 되돌리고 두 인스턴스를 다시 띄운 뒤, 복구된 상태의 health까지 확인합니다.
+
+되돌릴 지점은 새 값을 쓰기 **전에** 기록합니다. 실패한 뒤에 무엇으로 돌아가야 하는지 찾기 시작하면 늦습니다.
+
+**이 rollback은 이미지와 런타임 설정까지입니다. 이미 적용된 마이그레이션은 되돌리지 않습니다.**
+
+### 되돌릴 수 없는 변경
+
+이미지를 되돌려도 스키마는 되돌아가지 않습니다. 컬럼을 지우거나 이름을 바꾸는 마이그레이션이 섞이면, 이전 코드가 없어진 컬럼을 찾게 되어 되돌린 뒤에도 고장난 상태 그대로입니다.
+
+배포 전에 확인해 막습니다.
+
+```bash
+bash deploy/check-destructive-migration.sh <이전_commit> <새_commit>
+```
+
+`DROP TABLE`, `DROP COLUMN`, `DROP CONSTRAINT`, `RENAME`, 컬럼 타입 변경, `SET NOT NULL`, `TRUNCATE`를 찾습니다. `ADD COLUMN`, `CREATE TABLE`, `CREATE INDEX`는 막지 않습니다 — 이전 코드는 새로 생긴 것을 모르므로 그대로 동작합니다.
+
+이전 배포 commit을 찾을 수 없으면 통과가 아니라 **실패**로 끝냅니다. 모르는 것을 괜찮다고 답하면 확인 절차가 있으나 마나입니다. 워크플로가 `fetch-depth: 0`으로 checkout하는 이유입니다.
+
+걸렸다면 보통 두 번으로 나눕니다.
+
+1. 새 코드가 옛 컬럼 없이도 동작하도록 배포합니다
+2. 그 배포가 안정된 뒤에 컬럼을 지우는 마이그레이션을 배포합니다
+
+나눌 수 없다고 판단했다면 `allow_destructive_migration`을 켭니다. 그 경우 실패 시 복구는 수동입니다.
+
+### 배포 기록
+
+서버의 `/etc/mopl/deploy-state.env`에 남습니다. 워크플로 실행 요약에도 같은 내용이 붙습니다.
+
+| 항목 | 내용 |
+| --- | --- |
+| `DEPLOY_RESULT` | `succeeded` 또는 `failed` |
+| `DEPLOY_COMMIT` | 배포한 commit |
+| `DEPLOYED_BACKEND_IMAGE` | 배포한 이미지 |
+| `PREVIOUS_BACKEND_IMAGE` | 되돌릴 대상 |
+| `STARTED_AT`, `FINISHED_AT` | UTC |
+| `DETAIL` | 실패 사유 |
+
+다음 배포는 이 파일의 `DEPLOY_COMMIT`을 읽어 마이그레이션을 비교합니다.
+
+이 파일은 `bootstrap.sh`가 미리 만듭니다. `/etc/mopl`은 group에 쓰기 권한이 없어 `deploy`가 새 파일을 만들 수 없고, 파일이 있으면 내용만 바꿀 수 있습니다. 배포 스크립트에 `sudo`를 주지 않기 위한 것입니다.
+
+### GitHub Actions 자격 증명
+
+장기 자격 증명을 저장소에 두지 않습니다. OIDC로 IAM 역할을 맡습니다.
+
+역할의 신뢰 정책은 스크립트로 만듭니다.
+
+```bash
+APPLY=true bash deploy/aws/github-oidc-role.sh
+```
+
+계정 ID와 저장소 ID를 파일에 적어 두지 않고 실행 시점에 조회합니다. 적어 두면 다른 계정에서 그대로 쓸 수 없고, 틀린 값을 넣어도 적용할 때까지 드러나지 않습니다.
+
+백엔드와 프론트엔드가 같은 역할을 씁니다. 저장소마다 역할을 따로 두면 ECR 권한과 신뢰 조건이 두 벌이 되고, 한쪽만 고쳐 둔 채로 다른 쪽이 조용히 틀어집니다. 나눠야 한다면 인자로 저장소를 주고 `ROLE_NAME`을 바꿔 실행합니다.
+
+```bash
+ROLE_NAME=sb11-mopl-team1-fe-github-actions   bash deploy/aws/github-oidc-role.sh ow00us/sb11-mopl-team1-fe
+```
+
+한 역할을 함께 쓰면 프론트엔드 워크플로도 백엔드 ECR에 밀어 넣을 수 있습니다. 두 저장소를 같은 사람들이 관리하는 동안은 그 범위를 받아들이고, 관리 주체가 갈리면 그때 나눕니다.
+
+GitHub은 OIDC subject를 두 형태로 낼 수 있습니다.
+
+```
+repo:OWNER/REPO:ref:refs/heads/main
+repo:OWNER@OWNER_ID/REPO@REPO_ID:ref:refs/heads/main
+```
+
+어느 쪽이 오는지는 저장소 설정에 달려 있습니다. 한쪽만 넣어 두면 다른 쪽이 왔을 때 `sts:AssumeRoleWithWebIdentity`가 거부되고, 그 사실은 배포가 처음 돌 때에야 드러납니다. 스크립트는 둘 다 허용합니다.
+
+지금 저장소가 어느 형식을 쓰는지는 이렇게 확인합니다.
+
+```bash
+gh api repos/ow00us/sb11-mopl-team1/actions/oidc/customization/sub --jq .sub_claim_prefix
+```
+
+### 서버에 명령을 보내는 방법
+
+SSH로 붙지 않고 **AWS Systems Manager**로 명령을 보냅니다.
+
+SSH를 쓰려면 22번을 GitHub 러너에게 열어야 하는데, 러너 주소는 고정되지 않아 사실상 넓게 여는 것이 됩니다. 관리 경로를 한 주소로 좁혀 둔 의미가 없어집니다. SSM은 인바운드 포트를 하나도 열지 않고, **저장소에 개인 키를 두지 않아도 됩니다.**
+
+필요한 것은 저장소 변수 하나뿐입니다. Secret이 아닙니다.
+
+| 변수 | 값 |
+| --- | --- |
+| `DEPLOY_INSTANCE_ID` | 배포 서버의 EC2 인스턴스 ID |
+
+워크플로는 이미 OIDC로 맡은 역할로 SSM을 호출합니다. 그 역할의 `ssm-deploy` 정책은 이 인스턴스와 `AWS-RunShellScript` 문서로만 범위를 좁혀 두었습니다.
+
+배포 스크립트는 서버에 있는 사본이 아니라 **이번 commit의 것**을 보내 실행합니다. 서버 사본은 언제 갱신됐는지 알 수 없어, 배포되는 코드와 배포하는 절차가 어긋납니다.
+
+SSM은 명령을 root로 실행합니다. 배포 스크립트는 `runuser`로 `deploy` 사용자에게 내려 돌립니다. root로 두면 `sed -i`가 만드는 새 파일이 root 소유가 되어, 다음 배포에서 `deploy`가 환경 파일을 고치지 못합니다.
+
+### 검증
+
+실제 서버 없이 성공·실패·rollback 경로를 확인합니다.
+
+```bash
+bash deploy/test-deploy.sh
+```
+
+`docker`를 가짜로 바꿔 놓고 돌립니다. 실제 서버에서만 확인할 수 있는 절차라면 고칠 때마다 서버가 필요하고, 그러면 rollback 경로는 사실상 한 번도 확인되지 않습니다. 정작 필요한 순간에 처음 돌아가는 코드가 됩니다.
+
+확인하는 것은 이렇습니다.
+
+- A를 먼저, B를 나중에 교체하는지
+- 새 이미지와 되돌릴 지점이 기록되는지
+- A가 실패하면 되돌리고 **B는 건드리지 않는지**
+- 되돌린 뒤 환경 파일의 Secret이 그대로인지
+- 설정이 깨지면 컨테이너를 아예 건드리지 않는지
+- 이동 태그를 거부하는지
 
 ## CI 컨테이너 smoke 검증
 

@@ -154,4 +154,31 @@ public interface NotificationRepository extends JpaRepository<Notification, UUID
         @Param("idAfter") UUID idAfter,
         Pageable pageable
     );
+
+    @Query("""
+        SELECT notification
+        FROM Notification notification
+        WHERE notification.receiverId = :receiverId
+            AND (
+                notification.createdAt > :cursor
+                OR (
+                    notification.createdAt = :cursor
+                    AND notification.id > :idAfter
+                )
+            )
+        ORDER BY notification.createdAt ASC,
+                 notification.id ASC
+        """)
+    List<Notification> findAllForReplay(
+        @Param("receiverId")
+        UUID receiverId,
+
+        @Param("cursor")
+        Instant cursor,
+
+        @Param("idAfter")
+        UUID idAfter,
+
+        Pageable pageable
+    );
 }

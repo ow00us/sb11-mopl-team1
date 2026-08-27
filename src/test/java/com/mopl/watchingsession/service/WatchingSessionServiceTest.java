@@ -462,6 +462,31 @@ public class WatchingSessionServiceTest {
         verify(watchingSessionSnapshotWriter, never()).deleteById(any(), any(), any());
     }
 
+    @Test
+    @DisplayName("heartbeat가 한 번 이상 발생한 뒤에도 end()는 true를 반환하고, "
+        + "삭제 조건에 쓰이는 세대 토큰은 heartbeat 이전 값 그대로다 "
+        + "(renewExpiresAt이 updated_at을 건드리면 이 테스트가 깨진다)")
+    void end_stillSucceeds_afterOneOrMoreHeartbeats() {
+        mockContentExists(CONTENT_ID);
+        mockUserExists(WATCHER_ID);
+        mockUpsert(CONTENT_ID, FIRST_CREATED_AT, true);
+        watchingSessionService.start(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+        when(watchingSessionSnapshotWriter.renewExpiresAt(any(), any(), any())).thenReturn(1);
+
+        // heartbeat 한 번 이상 (연속 두 번)
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+        watchingSessionService.heartbeat(WATCHER_ID, CONTENT_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        boolean ended = watchingSessionService.end(WATCHER_ID, SESSION_ID, SUBSCRIPTION_ID);
+
+        assertThat(ended).isTrue();
+        assertThat(presenceStore).doesNotContainKey(WATCHER_ID);
+        // heartbeat가 반복돼도 presence가 들고 있던 세대 토큰은 start() 시점 값(FIRST_CREATED_AT) 그대로여야 한다.
+        // renewExpiresAt이 updated_at을 갱신하도록 바뀌면 이 토큰이 어긋나 실제 DB에서는
+        // 조건부 삭제가 0행으로 실패하게 된다.
+        verify(watchingSessionSnapshotWriter).deleteById(eq(WATCHER_ID), eq(SNAPSHOT_ID), eq(FIRST_CREATED_AT));
+    }
+
     /* --- endByConnection() 메서드 검증 --- */
     @Test
     @DisplayName("sessionId가 일치하면 presence와 DB 스냅샷을 모두 삭제하고, 삭제된 스냅샷 기준 DTO를 반환한다")

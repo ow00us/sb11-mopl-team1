@@ -45,6 +45,11 @@ services:
   gateway:
     image: ${FRONTEND_IMAGE}
     restart: unless-stopped
+    environment:
+      # 백엔드 두 인스턴스가 공유하는 별칭입니다. 이미지 기본값에 기대지 않고 여기서
+      # 명시합니다. 프론트엔드 이미지가 바뀔 때 기본값이 달라져도 배포가 조용히
+      # 틀어지지 않습니다.
+      BACKEND_UPSTREAM: http://backend:8080
     networks:
       - edge
       - app
@@ -54,7 +59,9 @@ services:
       backend-b:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      # Alpine wget은 localhost를 ::1로 먼저 해석하지만 Nginx는 이 이미지에서 IPv4로
+      # 리슨합니다. 127.0.0.1을 명시해 실제 리슨 소켓을 검사합니다.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -83,6 +90,8 @@ services:
       MAIL_PORT: ${MAIL_PORT}
       MAIL_USERNAME: ${MAIL_USERNAME}
       MAIL_PASSWORD: ${MAIL_PASSWORD}
+      PASSWORD_RESET_MAIL_FROM: ${PASSWORD_RESET_MAIL_FROM}
+      OAUTH2_LOCAL_CREDENTIAL_MAIL_FROM: ${OAUTH2_LOCAL_CREDENTIAL_MAIL_FROM}
       MAIL_SMTP_AUTH: ${MAIL_SMTP_AUTH}
       MAIL_STARTTLS_ENABLE: ${MAIL_STARTTLS_ENABLE}
       JWT_SECRET: ${JWT_SECRET}
@@ -106,8 +115,14 @@ services:
       TMDB_ACCESS_TOKEN: ${TMDB_ACCESS_TOKEN}
       SPORTSDB_API_KEY: ${SPORTSDB_API_KEY}
     networks:
-      - app
-      - data
+      # 두 인스턴스가 같은 별칭을 공유합니다. Docker 내장 DNS 가 backend 하나에
+      # 두 컨테이너 주소를 모두 돌려주므로 gateway 의 Nginx 가 요청 시점마다 다시
+      # 조회해 양쪽으로 보냅니다. 인스턴스 하나를 직접 가리키면 나머지는 요청을
+      # 받지 못하고, 그 인스턴스가 내려가면 전체가 502 입니다.
+      app:
+        aliases:
+          - backend
+      data:
     depends_on:
       postgres:
         condition: service_healthy
@@ -132,8 +147,14 @@ services:
     mem_limit: ${BACKEND_MEM_LIMIT}
     environment: *backend-environment
     networks:
-      - app
-      - data
+      # 두 인스턴스가 같은 별칭을 공유합니다. Docker 내장 DNS 가 backend 하나에
+      # 두 컨테이너 주소를 모두 돌려주므로 gateway 의 Nginx 가 요청 시점마다 다시
+      # 조회해 양쪽으로 보냅니다. 인스턴스 하나를 직접 가리키면 나머지는 요청을
+      # 받지 못하고, 그 인스턴스가 내려가면 전체가 502 입니다.
+      app:
+        aliases:
+          - backend
+      data:
     depends_on:
       postgres:
         condition: service_healthy

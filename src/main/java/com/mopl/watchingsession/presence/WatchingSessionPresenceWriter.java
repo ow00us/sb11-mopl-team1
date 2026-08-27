@@ -79,8 +79,8 @@ public class WatchingSessionPresenceWriter {
     // 쓰기 자체는 레거시 키 위에서도 안전하다.
     private static final String SWAP_LUA = """
         local key = KEYS[1]
-        local watcherId = ARGV[7]
         local newContentId = ARGV[2]
+        local watcherId = ARGV[7]
         local expiresAt = ARGV[8]
         local previous = {}
         if redis.call('TYPE', key)['ok'] == 'hash' then
@@ -154,8 +154,9 @@ public class WatchingSessionPresenceWriter {
         RECOVER_IF_ABSENT_LUA, Long.class);
 
     // 키가 없으면 HGET이 false를 반환해 문자열 비교가 실패
-    // 반환: {'1', snapshotId} 삭제됨 / {'0', ''} 소유권 불일치(이상 신호) /
-    //       {'-1', ''} 활성 세션 없음(hash 아님 포함, 정상 흐름)
+    // 반환: {'1', snapshotId, snapshotUpdatedAt} 삭제됨(snapshotUpdatedAt은 presence 세대 토큰, 없으면 '') /
+    //             {'0', '', ''} 소유권 불일치(이상 신호) /
+    //             {'-1', '', ''} 활성 세션 없음(hash 아님 포함, 정상 흐름)
     private static final String DELETE_IF_OWNER_LUA = """
         if redis.call('TYPE', KEYS[1])['ok'] ~= 'hash' then
           return {'-1', '', ''}

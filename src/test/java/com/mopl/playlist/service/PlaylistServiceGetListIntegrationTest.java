@@ -276,9 +276,10 @@ class PlaylistServiceGetListIntegrationTest {
                     "콘텐츠" + i, "설명", "MOVIE", 0.0, 0, 0
             );
             for (int t = 0; t < tagsPerContent; t++) {
+                String tag = "tag-" + i + "-" + t;
                 jdbcTemplate.update(
-                        "INSERT INTO content_tags (content_id, tag) VALUES (?, ?)",
-                        id, "tag-" + i + "-" + t
+                        "INSERT INTO content_tags (content_id, tag, display_tag) VALUES (?, ?, ?)",
+                        id, tag, tag
                 );
             }
         }

@@ -325,6 +325,42 @@ class SecurityAccessPolicyTest {
             .andExpect(jsonPath("$.errorCode").value("COMMON_401_1"));
     }
 
+    @Test
+    @DisplayName("DM 대상 사용자 검색은 토큰이 없으면 401을 반환한다")
+    void searchUsers_withoutToken_returnsUnauthorized() throws Exception {
+        mockMvc.perform(
+                get("/api/users/search")
+                    .param("keywordLike", "사용자")
+                    .param("limit", "20")
+            )
+            .andExpect(status().isUnauthorized())
+            .andExpect(jsonPath("$.errorCode").value("COMMON_401_1"));
+    }
+
+    @Test
+    @DisplayName("일반 사용자는 DM 대상 사용자를 검색할 수 있다")
+    void searchUsers_withUserToken_passesSecurityFilter() throws Exception {
+        var authentication = UsernamePasswordAuthenticationToken.authenticated(
+            UUID.fromString(USER_ID),
+            null,
+            List.of(new SimpleGrantedAuthority("ROLE_USER"))
+        );
+        when(jwtProvider.validate("user-token")).thenReturn(true);
+        when(jwtProvider.getAuthentication("user-token"))
+            .thenReturn(authentication);
+
+        mockMvc.perform(
+                get("/api/users/search")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer user-token")
+                    .param("keywordLike", "사용자")
+                    .param("limit", "20")
+            )
+            .andExpect(status().isNoContent());
+
+        verify(jwtProvider).validate("user-token");
+        verify(jwtProvider).getAuthentication("user-token");
+    }
+
     /**
      * 관리자 사용자 목록 조회 API는 인증되지 않은 사용자가
      * 접근할 수 없는 보호 API인지 검증

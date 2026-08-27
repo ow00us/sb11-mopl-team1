@@ -7,11 +7,13 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mopl.global.common.CursorResponse;
+import com.mopl.global.common.UserSummary;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.util.CursorUtils;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserListRequest;
+import com.mopl.user.dto.UserSearchRequest;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.repository.UserRepository;
@@ -244,6 +246,77 @@ class UserListServiceTest {
         // when & then
         assertThatThrownBy(
             () -> userService.findUsers(request)
+        )
+            .isInstanceOf(BusinessException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.INVALID_INPUT);
+
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    @DisplayName("DM 대상 검색 결과는 공개 프로필과 다음 이름 커서를 반환한다")
+    void searchUsers_success_buildsPublicProfilePage() {
+        UUID requesterId = UUID.fromString(
+            "11111111-1111-1111-1111-111111111111"
+        );
+        User first = createUser(
+            UUID.fromString("22222222-2222-2222-2222-222222222222"),
+            "first@example.com",
+            "Alpha",
+            UserRole.USER,
+            false
+        );
+        User additional = createUser(
+            UUID.fromString("33333333-3333-3333-3333-333333333333"),
+            "second@example.com",
+            "Beta",
+            UserRole.USER,
+            false
+        );
+        UserSearchRequest request = new UserSearchRequest(
+            "  AL  ",
+            null,
+            null,
+            1
+        );
+        when(userRepository.searchUsersByName(
+            requesterId,
+            "AL",
+            null,
+            null,
+            1
+        )).thenReturn(List.of(first, additional));
+        when(userRepository.countSearchUsersByName(requesterId, "AL"))
+            .thenReturn(2L);
+
+        CursorResponse<UserSummary> response =
+            userService.searchUsers(requesterId, request);
+
+        assertThat(response.data()).containsExactly(
+            new UserSummary(first.getId(), first.getName(), null)
+        );
+        assertThat(response.hasNext()).isTrue();
+        assertThat(CursorUtils.decode(response.nextCursor()))
+            .isEqualTo("alpha");
+        assertThat(response.nextIdAfter()).isEqualTo(first.getId());
+        assertThat(response.totalCount()).isEqualTo(2L);
+        assertThat(response.sortBy()).isEqualTo("name");
+        assertThat(response.sortDirection()).isEqualTo("ASCENDING");
+    }
+
+    @Test
+    @DisplayName("DM 대상 검색 커서 쌍이 불완전하면 조회를 거부한다")
+    void searchUsers_fail_whenCursorPairIsIncomplete() {
+        UserSearchRequest request = new UserSearchRequest(
+            "사용자",
+            CursorUtils.encode("사용자"),
+            null,
+            20
+        );
+
+        assertThatThrownBy(
+            () -> userService.searchUsers(UUID.randomUUID(), request)
         )
             .isInstanceOf(BusinessException.class)
             .extracting("errorCode")

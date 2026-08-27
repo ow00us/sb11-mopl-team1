@@ -105,7 +105,7 @@ class ContentRepositoryTest {
         Content found = contentRepository.findById(saved.getId()).orElseThrow();
 
         // then
-        assertThat(found.getTags()).containsExactlyInAnyOrder("action", "sf");
+        assertThat(found.getTags()).containsExactlyInAnyOrder("Action", "SF");
     }
 
     @Test
@@ -119,6 +119,7 @@ class ContentRepositoryTest {
         boolean second = content.addTag(" action ");
 
         // then
+        // 나중에 추가한 " action "이 소문자라서 표기(display)도 우연히 "action"으로 남는다.
         assertThat(first).isTrue();
         assertThat(second).isFalse();
         assertThat(content.getTags()).containsExactly("action");
@@ -463,6 +464,44 @@ class ContentRepositoryTest {
         assertThat(dtos).allSatisfy(dto -> assertThat(dto.tags()).containsExactlyInAnyOrder("action", "sf"));
     }
 
+    @Test
+    @DisplayName("findAllWithTagsByIdIn은 @EntityGraph로 태그를 즉시 로딩하고 원본 표기(대소문자)를 보존한다")
+    void findAllWithTagsByIdIn_eagerlyFetchesTagsAndPreservesDisplayCasing() {
+        Content contentA = movie().build();
+        contentA.addTag("SF");
+        contentA.addTag(" Drama ");
+        Content contentB = movie().build();
+        contentB.addTag("Action");
+        entityManager.persistAndFlush(contentA);
+        entityManager.persistAndFlush(contentB);
+        List<UUID> ids = List.of(contentA.getId(), contentB.getId());
+        entityManager.clear();
+
+        List<Content> result = contentRepository.findAllWithTagsByIdIn(ids);
+
+        SessionFactory sessionFactory = entityManager.getEntityManager()
+                .getEntityManagerFactory().unwrap(SessionFactory.class);
+        Statistics statistics = sessionFactory.getStatistics();
+        statistics.setStatisticsEnabled(true);
+        statistics.clear();
+        entityManager.getEntityManager().clear();
+
+        // @EntityGraph로 이미 즉시 로딩됐으므로, 영속성 컨텍스트를 비운 뒤에도 지연 로딩 예외 없이 읽힌다
+        Content foundA = result.stream().filter(c -> c.getId().equals(contentA.getId())).findFirst().orElseThrow();
+        Content foundB = result.stream().filter(c -> c.getId().equals(contentB.getId())).findFirst().orElseThrow();
+        assertThat(foundA.getTags()).containsExactlyInAnyOrder("SF", "Drama");
+        assertThat(foundB.getTags()).containsExactly("Action");
+        assertThat(statistics.getPrepareStatementCount()).isZero();
+    }
+
+    @Test
+    @DisplayName("findAllWithTagsByIdIn에 빈 컬렉션을 넘기면 빈 리스트를 반환한다")
+    void findAllWithTagsByIdIn_emptyIds_returnsEmptyList() {
+        List<Content> result = contentRepository.findAllWithTagsByIdIn(List.of());
+
+        assertThat(result).isEmpty();
+    }
+
     private UUID insertContent(
             String title, BigDecimal averageRating, long watcherCount, Instant createdAt, String type) {
         return insertContent(title, averageRating, watcherCount, 0, createdAt, type);
@@ -530,7 +569,8 @@ class ContentRepositoryTest {
 
     private void insertTag(UUID contentId, String tag) {
         entityManager.getEntityManager()
-                .createNativeQuery("INSERT INTO content_tags (content_id, tag) VALUES (:contentId, :tag)")
+                .createNativeQuery("INSERT INTO content_tags (content_id, tag, display_tag) "
+                        + "VALUES (:contentId, :tag, :tag)")
                 .setParameter("contentId", contentId)
                 .setParameter("tag", tag)
                 .executeUpdate();

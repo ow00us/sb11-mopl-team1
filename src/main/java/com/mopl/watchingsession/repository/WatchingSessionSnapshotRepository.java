@@ -23,6 +23,8 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
 
     // 조건부 삭제 (다중 인스턴스 세대 레이스 방지용) - 다른 인스턴스가 만든 새 세대는 건드리지 않음
     // expectedUpdatedAt이 null이면(구버전 presence 폴백) 세대 비교를 건너뜀
+    // @Modifying 벌크 쿼리라 트랜잭션 안에서만 실행 가능
+    @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             DELETE FROM WatchingSessionSnapshot s
@@ -143,6 +145,12 @@ public interface WatchingSessionSnapshotRepository extends JpaRepository<Watchin
     );
 
     // heartbeat 갱신용 - expiresAt이 지났어도 갱신한다
+    //
+    // 경고: 이 쿼리는 updated_at을 절대 갱신하면 안 된다 — presence 세대 토큰이 이 값이다.
+    // WatchingSessionSnapshotWriter#deleteById는 presence가 들고 있는 snapshotUpdatedAt과
+    // 행의 현재 updated_at이 같을 때만 삭제하는 조건부 삭제로 동시성을 지킨다. 이 쿼리가
+    // (bulk UPDATE라 @LastModifiedDate를 타지 않아 지금은 안전하지만) updated_at을 함께
+    // 바꾸도록 고쳐지면, 정상 세대의 삭제 요청도 세대 불일치로 조용히 0행 실패하게 된다.
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE WatchingSessionSnapshot s SET s.expiresAt = :newExpiresAt "
     + "WHERE s.watcherId = :watcherId AND s.contentId = :contentId")

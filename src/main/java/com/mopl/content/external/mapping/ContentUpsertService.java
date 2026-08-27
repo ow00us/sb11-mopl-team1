@@ -2,9 +2,11 @@ package com.mopl.content.external.mapping;
 
 import com.mopl.content.entity.Content;
 import com.mopl.content.repository.ContentRepository;
+import com.mopl.content.search.ContentSearchSyncEvent;
 import java.sql.SQLException;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -18,6 +20,7 @@ public class ContentUpsertService {
 
     private final ContentRepository contentRepository;
     private final ContentInsertExecutor contentInsertExecutor;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Transactional
     public Optional<Content> upsert(ExternalContentDraft draft) {
@@ -28,6 +31,10 @@ public class ContentUpsertService {
         Content result = contentRepository.findBySourceAndExternalId(draft.source(), draft.externalId())
                 .map(existing -> applyUpdate(existing, draft))
                 .orElseGet(() -> createOrRecoverFromRace(draft));
+        // ContentServiceImpl과 동일하게 저장/갱신 직후 검색 색인 동기화 이벤트를 발행한다.
+        // ContentSearchSyncListener가 @TransactionalEventListener(AFTER_COMMIT)라 이 트랜잭션이
+        // 커밋된 뒤에만 실제 동기화가 실행되고, 롤백되면 이벤트가 소비되지 않는다.
+        eventPublisher.publishEvent(new ContentSearchSyncEvent(result.getId()));
         return Optional.of(result);
     }
 

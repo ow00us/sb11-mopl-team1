@@ -26,14 +26,17 @@ flowchart LR
     DB[("PostgreSQL")]
     REDIS[("Redis")]
     KAFKA[("Kafka")]
+    ES[("Elasticsearch")]
     TMDB["TMDB API"]
     SPORTS["TheSportsDB API"]
 
     FE -->|"REST / JWT / CSRF"| API
     FE <-->|"SockJS + STOMP"| API
+    API -->|"SSE"| FE
     API -->|"JPA / Flyway"| DB
     API -->|"cache and shared state"| REDIS
     API -->|"domain events"| KAFKA
+    API -->|"콘텐츠 검색 인덱스"| ES
     API -->|"content collection"| TMDB
     API -->|"sports collection"| SPORTS
 ```
@@ -47,8 +50,6 @@ ERD는 `src/main/resources/db/migration`에 정의된 실제 Flyway 스키마를
 이미지를 누르면 검색, 도메인 필터와 FK 관계 강조를 지원하는 상세 ERD가 열립니다.
 
 **[상세 ERD 열기](https://ow00us.github.io/sb11-mopl-team1/erd/)**
-
-로컬에서는 `docs/erd/index.html`을 브라우저로 열어 확인합니다.
 
 주요 무결성 규칙은 다음과 같습니다.
 
@@ -108,8 +109,8 @@ sb11-mopl-team1
 | --- | --- |
 | Language | Java 17 |
 | Framework | Spring Boot 3.4, Spring Security, Spring Data JPA, Spring WebSocket, Spring Batch |
-| Data | PostgreSQL 16, Flyway, Redis 7, Kafka 3.8 |
-| API | REST, OpenAPI 3.1, SockJS, STOMP |
+| Data | PostgreSQL 16, Flyway, Redis 7, Kafka 3.8, Elasticsearch 8.15(nori) |
+| API | REST, OpenAPI 3.1, SockJS, STOMP, SSE |
 | Test | JUnit 5, Spring Boot Test, Testcontainers, JaCoCo |
 | Operations | Docker, GitHub Actions, Spring Boot Actuator, Prometheus |
 
@@ -127,8 +128,16 @@ sb11-mopl-team1
 | `/api/follows` | 팔로우 관계와 목록 조회 |
 | `/api/notifications` | 알림 목록과 삭제 |
 | `/api/conversations` | 대화방과 DM 조회·읽음 처리 |
+| `/api/admin/outbox` | Kafka 발행 실패 이벤트 조회·재시도·스킵 |
 
 목록 API는 커서 기반 페이지네이션을 사용합니다. 실제 요청·응답 필드와 상태 코드는 실행 중인 Swagger UI와 팀이 관리하는 기준 계약 `openapi/mopl-api.yaml`을 우선합니다. `openapi/reference/provided-openapi.json`은 최초 제공·비교용 문서입니다.
+
+### 콘텐츠 검색
+
+`GET /api/contents`는 Elasticsearch(nori 형태소 분석기)로 검색·정렬·필터링합니다.
+
+- 필터: `typeEqual`(콘텐츠 타입), `keywordLike`(제목·설명 검색), `tagsIn`(태그, AND 조건)
+- 정렬: `sortBy`(`createdAt` | `watcherCount` | `averageRating`), `sortDirection`
 
 ### 인증과 CSRF
 
@@ -155,6 +164,42 @@ sb11-mopl-team1
 
 STOMP destination은 서버의 허용 목록과 대화 참여자 권한 검사를 통과해야 합니다. 처리 중 발생한 인증·인가·요청 오류는 STOMP `ERROR` 프레임으로 전달됩니다.
 
+### SSE
+
+`GET /api/sse`는 Server-Sent Events 연결을 제공합니다.
+
+- 알림: Kafka 이벤트를 소비해 DB에 저장하고, 그 트랜잭션이 커밋된 뒤에만 SSE로 전송합니다.
+- DM: 저장 트랜잭션이 커밋되면 항상 STOMP로 브로드캐스트하고, 수신자가 해당 대화방을 STOMP로 구독 중이 아닐 때만 SSE로도 전달합니다(구독 중이면 STOMP로만 전달). DM도 Kafka에 이벤트를 발행하지만 이는 알림 생성을 위한 것이고, DM 자체의 실시간 전달은 Kafka를 거치지 않습니다.
+
+## 비동기 처리와 안정성
+
+### Kafka와 Outbox
+
+팔로우·플레이리스트 구독·DM 이벤트는 Outbox 패턴으로 발행합니다. 도메인 상태 변경과 이벤트 기록을 같은 트랜잭션에 남기고, 별도 스케줄러가 커밋된 이벤트만 Kafka로 relay합니다. 자세한 계약은 [`docs/07-kafka-outbox-contract.md`](docs/07-kafka-outbox-contract.md)를 참고하세요.
+
+Kafka 소비 실패는 재시도 후에도 실패하면 Dead Letter Topic으로 격리되고, `/api/admin/outbox/failures`로 조회·재시도·스킵할 수 있습니다.
+
+### 콘텐츠 검색 동기화
+
+콘텐츠 생성·수정·삭제는 Elasticsearch 색인과 비동기로 동기화됩니다. 동기화가 실패하면 재시도 대기열(`content_search_retries`)에 기록되어 별도 스케줄러가 재적용합니다. 애플리케이션 시작 시 색인이 없으면 자동 생성하고, 색인에 문서가 하나도 없으면 PostgreSQL 데이터로 백필합니다.
+
+### Redis 사용처
+
+Redis는 세 가지 용도로 나뉩니다.
+
+- 범용 캐시·직렬화된 값 저장
+- 카운터·토큰 관련 연산(리프레시 토큰 등)
+- 시청 세션 입장·퇴장 상태(presence) 관리(TTL 기반)
+
+### 외부 API 배치
+
+TMDB·TheSportsDB 데이터 수집은 Spring Batch로 매일 새벽 4시(KST)에 실행되며, 이미 실행 중이면 중복 실행하지 않습니다.
+
+알려진 제한사항은 다음과 같습니다.
+
+- 배치 Step의 skip 대상이 `RuntimeException` 전체로 열려 있어, 매핑 오류와 일시적 장애를 구분하지 않고 동일하게 건너뜁니다.
+- 외부 API 호출에 rate limit·백오프가 아직 없어, 대량 실패 시 재시도 없이 유실될 수 있습니다.
+
 ## 로컬 개발 환경
 
 ### 사전 준비
@@ -175,6 +220,7 @@ docker compose up -d
 | PostgreSQL | `localhost:5432` |
 | Redis | `localhost:6379` |
 | Kafka | `localhost:9092` |
+| Elasticsearch | `localhost:9200` |
 
 PostgreSQL 개발 계정은 `mopl / mopl`이며 데이터베이스 이름은 `mopl`입니다. 애플리케이션 시작 시 Flyway가 스키마 마이그레이션을 적용합니다.
 
@@ -188,6 +234,7 @@ PostgreSQL 개발 계정은 `mopl / mopl`이며 데이터베이스 이름은 `mo
 | `SPORTSDB_API_KEY` | TheSportsDB API 키 | 없음 |
 | `CORS_ALLOWED_ORIGINS` | REST API를 허용할 프론트엔드 origin | `http://localhost:5173` |
 | `WS_ALLOWED_ORIGINS` | WebSocket 연결을 허용할 프론트엔드 origin | `http://localhost:5173` |
+| `ELASTICSEARCH_URIS` | Elasticsearch 접속 주소(prod 필수) | `http://localhost:9200`(dev) |
 
 비밀값은 저장소에 커밋하지 않습니다. `prod` 프로필에서는 CORS와 WebSocket 허용 origin을 반드시 외부에서 주입해야 합니다.
 
@@ -217,7 +264,7 @@ PostgreSQL 데이터까지 제거해야 할 때만 `docker compose down --volume
 
 ## 테스트와 커버리지
 
-Docker가 실행 중인 상태에서 전체 테스트와 JaCoCo 커버리지 검증을 실행합니다. 저장소 테스트에는 PostgreSQL Testcontainers를 사용하는 통합 테스트가 포함되어 있습니다.
+Docker가 실행 중인 상태에서 전체 테스트와 JaCoCo 커버리지 검증을 실행합니다. 저장소 테스트에는 PostgreSQL·Kafka·Redis Testcontainers를 사용하는 통합 테스트가 포함되어 있습니다. Elasticsearch는 대부분의 테스트에서 mock으로 대체하고, 검색 회귀 테스트 하나만 nori 플러그인이 포함된 실제 컨테이너로 검증합니다.
 
 macOS 또는 Linux:
 
@@ -238,8 +285,6 @@ Windows:
 | 테스트 결과 | `build/reports/tests/test/index.html` |
 | JaCoCo HTML | `build/reports/jacoco/test/html/index.html` |
 | JaCoCo XML | `build/reports/jacoco/test/jacocoTestReport.xml` |
-
-README의 커버리지 배지는 `main` 브랜치에서 성공한 CI의 JaCoCo 결과만 표시합니다. PR이나 실패한 CI 실행은 `main` 배지 값을 갱신하지 않습니다.
 
 ## CI 파이프라인
 
@@ -272,6 +317,36 @@ docker build --tag mopl:local .
 - 최초 제공·비교용 문서: `openapi/reference/provided-openapi.json`
 
 REST 계약을 변경할 때에는 구현, 테스트, 런타임 Swagger와 팀 관리 기준 계약 `openapi/mopl-api.yaml`을 함께 갱신합니다.
+
+## 원본 계약 대비 변경점
+
+`openapi/reference/provided-openapi.json`(원본, 32개 경로)과 현재 계약 `openapi/mopl-api.yaml`(46개 경로)을 비교한 결과입니다. 원본 경로는 하나도 삭제되지 않았습니다.
+
+### 신규 엔드포인트 14개
+
+| 영역 | 엔드포인트 |
+| --- | --- |
+| 관리자 Outbox 운영 | `GET /api/admin/outbox/failures`, `POST .../{eventId}/requeue`, `POST .../{eventId}/skip` |
+| 팔로우 확장 조회 | `GET /api/follows/followers`, `GET /api/follows/followings`, `GET /api/follows/recommendations` |
+| 플레이리스트 확장 | `GET /api/playlists/popular`, `GET /api/playlists/{playlistId}/subscribers` |
+| 리뷰 | `GET /api/reviews/me` |
+| 로컬 인증(소셜 로그인 사용자용) | `POST /api/users/{userId}/local-credentials`, `POST .../local-credentials/email-verifications` |
+| OAuth 계정 관리 | `GET /api/users/{userId}/oauth-accounts`, `DELETE .../oauth-accounts/{provider}`, `POST .../oauth-accounts/{provider}/link` |
+
+### 기존 스키마 필드 변경
+
+- `ConversationDto`: 원본의 오타 `lastestMessage` → `latestMessage`
+- `DirectMessageDto`: `messageSequence` 필드 추가
+- `ErrorResponse`: `errorCode` 필드 추가
+- `NotificationDto`: `resourceId`, `type` 필드 추가
+- `SignInRequest`: `username` → `email`로 로그인 방식 변경
+
+### 상태 코드 정비
+
+- 생성 성공 응답을 `200`+`201` 혼용에서 `201`만 쓰도록 통일
+- 본문 없는 성공 응답을 `200`+`204` 혼용에서 `204`만 쓰도록 통일
+- 여러 오퍼레이션에 `404 Not Found`를 명시적으로 추가
+- 리뷰 중복 작성, 이메일 중복 가입 등에 `409 Conflict` 추가
 
 ## 데이터베이스 변경
 

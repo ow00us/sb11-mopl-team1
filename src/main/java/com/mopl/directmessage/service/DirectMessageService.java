@@ -1,5 +1,6 @@
 package com.mopl.directmessage.service;
 
+import com.mopl.directmessage.dto.DirectMessageReadEvent;
 import com.mopl.directmessage.dto.DirectMessageCreatedEvent;
 import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.directmessage.repository.DirectMessageRepository;
@@ -24,6 +25,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -466,10 +468,29 @@ public class DirectMessageService {
             );
         }
 
-        directMessageRepository.markAsReadIfUnread(
-            directMessageId,
-            conversationId,
-            Instant.now()
+        // PostgreSQL TIMESTAMP(6)과 WebSocket 이벤트가 같은 값을 공유하도록
+        // 저장 전에 마이크로초 정밀도로 맞춥니다. JDBC가 나노초를 반올림하면
+        // 이벤트와 DB 값이 1마이크로초 어긋날 수 있습니다.
+        Instant readAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
+
+        int updatedCount =
+            directMessageRepository.markAsReadIfUnread(
+                directMessageId,
+                conversationId,
+                readAt
+            );
+
+        if (updatedCount == 0) {
+            return;
+        }
+
+        eventPublisher.publishEvent(
+            new DirectMessageReadEvent(
+                conversationId,
+                requesterId,
+                directMessageId,
+                readAt
+            )
         );
     }
 }
