@@ -208,6 +208,7 @@ docker exec -i "${POSTGRES_CONTAINER}" psql -v ON_ERROR_STOP=1 \
     -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -At \
     -f "${CONTAINER_DATASET_DIR}/backfill-elasticsearch.sql" > "${HOST_BULK_FILE}"
 [[ -s ${HOST_BULK_FILE} ]] || fail "Elasticsearch Bulk 파일이 비어 있습니다."
+chmod 0644 "${HOST_BULK_FILE}"
 
 ELASTICSEARCH_CONTAINER=$(compose ps -q elasticsearch)
 [[ -n ${ELASTICSEARCH_CONTAINER} ]] || fail "Elasticsearch 컨테이너가 실행 중이 아닙니다."

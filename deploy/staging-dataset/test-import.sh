@@ -57,5 +57,7 @@ done
 
 grep -q "'_index', 'contents'" "${BACKFILL_SQL}" \
     || fail "Elasticsearch Bulk index action이 없습니다."
+grep -q 'chmod 0644 "${HOST_BULK_FILE}"' "${IMPORT_SCRIPT}" \
+    || fail "Elasticsearch 컨테이너가 Bulk 파일을 읽을 권한이 없습니다."
 
 printf 'PASS: staging dataset import safety checks\n'
