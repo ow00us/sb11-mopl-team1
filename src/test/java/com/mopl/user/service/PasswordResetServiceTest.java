@@ -86,7 +86,7 @@ class PasswordResetServiceTest {
             user.getId();
 
         when(
-            userRepository.findByEmail(
+            userRepository.findByEmailAndDeletedAtIsNull(
                 normalizedEmail
             )
         ).thenReturn(
@@ -118,7 +118,7 @@ class PasswordResetServiceTest {
          * Repository 조회와 이메일 발송에 사용되는지 확인
          */
         verify(userRepository)
-            .findByEmail(
+            .findByEmailAndDeletedAtIsNull(
                 normalizedEmail
             );
 
@@ -183,7 +183,7 @@ class PasswordResetServiceTest {
             );
 
         when(
-            userRepository.findByEmail(email)
+            userRepository.findByEmailAndDeletedAtIsNull(email)
         ).thenReturn(
             Optional.of(oauthOnlyUser)
         );
@@ -193,7 +193,7 @@ class PasswordResetServiceTest {
 
         // then
         verify(userRepository)
-            .findByEmail(email);
+            .findByEmailAndDeletedAtIsNull(email);
 
         /*
          * OAuth 전용 사용자는 별도의 이메일 인증 기반 등록 절차를
@@ -212,8 +212,8 @@ class PasswordResetServiceTest {
     }
 
     @Test
-    @DisplayName("존재하지 않는 이메일이면 작업 없이 종료한다")
-    void resetPassword_ignore_whenUserDoesNotExist() {
+    @DisplayName("존재하지 않거나 탈퇴한 사용자의 요청은 작업 없이 정상 종료한다")
+    void resetPassword_ignoresMissingOrDeletedUser() {
         // given
         String normalizedEmail =
             "missing@example.com";
@@ -224,7 +224,7 @@ class PasswordResetServiceTest {
             );
 
         when(
-            userRepository.findByEmail(
+            userRepository.findByEmailAndDeletedAtIsNull(
                 normalizedEmail
             )
         ).thenReturn(
@@ -236,13 +236,13 @@ class PasswordResetServiceTest {
 
         // then
         verify(userRepository)
-            .findByEmail(
+            .findByEmailAndDeletedAtIsNull(
                 normalizedEmail
             );
 
         /*
-         * 존재하지 않는 사용자는 임시 비밀번호 생성, 인코딩,
-         * 세션 폐기 및 이메일 발송을 수행하지 않는다.
+         * 존재하지 않거나 탈퇴한 사용자는 임시 비밀번호 생성,
+         * 인코딩, 세션 폐기 및 이메일 발송을 수행하지 않는다.
          */
         verifyNoInteractions(
             temporaryPasswordGenerator,
@@ -287,7 +287,7 @@ class PasswordResetServiceTest {
             );
 
         when(
-            userRepository.findByEmail(email)
+            userRepository.findByEmailAndDeletedAtIsNull(email)
         ).thenReturn(
             Optional.of(user)
         );
@@ -379,7 +379,7 @@ class PasswordResetServiceTest {
             user.getId();
 
         when(
-            userRepository.findByEmail(email)
+            userRepository.findByEmailAndDeletedAtIsNull(email)
         ).thenReturn(
             Optional.of(user)
         );

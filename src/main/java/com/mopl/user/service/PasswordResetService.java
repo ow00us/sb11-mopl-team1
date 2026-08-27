@@ -83,8 +83,8 @@ public class PasswordResetService {
      * 비밀번호를 초기화하더라도 관리자에 의해 잠긴 상태는 그대로 유지됩니다.</p>
      *
      * <p>공개 API 응답을 통해 사용자 존재 여부나 로그인 방식을
-     * 추측할 수 없도록, 존재하지 않는 사용자와 로컬 로그인 수단이 없는
-     * OAuth 전용 사용자는 작업 없이 정상 종료합니다.</p>
+     * 추측할 수 없도록, 존재하지 않거나 탈퇴한 사용자와
+     * 로컬 로그인 수단이 없는 OAuth 전용 사용자는 작업 없이 정상 종료합니다.</p>
      *
      * @param request 비밀번호를 초기화할 사용자 이메일
      */
@@ -102,13 +102,17 @@ public class PasswordResetService {
             );
 
         /*
-         * 비밀번호 초기화 대상 사용자를 한 번만 조회
+         * 비밀번호 초기화 대상인 활성 사용자를 한 번만 조회
          *
          * 공개 API를 통해 계정 존재 여부가 노출되지 않도록
-         * 사용자가 없어도 예외를 발생시키지 않는다.
+         * 사용자가 없거나 탈퇴한 경우에도 예외를 발생시키지 않는다.
          */
-        User user = userRepository.findByEmail(normalizedEmail)
-            .orElse(null);
+        User user =
+            userRepository
+                .findByEmailAndDeletedAtIsNull(
+                    normalizedEmail
+                )
+                .orElse(null);
 
         /*
          * 공개 API 응답만으로 계정 존재 여부나 로그인 방식을
