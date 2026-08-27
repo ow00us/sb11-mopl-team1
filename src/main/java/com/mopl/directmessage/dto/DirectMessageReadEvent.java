@@ -5,7 +5,7 @@ import java.util.UUID;
 
 public record DirectMessageReadEvent(
     UUID conversationId,
-    UUID readId,
+    UUID readerId,
     UUID lastReadMessageId,
     Instant readAt
 ) {
