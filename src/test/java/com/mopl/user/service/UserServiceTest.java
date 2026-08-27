@@ -7,6 +7,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.doThrow;
 
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
@@ -60,6 +61,9 @@ class UserServiceTest {
 
     @Mock
     RefreshTokenStore refreshTokenStore;
+
+    @Mock
+    AccessTokenBlockLifecycleService accessTokenBlockLifecycleService;
 
     @Test
     @DisplayName("회원가입 시 이메일을 정규화하고 비밀번호 해시를 저장한다.")
@@ -1013,7 +1017,7 @@ class UserServiceTest {
         UserLockUpdateRequest request =
             new UserLockUpdateRequest(true);
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.of(user));
 
         // when
@@ -1028,7 +1032,7 @@ class UserServiceTest {
         /*
          * 대상 사용자는 한 번만 조회해야 한다.
          */
-        verify(userRepository).findById(userId);
+        verify(userRepository).findByIdForUpdate(userId);
 
         /*
          * 조회한 User는 영속 엔티티이므로 JPA 변경 감지를 사용
@@ -1043,6 +1047,56 @@ class UserServiceTest {
          */
         verify(refreshTokenStore)
             .revokeAllByUserId(userId);
+
+        verify(accessTokenBlockLifecycleService)
+            .block(userId);
+    }
+
+    @Test
+    @DisplayName("Access Token 차단에 실패하면 계정 잠금과 세션 폐기를 시작하지 않는다")
+    void updateLocked_fail_whenAccessTokenBlockFails() {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        User user = createUserFixture(userId);
+
+        when(userRepository.findByIdForUpdate(userId))
+            .thenReturn(Optional.of(user));
+
+        BusinessException blockException =
+            new BusinessException(
+                ErrorCode.SERVICE_UNAVAILABLE
+            );
+
+        doThrow(blockException)
+            .when(accessTokenBlockLifecycleService)
+            .block(userId);
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.updateLocked(
+                userId,
+                new UserLockUpdateRequest(true)
+            )
+        ).isSameAs(blockException);
+
+        assertThat(user.isLocked()).isFalse();
+
+        verify(accessTokenBlockLifecycleService)
+            .block(userId);
+
+        verifyNoInteractions(
+            refreshTokenStore
+        );
+
+        verify(accessTokenBlockLifecycleService, never())
+            .unblockAfterCommit(userId);
+
+        verify(userRepository)
+            .findByIdForUpdate(userId);
     }
 
     @Test
@@ -1060,7 +1114,7 @@ class UserServiceTest {
         UserLockUpdateRequest request =
             new UserLockUpdateRequest(true);
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(
                 Optional.of(user)
             );
@@ -1084,7 +1138,7 @@ class UserServiceTest {
         ).isSameAs(redisException);
 
         verify(userRepository)
-            .findById(userId);
+            .findByIdForUpdate(userId);
 
         verify(refreshTokenStore)
             .revokeAllByUserId(userId);
@@ -1095,6 +1149,12 @@ class UserServiceTest {
          */
         verify(userRepository, never())
             .save(any(User.class));
+
+        verify(accessTokenBlockLifecycleService)
+            .block(userId);
+
+        verify(accessTokenBlockLifecycleService, never())
+            .unblockAfterCommit(userId);
     }
 
     @Test
@@ -1122,7 +1182,7 @@ class UserServiceTest {
         UserLockUpdateRequest request =
             new UserLockUpdateRequest(false);
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.of(user));
 
         // when
@@ -1134,7 +1194,7 @@ class UserServiceTest {
         // then
         assertThat(user.isLocked()).isFalse();
 
-        verify(userRepository).findById(userId);
+        verify(userRepository).findByIdForUpdate(userId);
 
         verify(userRepository, never())
             .save(any(User.class));
@@ -1146,6 +1206,12 @@ class UserServiceTest {
         verifyNoInteractions(
             refreshTokenStore
         );
+
+        verify(accessTokenBlockLifecycleService)
+            .unblockAfterCommit(userId);
+
+        verify(accessTokenBlockLifecycleService, never())
+            .block(userId);
     }
 
     @Test
@@ -1158,7 +1224,7 @@ class UserServiceTest {
         UserLockUpdateRequest request =
             new UserLockUpdateRequest(true);
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.empty());
 
         // when & then
@@ -1172,7 +1238,7 @@ class UserServiceTest {
             .extracting("errorCode")
             .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
 
-        verify(userRepository).findById(userId);
+        verify(userRepository).findByIdForUpdate(userId);
 
         /*
          * 사용자가 존재하지 않으므로 저장 또는 상태 변경과 관련된
@@ -1183,6 +1249,10 @@ class UserServiceTest {
 
         verifyNoInteractions(
             refreshTokenStore
+        );
+
+        verifyNoInteractions(
+            accessTokenBlockLifecycleService
         );
     }
 
