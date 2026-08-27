@@ -21,6 +21,8 @@ DEPLOY_USER="${DEPLOY_USER:-deploy}"
 MOPL_DATA_ROOT="${MOPL_DATA_ROOT:-/srv/mopl/data}"
 MOPL_CONFIG_DIR="${MOPL_CONFIG_DIR:-/etc/mopl}"
 MOPL_APP_DIR="${MOPL_APP_DIR:-/srv/mopl/app}"
+MOPL_ENV_FILE="${MOPL_ENV_FILE:-prod.env}"
+REQUIRE_SSH="${REQUIRE_SSH:-true}"
 
 # SSH 를 열어 줄 범위입니다. 지정하지 않으면 SSH 규칙을 건드리지 않습니다. 여기서 기본값을
 # 0.0.0.0/0 으로 두면 "일단 되게" 하려는 순간마다 전 세계에 열리게 됩니다.
@@ -35,7 +37,8 @@ fail() { printf '\n\033[31m!! %s\033[0m\n' "$*" >&2; exit 1; }
 # SSH 규칙을 먼저 확인합니다. 기본 정책이 deny 인 방화벽을 SSH 허용 없이 켜면 지금 붙어
 # 있는 접속까지 끊기고, 다시 들어갈 방법이 콘솔밖에 남지 않습니다. 디렉터리를 만든 뒤에
 # 알게 되면 이미 늦습니다.
-if [[ -z ${SSH_ALLOWED_CIDR} ]] \
+if [[ ${REQUIRE_SSH} == "true" ]] \
+    && [[ -z ${SSH_ALLOWED_CIDR} ]] \
     && ! (command -v ufw >/dev/null 2>&1 && ufw status | grep -q '22/tcp'); then
     fail "SSH_ALLOWED_CIDR 이 필요합니다. 없이 방화벽을 켜면 SSH 접속을 잃습니다.
    예: sudo SSH_ALLOWED_CIDR=\$(curl -s https://checkip.amazonaws.com)/32 bash \$0"
@@ -114,12 +117,12 @@ install -d -o root -g "${DEPLOY_USER}" -m 0750 "${MOPL_CONFIG_DIR}"
 install -d -o "${DEPLOY_USER}" -g "${DEPLOY_USER}" -m 0755 "${MOPL_APP_DIR}"
 
 # 환경 파일은 없을 때만 만듭니다. 있으면 채워 둔 값을 지우게 됩니다.
-if [[ -e ${MOPL_CONFIG_DIR}/prod.env ]]; then
-    note "${MOPL_CONFIG_DIR}/prod.env 가 이미 있습니다. 그대로 둡니다."
+if [[ -e ${MOPL_CONFIG_DIR}/${MOPL_ENV_FILE} ]]; then
+    note "${MOPL_CONFIG_DIR}/${MOPL_ENV_FILE} 가 이미 있습니다. 그대로 둡니다."
 else
     install -o "${DEPLOY_USER}" -g "${DEPLOY_USER}" -m 0600 \
-        /dev/null "${MOPL_CONFIG_DIR}/prod.env"
-    note "${MOPL_CONFIG_DIR}/prod.env 를 빈 파일로 만들었습니다. 값은 직접 채웁니다."
+        /dev/null "${MOPL_CONFIG_DIR}/${MOPL_ENV_FILE}"
+    note "${MOPL_CONFIG_DIR}/${MOPL_ENV_FILE} 를 빈 파일로 만들었습니다. 값은 직접 채웁니다."
 fi
 
 # 배포 기록 파일을 미리 만듭니다. ${MOPL_CONFIG_DIR} 는 group 에 쓰기 권한이 없어
@@ -146,8 +149,9 @@ fi
 # 받을 수 없는 이미지는 아래 기본값을 씁니다. Elasticsearch 는 nori 플러그인을 넣어 직접
 # 만든 이미지라 ECR 로그인 전에는 받지 못합니다. prod.env 를 채운 뒤 이 스크립트를 다시
 # 실행하면 실제 이미지에서 읽습니다. 여러 번 실행해도 되도록 만든 이유가 이것입니다.
-if [[ -r ${MOPL_CONFIG_DIR}/prod.env ]]; then
-    ELASTICSEARCH_IMAGE=$(sed -n 's/^ELASTICSEARCH_IMAGE=//p' "${MOPL_CONFIG_DIR}/prod.env")
+if [[ -r ${MOPL_CONFIG_DIR}/${MOPL_ENV_FILE} ]]; then
+    ELASTICSEARCH_IMAGE=$(sed -n 's/^ELASTICSEARCH_IMAGE=//p' \
+        "${MOPL_CONFIG_DIR}/${MOPL_ENV_FILE}")
 fi
 
 image_uid() {
@@ -202,8 +206,12 @@ if [[ -n ${SSH_ALLOWED_CIDR} ]]; then
         comment 'SSH (관리 경로)' >/dev/null
     note "SSH 를 ${SSH_ALLOWED_CIDR} 에서만 허용합니다."
 else
-    note "SSH_ALLOWED_CIDR 이 없어 SSH 규칙을 건드리지 않았습니다."
-    note "지금 접속을 잃지 않으려면 이 값을 주고 다시 실행하세요."
+    if [[ ${REQUIRE_SSH} == "true" ]]; then
+        note "SSH_ALLOWED_CIDR 이 없어 SSH 규칙을 건드리지 않았습니다."
+        note "지금 접속을 잃지 않으려면 이 값을 주고 다시 실행하세요."
+    else
+        note "SSM-only 모드입니다. SSH 포트는 열지 않습니다."
+    fi
 fi
 
 ufw --force enable >/dev/null
@@ -214,11 +222,11 @@ log "완료"
 cat <<EOF
    다음 순서로 진행합니다.
 
-   1. ${MOPL_CONFIG_DIR}/prod.env 를 .env.example 기준으로 채웁니다
+   1. ${MOPL_CONFIG_DIR}/${MOPL_ENV_FILE} 를 .env.example 기준으로 채웁니다
    2. docker-compose.prod.yml 과 deploy/Caddyfile 을 ${MOPL_APP_DIR} 에 둡니다
    3. ECR 로그인 후 이미지를 받습니다
    4. sudo -u ${DEPLOY_USER} docker compose -f ${MOPL_APP_DIR}/docker-compose.prod.yml \\
-        --env-file ${MOPL_CONFIG_DIR}/prod.env up -d
+        --env-file ${MOPL_CONFIG_DIR}/${MOPL_ENV_FILE} up -d
 
    자세한 절차는 DEPLOYMENT.md 의 "배포 서버 준비" 절에 있습니다.
 EOF
