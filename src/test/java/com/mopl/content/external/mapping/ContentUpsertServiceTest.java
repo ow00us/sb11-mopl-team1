@@ -79,7 +79,7 @@ class ContentUpsertServiceTest {
         assertThat(result.getTitle()).isEqualTo("제목");
         assertThat(result.getDescription()).isEqualTo("줄거리");
         assertThat(result.getThumbnailUrl()).isEqualTo("https://thumb.jpg");
-        assertThat(result.getTags()).containsExactly("action");
+        assertThat(result.getTags()).containsExactly("Action");
     }
 
     @Test
@@ -94,7 +94,7 @@ class ContentUpsertServiceTest {
         assertThat(existing.getTitle()).isEqualTo("제목");
         assertThat(existing.getDescription()).isEqualTo("줄거리");
         assertThat(existing.getThumbnailUrl()).isEqualTo("https://thumb.jpg");
-        assertThat(existing.getTags()).containsExactly("action");
+        assertThat(existing.getTags()).containsExactly("Action");
         verify(contentInsertExecutor, never()).insert(any());
     }
 

@@ -29,7 +29,8 @@ public class ContentDocumentMapper {
                 .title(content.getTitle())
                 .description(content.getDescription())
                 .type(content.getType().name())
-                .tags(new ArrayList<>(content.getTags()))
+                .tags(new ArrayList<>(content.getNormalizedTags()))
+                .displayTags(new ArrayList<>(content.getTags()))
                 .averageRating(content.getAverageRating().doubleValue())
                 .reviewCount(content.getReviewCount().intValue())
                 .thumbnailUrl(content.getThumbnailUrl())
@@ -51,7 +52,8 @@ public class ContentDocumentMapper {
         fields.put("title", content.getTitle());
         fields.put("description", content.getDescription());
         fields.put("type", content.getType().name());
-        fields.put("tags", new ArrayList<>(content.getTags()));
+        fields.put("tags", new ArrayList<>(content.getNormalizedTags()));
+        fields.put("displayTags", new ArrayList<>(content.getTags()));
         fields.put("averageRating", content.getAverageRating().doubleValue());
         fields.put("reviewCount", content.getReviewCount().intValue());
         fields.put("thumbnailUrl", content.getThumbnailUrl());
