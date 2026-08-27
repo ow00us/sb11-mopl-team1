@@ -700,12 +700,17 @@ jobs:
   coverage-upload:
     name: Coverage upload
     needs: [build, container-smoke]
-    if: ${{ success() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    if: ${{ success() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     steps:
+      # Codecov 는 리포트 안의 경로를 Git 소스 파일과 대조합니다. 별도 업로드
+      # job 에서도 같은 commit 을 checkout 해야 유효한 파일로 처리할 수 있습니다.
+      - name: Checkout source
+        uses: actions/checkout@v4
+
       - name: Download Jacoco report
         uses: actions/download-artifact@v4
         with:
@@ -716,5 +721,8 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           files: coverage/jacocoTestReport.xml
+          disable_search: true
+          root_dir: ${{ github.workspace }}
           fail_ci_if_error: true
           use_oidc: true
+          verbose: true
