@@ -86,7 +86,7 @@ class PasswordResetServiceTest {
             user.getId();
 
         when(
-            userRepository.findByEmailAndDeletedAtIsNull(
+            userRepository.findByEmailForUpdate(
                 normalizedEmail
             )
         ).thenReturn(
@@ -118,7 +118,7 @@ class PasswordResetServiceTest {
          * Repository 조회와 이메일 발송에 사용되는지 확인
          */
         verify(userRepository)
-            .findByEmailAndDeletedAtIsNull(
+            .findByEmailForUpdate(
                 normalizedEmail
             );
 
@@ -183,7 +183,7 @@ class PasswordResetServiceTest {
             );
 
         when(
-            userRepository.findByEmailAndDeletedAtIsNull(email)
+            userRepository.findByEmailForUpdate(email)
         ).thenReturn(
             Optional.of(oauthOnlyUser)
         );
@@ -193,7 +193,7 @@ class PasswordResetServiceTest {
 
         // then
         verify(userRepository)
-            .findByEmailAndDeletedAtIsNull(email);
+            .findByEmailForUpdate(email);
 
         /*
          * OAuth 전용 사용자는 별도의 이메일 인증 기반 등록 절차를
@@ -224,7 +224,7 @@ class PasswordResetServiceTest {
             );
 
         when(
-            userRepository.findByEmailAndDeletedAtIsNull(
+            userRepository.findByEmailForUpdate(
                 normalizedEmail
             )
         ).thenReturn(
@@ -236,7 +236,7 @@ class PasswordResetServiceTest {
 
         // then
         verify(userRepository)
-            .findByEmailAndDeletedAtIsNull(
+            .findByEmailForUpdate(
                 normalizedEmail
             );
 
@@ -287,7 +287,7 @@ class PasswordResetServiceTest {
             );
 
         when(
-            userRepository.findByEmailAndDeletedAtIsNull(email)
+            userRepository.findByEmailForUpdate(email)
         ).thenReturn(
             Optional.of(user)
         );
@@ -379,7 +379,7 @@ class PasswordResetServiceTest {
             user.getId();
 
         when(
-            userRepository.findByEmailAndDeletedAtIsNull(email)
+            userRepository.findByEmailForUpdate(email)
         ).thenReturn(
             Optional.of(user)
         );

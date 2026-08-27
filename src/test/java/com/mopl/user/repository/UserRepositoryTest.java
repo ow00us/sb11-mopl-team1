@@ -107,6 +107,8 @@ class UserRepositoryTest {
         // when: 회원가입 시 저장한 정규화 이메일로 사용자를 조회합니다.
         Optional<User> result = userRepository.findByEmail("user@example.com");
 
+        Optional<User> lockedResult = userRepository.findByEmailForUpdate("user@example.com");
+
         // then: 사용자가 존재하고 주요 필드가 올바르게 저장됐는지 확인합니다.
         assertThat(result).isPresent();
 
@@ -117,6 +119,8 @@ class UserRepositoryTest {
         assertThat(foundUser.getName()).isEqualTo("테스트 사용자");
         assertThat(foundUser.getRole()).isEqualTo(UserRole.USER);
         assertThat(foundUser.isLocked()).isFalse();
+        assertThat(lockedResult).isPresent();
+        assertThat(lockedResult.get().getId()).isEqualTo(foundUser.getId());
 
         // id, createdAt, updatedAt은 User가 아닌 BaseEntity에서 제공합니다.
         // UUID 생성과 JPA Auditing이 정상적으로 동작했는지 함께 확인합니다.
@@ -166,6 +170,12 @@ class UserRepositoryTest {
 
         assertThat(
             userRepository.findByEmailAndDeletedAtIsNull(
+                anonymizedEmail
+            )
+        ).isEmpty();
+
+        assertThat(
+            userRepository.findByEmailForUpdate(
                 anonymizedEmail
             )
         ).isEmpty();

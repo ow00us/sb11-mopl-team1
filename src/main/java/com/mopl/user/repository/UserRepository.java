@@ -72,6 +72,24 @@ public interface UserRepository extends JpaRepository<User, UUID>, UserRepositor
     );
 
     /**
+     * 비밀번호 초기화 대상 활성 사용자를 이메일로 쓰기 잠금 조회
+     *
+     * 같은 사용자의 회원 탈퇴와 비밀번호 초기화를 직렬화하여
+     * 탈퇴 익명화 결과가 뒤늦은 비밀번호 변경으로 덮이지 않도록 한다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query(
+        "SELECT u "
+            + "FROM User u "
+            + "WHERE u.email = :email "
+            + "AND u.deletedAt IS NULL"
+    )
+    Optional<User> findByEmailForUpdate(
+        @Param("email")
+        String email
+    );
+
+    /**
      * OAuth 연결 해제 정책을 검사할 사용자를 쓰기 잠금으로 조회
      *
      * <p>같은 사용자의 OAuth 연결을 동시에 해제하는 요청을 직렬화하여

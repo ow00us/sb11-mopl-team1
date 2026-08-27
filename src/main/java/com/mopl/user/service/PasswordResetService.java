@@ -109,7 +109,7 @@ public class PasswordResetService {
          */
         User user =
             userRepository
-                .findByEmailAndDeletedAtIsNull(
+                .findByEmailForUpdate(
                     normalizedEmail
                 )
                 .orElse(null);

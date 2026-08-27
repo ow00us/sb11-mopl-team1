@@ -248,7 +248,7 @@ public class UserService {
             throw new BusinessException(ErrorCode.FORBIDDEN);
         }
 
-        User user = userRepository.findById(userId)
+        User user = userRepository.findByIdForUpdate(userId)
             .orElseThrow(() ->
                 new BusinessException(ErrorCode.RESOURCE_NOT_FOUND)
             );
@@ -331,7 +331,7 @@ public class UserService {
          * JWT가 발급된 이후 계정이 삭제될 수 있으므로
          * 유효한 토큰이 있더라도 사용자가 항상 존재한다고 가정하지 않는다.
          */
-        User user = userRepository.findById(userId)
+        User user = userRepository.findByIdForUpdate(userId)
             .orElseThrow(() ->
                 new BusinessException(ErrorCode.RESOURCE_NOT_FOUND)
             );
@@ -413,7 +413,7 @@ public class UserService {
          * 존재하지 않는 사용자의 권한은 변경할 수 없으므로
          * 공통 RESOURCE_NOT_FOUND 예외를 발생
          */
-        User user = userRepository.findById(userId)
+        User user = userRepository.findByIdForUpdate(userId)
             .orElseThrow(() ->
                 new BusinessException(ErrorCode.RESOURCE_NOT_FOUND)
             );
