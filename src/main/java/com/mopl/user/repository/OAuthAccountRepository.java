@@ -87,4 +87,17 @@ public interface OAuthAccountRepository
      * @return 연결된 OAuth 계정 수
      */
     long countByUserId(UUID userId);
+
+    /**
+     * 특정 사용자에게 연결된 모든 OAuth 계정을 삭제
+     *
+     * 회원 탈퇴 시 Provider 사용자 식별 정보를 제거하고,
+     * 동일한 소셜 계정으로 신규 가입할 수 있도록 할 때 사용
+     *
+     * @param userId OAuth 연결을 삭제할 사용자 UUID
+     * @return 삭제된 OAuth 연결 수
+     */
+    long deleteAllByUserId(
+        UUID userId
+    );
 }
