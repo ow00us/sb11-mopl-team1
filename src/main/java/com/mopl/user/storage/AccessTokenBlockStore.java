@@ -44,7 +44,7 @@ public interface AccessTokenBlockStore {
     );
 
     /**
-     * 데이터베이스 탈퇴 처리 실패 시 선행 생성한 차단 상태를 제거
+     * 사용자의 Access Token 차단 상태를 제거
      *
      * @param userId 차단을 해제할 사용자 UUID
      */
