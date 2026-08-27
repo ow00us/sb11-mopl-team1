@@ -546,7 +546,7 @@ curl --fail http://localhost:8080/actuator/health
 
 배포 서버는 소스를 받아 다시 빌드하지 않습니다. CI가 검증한 commit과 대응하는 이미지를 그대로 내려받습니다. 서버에서 빌드하면 CI가 통과시킨 것과 실제로 도는 것이 같다는 보장이 없습니다.
 
-`main` push와 `main` 브랜치의 수동 재실행에서만 게시합니다. PR이나 다른 브랜치의 수동 실행에서는 운영 태그를 만들지 않습니다. 검증되지 않은 커밋의 태그가 레지스트리에 남거나 다른 브랜치가 `main` 태그를 덮어쓰면 배포 대상을 고를 때 무엇이 검증된 것인지 구분할 수 없습니다.
+`main`과 `develop` push, 그리고 두 브랜치의 수동 재실행에서만 게시합니다. PR이나 다른 브랜치의 수동 실행에서는 태그를 만들지 않습니다. `main`은 production용 역할을, `develop`은 production SSM 권한이 없는 staging 전용 역할을 맡습니다. 검증되지 않은 커밋의 태그가 레지스트리에 남거나 staging 코드가 production 권한을 얻지 않도록 게시 경계를 분리합니다.
 
 게시는 `build`와 `Container smoke`가 모두 통과한 뒤에 실행됩니다.
 
@@ -555,9 +555,10 @@ curl --fail http://localhost:8080/actuator/health
 | 태그 | 성질 | 용도 |
 | --- | --- | --- |
 | `<commit SHA>` | 한 번 붙으면 다른 이미지를 가리키지 않습니다 | 배포와 rollback의 기준 |
-| `main` | 매 배포마다 다른 이미지를 가리킵니다 | 사람이 최신을 확인하는 용도 |
+| `main` | main 게시마다 다른 이미지를 가리킵니다 | production 최신 확인용 |
+| `develop` | develop 게시마다 다른 이미지를 가리킵니다 | staging 최신 확인용 |
 
-**배포와 rollback은 digest 또는 commit SHA 태그를 씁니다.** `main`만 쓰면 되돌릴 대상을 지목할 수 없습니다. 게시 결과의 태그와 digest는 워크플로 실행 요약에 남으므로 실행 로그를 뒤지지 않고 찾을 수 있습니다.
+**배포와 rollback은 digest 또는 commit SHA 태그를 씁니다.** `main`이나 `develop` 이동 태그만 쓰면 되돌릴 대상을 지목할 수 없습니다. 게시 결과의 태그와 digest는 워크플로 실행 요약에 남으므로 실행 로그를 뒤지지 않고 찾을 수 있습니다.
 
 ### 자격 증명
 
@@ -570,8 +571,9 @@ curl --fail http://localhost:8080/actuator/health
 | `ECR_REPOSITORY` | ECR repository 이름 |
 | `AWS_REGION` | repository가 있는 리전 |
 | `AWS_DEPLOY_ROLE_ARN` | Actions가 OIDC로 맡을 IAM 역할 ARN |
+| `AWS_STAGING_PUBLISH_ROLE_ARN` | develop 게시가 맡을 staging 전용 IAM 역할 ARN. production SSM 권한을 포함하지 않습니다 |
 
-**`ECR_REPOSITORY`가 비어 있으면 게시 job을 건너뜁니다.** AWS 리소스와 OIDC 역할은 #348이 만들므로, 그 전까지 `main` push마다 실패로 남기지 않기 위한 조건입니다. #348이 끝나고 변수를 채우면 그때부터 게시가 시작됩니다.
+**`ECR_REPOSITORY`가 비어 있으면 게시 job을 건너뜁니다.** develop은 `AWS_STAGING_PUBLISH_ROLE_ARN`도 비어 있으면 건너뜁니다. staging 역할은 `refs/heads/develop`만 신뢰하고 ECR 게시 권한만 가져야 하며, 기존 production 역할에 develop 신뢰를 추가하지 않습니다.
 
 ### 게시 후 확인
 
