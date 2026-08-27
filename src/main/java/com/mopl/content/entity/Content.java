@@ -11,12 +11,15 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.MapKeyColumn;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Collections;
-import java.util.HashSet;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import lombok.AccessLevel;
 import lombok.Builder;
@@ -76,10 +79,11 @@ public class Content extends BaseEntity {
 
     @ElementCollection
     @CollectionTable(name = "content_tags", joinColumns = @JoinColumn(name = "content_id"))
-    @Column(name = "tag", length = 100, nullable = false)
+    @MapKeyColumn(name = "tag", length = 100)
+    @Column(name = "display_tag", length = 100, nullable = false)
     @BatchSize(size = 100)
     @Getter(AccessLevel.NONE)
-    private Set<String> tags = new HashSet<>();
+    private Map<String, String> tags = new HashMap<>();
 
     @Builder
     public Content(ContentType type, ContentSource source, String externalId, String title,
@@ -96,7 +100,11 @@ public class Content extends BaseEntity {
     }
 
     public Set<String> getTags() {
-        return Collections.unmodifiableSet(tags);
+        return Collections.unmodifiableSet(new LinkedHashSet<>(tags.values()));
+    }
+
+    public Set<String> getNormalizedTags() {
+        return Collections.unmodifiableSet(tags.keySet());
     }
 
     public void update(String title, String description, Set<String> tags) {
@@ -107,12 +115,12 @@ public class Content extends BaseEntity {
             this.description = description;
         }
         if (tags != null) {
-            Set<String> normalizedTags = new HashSet<>();
+            Map<String, String> normalizedTags = new HashMap<>();
             for (String rawTag : tags) {
-                normalizedTags.add(normalize(rawTag));
+                normalizedTags.put(normalize(rawTag), toDisplay(rawTag));
             }
             this.tags.clear();
-            this.tags.addAll(normalizedTags);
+            this.tags.putAll(normalizedTags);
         }
     }
 
@@ -122,20 +130,31 @@ public class Content extends BaseEntity {
 
     public boolean addTag(String rawTag) {
         String normalized = normalize(rawTag);
-        return this.tags.add(normalized);
+        String display = toDisplay(rawTag);
+        boolean isNew = !this.tags.containsKey(normalized);
+        this.tags.put(normalized, display);
+        return isNew;
     }
 
     public static String normalize(String rawTag) {
+        return sanitize(rawTag).toLowerCase(Locale.ROOT);
+    }
+
+    private static String toDisplay(String rawTag) {
+        return sanitize(rawTag);
+    }
+
+    private static String sanitize(String rawTag) {
         if (rawTag == null) {
             throw new BusinessException(ErrorCode.INVALID_INPUT, "태그는 비어 있을 수 없습니다.");
         }
-        String normalized = rawTag.strip().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
-        if (normalized.isEmpty()) {
+        String sanitized = rawTag.strip().replaceAll("\\s+", " ");
+        if (sanitized.isEmpty()) {
             throw new BusinessException(ErrorCode.INVALID_INPUT, "태그는 비어 있을 수 없습니다.");
         }
-        if (normalized.length() > 100) {
+        if (sanitized.length() > 100) {
             throw new BusinessException(ErrorCode.INVALID_INPUT, "태그는 100자를 초과할 수 없습니다.");
         }
-        return normalized;
+        return sanitized;
     }
 }

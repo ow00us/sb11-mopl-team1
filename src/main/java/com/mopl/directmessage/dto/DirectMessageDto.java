@@ -13,8 +13,31 @@ public record DirectMessageDto(
     long messageSequence,
     UserSummary sender,
     UserSummary receiver,
-    String content
+    String content,
+    Instant readAt
 ) {
+
+    public DirectMessageDto(
+        UUID id,
+        UUID conversationId,
+        Instant createdAt,
+        long messageSequence,
+        UserSummary sender,
+        UserSummary receiver,
+        String content
+    ) {
+        this(
+            id,
+            conversationId,
+            createdAt,
+            messageSequence,
+            sender,
+            receiver,
+            content,
+            null
+        );
+    }
+
     public static DirectMessageDto from(
         DirectMessage directMessage,
         UserSummary sender,
@@ -27,7 +50,8 @@ public record DirectMessageDto(
             directMessage.getMessageSequence(),
             sender,
             receiver,
-            directMessage.getContent()
+            directMessage.getContent(),
+            directMessage.getReadAt()
         );
     }
 }

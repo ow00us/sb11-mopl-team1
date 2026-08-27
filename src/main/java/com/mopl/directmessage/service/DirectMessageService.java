@@ -1,5 +1,6 @@
 package com.mopl.directmessage.service;
 
+import com.mopl.directmessage.dto.DirectMessageReadEvent;
 import com.mopl.directmessage.dto.DirectMessageCreatedEvent;
 import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.directmessage.repository.DirectMessageRepository;
@@ -466,10 +467,26 @@ public class DirectMessageService {
             );
         }
 
-        directMessageRepository.markAsReadIfUnread(
-            directMessageId,
-            conversationId,
-            Instant.now()
+        Instant readAt = Instant.now();
+
+        int updatedCount =
+            directMessageRepository.markAsReadIfUnread(
+                directMessageId,
+                conversationId,
+                readAt
+            );
+
+        if (updatedCount == 0) {
+            return;
+        }
+
+        eventPublisher.publishEvent(
+            new DirectMessageReadEvent(
+                conversationId,
+                requesterId,
+                directMessageId,
+                readAt
+            )
         );
     }
 }

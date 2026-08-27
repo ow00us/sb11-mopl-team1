@@ -595,17 +595,19 @@ jobs:
   publish-image:
     name: Publish image
     needs: [build, container-smoke]
-    # main push 와 main 브랜치의 수동 재게시에서만 게시합니다. PR 에서는 운영 태그를 만들지
-    # 않습니다. 검증되지 않은 커밋의 태그가 레지스트리에 남으면 배포 대상을 고를 때
-    # 무엇이 검증된 것인지 구분할 수 없습니다.
+    # main/develop push 와 해당 브랜치의 수동 재게시에서만 게시합니다. PR 에서는 태그를
+    # 만들지 않습니다. 검증되지 않은 커밋의 태그가 레지스트리에 남으면 배포 대상을
+    # 고를 때 무엇이 검증된 것인지 구분할 수 없습니다.
     #
     # ECR_REPOSITORY 가 비어 있으면 건너뜁니다. AWS 리소스와 OIDC 역할은 #348 이
-    # 만듭니다. 그 전까지 main push 마다 실패로 남기지 않기 위한 조건입니다.
+    # 만듭니다. develop 은 production SSM 권한이 섞인 역할을 쓰지 않고, 별도의
+    # AWS_STAGING_PUBLISH_ROLE_ARN 이 준비된 뒤에만 게시합니다.
     if: >-
       ${{ success()
-      && github.ref == 'refs/heads/main'
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
       && (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
-      && vars.ECR_REPOSITORY != '' }}
+      && vars.ECR_REPOSITORY != ''
+      && (github.ref == 'refs/heads/main' || vars.AWS_STAGING_PUBLISH_ROLE_ARN != '') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -619,7 +621,11 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          # 기존 역할은 production EC2 SSM 권한도 있으므로 develop 에서 맡지 않습니다.
+          role-to-assume: >-
+            ${{ github.ref == 'refs/heads/main'
+            && vars.AWS_DEPLOY_ROLE_ARN
+            || vars.AWS_STAGING_PUBLISH_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Log in to Amazon ECR
@@ -629,9 +635,8 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 태그를 둘 만듭니다. commit SHA 태그는 한 번 붙으면 다른 이미지를 가리키지 않으므로
-      # 배포와 rollback 이 이 값을 기준으로 삼습니다. main 태그는 사람이 최신을 확인하는
-      # 용도이고 매 배포마다 다른 이미지를 가리킵니다.
+      # 태그를 둘 만듭니다. commit SHA 태그는 배포와 rollback 의 기준입니다. 브랜치 태그는
+      # 사람이 각 환경의 최신을 확인하는 용도이고 main 또는 develop 을 가리킵니다.
       - name: Build and push image
         id: push
         uses: docker/build-push-action@v6
@@ -640,7 +645,7 @@ jobs:
           push: true
           tags: |
             ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
-            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:main
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.ref_name }}
           # 레이어 캐시는 입력이 바뀌면 무효화됩니다. 소스를 COPY 하는 단계가 커밋마다
           # 달라지므로 그 뒤 단계는 캐시를 쓰지 않습니다. 오래된 소스가 남지 않습니다.
           cache-from: type=gha
@@ -659,13 +664,13 @@ jobs:
 
           user="$(docker image inspect --format '{{.Config.User}}' "$IMAGE")"
           if [[ "$user" != "mopl" ]]; then
-            echo "운영 이미지의 기본 사용자가 비특권 사용자가 아닙니다: '$user'"
+            echo "게시 이미지의 기본 사용자가 비특권 사용자가 아닙니다: '$user'"
             exit 1
           fi
 
           healthcheck="$(docker image inspect --format '{{json .Config.Healthcheck}}' "$IMAGE")"
           if [[ "$healthcheck" == "null" ]]; then
-            echo "운영 이미지에 healthcheck 메타데이터가 없습니다."
+            echo "게시 이미지에 healthcheck 메타데이터가 없습니다."
             exit 1
           fi
 
@@ -681,16 +686,16 @@ jobs:
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           {
-            echo "### 게시한 운영 이미지"
+            echo "### 게시한 ${{ github.ref_name }} 이미지"
             echo
             echo "| 항목 | 값 |"
             echo "| --- | --- |"
             echo "| commit | \`${{ github.sha }}\` |"
             echo "| 불변 태그 | \`$REGISTRY/$REPOSITORY:${{ github.sha }}\` |"
-            echo "| 이동 태그 | \`$REGISTRY/$REPOSITORY:main\` |"
+            echo "| 이동 태그 | \`$REGISTRY/$REPOSITORY:${{ github.ref_name }}\` |"
             echo "| digest | \`$DIGEST\` |"
             echo
-            echo "배포와 rollback 은 digest 또는 commit SHA 태그를 사용합니다. \`main\` 태그는 사람이 최신을 확인하는 용도입니다."
+            echo "배포와 rollback 은 digest 또는 commit SHA 태그를 사용합니다. \`${{ github.ref_name }}\` 태그는 사람이 해당 환경의 최신을 확인하는 용도입니다."
           } >> "$GITHUB_STEP_SUMMARY"
   coverage-upload:
     name: Coverage upload
