@@ -1,5 +1,6 @@
 package com.mopl.global.security;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -15,10 +16,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.mopl.global.config.SecurityConfig;
 import com.mopl.global.security.controller.CsrfTokenController;
+import com.mopl.user.service.AccessTokenUserStatusService;
+import com.mopl.user.service.AccessTokenAuthenticationStatus;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,6 +53,20 @@ class SecurityAccessPolicyTest {
 
     @MockitoBean
     JwtProvider jwtProvider;
+
+    @MockitoBean
+    AccessTokenUserStatusService accessTokenUserStatusService;
+
+    @BeforeEach
+    void allowActiveAccessTokenUsersByDefault() {
+        when(
+            accessTokenUserStatusService.resolve(
+                any(UUID.class)
+            )
+        ).thenReturn(
+            AccessTokenAuthenticationStatus.ALLOWED
+        );
+    }
 
     @ParameterizedTest
     @ValueSource(strings = {
@@ -489,6 +507,120 @@ class SecurityAccessPolicyTest {
 
         verify(jwtProvider).validate("valid-token");
         verify(jwtProvider).getAuthentication("valid-token");
+    }
+
+    @Test
+    @DisplayName("차단된 사용자의 유효한 Access Token은 보호 API에서 401을 반환한다")
+    void protectedApi_withBlockedUser_returnsUnauthorized()
+        throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(USER_ID);
+
+        var authentication =
+            UsernamePasswordAuthenticationToken
+                .authenticated(
+                    userId,
+                    null,
+                    List.of(
+                        new SimpleGrantedAuthority(
+                            "ROLE_USER"
+                        )
+                    )
+                );
+
+        when(
+            jwtProvider.validate("blocked-token")
+        ).thenReturn(true);
+
+        when(
+            jwtProvider.getAuthentication(
+                "blocked-token"
+            )
+        ).thenReturn(authentication);
+
+        when(
+            accessTokenUserStatusService.resolve(
+                userId
+            )
+        ).thenReturn(
+            AccessTokenAuthenticationStatus.BLOCKED
+        );
+
+        // when & then
+        mockMvc.perform(
+                get(
+                    "/api/security-policy/protected"
+                )
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer blocked-token"
+                    )
+            )
+            .andExpect(
+                status().isUnauthorized()
+            )
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_401_1")
+            );
+    }
+
+    @Test
+    @DisplayName("사용자 인증 상태를 확인할 수 없으면 보호 API에서 503을 반환한다")
+    void protectedApi_withUnavailableUserStatus_returnsServiceUnavailable()
+        throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(USER_ID);
+
+        var authentication =
+            UsernamePasswordAuthenticationToken
+                .authenticated(
+                    userId,
+                    null,
+                    List.of(
+                        new SimpleGrantedAuthority(
+                            "ROLE_USER"
+                        )
+                    )
+                );
+
+        when(
+            jwtProvider.validate("unavailable-token")
+        ).thenReturn(true);
+
+        when(
+            jwtProvider.getAuthentication(
+                "unavailable-token"
+            )
+        ).thenReturn(authentication);
+
+        when(
+            accessTokenUserStatusService.resolve(
+                userId
+            )
+        ).thenReturn(
+            AccessTokenAuthenticationStatus.UNAVAILABLE
+        );
+
+        // when & then
+        mockMvc.perform(
+                get(
+                    "/api/security-policy/protected"
+                )
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer unavailable-token"
+                    )
+            )
+            .andExpect(
+                status().isServiceUnavailable()
+            )
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_503_1")
+            );
     }
 
     @Test
