@@ -22,8 +22,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class UserWithdrawalTransactionService {
 
     private final UserRepository userRepository;
-    private final OAuthAccountRepository
-        oauthAccountRepository;
+    private final OAuthAccountRepository oauthAccountRepository;
+    private final AccessTokenBlockLifecycleService accessTokenBlockLifecycleService;
 
     /**
      * 인증된 본인 계정을 탈퇴 처리
@@ -53,6 +53,15 @@ public class UserWithdrawalTransactionService {
                         ErrorCode.RESOURCE_NOT_FOUND
                     )
                 );
+
+        /*
+         * 사용자 행 잠금을 획득한 상태에서 기존 Access Token을 차단합니다.
+         * 잠금 해제 요청과 탈퇴 요청이 동시에 실행돼도,
+         * 잠금 해제의 afterCommit이 탈퇴 차단 상태를 뒤늦게 제거하지 못하게 합니다.
+         */
+        accessTokenBlockLifecycleService.block(
+            userId
+        );
 
         /*
          * 동일한 Provider 계정으로 신규 가입할 수 있도록

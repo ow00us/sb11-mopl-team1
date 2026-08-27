@@ -6,6 +6,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
@@ -20,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.InOrder;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
@@ -33,6 +36,9 @@ class UserWithdrawalTransactionServiceTest {
 
     @Mock
     User user;
+
+    @Mock
+    AccessTokenBlockLifecycleService accessTokenBlockLifecycleService;
 
     @InjectMocks
     UserWithdrawalTransactionService
@@ -63,15 +69,26 @@ class UserWithdrawalTransactionServiceTest {
         );
 
         // then
-        verify(
-            oauthAccountRepository
-        ).deleteAllByUserId(
-            userId
+        InOrder inOrder = inOrder(
+            userRepository,
+            accessTokenBlockLifecycleService,
+            oauthAccountRepository,
+            user
         );
 
-        verify(user).withdraw(
-            any(Instant.class)
-        );
+        inOrder.verify(userRepository)
+            .findByIdForUpdate(userId);
+
+        inOrder.verify(accessTokenBlockLifecycleService)
+            .block(userId);
+
+        inOrder.verify(oauthAccountRepository)
+            .deleteAllByUserId(userId);
+
+        inOrder.verify(user)
+            .withdraw(
+                any(Instant.class)
+            );
     }
 
     @Test
@@ -153,6 +170,47 @@ class UserWithdrawalTransactionServiceTest {
             never()
         ).deleteAllByUserId(
             userId
+        );
+
+        verify(
+            user,
+            never()
+        ).withdraw(
+            any(Instant.class)
+        );
+    }
+
+    @Test
+    @DisplayName("Access Token 차단에 실패하면 OAuth 연결 삭제와 탈퇴 처리를 실행하지 않는다")
+    void withdraw_rejectsWhenAccessTokenBlockFails() {
+        // given
+        UUID userId = UUID.randomUUID();
+
+        when(
+            userRepository.findByIdForUpdate(userId)
+        ).thenReturn(
+            Optional.of(user)
+        );
+
+        BusinessException exception =
+            new BusinessException(
+                ErrorCode.SERVICE_UNAVAILABLE
+            );
+
+        doThrow(exception)
+            .when(accessTokenBlockLifecycleService)
+            .block(userId);
+
+        // when & then
+        assertThatThrownBy(() ->
+            userWithdrawalTransactionService.withdraw(
+                userId,
+                userId
+            )
+        ).isSameAs(exception);
+
+        verifyNoInteractions(
+            oauthAccountRepository
         );
 
         verify(

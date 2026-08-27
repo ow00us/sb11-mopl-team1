@@ -2,14 +2,11 @@ package com.mopl.user.service;
 
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
-import com.mopl.global.security.JwtProperties;
-import com.mopl.user.storage.AccessTokenBlockStore;
 import com.mopl.user.storage.EmailVerificationStore;
 import com.mopl.user.storage.RefreshTokenStore;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
 /**
@@ -24,8 +21,7 @@ public class UserWithdrawalService {
     private final UserWithdrawalTransactionService transactionService;
     private final RefreshTokenStore refreshTokenStore;
     private final EmailVerificationStore emailVerificationStore;
-    private final AccessTokenBlockStore accessTokenBlockStore;
-    private final JwtProperties jwtProperties;
+
     /**
      * 기존 Access Token을 먼저 차단한 뒤 사용자를 탈퇴 처리하고
      * 남아 있는 인증 상태를 정리
@@ -45,12 +41,6 @@ public class UserWithdrawalService {
             authenticatedUserId,
             userId
         );
-
-        /*
-         * DB 탈퇴 처리보다 먼저 기존 Access Token을 차단합니다.
-         * 차단 상태를 저장하지 못하면 탈퇴를 시작하지 않습니다.
-         */
-        blockAccessTokens(userId);
 
         /*
          * 별도 Bean의 @Transactional 메서드가 반환되면
@@ -85,31 +75,6 @@ public class UserWithdrawalService {
         ) {
             throw new BusinessException(
                 ErrorCode.FORBIDDEN
-            );
-        }
-    }
-
-    private void blockAccessTokens(
-        UUID userId
-    ) {
-        try {
-            accessTokenBlockStore.block(
-                userId,
-                jwtProperties
-                    .getAccessTokenExpiration()
-            );
-        } catch (DataAccessException exception) {
-            log.error(
-                "회원 탈퇴 전 Access Token 차단 상태 저장에 실패했습니다. "
-                    + "userId={}, cause={}",
-                userId,
-                exception
-                    .getClass()
-                    .getSimpleName()
-            );
-
-            throw new BusinessException(
-                ErrorCode.SERVICE_UNAVAILABLE
             );
         }
     }
