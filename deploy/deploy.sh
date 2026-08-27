@@ -79,22 +79,27 @@ note "backend  ${PREVIOUS_BACKEND_IMAGE:-(없음)}"
 note "frontend ${PREVIOUS_FRONTEND_IMAGE:-(없음)}"
 
 ENV_BACKUP="$(mktemp)"
+ENV_UPDATED="$(mktemp)"
+chmod 0600 "${ENV_BACKUP}" "${ENV_UPDATED}"
 cp -a "${ENV_FILE}" "${ENV_BACKUP}"
 # Secret 이 들어 있는 파일의 사본입니다. 어떤 경로로 끝나든 지웁니다.
-trap 'rm -f "${ENV_BACKUP}"' EXIT
+trap 'rm -f "${ENV_BACKUP}" "${ENV_UPDATED}"' EXIT
 
 set_env_value() {
     local key=$1 value=$2
     if grep -q "^${key}=" "${ENV_FILE}"; then
-        # 값에 / 가 들어가므로 구분자를 | 로 씁니다.
-        sed -i "s|^${key}=.*|${key}=${value}|" "${ENV_FILE}"
+        # 설정 디렉터리는 의도적으로 deploy 사용자가 새 파일을 만들 수 없습니다.
+        # sed -i 는 같은 디렉터리에 임시 파일을 만들므로, /tmp 에 결과를 만든 뒤 기존
+        # 파일 내용을 제자리에서 갱신합니다. 값에 / 가 들어가므로 구분자는 | 입니다.
+        sed "s|^${key}=.*|${key}=${value}|" "${ENV_FILE}" > "${ENV_UPDATED}"
+        cat "${ENV_UPDATED}" > "${ENV_FILE}"
     else
         printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
     fi
 }
 
 restore_env() {
-    cp -a "${ENV_BACKUP}" "${ENV_FILE}"
+    cat "${ENV_BACKUP}" > "${ENV_FILE}"
 }
 
 # ── 새 이미지 준비 ─────────────────────────────────────────────────────────
