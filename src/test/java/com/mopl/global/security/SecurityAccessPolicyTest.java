@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -1141,4 +1142,128 @@ class SecurityAccessPolicyTest {
         ).validate(org.mockito.ArgumentMatchers.anyString());
     }
 
+    @Test
+    @DisplayName("회원 탈퇴 API는 인증되지 않은 요청을 401로 거부한다")
+    void withdrawUser_withoutJwt_returnsUnauthorized()
+        throws Exception {
+
+        /*
+         * CSRF 토큰을 포함하여 403 CSRF 실패가 아니라
+         * JWT 인증 부재로 인한 401인지 검증
+         */
+        mockMvc.perform(
+                delete(
+                    "/api/users/{userId}",
+                    USER_ID
+                )
+                    .with(csrf())
+            )
+            .andExpect(status().isUnauthorized())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_401_1")
+            );
+
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
+    @Test
+    @DisplayName("회원 탈퇴 API는 CSRF 토큰이 없는 요청을 403으로 거부한다")
+    void withdrawUser_withoutCsrf_returnsForbidden()
+        throws Exception {
+        // given
+        var authentication =
+            UsernamePasswordAuthenticationToken
+                .authenticated(
+                    UUID.fromString(USER_ID),
+                    null,
+                    List.of(
+                        new SimpleGrantedAuthority(
+                            "ROLE_USER"
+                        )
+                    )
+                );
+
+        when(
+            jwtProvider.validate("user-token")
+        ).thenReturn(true);
+
+        when(
+            jwtProvider.getAuthentication(
+                "user-token"
+            )
+        ).thenReturn(authentication);
+
+        // when & then
+        mockMvc.perform(
+                delete(
+                    "/api/users/{userId}",
+                    USER_ID
+                )
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer user-token"
+                    )
+            )
+            .andExpect(status().isForbidden())
+            .andExpect(
+                jsonPath("$.errorCode")
+                    .value("COMMON_403_1")
+            );
+    }
+
+    @Test
+    @DisplayName("회원 탈퇴 API는 유효한 JWT와 CSRF 토큰으로 접근할 수 있다")
+    void withdrawUser_withJwtAndCsrf_returnsNoContent()
+        throws Exception {
+        // given
+        var authentication =
+            UsernamePasswordAuthenticationToken
+                .authenticated(
+                    UUID.fromString(USER_ID),
+                    null,
+                    List.of(
+                        new SimpleGrantedAuthority(
+                            "ROLE_USER"
+                        )
+                    )
+                );
+
+        when(
+            jwtProvider.validate("user-token")
+        ).thenReturn(true);
+
+        when(
+            jwtProvider.getAuthentication(
+                "user-token"
+            )
+        ).thenReturn(authentication);
+
+        // when & then
+        mockMvc.perform(
+                delete(
+                    "/api/users/{userId}",
+                    USER_ID
+                )
+                    .with(csrf())
+                    .header(
+                        HttpHeaders.AUTHORIZATION,
+                        "Bearer user-token"
+                    )
+            )
+            .andExpect(status().isNoContent());
+
+        verify(jwtProvider).validate(
+            "user-token"
+        );
+
+        verify(jwtProvider).getAuthentication(
+            "user-token"
+        );
+    }
 }
