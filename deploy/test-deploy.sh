@@ -90,6 +90,8 @@ new_workspace() {
     dir="$(mktemp -d)"
     printf 'BACKEND_IMAGE=reg/be@sha256:OLD\nFRONTEND_IMAGE=reg/fe@sha256:OLDFE\nJWT_SECRET=keep-me\n' \
         > "${dir}/prod.env"
+    printf 'BACKEND_IMAGE=reg/be@sha256:STAGING-OLD\nFRONTEND_IMAGE=reg/fe@sha256:STAGING-OLDFE\nJWT_SECRET=staging-secret\n' \
+        > "${dir}/staging.env"
     : > "${dir}/compose.yml"
     : > "${dir}/state.env"
     : > "${dir}/calls.log"
@@ -101,7 +103,7 @@ run_deploy() {
     MOCK_LOG="${dir}/calls.log" \
     PATH="${dir}/bin:${PATH}" \
     COMPOSE_FILE="${dir}/compose.yml" \
-    ENV_FILE="${dir}/prod.env" \
+    MOPL_CONFIG_DIR="${dir}" \
     STATE_FILE="${dir}/state.env" \
     HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-6}" \
     HEALTH_INTERVAL="${HEALTH_INTERVAL:-2}" \
@@ -120,9 +122,23 @@ check "env 에 새 이미지" "reg/be@sha256:NEW" "$(sed -n 's/^BACKEND_IMAGE=//
 check "결과 기록" "succeeded" "$(sed -n 's/^DEPLOY_RESULT=//p' "${W}/state.env")"
 check "되돌릴 지점 기록" "reg/be@sha256:OLD" "$(sed -n 's/^PREVIOUS_BACKEND_IMAGE=//p' "${W}/state.env")"
 check "commit 기록" "abc1234" "$(sed -n 's/^DEPLOY_COMMIT=//p' "${W}/state.env")"
+check "환경 기록" "production" "$(sed -n 's/^DEPLOY_ENVIRONMENT=//p' "${W}/state.env")"
 rm -rf "${W}"
 
-# ── 2. rollback ────────────────────────────────────────────────────────────
+# ── 2. staging 환경 선택 ──────────────────────────────────────────────────
+head_ "staging: staging.env 만 변경하고 production 설정은 보존한다"
+W="$(new_workspace)"; make_docker always_up "${W}"
+OUT="$(run_deploy "${W}" --environment staging --backend-image reg/be@sha256:STAGING-NEW --commit def5678)"
+check "종료 코드 0" 0 $?
+check "staging env 에 새 이미지" "reg/be@sha256:STAGING-NEW" \
+    "$(sed -n 's/^BACKEND_IMAGE=//p' "${W}/staging.env")"
+check "production env 보존" "reg/be@sha256:OLD" \
+    "$(sed -n 's/^BACKEND_IMAGE=//p' "${W}/prod.env")"
+check "staging Secret 보존" "staging-secret" "$(sed -n 's/^JWT_SECRET=//p' "${W}/staging.env")"
+check "환경 기록" "staging" "$(sed -n 's/^DEPLOY_ENVIRONMENT=//p' "${W}/state.env")"
+rm -rf "${W}"
+
+# ── 3. rollback ────────────────────────────────────────────────────────────
 head_ "실패: A 가 health 를 통과하지 못하면 되돌리고 B 는 건드리지 않는다"
 W="$(new_workspace)"; make_docker down_when_new "${W}"
 OUT="$(run_deploy "${W}" --backend-image reg/be@sha256:NEW --commit abc1234)"
@@ -137,7 +153,7 @@ contains "복구 확인" "이전 이미지로 복구했습니다" "${OUT}"
 contains "스키마는 되돌리지 않았음을 알림" "마이그레이션은 되돌리지 않았습니다" "${OUT}"
 rm -rf "${W}"
 
-# ── 3. 교체 전 차단 ────────────────────────────────────────────────────────
+# ── 4. 교체 전 차단 ────────────────────────────────────────────────────────
 head_ "설정이 깨지면 아무것도 교체하지 않는다"
 W="$(new_workspace)"; make_docker config_fails "${W}"
 OUT="$(run_deploy "${W}" --backend-image reg/be@sha256:NEW)"
@@ -149,6 +165,14 @@ rm -rf "${W}"
 head_ "이동 태그는 배포 대상이 될 수 없다"
 W="$(new_workspace)"; make_docker always_up "${W}"
 OUT="$(run_deploy "${W}" --backend-image reg/be:main)"
+check "종료 코드 1" 1 $?
+contains "이유 안내" "이동 태그" "${OUT}"
+check "컨테이너를 건드리지 않음" 0 "$(grep -c 'no-deps' "${W}/calls.log")"
+rm -rf "${W}"
+
+head_ "staging 이동 태그도 배포 대상이 될 수 없다"
+W="$(new_workspace)"; make_docker always_up "${W}"
+OUT="$(run_deploy "${W}" --environment staging --backend-image reg/be:develop)"
 check "종료 코드 1" 1 $?
 contains "이유 안내" "이동 태그" "${OUT}"
 check "컨테이너를 건드리지 않음" 0 "$(grep -c 'no-deps' "${W}/calls.log")"
