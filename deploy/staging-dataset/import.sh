@@ -91,8 +91,10 @@ ACTUAL_INSTANCE_ID=$(curl --fail --silent --show-error \
 ACTUAL_DOMAIN=$(env_value MOPL_DOMAIN)
 [[ ${ACTUAL_DOMAIN} == "${EXPECTED_DOMAIN}" ]] \
     || fail "staging 도메인이 아닙니다. actual=${ACTUAL_DOMAIN}"
-grep -qx 'DEPLOY_ENVIRONMENT=staging' /etc/mopl/deploy-state.env \
-    || fail "최근 배포 환경 기록이 staging이 아닙니다."
+DEPLOY_ENVIRONMENT=$(sed -n 's/^DEPLOY_ENVIRONMENT=//p' /etc/mopl/deploy-state.env \
+    | tail -n 1 | tr -d '\r')
+[[ ${DEPLOY_ENVIRONMENT} == staging ]] \
+    || fail "최근 배포 환경 기록이 staging이 아닙니다: ${DEPLOY_ENVIRONMENT:-missing}"
 
 DATASET_MANIFEST=${DATASET_DIR}/manifest.yml
 [[ -r ${DATASET_MANIFEST} ]] || fail "manifest.yml이 없습니다."
