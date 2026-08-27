@@ -561,6 +561,10 @@ public class UserController {
         @ApiResponse(
             responseCode = "404",
             description = "사용자가 없거나 이미 탈퇴함"
+        ),
+        @ApiResponse(
+            responseCode = "503",
+            description = "인증 차단 상태를 저장할 수 없음"
         )
     })
     public ResponseEntity<Void> withdrawUser(

@@ -1723,6 +1723,12 @@ paths:
             "*/*":
               schema:
                 "$ref": "#/components/schemas/ErrorResponse"
+        "503":
+          description: "인증 차단 상태를 저장할 수 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
   "/api/users/{userId}/oauth-accounts":
     get:
       tags:

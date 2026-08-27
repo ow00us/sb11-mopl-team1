@@ -429,6 +429,29 @@ class OpenApiRuntimeContractTest {
                         "uuid"
                     )
                 )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}']"
+                        + ".delete.parameters"
+                        + "[?(@.name == 'userId')]"
+                        + ".schema.format"
+                ).value(
+                    org.hamcrest.Matchers.hasItem(
+                        "uuid"
+                    )
+                )
+            )
+
+            /*
+             * Access Token 차단 상태를 저장할 수 없으면
+             * 보안을 위해 탈퇴를 중단하고 503을 반환
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}']"
+                        + ".delete.responses['503']"
+                ).exists()
             );
     }
 
