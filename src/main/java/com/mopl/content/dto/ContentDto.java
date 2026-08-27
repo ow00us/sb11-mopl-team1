@@ -40,7 +40,7 @@ public record ContentDto(
                 document.getTitle(),
                 document.getDescription(),
                 document.getThumbnailUrl(),
-                Set.copyOf(document.getTags()),
+                Set.copyOf(document.getDisplayTags()),
                 BigDecimal.valueOf(document.getAverageRating()).setScale(1, RoundingMode.HALF_UP),
                 document.getReviewCount(),
                 document.getWatcherCount());
