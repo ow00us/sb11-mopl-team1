@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.directmessage.dto.DirectMessageDto;
+import com.mopl.directmessage.dto.DirectMessageReadEvent;
 import com.mopl.global.common.UserSummary;
 import com.mopl.global.realtime.RealtimeMessage;
 import java.time.Instant;
@@ -44,7 +45,20 @@ class DirectMessageRelayHandlerTest {
         // when
         boolean result =
             handler.supports(
-                DirectMessageRealtimeContract.EVENT_TYPE
+                DirectMessageRealtimeContract.CREATED_EVENT_TYPE
+            );
+
+        // then
+        assertThat(result).isTrue();
+    }
+
+    @Test
+    @DisplayName("DM 읽음 실시간 이벤트를 처리 대상으로 판단")
+    void supports_directMessageRead_returnsTrue() {
+        // when
+        boolean result =
+            handler.supports(
+                DirectMessageRealtimeContract.READ_EVENT_TYPE
             );
 
         // then
@@ -85,7 +99,7 @@ class DirectMessageRelayHandlerTest {
                     "cccccccc-cccc-cccc-cccc-cccccccccccc"
                 ),
                 "remote-instance",
-                DirectMessageRealtimeContract.EVENT_TYPE,
+                DirectMessageRealtimeContract.CREATED_EVENT_TYPE,
                 destination,
                 payload
             );
@@ -109,6 +123,50 @@ class DirectMessageRelayHandlerTest {
     }
 
     @Test
+    @DisplayName("다른 서버에서 받은 DM 읽음 상태를 현재 서버 구독자에게 전송")
+    void handle_readEvent_success() {
+        // given
+        DirectMessageReadEvent readEvent =
+            createReadEvent();
+
+        JsonNode payload =
+            mock(JsonNode.class);
+
+        String destination =
+            DirectMessageRealtimeContract.destination(
+                CONVERSATION_ID
+            );
+
+        RealtimeMessage relayMessage =
+            new RealtimeMessage(
+                UUID.fromString(
+                    "cccccccc-cccc-cccc-cccc-cccccccccccc"
+                ),
+                "remote-instance",
+                DirectMessageRealtimeContract.READ_EVENT_TYPE,
+                destination,
+                payload
+            );
+
+        when(
+            objectMapper.convertValue(
+                payload,
+                DirectMessageReadEvent.class
+            )
+        ).thenReturn(readEvent);
+
+        // when
+        handler.handle(relayMessage);
+
+        // then
+        verify(broadcaster)
+            .broadcastRead(
+                destination,
+                readEvent
+            );
+    }
+
+    @Test
     @DisplayName("DM payload와 WebSocket 목적지가 다르면 전송에 실패")
     void handle_destinationMismatch_fails() {
         // given
@@ -124,7 +182,7 @@ class DirectMessageRelayHandlerTest {
                     "cccccccc-cccc-cccc-cccc-cccccccccccc"
                 ),
                 "remote-instance",
-                DirectMessageRealtimeContract.EVENT_TYPE,
+                DirectMessageRealtimeContract.CREATED_EVENT_TYPE,
                 "/sub/conversations/"
                     + UUID.fromString(
                         "dddddddd-dddd-dddd-dddd-dddddddddddd"
@@ -150,6 +208,21 @@ class DirectMessageRelayHandlerTest {
             );
 
         verifyNoInteractions(broadcaster);
+    }
+
+    private DirectMessageReadEvent createReadEvent() {
+        return new DirectMessageReadEvent(
+            CONVERSATION_ID,
+            UUID.fromString(
+                "22222222-2222-2222-2222-222222222222"
+            ),
+            UUID.fromString(
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            ),
+            Instant.parse(
+                "2026-08-27T01:00:00Z"
+            )
+        );
     }
 
     private DirectMessageDto createMessageDto() {

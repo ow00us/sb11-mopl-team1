@@ -5,6 +5,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.mopl.directmessage.dto.DirectMessageDto;
+import com.mopl.directmessage.dto.DirectMessageReadEvent;
 import com.mopl.global.common.UserSummary;
 import com.mopl.global.realtime.RealtimeRelayPublisher;
 import java.time.Instant;
@@ -44,7 +45,7 @@ class DirectMessageRelayPublisherTest {
 
         when(
             relayPublisher.publish(
-                DirectMessageRealtimeContract.EVENT_TYPE,
+                DirectMessageRealtimeContract.CREATED_EVENT_TYPE,
                 destination,
                 message
             )
@@ -62,9 +63,58 @@ class DirectMessageRelayPublisherTest {
 
         verify(relayPublisher)
             .publish(
-                DirectMessageRealtimeContract.EVENT_TYPE,
+                DirectMessageRealtimeContract.CREATED_EVENT_TYPE,
                 destination,
                 message
+            );
+    }
+
+    @Test
+    @DisplayName("DM 읽음 상태를 다른 서버로 중계")
+    void publishRead_success() {
+        // given
+        DirectMessageReadEvent readEvent =
+            new DirectMessageReadEvent(
+                CONVERSATION_ID,
+                UUID.fromString(
+                    "22222222-2222-2222-2222-222222222222"
+                ),
+                UUID.fromString(
+                    "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+                ),
+                Instant.parse(
+                    "2026-08-27T01:00:00Z"
+                )
+            );
+
+        String destination =
+            DirectMessageRealtimeContract.destination(
+                CONVERSATION_ID
+            );
+
+        when(
+            relayPublisher.publish(
+                DirectMessageRealtimeContract.READ_EVENT_TYPE,
+                destination,
+                readEvent
+            )
+        ).thenReturn(true);
+
+        // when
+        boolean result =
+            publisher.publishRead(
+                CONVERSATION_ID,
+                readEvent
+            );
+
+        // then
+        assertThat(result).isTrue();
+
+        verify(relayPublisher)
+            .publish(
+                DirectMessageRealtimeContract.READ_EVENT_TYPE,
+                destination,
+                readEvent
             );
     }
 

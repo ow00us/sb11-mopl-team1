@@ -546,7 +546,7 @@ curl --fail http://localhost:8080/actuator/health
 
 배포 서버는 소스를 받아 다시 빌드하지 않습니다. CI가 검증한 commit과 대응하는 이미지를 그대로 내려받습니다. 서버에서 빌드하면 CI가 통과시킨 것과 실제로 도는 것이 같다는 보장이 없습니다.
 
-`main` push와 `main` 브랜치의 수동 재실행에서만 게시합니다. PR이나 다른 브랜치의 수동 실행에서는 운영 태그를 만들지 않습니다. 검증되지 않은 커밋의 태그가 레지스트리에 남거나 다른 브랜치가 `main` 태그를 덮어쓰면 배포 대상을 고를 때 무엇이 검증된 것인지 구분할 수 없습니다.
+`main`과 `develop` push, 그리고 두 브랜치의 수동 재실행에서만 게시합니다. PR이나 다른 브랜치의 수동 실행에서는 태그를 만들지 않습니다. `main`은 production용 역할을, `develop`은 production SSM 권한이 없는 staging 전용 역할을 맡습니다. 검증되지 않은 커밋의 태그가 레지스트리에 남거나 staging 코드가 production 권한을 얻지 않도록 게시 경계를 분리합니다.
 
 게시는 `build`와 `Container smoke`가 모두 통과한 뒤에 실행됩니다.
 
@@ -555,9 +555,10 @@ curl --fail http://localhost:8080/actuator/health
 | 태그 | 성질 | 용도 |
 | --- | --- | --- |
 | `<commit SHA>` | 한 번 붙으면 다른 이미지를 가리키지 않습니다 | 배포와 rollback의 기준 |
-| `main` | 매 배포마다 다른 이미지를 가리킵니다 | 사람이 최신을 확인하는 용도 |
+| `main` | main 게시마다 다른 이미지를 가리킵니다 | production 최신 확인용 |
+| `develop` | develop 게시마다 다른 이미지를 가리킵니다 | staging 최신 확인용 |
 
-**배포와 rollback은 digest 또는 commit SHA 태그를 씁니다.** `main`만 쓰면 되돌릴 대상을 지목할 수 없습니다. 게시 결과의 태그와 digest는 워크플로 실행 요약에 남으므로 실행 로그를 뒤지지 않고 찾을 수 있습니다.
+**배포와 rollback은 digest 또는 commit SHA 태그를 씁니다.** `main`이나 `develop` 이동 태그만 쓰면 되돌릴 대상을 지목할 수 없습니다. 게시 결과의 태그와 digest는 워크플로 실행 요약에 남으므로 실행 로그를 뒤지지 않고 찾을 수 있습니다.
 
 ### 자격 증명
 
@@ -570,8 +571,9 @@ curl --fail http://localhost:8080/actuator/health
 | `ECR_REPOSITORY` | ECR repository 이름 |
 | `AWS_REGION` | repository가 있는 리전 |
 | `AWS_DEPLOY_ROLE_ARN` | Actions가 OIDC로 맡을 IAM 역할 ARN |
+| `AWS_STAGING_PUBLISH_ROLE_ARN` | develop 게시가 맡을 staging 전용 IAM 역할 ARN. production SSM 권한을 포함하지 않습니다 |
 
-**`ECR_REPOSITORY`가 비어 있으면 게시 job을 건너뜁니다.** AWS 리소스와 OIDC 역할은 #348이 만들므로, 그 전까지 `main` push마다 실패로 남기지 않기 위한 조건입니다. #348이 끝나고 변수를 채우면 그때부터 게시가 시작됩니다.
+**`ECR_REPOSITORY`가 비어 있으면 게시 job을 건너뜁니다.** develop은 `AWS_STAGING_PUBLISH_ROLE_ARN`도 비어 있으면 건너뜁니다. staging 역할은 `refs/heads/develop`만 신뢰하고 ECR 게시 권한만 가져야 하며, 기존 production 역할에 develop 신뢰를 추가하지 않습니다.
 
 ### 게시 후 확인
 
@@ -821,7 +823,12 @@ Kafka에 볼륨을 두는 이유는 컨테이너를 다시 만들 때 토픽과 
 
 ```bash
 sudo install -o deploy -g deploy -m 600 /dev/null /etc/mopl/prod.env
+sudo install -o deploy -g deploy -m 600 /dev/null /etc/mopl/staging.env
 ```
+
+production 서버는 `prod.env`, staging 서버는 `staging.env`를 사용합니다. 두 파일을 같은
+서버에서 함께 쓰는 구성이 아니라, 같은 배포 스크립트가 대상 환경에 맞는 파일을 고르는
+계약입니다.
 
 Compose가 `MOPL_DOMAIN` 하나에서 CORS origin, WebSocket origin, OAuth Callback URI를 모두 만듭니다. 도메인을 바꿀 때 한 곳만 고치면 되고, 값들이 서로 어긋날 수 없습니다. 각 Provider Console에 등록한 Callback URI가 이 도메인과 같아야 합니다.
 
@@ -836,19 +843,34 @@ Compose가 `MOPL_DOMAIN` 하나에서 CORS origin, WebSocket origin, OAuth Callb
 | `deploy/check-destructive-migration.sh` | 되돌릴 수 없는 스키마 변경을 배포 전에 막습니다 |
 | `deploy/test-deploy.sh` | 성공·실패·rollback 경로 검증 |
 
+서버의 배포 스크립트는 환경을 명시해서 실행합니다.
+
+```bash
+bash deploy/deploy.sh --environment production --backend-image <digest-or-sha>
+bash deploy/deploy.sh --environment staging --backend-image <digest-or-sha>
+```
+
+`--environment production`은 `/etc/mopl/prod.env`, `--environment staging`은
+`/etc/mopl/staging.env`를 선택합니다. 기본값은 기존 운영 호출과의 호환을 위해
+`production`입니다. 배포 기록에는 선택한 환경도 함께 남습니다.
+
 ### 실행
 
 Actions 탭의 `Deploy` 워크플로를 실행합니다.
 
 | 입력 | 설명 |
 | --- | --- |
+| `target_environment` | `production` 또는 `staging`. 기본값은 `production`입니다 |
 | `backend_image` | digest 또는 commit SHA 태그 |
 | `frontend_image` | 비우면 지금 것을 그대로 둡니다 |
 | `allow_destructive_migration` | 아래 "되돌릴 수 없는 변경" 참고 |
 
-**이동 태그는 거부됩니다.** `main`이나 `latest`는 나중에 다른 이미지를 가리키므로, 무엇이 배포됐는지 지목할 수 없고 되돌릴 대상도 정해지지 않습니다.
+**이동 태그는 거부됩니다.** `main`, `develop`, `latest`는 나중에 다른 이미지를 가리키므로, 무엇이 배포됐는지 지목할 수 없고 되돌릴 대상도 정해지지 않습니다.
 
-`production` environment를 씁니다. 승인자와 대상 브랜치 제한은 저장소 설정에 둡니다. 같은 환경에 배포가 겹치지 않도록 concurrency를 걸었고, 진행 중인 배포를 취소하지 않습니다. 배포 도중 취소는 절반만 교체된 상태를 남깁니다.
+선택한 값과 같은 이름의 GitHub environment를 씁니다. `production`과 `staging`의 승인자,
+대상 브랜치, AWS 역할, EC2 instance ID, 도메인은 저장소 설정에서 분리합니다. 같은 환경에
+배포가 겹치지 않도록 environment별 concurrency를 걸었고, 진행 중인 배포를 취소하지
+않습니다. 배포 도중 취소는 절반만 교체된 상태를 남깁니다.
 
 ### 교체 순서
 
@@ -955,17 +977,23 @@ repo:OWNER@OWNER_ID/REPO@REPO_ID:ref:refs/heads/main
 gh api repos/ow00us/sb11-mopl-team1/actions/oidc/customization/sub --jq .sub_claim_prefix
 ```
 
-### 서버 접속 Secret
+### 서버에 명령을 보내는 방법
 
-| Secret | 내용 |
+SSH로 붙지 않고 **AWS Systems Manager**로 명령을 보냅니다.
+
+SSH를 쓰려면 22번을 GitHub 러너에게 열어야 하는데, 러너 주소는 고정되지 않아 사실상 넓게 여는 것이 됩니다. 관리 경로를 한 주소로 좁혀 둔 의미가 없어집니다. SSM은 인바운드 포트를 하나도 열지 않고, **저장소에 개인 키를 두지 않아도 됩니다.**
+
+필요한 것은 저장소 변수 하나뿐입니다. Secret이 아닙니다.
+
+| 변수 | 값 |
 | --- | --- |
-| `DEPLOY_HOST` | 배포 서버 주소 |
-| `DEPLOY_USER` | 배포 전용 사용자 |
-| `DEPLOY_SSH_KEY` | 그 사용자의 SSH 개인 키 |
+| `DEPLOY_INSTANCE_ID` | 배포 서버의 EC2 인스턴스 ID |
 
-키는 실행이 끝나면 지웁니다. `BatchMode=yes`로 붙어 자격 증명을 물어보지 않고 실패합니다. 프롬프트가 뜨면 timeout까지 붙잡고 있습니다.
+워크플로는 이미 OIDC로 맡은 역할로 SSM을 호출합니다. 그 역할의 `ssm-deploy` 정책은 이 인스턴스와 `AWS-RunShellScript` 문서로만 범위를 좁혀 두었습니다.
 
 배포 스크립트는 서버에 있는 사본이 아니라 **이번 commit의 것**을 보내 실행합니다. 서버 사본은 언제 갱신됐는지 알 수 없어, 배포되는 코드와 배포하는 절차가 어긋납니다.
+
+SSM은 명령을 root로 실행합니다. 배포 스크립트는 `runuser`로 `deploy` 사용자에게 내려 돌립니다. root로 두면 `sed -i`가 만드는 새 파일이 root 소유가 되어, 다음 배포에서 `deploy`가 환경 파일을 고치지 못합니다.
 
 ### 검증
 

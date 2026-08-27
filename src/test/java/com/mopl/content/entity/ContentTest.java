@@ -71,7 +71,8 @@ class ContentTest {
 
         content.update(null, null, Set.of("SF", " Drama "));
 
-        assertThat(content.getTags()).containsExactlyInAnyOrder("sf", "drama");
+        assertThat(content.getTags()).containsExactlyInAnyOrder("SF", "Drama");
+        assertThat(content.getNormalizedTags()).containsExactlyInAnyOrder("sf", "drama");
     }
 
     @Test
@@ -126,5 +127,37 @@ class ContentTest {
         content.updateThumbnail("https://example.com/new.png");
 
         assertThat(content.getThumbnailUrl()).isEqualTo("https://example.com/new.png");
+    }
+
+    @Test
+    @DisplayName("getNormalizedTags()는 소문자로 정규화된 키를 반환한다")
+    void getNormalizedTags_returnsLowercaseKeys() {
+        Content content = movie();
+        content.addTag("SF");
+        content.addTag(" Drama ");
+
+        assertThat(content.getNormalizedTags()).containsExactlyInAnyOrder("sf", "drama");
+    }
+
+    @Test
+    @DisplayName("getTags()는 공백은 정리하되 원본 표기의 대소문자는 그대로 보존한다")
+    void getTags_preservesOriginalCasingAndCollapsesWhitespace() {
+        Content content = movie();
+        content.addTag("  Sci   Fi  ");
+
+        assertThat(content.getTags()).containsExactly("Sci Fi");
+    }
+
+    @Test
+    @DisplayName("정규화 키가 같은 태그를 대소문자만 다르게 다시 추가하면 나중 값이 표기로 남는다")
+    void addTag_sameNormalizedKeyDifferentCasing_lastWriteWins() {
+        Content content = movie();
+        content.addTag("SF");
+
+        boolean isNew = content.addTag("sf");
+
+        assertThat(isNew).isFalse();
+        assertThat(content.getNormalizedTags()).hasSize(1);
+        assertThat(content.getTags()).containsExactly("sf");
     }
 }

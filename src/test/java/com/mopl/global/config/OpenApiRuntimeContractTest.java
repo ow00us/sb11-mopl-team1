@@ -142,6 +142,7 @@ class OpenApiRuntimeContractTest {
         "GET /api/reviews",
         "GET /api/reviews/me",
         "GET /api/users",
+        "GET /api/users/search",
         "GET /api/users/{userId}",
         "GET /api/users/{watcherId}/watching-sessions",
         "GET /api/users/{userId}/oauth-accounts",

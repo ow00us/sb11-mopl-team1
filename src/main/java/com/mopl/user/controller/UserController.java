@@ -3,6 +3,8 @@ package com.mopl.user.controller;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.user.cookie.RefreshTokenCookieFactory;
 import com.mopl.user.dto.UserListRequest;
+import com.mopl.user.dto.UserSearchRequest;
+import com.mopl.global.common.UserSummary;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserUpdateRequest;
 import com.mopl.user.dto.UserLockUpdateRequest;
@@ -116,6 +118,25 @@ public class UserController {
             userService.findUsers(request);
 
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/search")
+    @Operation(
+        summary = "DM 대상 사용자 검색",
+        description = "인증된 사용자가 이름으로 다른 사용자의 공개 프로필을 검색합니다."
+    )
+    public ResponseEntity<CursorResponse<UserSummary>> searchUsers(
+        @Parameter(hidden = true)
+        @AuthenticationPrincipal
+        UUID requesterId,
+        @Valid
+        @ParameterObject
+        @ModelAttribute
+        UserSearchRequest request
+    ) {
+        return ResponseEntity.ok(
+            userService.searchUsers(requesterId, request)
+        );
     }
 
     /**

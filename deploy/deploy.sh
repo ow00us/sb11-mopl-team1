@@ -9,7 +9,7 @@
 # 이미 적용된 스키마 위에서 뜹니다. A 가 실패하면 B 는 건드리지 않습니다.
 #
 # 사용:
-#   deploy.sh --backend-image <ref> [--frontend-image <ref>]
+#   deploy.sh --environment production|staging --backend-image <ref> [--frontend-image <ref>]
 #
 # ref 는 digest(@sha256:...) 또는 commit SHA 태그를 씁니다. latest 나 main 같은 이동
 # 태그를 쓰면 무엇이 배포됐는지 나중에 지목할 수 없고 rollback 대상도 정해지지 않습니다.
@@ -17,8 +17,9 @@
 set -euo pipefail
 
 COMPOSE_FILE="${COMPOSE_FILE:-/srv/mopl/app/docker-compose.prod.yml}"
-ENV_FILE="${ENV_FILE:-/etc/mopl/prod.env}"
-STATE_FILE="${STATE_FILE:-/etc/mopl/deploy-state.env}"
+MOPL_CONFIG_DIR="${MOPL_CONFIG_DIR:-/etc/mopl}"
+ENV_FILE="${ENV_FILE:-}"
+STATE_FILE="${STATE_FILE:-${MOPL_CONFIG_DIR}/deploy-state.env}"
 
 # health 가 통과할 때까지 기다리는 한도입니다. 백엔드는 start_period 가 90s 이고 Kafka·
 # Elasticsearch 연결까지 붙어야 readiness 가 올라옵니다.
@@ -28,6 +29,7 @@ HEALTH_INTERVAL="${HEALTH_INTERVAL:-5}"
 BACKEND_IMAGE=""
 FRONTEND_IMAGE=""
 DEPLOY_COMMIT="${DEPLOY_COMMIT:-unknown}"
+DEPLOY_ENVIRONMENT="${DEPLOY_ENVIRONMENT:-production}"
 
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -40,16 +42,26 @@ while [[ $# -gt 0 ]]; do
         --backend-image)  BACKEND_IMAGE=$2; shift 2 ;;
         --frontend-image) FRONTEND_IMAGE=$2; shift 2 ;;
         --commit)         DEPLOY_COMMIT=$2; shift 2 ;;
+        --environment)    DEPLOY_ENVIRONMENT=$2; shift 2 ;;
         *) fail "알 수 없는 인자: $1" ;;
     esac
 done
+
+case ${DEPLOY_ENVIRONMENT} in
+    production) DEFAULT_ENV_FILE="${MOPL_CONFIG_DIR}/prod.env" ;;
+    staging)    DEFAULT_ENV_FILE="${MOPL_CONFIG_DIR}/staging.env" ;;
+    *) fail "지원하지 않는 환경: ${DEPLOY_ENVIRONMENT}
+   --environment 는 production 또는 staging 이어야 합니다." ;;
+esac
+
+ENV_FILE="${ENV_FILE:-${DEFAULT_ENV_FILE}}"
 
 [[ -n ${BACKEND_IMAGE} ]] || fail "--backend-image 가 필요합니다."
 [[ -r ${ENV_FILE} ]]      || fail "${ENV_FILE} 를 읽을 수 없습니다."
 [[ -r ${COMPOSE_FILE} ]]  || fail "${COMPOSE_FILE} 를 읽을 수 없습니다."
 
 case ${BACKEND_IMAGE} in
-    *:main|*:latest)
+    *:main|*:develop|*:latest)
         fail "이동 태그(${BACKEND_IMAGE##*:})는 배포 대상이 될 수 없습니다.
    digest 또는 commit SHA 태그를 쓰세요. 이동 태그는 나중에 다른 이미지를 가리킵니다." ;;
 esac
@@ -60,28 +72,34 @@ compose() { docker compose --file "${COMPOSE_FILE}" --env-file "${ENV_FILE}" "$@
 # 새 값을 쓰기 전에 지금 값을 남깁니다. 실패한 뒤에 무엇으로 돌아가야 하는지 찾기
 # 시작하면 늦습니다.
 log "현재 상태"
+note "environment  ${DEPLOY_ENVIRONMENT}"
 PREVIOUS_BACKEND_IMAGE="$(sed -n 's/^BACKEND_IMAGE=//p' "${ENV_FILE}")"
 PREVIOUS_FRONTEND_IMAGE="$(sed -n 's/^FRONTEND_IMAGE=//p' "${ENV_FILE}")"
 note "backend  ${PREVIOUS_BACKEND_IMAGE:-(없음)}"
 note "frontend ${PREVIOUS_FRONTEND_IMAGE:-(없음)}"
 
 ENV_BACKUP="$(mktemp)"
+ENV_UPDATED="$(mktemp)"
+chmod 0600 "${ENV_BACKUP}" "${ENV_UPDATED}"
 cp -a "${ENV_FILE}" "${ENV_BACKUP}"
 # Secret 이 들어 있는 파일의 사본입니다. 어떤 경로로 끝나든 지웁니다.
-trap 'rm -f "${ENV_BACKUP}"' EXIT
+trap 'rm -f "${ENV_BACKUP}" "${ENV_UPDATED}"' EXIT
 
 set_env_value() {
     local key=$1 value=$2
     if grep -q "^${key}=" "${ENV_FILE}"; then
-        # 값에 / 가 들어가므로 구분자를 | 로 씁니다.
-        sed -i "s|^${key}=.*|${key}=${value}|" "${ENV_FILE}"
+        # 설정 디렉터리는 의도적으로 deploy 사용자가 새 파일을 만들 수 없습니다.
+        # sed -i 는 같은 디렉터리에 임시 파일을 만들므로, /tmp 에 결과를 만든 뒤 기존
+        # 파일 내용을 제자리에서 갱신합니다. 값에 / 가 들어가므로 구분자는 | 입니다.
+        sed "s|^${key}=.*|${key}=${value}|" "${ENV_FILE}" > "${ENV_UPDATED}"
+        cat "${ENV_UPDATED}" > "${ENV_FILE}"
     else
         printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
     fi
 }
 
 restore_env() {
-    cp -a "${ENV_BACKUP}" "${ENV_FILE}"
+    cat "${ENV_BACKUP}" > "${ENV_FILE}"
 }
 
 # ── 새 이미지 준비 ─────────────────────────────────────────────────────────
@@ -182,6 +200,7 @@ record_state() {
     local result=$1 detail=${2:-}
     cat > "${STATE_FILE}" <<EOF
 DEPLOY_RESULT=${result}
+DEPLOY_ENVIRONMENT=${DEPLOY_ENVIRONMENT}
 DEPLOY_COMMIT=${DEPLOY_COMMIT}
 DEPLOYED_BACKEND_IMAGE=${BACKEND_IMAGE}
 DEPLOYED_FRONTEND_IMAGE=${FRONTEND_IMAGE:-${PREVIOUS_FRONTEND_IMAGE}}
@@ -218,6 +237,7 @@ compose ps --format 'table {{.Service}}\t{{.Status}}' | sed 's/^/   /'
 cat <<EOF
 
    commit   ${DEPLOY_COMMIT}
+   환경     ${DEPLOY_ENVIRONMENT}
    backend  ${BACKEND_IMAGE}
    시작     ${STARTED_AT}
    종료     $(date -u +%Y-%m-%dT%H:%M:%SZ)

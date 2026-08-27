@@ -3,6 +3,7 @@ package com.mopl.content.search;
 import com.mopl.content.entity.Content;
 import com.mopl.content.repository.ContentRepository;
 import java.util.List;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
@@ -74,15 +75,24 @@ public class ContentSearchIndexInitializer implements ApplicationRunner {
     // contents 인덱스가 비어 있을 때 Postgres의 기존 콘텐츠를 전부 색인한다.
     // Content는 @SQLRestriction("deleted_at IS NULL")이 걸려 있어 findAll()이 이미 소프트
     // 삭제된 콘텐츠를 제외하므로 별도 필터링이 필요 없다.
+    //
+    // 트랜잭션 밖에서 실행되므로 findAll(pageable) 결과를 그대로 매핑하면 지연 로딩 컬렉션인
+    // Content.tags 접근 시 LazyInitializationException이 난다. 한 페이지의 ID만 뽑아
+    // findAllWithTagsByIdIn()으로 태그까지 함께(@EntityGraph) 재조회한 뒤 매핑한다.
+    // ID 목록 기준 메서드라 Pageable이 끼지 않아 "collection fetch + LIMIT" 인메모리
+    // 페이지네이션 문제도 피한다. 페이지당 쿼리는 2번(ID 페이지 조회 + 태그 포함 재조회)이다.
     private void backfillExistingContents() {
         long backfilled = 0;
         Pageable pageable = PageRequest.of(0, BACKFILL_PAGE_SIZE);
         Slice<Content> slice;
         do {
             slice = contentRepository.findAll(pageable);
-            List<ContentDocument> documents = slice.getContent().stream()
-                    .map(contentDocumentMapper::toNewDocument)
-                    .toList();
+            List<UUID> ids = slice.getContent().stream().map(Content::getId).toList();
+            List<ContentDocument> documents = ids.isEmpty()
+                    ? List.of()
+                    : contentRepository.findAllWithTagsByIdIn(ids).stream()
+                            .map(contentDocumentMapper::toNewDocument)
+                            .toList();
             if (!documents.isEmpty()) {
                 contentSearchRepository.saveAll(documents);
                 backfilled += documents.size();
