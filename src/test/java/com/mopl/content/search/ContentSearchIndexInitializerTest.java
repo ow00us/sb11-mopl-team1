@@ -95,7 +95,7 @@ class ContentSearchIndexInitializerTest {
     }
 
     @Test
-    @DisplayName("백필한 문서에 콘텐츠 ID와 정규화된 태그가 정확히 채워진다")
+    @DisplayName("백필한 문서에 콘텐츠 ID, 정규화된 태그, 원본 표기 태그가 정확히 채워진다")
     void backfill_populatesContentIdAndNormalizedTags() {
         Content withTags = Content.builder()
                 .type(ContentType.MOVIE)
@@ -115,8 +115,10 @@ class ContentSearchIndexInitializerTest {
                 .filter(doc -> doc.getContentId().equals(withTags.getId().toString()))
                 .findFirst()
                 .orElseThrow();
-        // Content 는 태그를 정규화(소문자화)해서만 저장하므로 백필 문서의 tags 도 정규화 값이다.
+        // tags는 검색·필터용 정규화 값, displayTags는 화면 노출용 원본 표기다.
+        // ContentDocumentMapper.toNewDocument()가 각각 content.getNormalizedTags()/getTags()로 채운다.
         assertThat(document.getTags()).containsExactly("sf");
+        assertThat(document.getDisplayTags()).containsExactly("SF");
         assertThat(document.getId()).isEqualTo(withTags.getId().toString());
     }
 }
