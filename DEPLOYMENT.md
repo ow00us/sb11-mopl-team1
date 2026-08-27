@@ -823,7 +823,12 @@ Kafka에 볼륨을 두는 이유는 컨테이너를 다시 만들 때 토픽과 
 
 ```bash
 sudo install -o deploy -g deploy -m 600 /dev/null /etc/mopl/prod.env
+sudo install -o deploy -g deploy -m 600 /dev/null /etc/mopl/staging.env
 ```
+
+production 서버는 `prod.env`, staging 서버는 `staging.env`를 사용합니다. 두 파일을 같은
+서버에서 함께 쓰는 구성이 아니라, 같은 배포 스크립트가 대상 환경에 맞는 파일을 고르는
+계약입니다.
 
 Compose가 `MOPL_DOMAIN` 하나에서 CORS origin, WebSocket origin, OAuth Callback URI를 모두 만듭니다. 도메인을 바꿀 때 한 곳만 고치면 되고, 값들이 서로 어긋날 수 없습니다. 각 Provider Console에 등록한 Callback URI가 이 도메인과 같아야 합니다.
 
@@ -838,19 +843,34 @@ Compose가 `MOPL_DOMAIN` 하나에서 CORS origin, WebSocket origin, OAuth Callb
 | `deploy/check-destructive-migration.sh` | 되돌릴 수 없는 스키마 변경을 배포 전에 막습니다 |
 | `deploy/test-deploy.sh` | 성공·실패·rollback 경로 검증 |
 
+서버의 배포 스크립트는 환경을 명시해서 실행합니다.
+
+```bash
+bash deploy/deploy.sh --environment production --backend-image <digest-or-sha>
+bash deploy/deploy.sh --environment staging --backend-image <digest-or-sha>
+```
+
+`--environment production`은 `/etc/mopl/prod.env`, `--environment staging`은
+`/etc/mopl/staging.env`를 선택합니다. 기본값은 기존 운영 호출과의 호환을 위해
+`production`입니다. 배포 기록에는 선택한 환경도 함께 남습니다.
+
 ### 실행
 
 Actions 탭의 `Deploy` 워크플로를 실행합니다.
 
 | 입력 | 설명 |
 | --- | --- |
+| `target_environment` | `production` 또는 `staging`. 기본값은 `production`입니다 |
 | `backend_image` | digest 또는 commit SHA 태그 |
 | `frontend_image` | 비우면 지금 것을 그대로 둡니다 |
 | `allow_destructive_migration` | 아래 "되돌릴 수 없는 변경" 참고 |
 
-**이동 태그는 거부됩니다.** `main`이나 `latest`는 나중에 다른 이미지를 가리키므로, 무엇이 배포됐는지 지목할 수 없고 되돌릴 대상도 정해지지 않습니다.
+**이동 태그는 거부됩니다.** `main`, `develop`, `latest`는 나중에 다른 이미지를 가리키므로, 무엇이 배포됐는지 지목할 수 없고 되돌릴 대상도 정해지지 않습니다.
 
-`production` environment를 씁니다. 승인자와 대상 브랜치 제한은 저장소 설정에 둡니다. 같은 환경에 배포가 겹치지 않도록 concurrency를 걸었고, 진행 중인 배포를 취소하지 않습니다. 배포 도중 취소는 절반만 교체된 상태를 남깁니다.
+선택한 값과 같은 이름의 GitHub environment를 씁니다. `production`과 `staging`의 승인자,
+대상 브랜치, AWS 역할, EC2 instance ID, 도메인은 저장소 설정에서 분리합니다. 같은 환경에
+배포가 겹치지 않도록 environment별 concurrency를 걸었고, 진행 중인 배포를 취소하지
+않습니다. 배포 도중 취소는 절반만 교체된 상태를 남깁니다.
 
 ### 교체 순서
 

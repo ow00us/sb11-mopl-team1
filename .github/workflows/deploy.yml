@@ -5,6 +5,14 @@ name: Deploy
 on:
   workflow_dispatch:
     inputs:
+      target_environment:
+        description: '배포 대상 환경'
+        required: true
+        default: production
+        type: choice
+        options:
+          - production
+          - staging
       backend_image:
         description: '배포할 백엔드 이미지. digest(@sha256:...) 또는 commit SHA 태그'
         required: true
@@ -26,21 +34,21 @@ permissions:
 # 건드립니다. 어느 이미지가 남는지도 정해지지 않습니다. 진행 중인 것을 취소하지 않고
 # 기다립니다 - 배포 도중 취소는 절반만 교체된 상태를 남깁니다.
 concurrency:
-  group: deploy-production
+  group: deploy-${{ inputs.target_environment }}
   cancel-in-progress: false
 
 jobs:
   deploy:
-    name: Deploy to production
+    name: Deploy to ${{ inputs.target_environment }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
       # OIDC 로 IAM 역할을 맡습니다. 장기 자격 증명을 저장소에 두지 않습니다.
       id-token: write
-    # 보호된 environment 입니다. 승인자와 대상 브랜치 제한은 저장소 설정에 있습니다.
+    # environment 별 승인자·대상 브랜치·AWS 역할·EC2 ID 는 저장소 설정에서 분리합니다.
     environment:
-      name: production
+      name: ${{ inputs.target_environment }}
       url: https://${{ vars.MOPL_DOMAIN }}
 
     steps:
@@ -101,6 +109,7 @@ jobs:
           BACKEND_IMAGE: ${{ inputs.backend_image }}
           FRONTEND_IMAGE: ${{ inputs.frontend_image }}
           ALLOW_DESTRUCTIVE: ${{ inputs.allow_destructive_migration }}
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
         run: |
           set -euo pipefail
 
@@ -110,7 +119,8 @@ jobs:
           # 언제 갱신됐는지 알 수 없어, 배포되는 코드와 배포하는 절차가 어긋납니다.
           script_b64="$(base64 -w0 deploy/deploy.sh)"
 
-          args="--backend-image $(printf '%q' "$BACKEND_IMAGE") --commit $(printf '%q' "$GITHUB_SHA")"
+          args="--environment $(printf '%q' "$TARGET_ENVIRONMENT")"
+          args+=" --backend-image $(printf '%q' "$BACKEND_IMAGE") --commit $(printf '%q' "$GITHUB_SHA")"
           if [[ -n "$FRONTEND_IMAGE" ]]; then
             args+=" --frontend-image $(printf '%q' "$FRONTEND_IMAGE")"
           fi
@@ -196,6 +206,7 @@ jobs:
             echo
             echo "| 항목 | 값 |"
             echo "| --- | --- |"
+            echo "| 환경 | \`${{ inputs.target_environment }}\` |"
             echo "| commit | \`${{ github.sha }}\` |"
             echo "| 백엔드 이미지 | \`${{ inputs.backend_image }}\` |"
             echo "| 프론트 이미지 | \`${{ inputs.frontend_image || '(변경 없음)' }}\` |"
