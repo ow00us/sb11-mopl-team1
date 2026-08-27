@@ -130,7 +130,7 @@ jobs:
           # deploy 가 환경 파일을 고치지 못합니다.
           jq -n --arg s "$script_b64" --arg a "$args" '{
             commands: [
-              "set -euo pipefail",
+              "set -eu",
               ("echo " + $s + " | base64 -d > /srv/mopl/app/deploy/deploy.sh"),
               "chown deploy:deploy /srv/mopl/app/deploy/deploy.sh",
               "chmod 0755 /srv/mopl/app/deploy/deploy.sh",
