@@ -1,8 +1,28 @@
 name: Deploy
 
-# 자동으로 돌지 않습니다. 배포 시점은 사람이 정합니다. main push 마다 운영에 나가면
-# 되돌릴 판단을 할 사람이 없는 시간에도 배포가 일어납니다.
+# production 은 계속 사람이 배포 시점을 정합니다. staging 은 develop push 의 CI 가
+# 검증하고 게시한 불변 digest 를 이 재사용 워크플로에 넘겨 자동 배포합니다.
 on:
+  workflow_call:
+    inputs:
+      target_environment:
+        description: '배포 대상 환경'
+        required: true
+        type: string
+      backend_image:
+        description: '배포할 백엔드 불변 이미지'
+        required: true
+        type: string
+      frontend_image:
+        description: '배포할 프론트엔드 이미지. 비우면 지금 것을 그대로 둡니다'
+        required: false
+        default: ''
+        type: string
+      allow_destructive_migration:
+        description: '역호환되지 않는 마이그레이션을 알고도 진행합니다'
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       target_environment:
@@ -179,6 +199,39 @@ jobs:
           [[ -n "$err" ]] && printf '%s\n' "$err" >&2
 
           [[ "$status" == "Success" ]]
+
+      # deploy.sh 가 서버 내부 health 를 확인한 뒤, 실제 사용자가 지나는 HTTPS, Caddy,
+      # gateway, backend 경로도 확인합니다. readiness 는 인증이 필요하므로 공개 계약인
+      # CSRF 발급(204)을 사용해 백엔드까지 도달했는지 봅니다.
+      - name: Verify staging public endpoints
+        if: ${{ inputs.target_environment == 'staging' }}
+        env:
+          MOPL_DOMAIN: ${{ vars.MOPL_DOMAIN }}
+        run: |
+          set -euo pipefail
+
+          [[ -n "$MOPL_DOMAIN" ]] || { echo "MOPL_DOMAIN 변수가 없습니다."; exit 1; }
+
+          for attempt in $(seq 1 30); do
+            home_status="$(curl --silent --show-error --output /tmp/mopl-home.html \
+              --write-out '%{http_code}' --max-time 10 \
+              "https://$MOPL_DOMAIN/" || true)"
+            csrf_status="$(curl --silent --show-error --output /tmp/mopl-csrf.txt \
+              --write-out '%{http_code}' --max-time 10 \
+              "https://$MOPL_DOMAIN/api/auth/csrf-token" || true)"
+
+            if [[ "$home_status" == "200" && "$csrf_status" == "204" ]]; then
+              echo "staging 공개 경로 검증 성공: home=$home_status csrf=$csrf_status"
+              exit 0
+            fi
+
+            echo "staging 공개 경로 대기 ($attempt/30): home=$home_status csrf=$csrf_status"
+            sleep 5
+          done
+
+          echo "staging 공개 경로가 준비되지 않았습니다."
+          head -c 500 /tmp/mopl-home.html 2>/dev/null || true
+          exit 1
 
       # 실패한 배포도 무엇을 시도했는지 남아야 합니다. 실행 로그를 뒤지지 않고 찾을 수
       # 있어야 다음 판단이 빨라집니다.
