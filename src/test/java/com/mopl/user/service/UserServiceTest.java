@@ -7,6 +7,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.doThrow;
 
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
@@ -60,6 +61,9 @@ class UserServiceTest {
 
     @Mock
     RefreshTokenStore refreshTokenStore;
+
+    @Mock
+    AccessTokenBlockLifecycleService accessTokenBlockLifecycleService;
 
     @Test
     @DisplayName("회원가입 시 이메일을 정규화하고 비밀번호 해시를 저장한다.")
@@ -265,7 +269,7 @@ class UserServiceTest {
             new byte[]{1, 2, 3}
         );
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.of(user));
 
         when(profileImageStorage.upload(image))
@@ -302,7 +306,7 @@ class UserServiceTest {
                 "https://placeholder.mopl.local/profile-images/new-profile.png"
             );
 
-        verify(userRepository).findById(userId);
+        verify(userRepository).findByIdForUpdate(userId);
         verify(profileImageStorage).upload(image);
 
         /*
@@ -324,7 +328,7 @@ class UserServiceTest {
         UserUpdateRequest request =
             new UserUpdateRequest("변경된 사용자");
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.of(user));
 
         // when
@@ -352,7 +356,7 @@ class UserServiceTest {
          * 이미지가 전달되지 않았으므로 저장소 업로드는 실행되면 안 된다.
          */
         verifyNoInteractions(profileImageStorage);
-        verify(userRepository).findById(userId);
+        verify(userRepository).findByIdForUpdate(userId);
     }
 
     @Test
@@ -434,7 +438,7 @@ class UserServiceTest {
         UserUpdateRequest request =
             new UserUpdateRequest("변경된 사용자");
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.empty());
 
         // when & then
@@ -450,7 +454,7 @@ class UserServiceTest {
             .extracting("errorCode")
             .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
 
-        verify(userRepository).findById(userId);
+        verify(userRepository).findByIdForUpdate(userId);
 
         /*
          * 사용자가 없으면 이미지를 업로드해서는 안 된다.
@@ -475,7 +479,7 @@ class UserServiceTest {
         String encodedPassword =
             "$2a$10$new-encoded-password";
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.of(user));
 
         when(passwordEncoder.encode("newPassword1!"))
@@ -499,7 +503,7 @@ class UserServiceTest {
         assertThat(user.getPasswordHash())
             .isNotEqualTo("newPassword1!");
 
-        verify(userRepository).findById(userId);
+        verify(userRepository).findByIdForUpdate(userId);
         verify(passwordEncoder).encode("newPassword1!");
         verify(refreshTokenStore).revokeAllByUserId(userId);
 
@@ -535,7 +539,7 @@ class UserServiceTest {
                 "newPassword1!"
             );
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(
                 Optional.of(oauthOnlyUser)
             );
@@ -555,7 +559,7 @@ class UserServiceTest {
             );
 
         verify(userRepository)
-            .findById(userId);
+            .findByIdForUpdate(userId);
 
         /*
          * 기존 로컬 비밀번호가 없으면 이메일 인증 등록 경로를
@@ -590,7 +594,7 @@ class UserServiceTest {
         String encodedPassword =
             "$2a$10$new-encoded-password";
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(
                 Optional.of(user)
             );
@@ -631,7 +635,7 @@ class UserServiceTest {
             );
 
         verify(userRepository)
-            .findById(userId);
+            .findByIdForUpdate(userId);
 
         verify(passwordEncoder)
             .encode("newPassword1!");
@@ -729,7 +733,7 @@ class UserServiceTest {
         ChangePasswordRequest request =
             new ChangePasswordRequest("newPassword1!");
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.empty());
 
         // when & then
@@ -744,7 +748,7 @@ class UserServiceTest {
             .extracting("errorCode")
             .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
 
-        verify(userRepository).findById(userId);
+        verify(userRepository).findByIdForUpdate(userId);
 
         /*
          * 사용자가 존재하지 않으면 비용이 큰 BCrypt 인코딩을
@@ -772,7 +776,7 @@ class UserServiceTest {
         UserRoleUpdateRequest request =
             new UserRoleUpdateRequest(UserRole.ADMIN);
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.of(user));
 
         // when
@@ -788,7 +792,7 @@ class UserServiceTest {
         /*
          * 변경 대상 사용자는 한 번만 조회해야 한다.
          */
-        verify(userRepository).findById(userId);
+        verify(userRepository).findByIdForUpdate(userId);
 
         /*
          * 조회한 User는 영속 엔티티이므로 JPA 변경 감지를 사용
@@ -830,7 +834,7 @@ class UserServiceTest {
         UserRoleUpdateRequest request =
             new UserRoleUpdateRequest(UserRole.USER);
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.of(user));
 
         // when
@@ -843,7 +847,7 @@ class UserServiceTest {
         assertThat(user.getRole())
             .isEqualTo(UserRole.USER);
 
-        verify(userRepository).findById(userId);
+        verify(userRepository).findByIdForUpdate(userId);
 
         verify(userRepository, never())
             .save(any(User.class));
@@ -875,7 +879,7 @@ class UserServiceTest {
                 UserRole.USER
             );
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(
                 Optional.of(user)
             );
@@ -891,7 +895,7 @@ class UserServiceTest {
             .isEqualTo(UserRole.USER);
 
         verify(userRepository)
-            .findById(userId);
+            .findByIdForUpdate(userId);
 
         /*
          * 실제 권한 변화가 없으므로 사용자를 모든 기기에서
@@ -922,7 +926,7 @@ class UserServiceTest {
                 UserRole.ADMIN
             );
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(
                 Optional.of(user)
             );
@@ -946,7 +950,7 @@ class UserServiceTest {
         ).isSameAs(redisException);
 
         verify(userRepository)
-            .findById(userId);
+            .findByIdForUpdate(userId);
 
         verify(refreshTokenStore)
             .revokeAllByUserId(userId);
@@ -969,7 +973,7 @@ class UserServiceTest {
         UserRoleUpdateRequest request =
             new UserRoleUpdateRequest(UserRole.ADMIN);
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.empty());
 
         // when & then
@@ -983,7 +987,7 @@ class UserServiceTest {
             .extracting("errorCode")
             .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
 
-        verify(userRepository).findById(userId);
+        verify(userRepository).findByIdForUpdate(userId);
 
         /*
          * 대상 사용자가 존재하지 않으므로
@@ -1013,7 +1017,7 @@ class UserServiceTest {
         UserLockUpdateRequest request =
             new UserLockUpdateRequest(true);
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.of(user));
 
         // when
@@ -1028,7 +1032,7 @@ class UserServiceTest {
         /*
          * 대상 사용자는 한 번만 조회해야 한다.
          */
-        verify(userRepository).findById(userId);
+        verify(userRepository).findByIdForUpdate(userId);
 
         /*
          * 조회한 User는 영속 엔티티이므로 JPA 변경 감지를 사용
@@ -1043,6 +1047,56 @@ class UserServiceTest {
          */
         verify(refreshTokenStore)
             .revokeAllByUserId(userId);
+
+        verify(accessTokenBlockLifecycleService)
+            .block(userId);
+    }
+
+    @Test
+    @DisplayName("Access Token 차단에 실패하면 계정 잠금과 세션 폐기를 시작하지 않는다")
+    void updateLocked_fail_whenAccessTokenBlockFails() {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        User user = createUserFixture(userId);
+
+        when(userRepository.findByIdForUpdate(userId))
+            .thenReturn(Optional.of(user));
+
+        BusinessException blockException =
+            new BusinessException(
+                ErrorCode.SERVICE_UNAVAILABLE
+            );
+
+        doThrow(blockException)
+            .when(accessTokenBlockLifecycleService)
+            .block(userId);
+
+        // when & then
+        assertThatThrownBy(() ->
+            userService.updateLocked(
+                userId,
+                new UserLockUpdateRequest(true)
+            )
+        ).isSameAs(blockException);
+
+        assertThat(user.isLocked()).isFalse();
+
+        verify(accessTokenBlockLifecycleService)
+            .block(userId);
+
+        verifyNoInteractions(
+            refreshTokenStore
+        );
+
+        verify(accessTokenBlockLifecycleService, never())
+            .unblockAfterCommit(userId);
+
+        verify(userRepository)
+            .findByIdForUpdate(userId);
     }
 
     @Test
@@ -1060,7 +1114,7 @@ class UserServiceTest {
         UserLockUpdateRequest request =
             new UserLockUpdateRequest(true);
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(
                 Optional.of(user)
             );
@@ -1084,7 +1138,7 @@ class UserServiceTest {
         ).isSameAs(redisException);
 
         verify(userRepository)
-            .findById(userId);
+            .findByIdForUpdate(userId);
 
         verify(refreshTokenStore)
             .revokeAllByUserId(userId);
@@ -1095,6 +1149,12 @@ class UserServiceTest {
          */
         verify(userRepository, never())
             .save(any(User.class));
+
+        verify(accessTokenBlockLifecycleService)
+            .block(userId);
+
+        verify(accessTokenBlockLifecycleService, never())
+            .unblockAfterCommit(userId);
     }
 
     @Test
@@ -1122,7 +1182,7 @@ class UserServiceTest {
         UserLockUpdateRequest request =
             new UserLockUpdateRequest(false);
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.of(user));
 
         // when
@@ -1134,7 +1194,7 @@ class UserServiceTest {
         // then
         assertThat(user.isLocked()).isFalse();
 
-        verify(userRepository).findById(userId);
+        verify(userRepository).findByIdForUpdate(userId);
 
         verify(userRepository, never())
             .save(any(User.class));
@@ -1146,6 +1206,12 @@ class UserServiceTest {
         verifyNoInteractions(
             refreshTokenStore
         );
+
+        verify(accessTokenBlockLifecycleService)
+            .unblockAfterCommit(userId);
+
+        verify(accessTokenBlockLifecycleService, never())
+            .block(userId);
     }
 
     @Test
@@ -1158,7 +1224,7 @@ class UserServiceTest {
         UserLockUpdateRequest request =
             new UserLockUpdateRequest(true);
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.empty());
 
         // when & then
@@ -1172,7 +1238,7 @@ class UserServiceTest {
             .extracting("errorCode")
             .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
 
-        verify(userRepository).findById(userId);
+        verify(userRepository).findByIdForUpdate(userId);
 
         /*
          * 사용자가 존재하지 않으므로 저장 또는 상태 변경과 관련된
@@ -1183,6 +1249,10 @@ class UserServiceTest {
 
         verifyNoInteractions(
             refreshTokenStore
+        );
+
+        verifyNoInteractions(
+            accessTokenBlockLifecycleService
         );
     }
 
@@ -1239,7 +1309,7 @@ class UserServiceTest {
             "not-image".getBytes()
         );
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.of(user));
 
         // when & then
@@ -1290,7 +1360,7 @@ class UserServiceTest {
                 new byte[]{1, 2, 3}
             );
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.of(user));
 
         // when & then
@@ -1340,7 +1410,7 @@ class UserServiceTest {
             new byte[0]
         );
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdForUpdate(userId))
             .thenReturn(Optional.of(user));
 
         // when
@@ -1372,7 +1442,7 @@ class UserServiceTest {
         assertThat(user.getProfileImageUrl())
             .isEqualTo("https://example.com/old-profile.png");
 
-        verify(userRepository).findById(userId);
+        verify(userRepository).findByIdForUpdate(userId);
     }
 
 }

@@ -1736,6 +1736,66 @@ paths:
             "*/*":
               schema:
                 "$ref": "#/components/schemas/ErrorResponse"
+    delete:
+      tags:
+        - "사용자 관리"
+      summary: "회원 탈퇴"
+      description: "인증된 본인 계정을 탈퇴 처리합니다. 사용자 UUID와 작성 콘텐츠는 유지하지만 개인정보와 로컬·OAuth 로그인 수단은 제거합니다."
+      operationId: "withdrawUser"
+      security:
+        - BearerAuth: [ ]
+          CsrfToken: [ ]
+      parameters:
+        - name: "userId"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+      responses:
+        "204":
+          description: "회원 탈퇴 성공"
+          headers:
+            Set-Cookie:
+              description: "Refresh Token 삭제 Cookie"
+              schema:
+                type: "string"
+        "400":
+          description: "잘못된 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "401":
+          description: "인증이 필요함"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "다른 사용자의 탈퇴 요청"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "404":
+          description: "사용자가 없거나 이미 탈퇴함"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "503":
+          description: "인증 차단 상태를 저장할 수 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
   "/api/users/{userId}/oauth-accounts":
     get:
       tags:

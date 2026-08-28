@@ -6,6 +6,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import java.time.Instant;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -58,6 +59,14 @@ public class User extends BaseEntity {
     // true면 로그인 불허, false면 허용. 기본값 false
     @Column(nullable = false)
     private boolean locked;
+
+    /**
+     * 회원 탈퇴 시각
+     *
+     * null이면 활성 사용자이고, 값이 있으면 탈퇴한 사용자
+     */
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
 
     /**
      * User 엔티티를 명시적인 값으로 생성하기 위한 생성자
@@ -217,5 +226,48 @@ public class User extends BaseEntity {
         boolean locked
     ) {
         this.locked = locked;
+    }
+
+    /**
+     * 사용자 계정을 탈퇴 처리하고 개인정보와 로컬 로그인 수단을 익명화
+     *
+     * 기존 콘텐츠의 FK 참조를 유지하기 위해 사용자 UUID는 변경하지 않는다.
+     *
+     * @param deletedAt 회원 탈퇴 처리 시각
+     */
+    public void withdraw(
+        Instant deletedAt
+    ) {
+        if (deletedAt == null) {
+            throw new IllegalArgumentException(
+                "회원 탈퇴 시각은 필수입니다."
+            );
+        }
+
+        if (getId() == null) {
+            throw new IllegalStateException(
+                "저장되지 않은 사용자는 탈퇴 처리할 수 없습니다."
+            );
+        }
+
+        if (this.deletedAt != null) {
+            throw new IllegalStateException(
+                "이미 탈퇴한 사용자입니다."
+            );
+        }
+
+        this.email =
+            "deleted-" + getId() + "@deleted.mopl";
+        this.passwordHash = null;
+        this.name = "탈퇴한 사용자";
+        this.profileImageUrl = null;
+        this.deletedAt = deletedAt;
+    }
+
+    /**
+     * 회원 탈퇴 여부를 반환
+     */
+    public boolean isDeleted() {
+        return deletedAt != null;
     }
 }

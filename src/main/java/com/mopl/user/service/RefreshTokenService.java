@@ -70,7 +70,7 @@ public class RefreshTokenService {
      * @param userId Refresh Token을 발급받을 사용자 UUID
      * @return Refresh Token 원문과 절대 만료 시각
      * @throws BusinessException 사용자 UUID가 null인 경우
-     * @throws BusinessException 사용자가 존재하지 않는 경우
+     * @throws BusinessException 사용자가 존재하지 않거나 탈퇴한 경우
      */
     public IssuedRefreshToken issue(UUID userId) {
         /*
@@ -82,10 +82,10 @@ public class RefreshTokenService {
         }
 
         /*
-         * 존재하지 않는 사용자에게 Refresh Token 세션을 발급하지 않도록
-         * 실제 users 테이블에 사용자가 존재하는지 확인
+         * 존재하지 않거나 탈퇴한 사용자에게 Refresh Token 세션을
+         * 발급하지 않도록 활성 사용자 여부를 확인
          */
-        if (!userRepository.existsById(userId)) {
+        if (!userRepository.existsByIdAndDeletedAtIsNull(userId)) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
         }
 
@@ -249,8 +249,10 @@ public class RefreshTokenService {
          * 사용자 삭제 여부와 현재 역할, 현재 계정 잠금 상태를
          * 토큰이 처음 발급됐던 시점이 아니라 재발급 시점 기준으로 반영
          */
-        User user =
-            userRepository.findById(userId)
+        User user = userRepository
+                .findByIdAndDeletedAtIsNull(
+                    userId
+                )
                 .orElseThrow(() ->
                     new BusinessException(
                         ErrorCode.UNAUTHORIZED,
