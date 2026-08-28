@@ -1,0 +1,11 @@
+services:
+  backend-a:
+    environment:
+      IMAGE_STORAGE_ENABLED: "false"
+      KAFKA_TOPIC_VERIFY: "false"
+    ports:
+      - "8080:8080"
+  backend-b:
+    environment:
+      IMAGE_STORAGE_ENABLED: "false"
+      KAFKA_TOPIC_VERIFY: "false"
