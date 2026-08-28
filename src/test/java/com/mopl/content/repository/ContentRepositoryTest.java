@@ -27,6 +27,9 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -715,6 +718,59 @@ class ContentRepositoryTest {
         Optional<Content> result = contentRepository.findBySourceAndExternalId(ContentSource.TMDB, "603");
 
         assertThat(result).isEmpty();
+    }
+
+    // ── findBySource ────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("findBySource는 요청한 소스의 콘텐츠만 반환한다")
+    void findBySource_returnsOnlyMatchingSourceContents() {
+        Instant now = Instant.now();
+        UUID tmdb1 = insertContentWithRawSource("TMDB 1", "TMDB", now);
+        UUID tmdb2 = insertContentWithRawSource("TMDB 2", "TMDB", now.minusSeconds(1));
+        insertContentWithRawSource("SportsDB 1", "SPORTS_DB", now.minusSeconds(2));
+
+        Slice<Content> result = contentRepository.findBySource(ContentSource.TMDB, PageRequest.of(0, 10));
+
+        assertThat(result.getContent()).extracting(Content::getId)
+                .containsExactlyInAnyOrder(tmdb1, tmdb2);
+    }
+
+    @Test
+    @DisplayName("findBySource는 소프트 삭제된 콘텐츠를 제외한다")
+    void findBySource_excludesSoftDeletedContent() {
+        Instant now = Instant.now();
+        UUID kept = insertContentWithRawSource("TMDB kept", "TMDB", now);
+        UUID deleted = insertContentWithRawSource("TMDB deleted", "TMDB", now.minusSeconds(1));
+        markDeleted(deleted);
+
+        Slice<Content> result = contentRepository.findBySource(ContentSource.TMDB, PageRequest.of(0, 10));
+
+        assertThat(result.getContent()).extracting(Content::getId).containsExactly(kept);
+    }
+
+    @Test
+    @DisplayName("findBySource는 커서 페이지네이션으로 2페이지에 걸쳐 전부 조회된다")
+    void findBySource_pagination_acrossTwoPages() {
+        Instant now = Instant.now();
+        UUID id1 = insertContentWithRawSource("T1", "TMDB", now.minusSeconds(3));
+        UUID id2 = insertContentWithRawSource("T2", "TMDB", now.minusSeconds(2));
+        UUID id3 = insertContentWithRawSource("T3", "TMDB", now.minusSeconds(1));
+
+        Pageable firstPageable = PageRequest.of(0, 2);
+        Slice<Content> firstPage = contentRepository.findBySource(ContentSource.TMDB, firstPageable);
+        assertThat(firstPage.getContent()).hasSize(2);
+        assertThat(firstPage.hasNext()).isTrue();
+
+        Slice<Content> secondPage = contentRepository.findBySource(ContentSource.TMDB, firstPageable.next());
+        assertThat(secondPage.getContent()).hasSize(1);
+        assertThat(secondPage.hasNext()).isFalse();
+
+        assertThat(List.of(firstPage.getContent(), secondPage.getContent()).stream()
+                .flatMap(List::stream)
+                .map(Content::getId)
+                .toList())
+                .containsExactlyInAnyOrder(id1, id2, id3);
     }
 
     // ── findBySourceAndExternalIdIncludingDeleted ───────────────────────────
