@@ -5,13 +5,8 @@ on:
     branches: [ main, develop ]
   push:
     branches: [ main, develop ]
-  # 운영 이미지 재게시 또는 고정 이미지 Smoke 실험에 사용합니다.
+  # 운영 이미지를 다시 게시해야 할 때 쓰는 수동 실행입니다.
   workflow_dispatch:
-    inputs:
-      smoke_image:
-        description: "Container smoke에서 재사용할 고정 이미지 Digest 주소"
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -45,6 +40,36 @@ jobs:
       - name: Build & Test
         run: ./gradlew build
 
+      - name: Build fixed smoke image
+        run: docker build --tag mopl:exp05 .
+
+      - name: Export fixed smoke image
+        run: |
+          set -euo pipefail
+
+          docker image inspect --format '{{.Id}}' mopl:exp05 \
+            | tee mopl-exp05-image-id.txt
+
+          docker save mopl:exp05 \
+            | gzip -1 \
+            > mopl-exp05-image.tar.gz
+
+          test -s mopl-exp05-image.tar.gz
+
+          sha256sum mopl-exp05-image.tar.gz \
+            | tee mopl-exp05-archive-sha256.txt
+
+      - name: Upload fixed smoke image
+        uses: actions/upload-artifact@v4
+        with:
+          name: mopl-exp05-image
+          path: |
+            mopl-exp05-image.tar.gz
+            mopl-exp05-image-id.txt
+            mopl-exp05-archive-sha256.txt
+          retention-days: 1
+          compression-level: 0
+
       - name: Upload Jacoco report
         if: always()
         uses: actions/upload-artifact@v4
@@ -55,13 +80,36 @@ jobs:
             build/reports/jacoco/test/jacocoTestReport.xml
 
   container-smoke:
-    name: Container smoke
+    name: Container smoke (${{ matrix.measurement }})
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    permissions:
-      contents: read
-      id-token: write
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        measurement:
+          - 0
+          - 1
+          - 2
+          - 3
+          - 4
+          - 5
+          - 6
+          - 7
+          - 8
+          - 9
+          - 10
+          - 11
+          - 12
+          - 13
+          - 14
+          - 15
+          - 16
+          - 17
+          - 18
+          - 19
+          - 20
 
     services:
       postgres:
@@ -98,35 +146,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build production image
-        if: ${{ inputs.smoke_image == '' }}
-        run: docker build --tag mopl:ci .
-
-      - name: Configure AWS credentials for pinned smoke image
-        if: ${{ inputs.smoke_image != '' }}
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Download fixed smoke image
+        uses: actions/download-artifact@v4
         with:
-          role-to-assume: ${{ vars.AWS_STAGING_PUBLISH_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          name: mopl-exp05-image
 
-      - name: Log in to Amazon ECR for pinned smoke image
-        if: ${{ inputs.smoke_image != '' }}
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Pull pinned smoke image
-        if: ${{ inputs.smoke_image != '' }}
-        env:
-          SMOKE_IMAGE: ${{ inputs.smoke_image }}
+      - name: Load fixed smoke image
         run: |
           set -euo pipefail
 
-          docker pull "$SMOKE_IMAGE"
-          docker tag "$SMOKE_IMAGE" mopl:ci
+          sha256sum --check mopl-exp05-archive-sha256.txt
 
-          docker image inspect \
-            --format '{{range .RepoDigests}}{{println .}}{{end}}' \
-            "$SMOKE_IMAGE" \
-            | grep --fixed-strings --line-regexp "$SMOKE_IMAGE"
+          gzip -dc mopl-exp05-image.tar.gz \
+            | docker load
+
+          docker tag mopl:exp05 mopl:ci
+
+          expected_image_id="$(cat mopl-exp05-image-id.txt)"
+          actual_image_id="$(docker image inspect --format '{{.Id}}' mopl:ci)"
+
+          echo "measurement=${{ matrix.measurement }}"
+          echo "expected_image_id=$expected_image_id"
+          echo "actual_image_id=$actual_image_id"
+
+          test "$actual_image_id" = "$expected_image_id"
 
       - name: Verify non-root runtime user
         run: test "$(docker image inspect --format '{{.Config.User}}' mopl:ci)" = "mopl"
