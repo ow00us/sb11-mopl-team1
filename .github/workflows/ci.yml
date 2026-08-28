@@ -704,8 +704,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # PR 은 배포하지 않습니다. develop 에 실제로 반영된 commit 을 전체 CI 와 Container
-  # Smoke 가 검증하고 ECR 게시까지 끝낸 뒤에만 staging 으로 보냅니다. production 은
-  # deploy.yml 의 수동 실행 경로를 그대로 사용합니다.
+  # Smoke 가 검증하고 ECR 게시까지 끝낸 뒤에만 staging 으로 보냅니다.
   deploy-staging:
     name: Deploy staging
     needs: publish-image
@@ -719,6 +718,25 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with:
       target_environment: staging
+      backend_image: ${{ needs.publish-image.outputs.backend_image }}
+      allow_destructive_migration: false
+
+  # main 에 실제로 반영된 commit 만 운영 배포 후보가 됩니다. 호출된 deploy workflow 의
+  # production Environment 승인 전에는 job 이 시작되지 않으므로, 이미지 게시 성공만으로
+  # 운영 EC2 가 바뀌지 않습니다. 승인 후에도 파괴적 마이그레이션은 자동 허용하지 않습니다.
+  deploy-production:
+    name: Deploy production
+    needs: publish-image
+    if: >-
+      ${{ github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.publish-image.result == 'success' }}
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy.yml
+    with:
+      target_environment: production
       backend_image: ${{ needs.publish-image.outputs.backend_image }}
       allow_destructive_migration: false
 
