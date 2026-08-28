@@ -595,6 +595,8 @@ jobs:
   publish-image:
     name: Publish image
     needs: [build, container-smoke]
+    outputs:
+      backend_image: ${{ steps.image.outputs.reference }}
     # main/develop push 와 해당 브랜치의 수동 재게시에서만 게시합니다. PR 에서는 태그를
     # 만들지 않습니다. 검증되지 않은 커밋의 태그가 레지스트리에 남으면 배포 대상을
     # 고를 때 무엇이 검증된 것인지 구분할 수 없습니다.
@@ -680,11 +682,14 @@ jobs:
       # 후속 배포와 rollback 이 이 값을 씁니다. 실행 로그를 뒤지지 않고 찾을 수 있어야
       # 합니다.
       - name: Record image reference
+        id: image
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
           REPOSITORY: ${{ vars.ECR_REPOSITORY }}
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
+          echo "reference=$REGISTRY/$REPOSITORY@$DIGEST" >> "$GITHUB_OUTPUT"
+
           {
             echo "### 게시한 ${{ github.ref_name }} 이미지"
             echo
@@ -697,6 +702,26 @@ jobs:
             echo
             echo "배포와 rollback 은 digest 또는 commit SHA 태그를 사용합니다. \`${{ github.ref_name }}\` 태그는 사람이 해당 환경의 최신을 확인하는 용도입니다."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # PR 은 배포하지 않습니다. develop 에 실제로 반영된 commit 을 전체 CI 와 Container
+  # Smoke 가 검증하고 ECR 게시까지 끝낸 뒤에만 staging 으로 보냅니다. production 은
+  # deploy.yml 의 수동 실행 경로를 그대로 사용합니다.
+  deploy-staging:
+    name: Deploy staging
+    needs: publish-image
+    if: >-
+      ${{ github.event_name == 'push'
+      && github.ref == 'refs/heads/develop'
+      && needs.publish-image.result == 'success' }}
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy.yml
+    with:
+      target_environment: staging
+      backend_image: ${{ needs.publish-image.outputs.backend_image }}
+      allow_destructive_migration: false
+
   coverage-upload:
     name: Coverage upload
     needs: [build, container-smoke]
