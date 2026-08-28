@@ -14,7 +14,8 @@ public record DirectMessageDto(
     UserSummary sender,
     UserSummary receiver,
     String content,
-    Instant readAt
+    Instant readAt,
+    UUID clientMessageId
 ) {
 
     public DirectMessageDto(
@@ -34,6 +35,30 @@ public record DirectMessageDto(
             sender,
             receiver,
             content,
+            null,
+            null
+        );
+    }
+
+    public DirectMessageDto(
+        UUID id,
+        UUID conversationId,
+        Instant createdAt,
+        long messageSequence,
+        UserSummary sender,
+        UserSummary receiver,
+        String content,
+        Instant readAt
+    ) {
+        this(
+            id,
+            conversationId,
+            createdAt,
+            messageSequence,
+            sender,
+            receiver,
+            content,
+            readAt,
             null
         );
     }
@@ -43,6 +68,20 @@ public record DirectMessageDto(
         UserSummary sender,
         UserSummary receiver
     ) {
+        return from(
+            directMessage,
+            sender,
+            receiver,
+            null
+        );
+    }
+
+    public static DirectMessageDto from(
+        DirectMessage directMessage,
+        UserSummary sender,
+        UserSummary receiver,
+        UUID clientMessageId
+    ) {
         return new DirectMessageDto(
             directMessage.getId(),
             directMessage.getConversationId(),
@@ -51,7 +90,8 @@ public record DirectMessageDto(
             sender,
             receiver,
             directMessage.getContent(),
-            directMessage.getReadAt()
+            directMessage.getReadAt(),
+            clientMessageId
         );
     }
 }
