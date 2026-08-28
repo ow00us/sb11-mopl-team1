@@ -5,8 +5,13 @@ on:
     branches: [ main, develop ]
   push:
     branches: [ main, develop ]
-  # 운영 이미지를 다시 게시해야 할 때 쓰는 수동 실행입니다.
+  # 운영 이미지 재게시 또는 고정 이미지 Smoke 실험에 사용합니다.
   workflow_dispatch:
+    inputs:
+      smoke_image:
+        description: "Container smoke에서 재사용할 고정 이미지 Digest 주소"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -54,6 +59,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
 
     services:
       postgres:
@@ -91,7 +99,34 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build production image
+        if: ${{ inputs.smoke_image == '' }}
         run: docker build --tag mopl:ci .
+
+      - name: Configure AWS credentials for pinned smoke image
+        if: ${{ inputs.smoke_image != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_STAGING_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to Amazon ECR for pinned smoke image
+        if: ${{ inputs.smoke_image != '' }}
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Pull pinned smoke image
+        if: ${{ inputs.smoke_image != '' }}
+        env:
+          SMOKE_IMAGE: ${{ inputs.smoke_image }}
+        run: |
+          set -euo pipefail
+
+          docker pull "$SMOKE_IMAGE"
+          docker tag "$SMOKE_IMAGE" mopl:ci
+
+          docker image inspect \
+            --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+            "$SMOKE_IMAGE" \
+            | grep --fixed-strings --line-regexp "$SMOKE_IMAGE"
 
       - name: Verify non-root runtime user
         run: test "$(docker image inspect --format '{{.Config.User}}' mopl:ci)" = "mopl"
