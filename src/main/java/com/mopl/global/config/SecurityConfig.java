@@ -61,6 +61,7 @@ public class SecurityConfig {
             "/swagger-ui/**",
             "/swagger-ui.html",
             "/v3/api-docs/**",
+            "/api/playlists/popular",
             "/actuator/health",
             // liveness·readiness probe 경로입니다. 오케스트레이터가 인증 없이 호출합니다.
             // 상세는 management.endpoint.health.show-details 가 가립니다.
