@@ -10,6 +10,8 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.MoplApplication;
 import com.mopl.content.controller.ContentController;
+import com.mopl.content.controller.TmdbContentLocalizationAdminController;
+import com.mopl.content.external.mapping.TmdbContentLocalizationBackfillService;
 import com.mopl.content.service.ContentService;
 import com.mopl.directmessage.controller.ConversationController;
 import com.mopl.directmessage.controller.DirectMessageController;
@@ -79,6 +81,7 @@ import org.yaml.snakeyaml.Yaml;
 @WebMvcTest(controllers = {
     AuthController.class,
     ContentController.class,
+    TmdbContentLocalizationAdminController.class,
     ConversationController.class,
     CsrfTokenController.class,
     DirectMessageController.class,
@@ -153,6 +156,7 @@ class OpenApiRuntimeContractTest {
         "PATCH /api/users/{userId}/locked",
         "PATCH /api/users/{userId}/password",
         "PATCH /api/users/{userId}/role",
+        "POST /api/admin/contents/tmdb-localization/backfill",
         "POST /api/admin/outbox/failures/{eventId}/requeue",
         "POST /api/admin/outbox/failures/{eventId}/skip",
         "POST /api/auth/sign-in",
@@ -197,6 +201,9 @@ class OpenApiRuntimeContractTest {
 
     @MockitoBean
     OutboxFailureService outboxFailureService;
+
+    @MockitoBean
+    TmdbContentLocalizationBackfillService tmdbContentLocalizationBackfillService;
 
     @MockitoBean
     PlaylistService playlistService;

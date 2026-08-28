@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
 class TmdbContentMapperTest {
 
     private final TmdbContentMapper mapper = new TmdbContentMapper(
-            new TmdbProperties("base", "token", "https://image.tmdb.org/t/p/w500"));
+            new TmdbProperties("base", "token", "https://image.tmdb.org/t/p/w500", "ko-KR"));
 
     @Test
     @DisplayName("영화 응답의 모든 필드가 draft에 매핑된다")
