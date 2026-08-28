@@ -45,7 +45,7 @@ public class TmdbContentLocalizationBackfillService {
         Pageable pageable = PageRequest.of(0, PAGE_SIZE);
         Slice<Content> slice;
         do {
-            slice = contentRepository.findBySource(ContentSource.TMDB, pageable);
+            slice = contentRepository.findBySourceOrderByIdAsc(ContentSource.TMDB, pageable);
             for (Content content : slice.getContent()) {
                 total++;
                 if (content.getType() == ContentType.SPORT) {

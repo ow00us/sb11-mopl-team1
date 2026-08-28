@@ -60,7 +60,7 @@ class TmdbContentLocalizationBackfillServiceTest {
     }
 
     private void mockSingleSlice(Content... contents) {
-        when(contentRepository.findBySource(eq(ContentSource.TMDB), any(Pageable.class)))
+        when(contentRepository.findBySourceOrderByIdAsc(eq(ContentSource.TMDB), any(Pageable.class)))
                 .thenReturn(new SliceImpl<>(List.of(contents)));
     }
 
@@ -147,14 +147,15 @@ class TmdbContentLocalizationBackfillServiceTest {
         Content page2 = content(ContentType.MOVIE, "2");
         Slice<Content> firstSlice = new SliceImpl<>(List.of(page1), PageRequest.of(0, 100), true);
         Slice<Content> secondSlice = new SliceImpl<>(List.of(page2), PageRequest.of(1, 100), false);
-        when(contentRepository.findBySource(eq(ContentSource.TMDB), any(Pageable.class)))
+        when(contentRepository.findBySourceOrderByIdAsc(eq(ContentSource.TMDB), any(Pageable.class)))
                 .thenReturn(firstSlice, secondSlice);
         when(tmdbApiClient.getMovieDetail(any()))
                 .thenReturn(new TmdbMovieDetail(1L, "제목", "줄거리"));
 
         BackfillResult result = backfillService.backfill();
 
-        verify(contentRepository, times(2)).findBySource(eq(ContentSource.TMDB), any(Pageable.class));
+        verify(contentRepository, times(2))
+                .findBySourceOrderByIdAsc(eq(ContentSource.TMDB), any(Pageable.class));
         verify(tmdbApiClient).getMovieDetail("1");
         verify(tmdbApiClient).getMovieDetail("2");
         assertThat(result.total()).isEqualTo(2);

@@ -730,7 +730,7 @@ class ContentRepositoryTest {
         UUID tmdb2 = insertContentWithRawSource("TMDB 2", "TMDB", now.minusSeconds(1));
         insertContentWithRawSource("SportsDB 1", "SPORTS_DB", now.minusSeconds(2));
 
-        Slice<Content> result = contentRepository.findBySource(ContentSource.TMDB, PageRequest.of(0, 10));
+        Slice<Content> result = contentRepository.findBySourceOrderByIdAsc(ContentSource.TMDB, PageRequest.of(0, 10));
 
         assertThat(result.getContent()).extracting(Content::getId)
                 .containsExactlyInAnyOrder(tmdb1, tmdb2);
@@ -744,7 +744,7 @@ class ContentRepositoryTest {
         UUID deleted = insertContentWithRawSource("TMDB deleted", "TMDB", now.minusSeconds(1));
         markDeleted(deleted);
 
-        Slice<Content> result = contentRepository.findBySource(ContentSource.TMDB, PageRequest.of(0, 10));
+        Slice<Content> result = contentRepository.findBySourceOrderByIdAsc(ContentSource.TMDB, PageRequest.of(0, 10));
 
         assertThat(result.getContent()).extracting(Content::getId).containsExactly(kept);
     }
@@ -758,19 +758,37 @@ class ContentRepositoryTest {
         UUID id3 = insertContentWithRawSource("T3", "TMDB", now.minusSeconds(1));
 
         Pageable firstPageable = PageRequest.of(0, 2);
-        Slice<Content> firstPage = contentRepository.findBySource(ContentSource.TMDB, firstPageable);
+        Slice<Content> firstPage = contentRepository.findBySourceOrderByIdAsc(ContentSource.TMDB, firstPageable);
         assertThat(firstPage.getContent()).hasSize(2);
         assertThat(firstPage.hasNext()).isTrue();
 
-        Slice<Content> secondPage = contentRepository.findBySource(ContentSource.TMDB, firstPageable.next());
+        Slice<Content> secondPage = contentRepository.findBySourceOrderByIdAsc(ContentSource.TMDB, firstPageable.next());
         assertThat(secondPage.getContent()).hasSize(1);
         assertThat(secondPage.hasNext()).isFalse();
 
-        assertThat(List.of(firstPage.getContent(), secondPage.getContent()).stream()
+        List<UUID> firstPageIds = firstPage.getContent().stream().map(Content::getId).toList();
+        List<UUID> secondPageIds = secondPage.getContent().stream().map(Content::getId).toList();
+
+        assertThat(List.of(firstPageIds, secondPageIds).stream()
                 .flatMap(List::stream)
-                .map(Content::getId)
                 .toList())
                 .containsExactlyInAnyOrder(id1, id2, id3);
+
+        // id ASC로 안정 정렬된 상태로 페이지가 나뉜다. 두 페이지는 겹치지 않고, 이어 붙이면
+        // 한 페이지로 통째 조회했을 때의 정렬 순서와 정확히 일치한다(경계에서 중복·누락 없음).
+        // → 첫 페이지 마지막 id가 정렬 순서상 두 번째 페이지 첫 id보다 앞선다.
+        // (UUID의 Java 자연 정렬은 부호 있는 비교라 Postgres uuid 정렬과 달라서, DB가 매긴
+        //  순서를 기준으로 검증한다.)
+        List<UUID> allInOnePage = contentRepository
+                .findBySourceOrderByIdAsc(ContentSource.TMDB, PageRequest.of(0, 10))
+                .getContent().stream().map(Content::getId).toList();
+        assertThat(firstPageIds).doesNotContainAnyElementsOf(secondPageIds);
+        assertThat(List.of(firstPageIds, secondPageIds).stream()
+                .flatMap(List::stream)
+                .toList())
+                .containsExactlyElementsOf(allInOnePage);
+        assertThat(allInOnePage.indexOf(firstPageIds.get(firstPageIds.size() - 1)))
+                .isLessThan(allInOnePage.indexOf(secondPageIds.get(0)));
     }
 
     // ── findBySourceAndExternalIdIncludingDeleted ───────────────────────────

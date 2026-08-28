@@ -32,7 +32,10 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
 
     // 특정 소스의 콘텐츠를 페이지 단위로 순회한다(TMDB 현지화 백필 등).
     // ContentSearchIndexInitializer.backfillExistingContents()와 동일한 Slice 페이지네이션 패턴을 쓴다.
-    Slice<Content> findBySource(ContentSource source, Pageable pageable);
+    // id ASC로 안정 정렬한다. 백필은 순회 도중 같은 contents 행의 title/description을 갱신하는데,
+    // Postgres UPDATE는 물리적 행 위치를 바꿀 수 있어 정렬 기준 없는 offset 페이지네이션은
+    // 같은 콘텐츠를 중복 처리하거나 건너뛸 수 있다. 갱신돼도 안 바뀌는 id를 정렬 키로 고정한다.
+    Slice<Content> findBySourceOrderByIdAsc(ContentSource source, Pageable pageable);
 
     // (source, external_id) 기준으로 소프트 삭제 여부와 무관하게 콘텐츠를 조회한다.
     // 삭제된 외부 콘텐츠를 재수집할 때 unique index 충돌을 사전에 감지하기 위해 사용한다.
