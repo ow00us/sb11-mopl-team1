@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.mopl.global.config.SecurityConfig;
 import com.mopl.global.security.JwtProvider;
+import com.mopl.user.service.AccessTokenUserStatusService;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -50,6 +51,9 @@ class ClientErrorStatusMappingTest {
 
     @MockitoBean
     JwtProvider jwtProvider;
+
+    @MockitoBean
+    AccessTokenUserStatusService accessTokenUserStatusService;
 
     @Test
     @DisplayName("매핑되지 않은 경로는 404를 반환한다")

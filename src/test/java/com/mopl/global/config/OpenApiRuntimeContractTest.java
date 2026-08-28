@@ -40,6 +40,7 @@ import com.mopl.user.service.UserService;
 import com.mopl.user.service.RefreshTokenService;
 import com.mopl.user.service.OAuthAccountManagementService;
 import com.mopl.user.service.OAuthLocalCredentialService;
+import com.mopl.user.service.UserWithdrawalService;
 import com.mopl.user.security.oauth.link.OAuthLinkIntentSessionStore;
 import com.mopl.watchingsession.controller.WatchingSessionController;
 import com.mopl.watchingsession.service.WatchingSessionService;
@@ -119,6 +120,7 @@ class OpenApiRuntimeContractTest {
         "DELETE /api/playlists/{playlistId}/contents/{contentId}",
         "DELETE /api/playlists/{playlistId}/subscription",
         "DELETE /api/reviews/{reviewId}",
+        "DELETE /api/users/{userId}",
         "DELETE /api/users/{userId}/oauth-accounts/{provider}",
         "GET /api/admin/outbox/failures",
         "GET /api/auth/csrf-token",
@@ -223,6 +225,9 @@ class OpenApiRuntimeContractTest {
 
     @MockitoBean
     UserService userService;
+
+    @MockitoBean
+    UserWithdrawalService userWithdrawalService;
 
     @MockitoBean
     OAuthAccountManagementService oauthAccountManagementService;
@@ -364,6 +369,97 @@ class OpenApiRuntimeContractTest {
                         + ".headers['Set-Cookie']"
                         + ".schema.type"
                 ).value("string")
+            );
+    }
+
+    /**
+     * 회원 탈퇴 API의 응답과 Refresh Token 삭제 Cookie 계약을 검증
+     */
+    @Test
+    void documentsUserWithdrawalContract()
+        throws Exception {
+
+        mockMvc.perform(
+                get("/v3/api-docs")
+            )
+            .andExpect(status().isOk())
+
+            /*
+             * 회원 탈퇴 성공 응답은 본문이 없는 204
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}']"
+                        + ".delete.responses['204']"
+                ).exists()
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}']"
+                        + ".delete.responses['204'].content"
+                ).doesNotExist()
+            )
+
+            /*
+             * 브라우저의 Refresh Token을 제거하는
+             * Set-Cookie 응답 헤더
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}']"
+                        + ".delete.responses['204']"
+                        + ".headers['Set-Cookie']"
+                        + ".schema.type"
+                ).value("string")
+            )
+
+            /*
+             * 탈퇴 대상 사용자 UUID는 Path Parameter
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}']"
+                        + ".delete.parameters[*].name"
+                ).value(
+                    org.hamcrest.Matchers.contains(
+                        "userId"
+                    )
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}']"
+                        + ".delete.parameters"
+                        + "[?(@.name == 'userId')]"
+                        + ".schema.format"
+                ).value(
+                    org.hamcrest.Matchers.hasItem(
+                        "uuid"
+                    )
+                )
+            )
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}']"
+                        + ".delete.parameters"
+                        + "[?(@.name == 'userId')]"
+                        + ".schema.format"
+                ).value(
+                    org.hamcrest.Matchers.hasItem(
+                        "uuid"
+                    )
+                )
+            )
+
+            /*
+             * Access Token 차단 상태를 저장할 수 없으면
+             * 보안을 위해 탈퇴를 중단하고 503을 반환
+             */
+            .andExpect(
+                jsonPath(
+                    "$.paths['/api/users/{userId}']"
+                        + ".delete.responses['503']"
+                ).exists()
             );
     }
 

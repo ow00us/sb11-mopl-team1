@@ -269,7 +269,10 @@ public class OAuthLocalCredentialService {
         String normalizedEmail
     ) {
         User user =
-            userRepository.findById(userId)
+            userRepository
+                .findByIdAndDeletedAtIsNull(
+                    userId
+                )
                 .orElseThrow(() ->
                     new BusinessException(
                         ErrorCode.RESOURCE_NOT_FOUND

@@ -122,7 +122,7 @@ class OAuthLocalCredentialServiceTest {
             oauthOnlyUser(false);
 
         when(
-            userRepository.findById(USER_ID)
+            userRepository.findByIdAndDeletedAtIsNull(USER_ID)
         ).thenReturn(
             Optional.of(user)
         );
@@ -239,7 +239,7 @@ class OAuthLocalCredentialServiceTest {
     void sendVerificationCode_rejectsLockedUser() {
         // given
         when(
-            userRepository.findById(USER_ID)
+            userRepository.findByIdAndDeletedAtIsNull(USER_ID)
         ).thenReturn(
             Optional.of(
                 oauthOnlyUser(true)
@@ -275,7 +275,7 @@ class OAuthLocalCredentialServiceTest {
     void sendVerificationCode_rejectsExistingLocalCredential() {
         // given
         when(
-            userRepository.findById(USER_ID)
+            userRepository.findByIdAndDeletedAtIsNull(USER_ID)
         ).thenReturn(
             Optional.of(
                 localUser()
@@ -341,7 +341,7 @@ class OAuthLocalCredentialServiceTest {
     void sendVerificationCode_rejectsDuplicatedEmail() {
         // given
         when(
-            userRepository.findById(USER_ID)
+            userRepository.findByIdAndDeletedAtIsNull(USER_ID)
         ).thenReturn(
             Optional.of(
                 oauthOnlyUser(false)
@@ -386,7 +386,7 @@ class OAuthLocalCredentialServiceTest {
             oauthOnlyUserWithActualEmail(false);
 
         when(
-            userRepository.findById(USER_ID)
+            userRepository.findByIdAndDeletedAtIsNull(USER_ID)
         ).thenReturn(
             Optional.of(user)
         );
@@ -722,7 +722,7 @@ class OAuthLocalCredentialServiceTest {
 
     private void prepareRegistrationRequest() {
         when(
-            userRepository.findById(USER_ID)
+            userRepository.findByIdAndDeletedAtIsNull(USER_ID)
         ).thenReturn(
             Optional.of(
                 oauthOnlyUser(false)
@@ -746,7 +746,7 @@ class OAuthLocalCredentialServiceTest {
 
     private void prepareIssueRequest() {
         when(
-            userRepository.findById(USER_ID)
+            userRepository.findByIdAndDeletedAtIsNull(USER_ID)
         ).thenReturn(
             Optional.of(
                 oauthOnlyUser(false)

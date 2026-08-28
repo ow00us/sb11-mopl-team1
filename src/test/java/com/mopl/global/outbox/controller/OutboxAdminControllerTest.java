@@ -19,6 +19,8 @@ import com.mopl.global.outbox.OutboxFailureService;
 import com.mopl.global.outbox.OutboxRequeueOutcome;
 import com.mopl.global.outbox.OutboxSkipOutcome;
 import com.mopl.global.security.JwtProvider;
+import com.mopl.user.service.AccessTokenUserStatusService;
+import com.mopl.user.service.AccessTokenAuthenticationStatus;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -61,11 +63,16 @@ class OutboxAdminControllerTest {
     @MockitoBean
     OutboxFailureService outboxFailureService;
 
+    @MockitoBean
+    AccessTokenUserStatusService accessTokenUserStatusService;
+
     private void authenticate(String token, String role) {
         when(jwtProvider.validate(token)).thenReturn(true);
         when(jwtProvider.getAuthentication(token)).thenReturn(
             UsernamePasswordAuthenticationToken.authenticated(
                 ACTOR_ID, null, List.of(new SimpleGrantedAuthority("ROLE_" + role))));
+        when(accessTokenUserStatusService.resolve(
+                ACTOR_ID)).thenReturn(AccessTokenAuthenticationStatus.ALLOWED);
     }
 
     /** 최종 실패는 relay 가 만드는 상태입니다. 여기서는 상태 전이 메서드로 같은 모양을 만듭니다. */
