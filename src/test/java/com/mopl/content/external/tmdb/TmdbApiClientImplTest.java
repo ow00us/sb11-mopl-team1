@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.queryParam;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
@@ -24,6 +25,8 @@ import org.springframework.web.client.RestClient;
 class TmdbApiClientImplTest {
 
     private static final String ACCESS_TOKEN = "test-token";
+    private static final TmdbProperties PROPERTIES = new TmdbProperties(
+            "https://api.themoviedb.org/3", ACCESS_TOKEN, "https://image.tmdb.org/t/p/w500", "ko-KR");
 
     private RestClient.Builder newBuilder() {
         return RestClient.builder()
@@ -32,12 +35,16 @@ class TmdbApiClientImplTest {
                 .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE);
     }
 
+    private TmdbApiClientImpl newClient(RestClient.Builder builder) {
+        return new TmdbApiClientImpl(builder.build(), PROPERTIES);
+    }
+
     @Test
     @DisplayName("getPopularMovies는 인증 헤더를 포함해 요청하고 정상 응답을 파싱한다")
     void getPopularMovies_success_parsesResponse() {
         RestClient.Builder builder = newBuilder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        TmdbApiClientImpl client = new TmdbApiClientImpl(builder.build());
+        TmdbApiClientImpl client = newClient(builder);
 
         String body = """
                 {
@@ -50,9 +57,10 @@ class TmdbApiClientImplTest {
                 }
                 """;
 
-        server.expect(requestTo("https://api.themoviedb.org/3/movie/popular?page=1"))
+        server.expect(requestTo("https://api.themoviedb.org/3/movie/popular?page=1&language=ko-KR"))
                 .andExpect(method(HttpMethod.GET))
                 .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer " + ACCESS_TOKEN))
+                .andExpect(queryParam("language", "ko-KR"))
                 .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
 
         TmdbPopularMoviesResponse response = client.getPopularMovies(1);
@@ -68,9 +76,9 @@ class TmdbApiClientImplTest {
     void getPopularMovies_serverError_throwsTmdbApiException() {
         RestClient.Builder builder = newBuilder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        TmdbApiClientImpl client = new TmdbApiClientImpl(builder.build());
+        TmdbApiClientImpl client = newClient(builder);
 
-        server.expect(requestTo("https://api.themoviedb.org/3/movie/popular?page=1"))
+        server.expect(requestTo("https://api.themoviedb.org/3/movie/popular?page=1&language=ko-KR"))
                 .andRespond(withServerError());
 
         assertThatThrownBy(() -> client.getPopularMovies(1))
@@ -83,9 +91,9 @@ class TmdbApiClientImplTest {
     void getPopularMovies_clientError_throwsTmdbApiException() {
         RestClient.Builder builder = newBuilder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        TmdbApiClientImpl client = new TmdbApiClientImpl(builder.build());
+        TmdbApiClientImpl client = newClient(builder);
 
-        server.expect(requestTo("https://api.themoviedb.org/3/movie/popular?page=1"))
+        server.expect(requestTo("https://api.themoviedb.org/3/movie/popular?page=1&language=ko-KR"))
                 .andRespond(withStatus(HttpStatus.UNAUTHORIZED));
 
         assertThatThrownBy(() -> client.getPopularMovies(1))
@@ -98,9 +106,9 @@ class TmdbApiClientImplTest {
     void getPopularMovies_ioException_throwsTmdbApiException() {
         RestClient.Builder builder = newBuilder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        TmdbApiClientImpl client = new TmdbApiClientImpl(builder.build());
+        TmdbApiClientImpl client = newClient(builder);
 
-        server.expect(requestTo("https://api.themoviedb.org/3/movie/popular?page=1"))
+        server.expect(requestTo("https://api.themoviedb.org/3/movie/popular?page=1&language=ko-KR"))
                 .andRespond(request -> {
                     throw new IOException("connection reset");
                 });
@@ -115,7 +123,7 @@ class TmdbApiClientImplTest {
     void getPopularTvShows_success_parsesResponse() {
         RestClient.Builder builder = newBuilder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        TmdbApiClientImpl client = new TmdbApiClientImpl(builder.build());
+        TmdbApiClientImpl client = newClient(builder);
 
         String body = """
                 {
@@ -128,8 +136,9 @@ class TmdbApiClientImplTest {
                 }
                 """;
 
-        server.expect(requestTo("https://api.themoviedb.org/3/tv/popular?page=1"))
+        server.expect(requestTo("https://api.themoviedb.org/3/tv/popular?page=1&language=ko-KR"))
                 .andExpect(method(HttpMethod.GET))
+                .andExpect(queryParam("language", "ko-KR"))
                 .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
 
         TmdbPopularTvResponse response = client.getPopularTvShows(1);
@@ -144,9 +153,9 @@ class TmdbApiClientImplTest {
     void getPopularTvShows_serverError_throwsTmdbApiException() {
         RestClient.Builder builder = newBuilder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        TmdbApiClientImpl client = new TmdbApiClientImpl(builder.build());
+        TmdbApiClientImpl client = newClient(builder);
 
-        server.expect(requestTo("https://api.themoviedb.org/3/tv/popular?page=1"))
+        server.expect(requestTo("https://api.themoviedb.org/3/tv/popular?page=1&language=ko-KR"))
                 .andRespond(withServerError());
 
         assertThatThrownBy(() -> client.getPopularTvShows(1))

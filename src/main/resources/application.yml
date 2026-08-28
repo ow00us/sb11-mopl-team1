@@ -179,6 +179,8 @@ tmdb:
   base-url: https://api.themoviedb.org/3
   access-token: ${TMDB_ACCESS_TOKEN}
   image-base-url: https://image.tmdb.org/t/p/w500
+  # TMDB 요청 시 붙는 language 파라미터. 없으면 TMDB가 en-US로 응답한다.
+  language: ${TMDB_LANGUAGE:ko-KR}
 
 sportsdb:
   base-url: https://www.thesportsdb.com/api/v1/json

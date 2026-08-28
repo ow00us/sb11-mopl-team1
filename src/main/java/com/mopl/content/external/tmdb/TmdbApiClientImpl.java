@@ -1,7 +1,9 @@
 package com.mopl.content.external.tmdb;
 
+import com.mopl.content.external.tmdb.dto.TmdbMovieDetail;
 import com.mopl.content.external.tmdb.dto.TmdbPopularMoviesResponse;
 import com.mopl.content.external.tmdb.dto.TmdbPopularTvResponse;
+import com.mopl.content.external.tmdb.dto.TmdbTvDetail;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -12,12 +14,13 @@ import org.springframework.web.client.RestClientException;
 public class TmdbApiClientImpl implements TmdbApiClient {
 
     private final RestClient tmdbRestClient;
+    private final TmdbProperties tmdbProperties;
 
     @Override
     public TmdbPopularMoviesResponse getPopularMovies(int page) {
         try {
             TmdbPopularMoviesResponse response = tmdbRestClient.get()
-                    .uri("/movie/popular?page={page}", page)
+                    .uri("/movie/popular?page={page}&language={language}", page, tmdbProperties.language())
                     .retrieve()
                     .body(TmdbPopularMoviesResponse.class);
             return response == null ? TmdbPopularMoviesResponse.empty() : response;
@@ -30,7 +33,7 @@ public class TmdbApiClientImpl implements TmdbApiClient {
     public TmdbPopularTvResponse getPopularTvShows(int page) {
         try {
             TmdbPopularTvResponse response = tmdbRestClient.get()
-                    .uri("/tv/popular?page={page}", page)
+                    .uri("/tv/popular?page={page}&language={language}", page, tmdbProperties.language())
                     .retrieve()
                     .body(TmdbPopularTvResponse.class);
             return response == null ? TmdbPopularTvResponse.empty() : response;
