@@ -682,6 +682,7 @@ paths:
 
         기존 `GET /api/playlists?sortBy=subscriberCount` 옵션은 하위 호환을 위해 유지되며, FE 이관 완료 후 별도 이슈로 제거를 검토합니다.
       operationId: "findPopularPlaylists"
+      security: []
       parameters:
         -
           name: "cursor"
