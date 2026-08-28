@@ -4,13 +4,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.queryParam;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import com.mopl.content.external.tmdb.dto.TmdbMovieDetail;
 import com.mopl.content.external.tmdb.dto.TmdbPopularMoviesResponse;
 import com.mopl.content.external.tmdb.dto.TmdbPopularTvResponse;
+import com.mopl.content.external.tmdb.dto.TmdbTvDetail;
 import java.io.IOException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,6 +27,8 @@ import org.springframework.web.client.RestClient;
 class TmdbApiClientImplTest {
 
     private static final String ACCESS_TOKEN = "test-token";
+    private static final TmdbProperties PROPERTIES = new TmdbProperties(
+            "https://api.themoviedb.org/3", ACCESS_TOKEN, "https://image.tmdb.org/t/p/w500", "ko-KR");
 
     private RestClient.Builder newBuilder() {
         return RestClient.builder()
@@ -32,12 +37,16 @@ class TmdbApiClientImplTest {
                 .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE);
     }
 
+    private TmdbApiClientImpl newClient(RestClient.Builder builder) {
+        return new TmdbApiClientImpl(builder.build(), PROPERTIES);
+    }
+
     @Test
     @DisplayName("getPopularMovies는 인증 헤더를 포함해 요청하고 정상 응답을 파싱한다")
     void getPopularMovies_success_parsesResponse() {
         RestClient.Builder builder = newBuilder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        TmdbApiClientImpl client = new TmdbApiClientImpl(builder.build());
+        TmdbApiClientImpl client = newClient(builder);
 
         String body = """
                 {
@@ -50,9 +59,10 @@ class TmdbApiClientImplTest {
                 }
                 """;
 
-        server.expect(requestTo("https://api.themoviedb.org/3/movie/popular?page=1"))
+        server.expect(requestTo("https://api.themoviedb.org/3/movie/popular?page=1&language=ko-KR"))
                 .andExpect(method(HttpMethod.GET))
                 .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer " + ACCESS_TOKEN))
+                .andExpect(queryParam("language", "ko-KR"))
                 .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
 
         TmdbPopularMoviesResponse response = client.getPopularMovies(1);
@@ -68,9 +78,9 @@ class TmdbApiClientImplTest {
     void getPopularMovies_serverError_throwsTmdbApiException() {
         RestClient.Builder builder = newBuilder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        TmdbApiClientImpl client = new TmdbApiClientImpl(builder.build());
+        TmdbApiClientImpl client = newClient(builder);
 
-        server.expect(requestTo("https://api.themoviedb.org/3/movie/popular?page=1"))
+        server.expect(requestTo("https://api.themoviedb.org/3/movie/popular?page=1&language=ko-KR"))
                 .andRespond(withServerError());
 
         assertThatThrownBy(() -> client.getPopularMovies(1))
@@ -83,9 +93,9 @@ class TmdbApiClientImplTest {
     void getPopularMovies_clientError_throwsTmdbApiException() {
         RestClient.Builder builder = newBuilder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        TmdbApiClientImpl client = new TmdbApiClientImpl(builder.build());
+        TmdbApiClientImpl client = newClient(builder);
 
-        server.expect(requestTo("https://api.themoviedb.org/3/movie/popular?page=1"))
+        server.expect(requestTo("https://api.themoviedb.org/3/movie/popular?page=1&language=ko-KR"))
                 .andRespond(withStatus(HttpStatus.UNAUTHORIZED));
 
         assertThatThrownBy(() -> client.getPopularMovies(1))
@@ -98,9 +108,9 @@ class TmdbApiClientImplTest {
     void getPopularMovies_ioException_throwsTmdbApiException() {
         RestClient.Builder builder = newBuilder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        TmdbApiClientImpl client = new TmdbApiClientImpl(builder.build());
+        TmdbApiClientImpl client = newClient(builder);
 
-        server.expect(requestTo("https://api.themoviedb.org/3/movie/popular?page=1"))
+        server.expect(requestTo("https://api.themoviedb.org/3/movie/popular?page=1&language=ko-KR"))
                 .andRespond(request -> {
                     throw new IOException("connection reset");
                 });
@@ -115,7 +125,7 @@ class TmdbApiClientImplTest {
     void getPopularTvShows_success_parsesResponse() {
         RestClient.Builder builder = newBuilder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        TmdbApiClientImpl client = new TmdbApiClientImpl(builder.build());
+        TmdbApiClientImpl client = newClient(builder);
 
         String body = """
                 {
@@ -128,8 +138,9 @@ class TmdbApiClientImplTest {
                 }
                 """;
 
-        server.expect(requestTo("https://api.themoviedb.org/3/tv/popular?page=1"))
+        server.expect(requestTo("https://api.themoviedb.org/3/tv/popular?page=1&language=ko-KR"))
                 .andExpect(method(HttpMethod.GET))
+                .andExpect(queryParam("language", "ko-KR"))
                 .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
 
         TmdbPopularTvResponse response = client.getPopularTvShows(1);
@@ -144,12 +155,130 @@ class TmdbApiClientImplTest {
     void getPopularTvShows_serverError_throwsTmdbApiException() {
         RestClient.Builder builder = newBuilder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        TmdbApiClientImpl client = new TmdbApiClientImpl(builder.build());
+        TmdbApiClientImpl client = newClient(builder);
 
-        server.expect(requestTo("https://api.themoviedb.org/3/tv/popular?page=1"))
+        server.expect(requestTo("https://api.themoviedb.org/3/tv/popular?page=1&language=ko-KR"))
                 .andRespond(withServerError());
 
         assertThatThrownBy(() -> client.getPopularTvShows(1))
+                .isInstanceOf(TmdbApiException.class);
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("getMovieDetail은 language=ko-KR로 상세를 요청하고 정상 응답을 파싱한다")
+    void getMovieDetail_success_parsesResponse() {
+        RestClient.Builder builder = newBuilder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        TmdbApiClientImpl client = newClient(builder);
+
+        String body = """
+                {
+                  "id": 603,
+                  "title": "매트릭스",
+                  "overview": "해커가 현실이 시뮬레이션임을 깨닫는다."
+                }
+                """;
+
+        server.expect(requestTo("https://api.themoviedb.org/3/movie/603?language=ko-KR"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer " + ACCESS_TOKEN))
+                .andExpect(queryParam("language", "ko-KR"))
+                .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+
+        TmdbMovieDetail detail = client.getMovieDetail("603");
+
+        assertThat(detail.id()).isEqualTo(603L);
+        assertThat(detail.title()).isEqualTo("매트릭스");
+        assertThat(detail.overview()).isEqualTo("해커가 현실이 시뮬레이션임을 깨닫는다.");
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("getMovieDetail은 5xx 응답을 TmdbApiException으로 변환한다")
+    void getMovieDetail_serverError_throwsTmdbApiException() {
+        RestClient.Builder builder = newBuilder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        TmdbApiClientImpl client = newClient(builder);
+
+        server.expect(requestTo("https://api.themoviedb.org/3/movie/603?language=ko-KR"))
+                .andRespond(withServerError());
+
+        assertThatThrownBy(() -> client.getMovieDetail("603"))
+                .isInstanceOf(TmdbApiException.class);
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("getMovieDetail은 4xx 응답을 TmdbApiException으로 변환한다")
+    void getMovieDetail_clientError_throwsTmdbApiException() {
+        RestClient.Builder builder = newBuilder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        TmdbApiClientImpl client = newClient(builder);
+
+        server.expect(requestTo("https://api.themoviedb.org/3/movie/603?language=ko-KR"))
+                .andRespond(withStatus(HttpStatus.NOT_FOUND));
+
+        assertThatThrownBy(() -> client.getMovieDetail("603"))
+                .isInstanceOf(TmdbApiException.class);
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("getTvDetail은 language=ko-KR로 상세를 요청하고 정상 응답을 파싱한다")
+    void getTvDetail_success_parsesResponse() {
+        RestClient.Builder builder = newBuilder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        TmdbApiClientImpl client = newClient(builder);
+
+        String body = """
+                {
+                  "id": 1399,
+                  "name": "왕좌의 게임",
+                  "overview": "칠왕국의 왕좌를 둘러싼 암투."
+                }
+                """;
+
+        server.expect(requestTo("https://api.themoviedb.org/3/tv/1399?language=ko-KR"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer " + ACCESS_TOKEN))
+                .andExpect(queryParam("language", "ko-KR"))
+                .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+
+        TmdbTvDetail detail = client.getTvDetail("1399");
+
+        assertThat(detail.id()).isEqualTo(1399L);
+        assertThat(detail.name()).isEqualTo("왕좌의 게임");
+        assertThat(detail.overview()).isEqualTo("칠왕국의 왕좌를 둘러싼 암투.");
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("getTvDetail은 5xx 응답을 TmdbApiException으로 변환한다")
+    void getTvDetail_serverError_throwsTmdbApiException() {
+        RestClient.Builder builder = newBuilder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        TmdbApiClientImpl client = newClient(builder);
+
+        server.expect(requestTo("https://api.themoviedb.org/3/tv/1399?language=ko-KR"))
+                .andRespond(withServerError());
+
+        assertThatThrownBy(() -> client.getTvDetail("1399"))
+                .isInstanceOf(TmdbApiException.class);
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("getTvDetail은 4xx 응답을 TmdbApiException으로 변환한다")
+    void getTvDetail_clientError_throwsTmdbApiException() {
+        RestClient.Builder builder = newBuilder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        TmdbApiClientImpl client = newClient(builder);
+
+        server.expect(requestTo("https://api.themoviedb.org/3/tv/1399?language=ko-KR"))
+                .andRespond(withStatus(HttpStatus.NOT_FOUND));
+
+        assertThatThrownBy(() -> client.getTvDetail("1399"))
                 .isInstanceOf(TmdbApiException.class);
         server.verify();
     }
