@@ -1,10 +1,39 @@
 name: Deploy
 
-# 자동으로 돌지 않습니다. 배포 시점은 사람이 정합니다. main push 마다 운영에 나가면
-# 되돌릴 판단을 할 사람이 없는 시간에도 배포가 일어납니다.
+# staging 은 develop push 의 CI 가 검증한 불변 digest 를 자동 배포합니다. production 은
+# main push 가 검증한 digest 로 승인 요청을 만들고, Environment 승인 뒤에만 배포합니다.
+# 수동 실행 경로는 긴급 재배포와 rollback 용도로 계속 유지합니다.
 on:
+  workflow_call:
+    inputs:
+      target_environment:
+        description: '배포 대상 환경'
+        required: true
+        type: string
+      backend_image:
+        description: '배포할 백엔드 불변 이미지'
+        required: true
+        type: string
+      frontend_image:
+        description: '배포할 프론트엔드 이미지. 비우면 지금 것을 그대로 둡니다'
+        required: false
+        default: ''
+        type: string
+      allow_destructive_migration:
+        description: '역호환되지 않는 마이그레이션을 알고도 진행합니다'
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
+      target_environment:
+        description: '배포 대상 환경'
+        required: true
+        default: production
+        type: choice
+        options:
+          - production
+          - staging
       backend_image:
         description: '배포할 백엔드 이미지. digest(@sha256:...) 또는 commit SHA 태그'
         required: true
@@ -26,21 +55,21 @@ permissions:
 # 건드립니다. 어느 이미지가 남는지도 정해지지 않습니다. 진행 중인 것을 취소하지 않고
 # 기다립니다 - 배포 도중 취소는 절반만 교체된 상태를 남깁니다.
 concurrency:
-  group: deploy-production
+  group: deploy-${{ inputs.target_environment }}
   cancel-in-progress: false
 
 jobs:
   deploy:
-    name: Deploy to production
+    name: Deploy to ${{ inputs.target_environment }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
       # OIDC 로 IAM 역할을 맡습니다. 장기 자격 증명을 저장소에 두지 않습니다.
       id-token: write
-    # 보호된 environment 입니다. 승인자와 대상 브랜치 제한은 저장소 설정에 있습니다.
+    # environment 별 승인자·대상 브랜치·AWS 역할·EC2 ID 는 저장소 설정에서 분리합니다.
     environment:
-      name: production
+      name: ${{ inputs.target_environment }}
       url: https://${{ vars.MOPL_DOMAIN }}
 
     steps:
@@ -49,6 +78,32 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # 환경 변수가 빠졌을 때 AWS action 의 모호한 인증 오류로 넘어가지 않습니다.
+      # workflow_call 의 target 은 문자열이므로 수동 choice 와 같은 범위를 여기서도
+      # 보장합니다.
+      - name: Validate deployment configuration
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+          BACKEND_IMAGE: ${{ inputs.backend_image }}
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          DEPLOY_INSTANCE_ID: ${{ vars.DEPLOY_INSTANCE_ID }}
+          MOPL_DOMAIN: ${{ vars.MOPL_DOMAIN }}
+        run: |
+          set -euo pipefail
+
+          case "$TARGET_ENVIRONMENT" in
+            production|staging) ;;
+            *) echo "지원하지 않는 배포 환경입니다: $TARGET_ENVIRONMENT"; exit 1 ;;
+          esac
+
+          for variable in AWS_DEPLOY_ROLE_ARN AWS_REGION DEPLOY_INSTANCE_ID MOPL_DOMAIN; do
+            [[ -n "${!variable}" ]] || {
+              echo "$TARGET_ENVIRONMENT Environment 에 $variable 변수가 없습니다."
+              exit 1
+            }
+          done
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -101,6 +156,7 @@ jobs:
           BACKEND_IMAGE: ${{ inputs.backend_image }}
           FRONTEND_IMAGE: ${{ inputs.frontend_image }}
           ALLOW_DESTRUCTIVE: ${{ inputs.allow_destructive_migration }}
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
         run: |
           set -euo pipefail
 
@@ -110,7 +166,8 @@ jobs:
           # 언제 갱신됐는지 알 수 없어, 배포되는 코드와 배포하는 절차가 어긋납니다.
           script_b64="$(base64 -w0 deploy/deploy.sh)"
 
-          args="--backend-image $(printf '%q' "$BACKEND_IMAGE") --commit $(printf '%q' "$GITHUB_SHA")"
+          args="--environment $(printf '%q' "$TARGET_ENVIRONMENT")"
+          args+=" --backend-image $(printf '%q' "$BACKEND_IMAGE") --commit $(printf '%q' "$GITHUB_SHA")"
           if [[ -n "$FRONTEND_IMAGE" ]]; then
             args+=" --frontend-image $(printf '%q' "$FRONTEND_IMAGE")"
           fi
@@ -120,7 +177,7 @@ jobs:
           # deploy 가 환경 파일을 고치지 못합니다.
           jq -n --arg s "$script_b64" --arg a "$args" '{
             commands: [
-              "set -euo pipefail",
+              "set -eu",
               ("echo " + $s + " | base64 -d > /srv/mopl/app/deploy/deploy.sh"),
               "chown deploy:deploy /srv/mopl/app/deploy/deploy.sh",
               "chmod 0755 /srv/mopl/app/deploy/deploy.sh",
@@ -170,6 +227,39 @@ jobs:
 
           [[ "$status" == "Success" ]]
 
+      # deploy.sh 가 서버 내부 health 를 확인한 뒤, 실제 사용자가 지나는 HTTPS, Caddy,
+      # gateway, backend 경로도 확인합니다. readiness 는 인증이 필요하므로 공개 계약인
+      # CSRF 발급(204)을 사용해 백엔드까지 도달했는지 봅니다.
+      - name: Verify public endpoints
+        env:
+          MOPL_DOMAIN: ${{ vars.MOPL_DOMAIN }}
+          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+        run: |
+          set -euo pipefail
+
+          [[ -n "$MOPL_DOMAIN" ]] || { echo "MOPL_DOMAIN 변수가 없습니다."; exit 1; }
+
+          for attempt in $(seq 1 30); do
+            home_status="$(curl --silent --show-error --output /tmp/mopl-home.html \
+              --write-out '%{http_code}' --max-time 10 \
+              "https://$MOPL_DOMAIN/" || true)"
+            csrf_status="$(curl --silent --show-error --output /tmp/mopl-csrf.txt \
+              --write-out '%{http_code}' --max-time 10 \
+              "https://$MOPL_DOMAIN/api/auth/csrf-token" || true)"
+
+            if [[ "$home_status" == "200" && "$csrf_status" == "204" ]]; then
+              echo "$TARGET_ENVIRONMENT 공개 경로 검증 성공: home=$home_status csrf=$csrf_status"
+              exit 0
+            fi
+
+            echo "$TARGET_ENVIRONMENT 공개 경로 대기 ($attempt/30): home=$home_status csrf=$csrf_status"
+            sleep 5
+          done
+
+          echo "$TARGET_ENVIRONMENT 공개 경로가 준비되지 않았습니다."
+          head -c 500 /tmp/mopl-home.html 2>/dev/null || true
+          exit 1
+
       # 실패한 배포도 무엇을 시도했는지 남아야 합니다. 실행 로그를 뒤지지 않고 찾을 수
       # 있어야 다음 판단이 빨라집니다.
       - name: Record deployment
@@ -196,6 +286,7 @@ jobs:
             echo
             echo "| 항목 | 값 |"
             echo "| --- | --- |"
+            echo "| 환경 | \`${{ inputs.target_environment }}\` |"
             echo "| commit | \`${{ github.sha }}\` |"
             echo "| 백엔드 이미지 | \`${{ inputs.backend_image }}\` |"
             echo "| 프론트 이미지 | \`${{ inputs.frontend_image || '(변경 없음)' }}\` |"

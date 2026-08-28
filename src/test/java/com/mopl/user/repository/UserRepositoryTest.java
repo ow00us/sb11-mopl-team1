@@ -6,6 +6,8 @@ import com.mopl.global.config.JpaConfig;
 import com.mopl.user.entity.User;
 import com.mopl.user.entity.UserRole;
 import java.util.Optional;
+import java.util.UUID;
+import java.time.Instant;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -105,6 +107,8 @@ class UserRepositoryTest {
         // when: 회원가입 시 저장한 정규화 이메일로 사용자를 조회합니다.
         Optional<User> result = userRepository.findByEmail("user@example.com");
 
+        Optional<User> lockedResult = userRepository.findByEmailForUpdate("user@example.com");
+
         // then: 사용자가 존재하고 주요 필드가 올바르게 저장됐는지 확인합니다.
         assertThat(result).isPresent();
 
@@ -115,11 +119,145 @@ class UserRepositoryTest {
         assertThat(foundUser.getName()).isEqualTo("테스트 사용자");
         assertThat(foundUser.getRole()).isEqualTo(UserRole.USER);
         assertThat(foundUser.isLocked()).isFalse();
+        assertThat(lockedResult).isPresent();
+        assertThat(lockedResult.get().getId()).isEqualTo(foundUser.getId());
 
         // id, createdAt, updatedAt은 User가 아닌 BaseEntity에서 제공합니다.
         // UUID 생성과 JPA Auditing이 정상적으로 동작했는지 함께 확인합니다.
         assertThat(foundUser.getId()).isNotNull();
         assertThat(foundUser.getCreatedAt()).isNotNull();
         assertThat(foundUser.getUpdatedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("탈퇴 사용자는 활성 사용자 조회에서 제외하지만 일반 UUID 조회는 유지한다")
+    void activeUserQueries_excludeDeletedUser() {
+        // given
+        User user = User.builder()
+            .email("withdraw@example.com")
+            .passwordHash("encoded-password")
+            .name("탈퇴 전 사용자")
+            .role(UserRole.USER)
+            .locked(false)
+            .build();
+
+        entityManager.persistAndFlush(user);
+
+        UUID userId = user.getId();
+
+        user.withdraw(
+            Instant.parse("2026-08-27T00:00:00Z")
+        );
+
+        entityManager.flush();
+        entityManager.clear();
+
+        String anonymizedEmail =
+            "deleted-" + userId + "@deleted.mopl";
+
+        // when & then
+        assertThat(
+            userRepository.findById(userId)
+        ).isPresent();
+
+        assertThat(
+            userRepository.findByIdAndDeletedAtIsNull(userId)
+        ).isEmpty();
+
+        assertThat(
+            userRepository.existsByIdAndDeletedAtIsNull(userId)
+        ).isFalse();
+
+        assertThat(
+            userRepository.findByEmailAndDeletedAtIsNull(
+                anonymizedEmail
+            )
+        ).isEmpty();
+
+        assertThat(
+            userRepository.findByEmailForUpdate(
+                anonymizedEmail
+            )
+        ).isEmpty();
+
+        assertThat(
+            userRepository.findByIdForUpdate(userId)
+        ).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Access Token 인증은 활성 상태이며 잠기지 않은 사용자에게만 허용한다")
+    void accessTokenAuthenticationQuery_allowsOnlyActiveUnlockedUser() {
+        // given
+        User activeUser = User.builder()
+            .email("active-auth@example.com")
+            .passwordHash("encoded-password")
+            .name("활성 사용자")
+            .role(UserRole.USER)
+            .locked(false)
+            .build();
+
+        User lockedUser = User.builder()
+            .email("locked-auth@example.com")
+            .passwordHash("encoded-password")
+            .name("잠긴 사용자")
+            .role(UserRole.USER)
+            .locked(true)
+            .build();
+
+        User deletedUser = User.builder()
+            .email("deleted-auth@example.com")
+            .passwordHash("encoded-password")
+            .name("탈퇴 예정 사용자")
+            .role(UserRole.USER)
+            .locked(false)
+            .build();
+
+        entityManager.persist(activeUser);
+        entityManager.persist(lockedUser);
+        entityManager.persist(deletedUser);
+        entityManager.flush();
+
+        UUID activeUserId = activeUser.getId();
+        UUID lockedUserId = lockedUser.getId();
+        UUID deletedUserId = deletedUser.getId();
+
+        deletedUser.withdraw(
+            Instant.parse(
+                "2026-08-27T00:00:00Z"
+            )
+        );
+
+        entityManager.flush();
+        entityManager.clear();
+
+        // when & then
+        assertThat(
+            userRepository
+                .existsByIdAndLockedFalseAndDeletedAtIsNull(
+                    activeUserId
+                )
+        ).isTrue();
+
+        assertThat(
+            userRepository
+                .existsByIdAndLockedFalseAndDeletedAtIsNull(
+                    lockedUserId
+                )
+        ).isFalse();
+
+        assertThat(
+            userRepository
+                .existsByIdAndLockedFalseAndDeletedAtIsNull(
+                    deletedUserId
+                )
+        ).isFalse();
+
+        assertThat(
+            userRepository
+                .existsByIdAndLockedFalseAndDeletedAtIsNull(
+                    UUID.randomUUID()
+                )
+        ).isFalse();
     }
 }

@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.context.annotation.Profile;
 
 /**
@@ -51,6 +52,18 @@ class SecurityPolicyProbeController {
     )
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void startOAuthAccountLink() {
+    }
+
+    /**
+     * 회원 탈퇴 API의 JWT 및 CSRF 정책을 검증하기 위한
+     * 테스트 전용 경로
+     *
+     * <p>실제 UserController와 같은 HTTP 메서드와 경로를 사용하고,
+     * 탈퇴 서비스나 데이터베이스에는 의존하지 않습니다.</p>
+     */
+    @DeleteMapping("/api/users/{userId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void withdrawUser() {
     }
 
     /**
@@ -100,6 +113,11 @@ class SecurityPolicyProbeController {
     @GetMapping("/api/users")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void findUsers() {
+    }
+
+    @GetMapping("/api/users/search")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void searchUsers() {
     }
 
     @GetMapping("/api/security-policy/protected")

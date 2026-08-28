@@ -37,6 +37,10 @@ public class ContentDocument {
     @Field(type = FieldType.Keyword)
     private List<String> tags;
 
+    // 화면에 보여줄 원본 표기. tags(정규화 키)는 검색·필터에만 쓰고, 실제 노출은 이 필드를 쓴다.
+    @Field(type = FieldType.Keyword, index = false)
+    private List<String> displayTags;
+
     @Field(type = FieldType.Double)
     private Double averageRating;
 

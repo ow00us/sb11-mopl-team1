@@ -378,10 +378,11 @@
           </article>
 
           <article class="table-card" id="content_tags" data-table="content_tags" data-relations="contents">
-            <button class="table-head" type="button"><span class="table-name">content_tags</span><span class="table-note">정규화된 다중 태그</span></button>
+            <button class="table-head" type="button"><span class="table-name">content_tags</span><span class="table-note">정규화 키(tag) + 원본 표기(display_tag)</span></button>
             <ul class="fields">
               <li class="field"><span class="field-main"><a class="field-name relation" href="#contents">content_id</a><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span><span class="key fk">FK</span></span></li>
               <li class="field"><span class="field-main"><span class="field-name">tag</span><span class="field-type">varchar</span></span><span class="keys"><span class="key pk">PK</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">display_tag</span><span class="field-type">varchar</span></span></li>
             </ul>
           </article>
 

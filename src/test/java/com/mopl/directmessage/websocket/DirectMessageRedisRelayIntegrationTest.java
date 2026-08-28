@@ -242,7 +242,7 @@ class DirectMessageRedisRelayIntegrationTest {
                 UUID.fromString(
                     "cccccccc-cccc-cccc-cccc-cccccccccccc"
                 ),
-                DirectMessageRealtimeContract.EVENT_TYPE,
+                DirectMessageRealtimeContract.CREATED_EVENT_TYPE,
                 message
             );
 
@@ -280,7 +280,7 @@ class DirectMessageRedisRelayIntegrationTest {
                     "dddddddd-dddd-dddd-dddd-dddddddddddd"
                 ),
                 "another-instance",
-                DirectMessageRealtimeContract.EVENT_TYPE,
+                DirectMessageRealtimeContract.CREATED_EVENT_TYPE,
                 DirectMessageRealtimeContract.destination(
                     CONVERSATION_ID
                 ),
@@ -299,7 +299,7 @@ class DirectMessageRedisRelayIntegrationTest {
                 UUID.fromString(
                     "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
                 ),
-                DirectMessageRealtimeContract.EVENT_TYPE,
+                DirectMessageRealtimeContract.CREATED_EVENT_TYPE,
                 validMessage
             )
         );
@@ -342,7 +342,7 @@ class DirectMessageRedisRelayIntegrationTest {
                 UUID.fromString(
                     "99999999-9999-9999-9999-999999999999"
                 ),
-                DirectMessageRealtimeContract.EVENT_TYPE,
+                DirectMessageRealtimeContract.CREATED_EVENT_TYPE,
                 message
             )
         );

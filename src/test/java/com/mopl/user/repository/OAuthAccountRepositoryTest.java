@@ -326,6 +326,75 @@ class OAuthAccountRepositoryTest {
             .isEmpty();
     }
 
+    @Test
+    @DisplayName("사용자에게 연결된 모든 OAuth 계정을 삭제한다")
+    void deleteAllByUserId_success() {
+        // given
+        User withdrawnUser = persistUser(
+            "withdrawn@example.com",
+            null
+        );
+
+        User otherUser = persistUser(
+            "other@example.com",
+            null
+        );
+
+        OAuthAccount googleAccount =
+            OAuthAccount.builder()
+                .user(withdrawnUser)
+                .provider(OAuthProvider.GOOGLE)
+                .providerUserId("withdrawn-google-id")
+                .build();
+
+        OAuthAccount kakaoAccount =
+            OAuthAccount.builder()
+                .user(withdrawnUser)
+                .provider(OAuthProvider.KAKAO)
+                .providerUserId("withdrawn-kakao-id")
+                .build();
+
+        OAuthAccount otherAccount =
+            OAuthAccount.builder()
+                .user(otherUser)
+                .provider(OAuthProvider.NAVER)
+                .providerUserId("other-naver-id")
+                .build();
+
+        entityManager.persist(googleAccount);
+        entityManager.persist(kakaoAccount);
+        entityManager.persist(otherAccount);
+        entityManager.flush();
+        entityManager.clear();
+
+        // when
+        long deletedCount =
+            oauthAccountRepository.deleteAllByUserId(
+                withdrawnUser.getId()
+            );
+
+        entityManager.flush();
+        entityManager.clear();
+
+        // then
+        assertThat(deletedCount)
+            .isEqualTo(2L);
+
+        assertThat(
+            oauthAccountRepository.findAllByUserId(
+                withdrawnUser.getId()
+            )
+        ).isEmpty();
+
+        assertThat(
+            oauthAccountRepository.findAllByUserId(
+                otherUser.getId()
+            )
+        )
+            .extracting(OAuthAccount::getProvider)
+            .containsExactly(OAuthProvider.NAVER);
+    }
+
     /**
      * 테스트용 사용자를 실제 PostgreSQL에 저장
      *

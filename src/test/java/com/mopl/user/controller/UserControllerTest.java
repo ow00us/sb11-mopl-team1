@@ -19,7 +19,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.common.CursorResponse;
+import com.mopl.global.common.UserSummary;
+import com.mopl.user.cookie.RefreshTokenCookieFactory;
 import com.mopl.user.dto.UserListRequest;
+import com.mopl.user.dto.UserSearchRequest;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserDto;
 import com.mopl.user.dto.UserUpdateRequest;
@@ -32,10 +35,12 @@ import com.mopl.user.dto.LocalCredentialRegistrationRequest;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.service.UserService;
+import com.mopl.user.service.UserWithdrawalService;
 import com.mopl.user.service.OAuthAccountManagementService;
 import com.mopl.user.service.OAuthLocalCredentialService;
 import com.mopl.user.security.oauth.link.OAuthLinkIntentSessionStore;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
 import java.util.List;
@@ -44,6 +49,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterEach;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -80,6 +87,12 @@ class UserControllerTest {
 
     @MockitoBean
     OAuthLocalCredentialService oauthLocalCredentialService;
+
+    @MockitoBean
+    UserWithdrawalService userWithdrawalService;
+
+    @MockitoBean
+    RefreshTokenCookieFactory refreshTokenCookieFactory;
 
     /**
      * 테스트 종료 후 인증 정보 제거
@@ -237,6 +250,70 @@ class UserControllerTest {
             .andExpect(jsonPath("$.sortDirection").value("ASCENDING"));
 
         verify(userService).findUsers(request);
+    }
+
+    @Test
+    @DisplayName("인증된 사용자는 이름으로 DM 대상 사용자를 검색할 수 있다")
+    void searchUsers_success() throws Exception {
+        UUID requesterId = UUID.fromString(
+            "11111111-1111-1111-1111-111111111111"
+        );
+        UUID searchedUserId = UUID.fromString(
+            "22222222-2222-2222-2222-222222222222"
+        );
+        setAuthenticatedUser(requesterId);
+
+        UserSearchRequest request = new UserSearchRequest(
+            "홍길동",
+            null,
+            null,
+            20
+        );
+        CursorResponse<UserSummary> response = CursorResponse.of(
+            List.of(new UserSummary(
+                searchedUserId,
+                "홍길동",
+                "https://example.com/profile.png"
+            )),
+            null,
+            null,
+            false,
+            1L,
+            "name",
+            "ASCENDING"
+        );
+        when(userService.searchUsers(requesterId, request))
+            .thenReturn(response);
+
+        mockMvc.perform(
+                get("/api/users/search")
+                    .param("keywordLike", "홍길동")
+                    .param("limit", "20")
+            )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data[0].userId")
+                .value(searchedUserId.toString()))
+            .andExpect(jsonPath("$.data[0].name").value("홍길동"))
+            .andExpect(jsonPath("$.data[0].email").doesNotExist())
+            .andExpect(jsonPath("$.hasNext").value(false))
+            .andExpect(jsonPath("$.totalCount").value(1));
+
+        verify(userService).searchUsers(requesterId, request);
+    }
+
+    @Test
+    @DisplayName("DM 대상 검색어가 비어 있으면 400을 반환한다")
+    void searchUsers_fail_whenKeywordIsBlank() throws Exception {
+        setAuthenticatedUser(UUID.randomUUID());
+
+        mockMvc.perform(
+                get("/api/users/search")
+                    .param("keywordLike", " ")
+                    .param("limit", "20")
+            )
+            .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(userService);
     }
 
     /**
@@ -789,6 +866,135 @@ class UserControllerTest {
          * 비밀번호 암호화와 DB 조회를 담당하는 Service는 호출되면 안된다.
          */
         verifyNoInteractions(userService);
+    }
+
+    @Test
+    @DisplayName("본인 계정을 탈퇴하면 Refresh Token 삭제 Cookie와 204를 반환한다")
+    void withdrawUser_success() throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        ResponseCookie deletionCookie =
+            ResponseCookie
+                .from("REFRESH_TOKEN", "")
+                .httpOnly(true)
+                .path("/")
+                .sameSite("Lax")
+                .maxAge(Duration.ZERO)
+                .build();
+
+        when(
+            refreshTokenCookieFactory
+                .createDeletionCookie()
+        ).thenReturn(deletionCookie);
+
+        // when & then
+        mockMvc.perform(
+                delete(
+                    "/api/users/{userId}",
+                    userId
+                )
+            )
+            .andExpect(status().isNoContent())
+            .andExpect(content().string(""))
+            .andExpect(
+                org.springframework.test.web.servlet
+                    .result.MockMvcResultMatchers
+                    .header()
+                    .string(
+                        HttpHeaders.SET_COOKIE,
+                        org.hamcrest.Matchers.allOf(
+                            org.hamcrest.Matchers.containsString(
+                                "REFRESH_TOKEN="
+                            ),
+                            org.hamcrest.Matchers.containsString(
+                                "Path=/"
+                            ),
+                            org.hamcrest.Matchers.containsString(
+                                "Max-Age=0"
+                            ),
+                            org.hamcrest.Matchers.containsString(
+                                "HttpOnly"
+                            ),
+                            org.hamcrest.Matchers.containsString(
+                                "SameSite=Lax"
+                            )
+                        )
+                    )
+            );
+
+        verify(userWithdrawalService).withdraw(
+            userId,
+            userId
+        );
+
+        verify(oauthLinkIntentSessionStore).clear(
+            any(HttpServletRequest.class)
+        );
+
+        verify(refreshTokenCookieFactory)
+            .createDeletionCookie();
+    }
+
+    @Test
+    @DisplayName("회원 탈퇴 처리에 실패하면 세션 의도를 제거하지 않는다")
+    void withdrawUser_failure_doesNotClearOAuthIntent()
+        throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        ResponseCookie deletionCookie =
+            ResponseCookie
+                .from("REFRESH_TOKEN", "")
+                .httpOnly(true)
+                .path("/")
+                .sameSite("Lax")
+                .maxAge(Duration.ZERO)
+                .build();
+
+        when(
+            refreshTokenCookieFactory
+                .createDeletionCookie()
+        ).thenReturn(deletionCookie);
+
+        doThrow(
+            new BusinessException(
+                ErrorCode.RESOURCE_NOT_FOUND
+            )
+        )
+            .when(userWithdrawalService)
+            .withdraw(userId, userId);
+
+        // when & then
+        mockMvc.perform(
+                delete(
+                    "/api/users/{userId}",
+                    userId
+                )
+            )
+            .andExpect(status().isNotFound())
+            .andExpect(
+                org.springframework.test.web.servlet
+                    .result.MockMvcResultMatchers
+                    .header()
+                    .doesNotExist(
+                        HttpHeaders.SET_COOKIE
+                    )
+            );
+
+        verifyNoInteractions(
+            oauthLinkIntentSessionStore
+        );
     }
 
     /**

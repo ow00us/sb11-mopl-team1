@@ -24,6 +24,7 @@ class ContentDtoTest {
                 .description("설명")
                 .type(ContentType.TV_SERIES.name())
                 .tags(List.of("action", "sf"))
+                .displayTags(List.of("Action", "SF"))
                 .averageRating(3.5)
                 .reviewCount(3)
                 .watcherCount(7)
@@ -38,7 +39,7 @@ class ContentDtoTest {
         assertThat(dto.title()).isEqualTo("제목");
         assertThat(dto.description()).isEqualTo("설명");
         assertThat(dto.thumbnailUrl()).isEqualTo("https://example.com/thumb.jpg");
-        assertThat(dto.tags()).containsExactlyInAnyOrder("action", "sf");
+        assertThat(dto.tags()).containsExactlyInAnyOrder("Action", "SF");
         assertThat(dto.averageRating()).isEqualByComparingTo("3.5");
         assertThat(dto.averageRating().scale()).isEqualTo(1);
         assertThat(dto.reviewCount()).isEqualTo(3L);
@@ -57,6 +58,52 @@ class ContentDtoTest {
         assertThat(dto.averageRating()).isEqualByComparingTo(new BigDecimal("4.5"));
     }
 
+    @Test
+    @DisplayName("from(ContentDocument)은 displayTags가 null이면 tags(정규화 값)로 폴백한다")
+    void from_document_nullDisplayTags_fallsBackToTags() {
+        UUID id = UUID.randomUUID();
+        ContentDocument document = ContentDocument.builder()
+                .id(id.toString())
+                .contentId(id.toString())
+                .title("제목")
+                .description("설명")
+                .type(ContentType.MOVIE.name())
+                .tags(List.of("action", "sf"))
+                // displayTags를 의도적으로 설정하지 않음 - 이 필드가 추가되기 전에 색인된
+                // 기존 문서를 흉내낸다.
+                .averageRating(0.0)
+                .reviewCount(0)
+                .watcherCount(0)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        ContentDto dto = ContentDto.from(document);
+
+        assertThat(dto.tags()).containsExactlyInAnyOrder("action", "sf");
+    }
+
+    @Test
+    @DisplayName("from(ContentDocument)은 displayTags가 null이고 tags도 비어 있으면 빈 Set을 반환한다")
+    void from_document_nullDisplayTagsAndEmptyTags_returnsEmptySet() {
+        UUID id = UUID.randomUUID();
+        ContentDocument document = ContentDocument.builder()
+                .id(id.toString())
+                .contentId(id.toString())
+                .title("제목")
+                .description("설명")
+                .type(ContentType.MOVIE.name())
+                .tags(List.of())
+                .averageRating(0.0)
+                .reviewCount(0)
+                .watcherCount(0)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        ContentDto dto = ContentDto.from(document);
+
+        assertThat(dto.tags()).isEmpty();
+    }
+
     private ContentDocument baseDocument() {
         UUID id = UUID.randomUUID();
         return ContentDocument.builder()
@@ -66,6 +113,7 @@ class ContentDtoTest {
                 .description("설명")
                 .type(ContentType.MOVIE.name())
                 .tags(List.of())
+                .displayTags(List.of())
                 .averageRating(0.0)
                 .reviewCount(0)
                 .watcherCount(0)

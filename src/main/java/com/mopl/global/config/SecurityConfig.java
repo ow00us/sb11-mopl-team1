@@ -7,6 +7,7 @@ import com.mopl.global.security.csrf.RotatingCookieCsrfTokenRepository;
 import com.mopl.global.security.handler.RestAccessDeniedHandler;
 import com.mopl.global.security.handler.RestAuthenticationEntryPoint;
 import com.mopl.global.security.handler.SecurityErrorResponseWriter;
+import com.mopl.user.service.AccessTokenUserStatusService;
 import com.mopl.user.security.oauth.GoogleOidcUserService;
 import com.mopl.user.security.oauth.MoplOAuth2UserService;
 import com.mopl.user.security.oauth.handler.OAuth2AuthenticationFailureHandler;
@@ -140,6 +141,8 @@ public class SecurityConfig {
         RestAuthenticationEntryPoint authenticationEntryPoint,
         RestAccessDeniedHandler accessDeniedHandler,
         CorsConfigurationSource corsConfigurationSource,
+        AccessTokenUserStatusService accessTokenUserStatusService,
+        SecurityErrorResponseWriter responseWriter,
         ObjectProvider<ClientRegistrationRepository>
             clientRegistrationRepositoryProvider,
         ObjectProvider<OAuth2AuthenticationSuccessHandler>
@@ -174,7 +177,7 @@ public class SecurityConfig {
                         // 권한 부여를 따로 기억해야 하면 언젠가 빠뜨립니다.
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
-                .addFilterBefore(new JwtAuthenticationFilter(jwtProvider), UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(new JwtAuthenticationFilter(jwtProvider, accessTokenUserStatusService, responseWriter), UsernamePasswordAuthenticationFilter.class);
 
         /*
          * OAuth ClientRegistration과 공통 성공·실패 Handler가

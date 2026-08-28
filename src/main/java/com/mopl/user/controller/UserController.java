@@ -1,7 +1,10 @@
 package com.mopl.user.controller;
 
 import com.mopl.global.common.CursorResponse;
+import com.mopl.user.cookie.RefreshTokenCookieFactory;
 import com.mopl.user.dto.UserListRequest;
+import com.mopl.user.dto.UserSearchRequest;
+import com.mopl.global.common.UserSummary;
 import com.mopl.user.dto.UserCreateRequest;
 import com.mopl.user.dto.UserUpdateRequest;
 import com.mopl.user.dto.UserLockUpdateRequest;
@@ -13,6 +16,7 @@ import com.mopl.user.dto.OAuthLinkStartResponse;
 import com.mopl.user.dto.LocalCredentialEmailVerificationRequest;
 import com.mopl.user.dto.LocalCredentialRegistrationRequest;
 import com.mopl.user.entity.OAuthProvider;
+import com.mopl.user.service.UserWithdrawalService;
 import com.mopl.user.service.UserService;
 import com.mopl.user.service.OAuthAccountManagementService;
 import com.mopl.user.service.OAuthLocalCredentialService;
@@ -21,6 +25,8 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.headers.Header;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.UUID;
 import java.util.List;
 import java.util.Locale;
@@ -29,6 +35,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -60,6 +68,8 @@ public class UserController {
     private final OAuthAccountManagementService oauthAccountManagementService;
     private final OAuthLinkIntentSessionStore oauthLinkIntentSessionStore;
     private final OAuthLocalCredentialService oauthLocalCredentialService;
+    private final UserWithdrawalService userWithdrawalService;
+    private final RefreshTokenCookieFactory refreshTokenCookieFactory;
 
     /**
      * 이메일과 비밀번호를 이용해 사용자를 생성
@@ -108,6 +118,25 @@ public class UserController {
             userService.findUsers(request);
 
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/search")
+    @Operation(
+        summary = "DM 대상 사용자 검색",
+        description = "인증된 사용자가 이름으로 다른 사용자의 공개 프로필을 검색합니다."
+    )
+    public ResponseEntity<CursorResponse<UserSummary>> searchUsers(
+        @Parameter(hidden = true)
+        @AuthenticationPrincipal
+        UUID requesterId,
+        @Valid
+        @ParameterObject
+        @ModelAttribute
+        UserSearchRequest request
+    ) {
+        return ResponseEntity.ok(
+            userService.searchUsers(requesterId, request)
+        );
     }
 
     /**
@@ -507,6 +536,94 @@ public class UserController {
         );
 
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 인증된 사용자가 본인 계정을 탈퇴
+     *
+     * <p>사용자 UUID는 유지하면서 개인정보와 로그인 수단을 제거하고,
+     * 현재 사용자의 Refresh Token Cookie를 즉시 만료시킵니다.</p>
+     *
+     * <p>JWT 인증 사용자와 URL의 사용자 UUID가 다르면
+     * 다른 사용자의 계정을 탈퇴할 수 없도록 거부합니다.</p>
+     *
+     * @param authenticatedUserId JWT 인증 사용자 UUID
+     * @param userId 탈퇴할 사용자 UUID
+     * @param request 현재 HTTP 요청
+     * @return Refresh Token 삭제 Cookie가 포함된 204 No Content
+     */
+    @DeleteMapping("/{userId}")
+    @Operation(
+        summary = "회원 탈퇴",
+        description = "인증된 본인 계정을 탈퇴 처리합니다. "
+            + "사용자 UUID와 작성 콘텐츠는 유지하지만 개인정보와 "
+            + "로컬·OAuth 로그인 수단은 제거합니다."
+    )
+    @ApiResponses({
+        @ApiResponse(
+            responseCode = "204",
+            description = "회원 탈퇴 성공",
+            headers = @Header(
+                name = HttpHeaders.SET_COOKIE,
+                description = "Refresh Token 삭제 Cookie",
+                schema = @Schema(
+                    implementation = String.class
+                )
+            )
+        ),
+        @ApiResponse(
+            responseCode = "401",
+            description = "인증이 필요함"
+        ),
+        @ApiResponse(
+            responseCode = "403",
+            description = "다른 사용자의 탈퇴 요청"
+        ),
+        @ApiResponse(
+            responseCode = "404",
+            description = "사용자가 없거나 이미 탈퇴함"
+        ),
+        @ApiResponse(
+            responseCode = "503",
+            description = "인증 차단 상태를 저장할 수 없음"
+        )
+    })
+    public ResponseEntity<Void> withdrawUser(
+        @Parameter(hidden = true)
+        @AuthenticationPrincipal
+        UUID authenticatedUserId,
+        @PathVariable
+        UUID userId,
+        @Parameter(hidden = true)
+        HttpServletRequest request
+    ) {
+        /*
+         * 설정 오류가 DB 탈퇴 커밋 이후 발견되는 상황을 피하기 위해
+         * 삭제 Cookie를 데이터 변경 전에 생성
+         */
+        ResponseCookie deletionCookie =
+            refreshTokenCookieFactory
+                .createDeletionCookie();
+
+        userWithdrawalService.withdraw(
+            authenticatedUserId,
+            userId
+        );
+
+        /*
+         * 브라우저 세션에 남아 있을 수 있는 OAuth 계정 연결 의도를 제거
+         */
+        oauthLinkIntentSessionStore.clear(
+            request
+        );
+
+        return ResponseEntity
+            .noContent()
+            .header(
+                HttpHeaders.SET_COOKIE,
+                deletionCookie.toString()
+            )
+            .build();
     }
 
     /**

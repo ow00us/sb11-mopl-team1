@@ -9,6 +9,8 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 
 import com.mopl.directmessage.dto.DirectMessageDto;
+import com.mopl.directmessage.dto.DirectMessageReadEvent;
+import com.mopl.directmessage.dto.DirectMessageRealtimeEvent;
 import com.mopl.directmessage.dto.DirectMessageSendRequest;
 import com.mopl.directmessage.entity.Conversation;
 import com.mopl.directmessage.entity.ConversationParticipant;
@@ -17,6 +19,7 @@ import com.mopl.directmessage.entity.ParticipantSlot;
 import com.mopl.directmessage.repository.ConversationParticipantRepository;
 import com.mopl.directmessage.repository.ConversationRepository;
 import com.mopl.directmessage.repository.DirectMessageRepository;
+import com.mopl.directmessage.service.DirectMessageService;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.security.JwtProvider;
 import com.mopl.global.exception.ErrorResponse;
@@ -29,6 +32,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.lang.reflect.Type;
 import java.security.Principal;
 import java.net.URI;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -123,6 +127,9 @@ class DirectMessageStompIntegrationTest {
 
     @Autowired
     private DirectMessageRepository directMessageRepository;
+
+    @Autowired
+    private DirectMessageService directMessageService;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -262,7 +269,7 @@ class DirectMessageStompIntegrationTest {
         Authentication authentication =
             UsernamePasswordAuthenticationToken
                 .authenticated(
-                    userId.toString(),
+                    userId,
                     null,
                     List.of()
                 );
@@ -345,7 +352,7 @@ class DirectMessageStompIntegrationTest {
                 public Type getPayloadType(
                     StompHeaders headers
                 ) {
-                    return DirectMessageDto.class;
+                    return DirectMessageRealtimeEvent.class;
                 }
 
                 @Override
@@ -353,8 +360,14 @@ class DirectMessageStompIntegrationTest {
                     StompHeaders headers,
                     Object payload
                 ) {
+                    DirectMessageRealtimeEvent<?> event =
+                        (DirectMessageRealtimeEvent<?>) payload;
+
                     received.complete(
-                        (DirectMessageDto) payload
+                        objectMapper.convertValue(
+                            event.data(),
+                            DirectMessageDto.class
+                        )
                     );
                 }
             }
@@ -362,6 +375,55 @@ class DirectMessageStompIntegrationTest {
 
         // Simple Broker는 SUBSCRIBE RECEIPT를 자동으로 보내지 않으므로
         // 구독 정보가 등록될 짧은 시간을 확보한다.
+        Thread.sleep(
+            SUBSCRIBE_SETTLE_MILLIS
+        );
+
+        return received;
+    }
+
+    private CompletableFuture<DirectMessageReadEvent>
+    subscribeDirectMessageReadEvents(
+        StompSession session
+    ) throws InterruptedException {
+
+        CompletableFuture<DirectMessageReadEvent> received =
+            new CompletableFuture<>();
+
+        String destination =
+            DirectMessageRealtimeContract.destination(
+                conversationId
+            );
+
+        session.subscribe(
+            destination,
+            new StompFrameHandler() {
+
+                @Override
+                public Type getPayloadType(
+                    StompHeaders headers
+                ) {
+                    return DirectMessageRealtimeEvent.class;
+                }
+
+                @Override
+                public void handleFrame(
+                    StompHeaders headers,
+                    Object payload
+                ) {
+                    DirectMessageRealtimeEvent<?> event =
+                        (DirectMessageRealtimeEvent<?>) payload;
+
+                    received.complete(
+                        objectMapper.convertValue(
+                            event.data(),
+                            DirectMessageReadEvent.class
+                        )
+                    );
+                }
+            }
+        );
+
         Thread.sleep(
             SUBSCRIBE_SETTLE_MILLIS
         );
@@ -464,6 +526,74 @@ class DirectMessageStompIntegrationTest {
         // 아직 수신자가 읽음 처리하지 않았으므로 null이다.
         assertThat(savedMessages.get(0).getReadAt())
             .isNull();
+    }
+
+    @Test
+    @DisplayName("수신자가 DM을 읽으면 발신자에게 읽음 상태를 실시간으로 전달한다")
+    void read_receiver_broadcastsReadEvent() throws Exception {
+        // given
+        StompSession senderSession =
+            connectAs(senderId);
+
+        StompSession receiverSession =
+            connectAs(receiverId);
+
+        receiverSession.send(
+            "/pub/conversations/"
+                + conversationId
+                + "/direct-messages",
+            new DirectMessageSendRequest(
+                "읽음 상태 테스트 메시지"
+            )
+        );
+
+        DirectMessage message =
+            waitForMessageCount(1)
+                .get(0);
+
+        CompletableFuture<DirectMessageReadEvent> received =
+            subscribeDirectMessageReadEvents(
+                senderSession
+            );
+
+        // when
+        directMessageService.read(
+            senderId,
+            conversationId,
+            message.getId()
+        );
+
+        DirectMessageReadEvent readEvent =
+            received.get(
+                5,
+                TimeUnit.SECONDS
+            );
+
+        // then
+        assertThat(readEvent.conversationId())
+            .isEqualTo(conversationId);
+
+        assertThat(readEvent.readerId())
+            .isEqualTo(senderId);
+
+        assertThat(readEvent.lastReadMessageId())
+            .isEqualTo(message.getId());
+
+        assertThat(readEvent.readAt())
+            .isNotNull();
+
+        DirectMessage savedMessage =
+            directMessageRepository.findById(
+                message.getId()
+            ).orElseThrow();
+
+        assertThat(savedMessage.getReadAt())
+            .isEqualTo(
+                readEvent.readAt()
+                    .truncatedTo(
+                        ChronoUnit.MICROS
+                    )
+            );
     }
 
     @Test
