@@ -45,8 +45,12 @@ docs/*
 docs/erd/*
 !docs/erd/index.html
 !docs/erd/overview.svg
+!docs/perf/
+!docs/perf/watching-session/
+!docs/perf/watching-session/*.md
 
 # k6 raw 출력 (대용량, 요약본만 커밋)
 results/*-run*.json
 !results/*-summary.json
 results/run_all.log
+results/summary_table.txt

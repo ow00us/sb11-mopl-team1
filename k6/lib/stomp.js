@@ -29,10 +29,22 @@ export function parseFrames(raw) {
     .split(NULL_BYTE)
     .filter((f) => f.trim().length > 0)
     .map((f) => {
-        const lines = f.split('\n').filter((l) => l.length > 0 || f.indexOf(l) === 0);
-        const command = lines[0];
+        const commandEnd = f.indexOf('\n');
+        const command = (commandEnd >= 0 ? f.slice(0, commandEnd) : f).replace(/\r$/, '');
         const bodyIndex = f.indexOf('\n\n');
         const body = bodyIndex >= 0 ? f.slice(bodyIndex + 2) : '';
-        return { command, body };
+        const headerBlock = commandEnd >= 0
+            ? f.slice(commandEnd + 1, bodyIndex >= 0 ? bodyIndex : f.length)
+            : '';
+        const headers = {};
+
+        for (const rawLine of headerBlock.split('\n')) {
+            const line = rawLine.replace(/\r$/, '');
+            const separator = line.indexOf(':');
+            if (separator <= 0) continue;
+            headers[line.slice(0, separator)] = line.slice(separator + 1);
+        }
+
+        return { command, headers, body };
     });
 }
