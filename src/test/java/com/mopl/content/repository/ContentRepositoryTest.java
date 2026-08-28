@@ -27,6 +27,9 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -715,6 +718,77 @@ class ContentRepositoryTest {
         Optional<Content> result = contentRepository.findBySourceAndExternalId(ContentSource.TMDB, "603");
 
         assertThat(result).isEmpty();
+    }
+
+    // ── findBySource ────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("findBySource는 요청한 소스의 콘텐츠만 반환한다")
+    void findBySource_returnsOnlyMatchingSourceContents() {
+        Instant now = Instant.now();
+        UUID tmdb1 = insertContentWithRawSource("TMDB 1", "TMDB", now);
+        UUID tmdb2 = insertContentWithRawSource("TMDB 2", "TMDB", now.minusSeconds(1));
+        insertContentWithRawSource("SportsDB 1", "SPORTS_DB", now.minusSeconds(2));
+
+        Slice<Content> result = contentRepository.findBySourceOrderByIdAsc(ContentSource.TMDB, PageRequest.of(0, 10));
+
+        assertThat(result.getContent()).extracting(Content::getId)
+                .containsExactlyInAnyOrder(tmdb1, tmdb2);
+    }
+
+    @Test
+    @DisplayName("findBySource는 소프트 삭제된 콘텐츠를 제외한다")
+    void findBySource_excludesSoftDeletedContent() {
+        Instant now = Instant.now();
+        UUID kept = insertContentWithRawSource("TMDB kept", "TMDB", now);
+        UUID deleted = insertContentWithRawSource("TMDB deleted", "TMDB", now.minusSeconds(1));
+        markDeleted(deleted);
+
+        Slice<Content> result = contentRepository.findBySourceOrderByIdAsc(ContentSource.TMDB, PageRequest.of(0, 10));
+
+        assertThat(result.getContent()).extracting(Content::getId).containsExactly(kept);
+    }
+
+    @Test
+    @DisplayName("findBySource는 커서 페이지네이션으로 2페이지에 걸쳐 전부 조회된다")
+    void findBySource_pagination_acrossTwoPages() {
+        Instant now = Instant.now();
+        UUID id1 = insertContentWithRawSource("T1", "TMDB", now.minusSeconds(3));
+        UUID id2 = insertContentWithRawSource("T2", "TMDB", now.minusSeconds(2));
+        UUID id3 = insertContentWithRawSource("T3", "TMDB", now.minusSeconds(1));
+
+        Pageable firstPageable = PageRequest.of(0, 2);
+        Slice<Content> firstPage = contentRepository.findBySourceOrderByIdAsc(ContentSource.TMDB, firstPageable);
+        assertThat(firstPage.getContent()).hasSize(2);
+        assertThat(firstPage.hasNext()).isTrue();
+
+        Slice<Content> secondPage = contentRepository.findBySourceOrderByIdAsc(ContentSource.TMDB, firstPageable.next());
+        assertThat(secondPage.getContent()).hasSize(1);
+        assertThat(secondPage.hasNext()).isFalse();
+
+        List<UUID> firstPageIds = firstPage.getContent().stream().map(Content::getId).toList();
+        List<UUID> secondPageIds = secondPage.getContent().stream().map(Content::getId).toList();
+
+        assertThat(List.of(firstPageIds, secondPageIds).stream()
+                .flatMap(List::stream)
+                .toList())
+                .containsExactlyInAnyOrder(id1, id2, id3);
+
+        // id ASC로 안정 정렬된 상태로 페이지가 나뉜다. 두 페이지는 겹치지 않고, 이어 붙이면
+        // 한 페이지로 통째 조회했을 때의 정렬 순서와 정확히 일치한다(경계에서 중복·누락 없음).
+        // → 첫 페이지 마지막 id가 정렬 순서상 두 번째 페이지 첫 id보다 앞선다.
+        // (UUID의 Java 자연 정렬은 부호 있는 비교라 Postgres uuid 정렬과 달라서, DB가 매긴
+        //  순서를 기준으로 검증한다.)
+        List<UUID> allInOnePage = contentRepository
+                .findBySourceOrderByIdAsc(ContentSource.TMDB, PageRequest.of(0, 10))
+                .getContent().stream().map(Content::getId).toList();
+        assertThat(firstPageIds).doesNotContainAnyElementsOf(secondPageIds);
+        assertThat(List.of(firstPageIds, secondPageIds).stream()
+                .flatMap(List::stream)
+                .toList())
+                .containsExactlyElementsOf(allInOnePage);
+        assertThat(allInOnePage.indexOf(firstPageIds.get(firstPageIds.size() - 1)))
+                .isLessThan(allInOnePage.indexOf(secondPageIds.get(0)));
     }
 
     // ── findBySourceAndExternalIdIncludingDeleted ───────────────────────────
