@@ -1,0 +1,25 @@
+services:
+  caddy:
+    ports: !override
+      - "127.0.0.1:80:80"
+      - "127.0.0.1:443:443"
+
+  gateway:
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  backend-a:
+    environment:
+      IMAGE_STORAGE_ENABLED: "false"
+      KAFKA_TOPIC_VERIFY: "false"
+      WATCHING_SESSION_CONTENT_EXISTENCE_CACHE_TTL: ${WATCHING_SESSION_CONTENT_EXISTENCE_CACHE_TTL:-30s}
+    ports:
+      - "127.0.0.1:18080:8080"
+
+  backend-b:
+    environment:
+      IMAGE_STORAGE_ENABLED: "false"
+      KAFKA_TOPIC_VERIFY: "false"
+      WATCHING_SESSION_CONTENT_EXISTENCE_CACHE_TTL: ${WATCHING_SESSION_CONTENT_EXISTENCE_CACHE_TTL:-30s}
+    ports:
+      - "127.0.0.1:18081:8080"
