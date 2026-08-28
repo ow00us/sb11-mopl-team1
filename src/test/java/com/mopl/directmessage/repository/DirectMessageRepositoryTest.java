@@ -259,9 +259,10 @@ public class DirectMessageRepositoryTest {
                     start.await();
 
                     return transactionTemplate.execute(status ->
-                        directMessageRepository.markAsReadIfUnread(
-                            message.getId(),
+                        directMessageRepository.markAsReadThrough(
                             conversation.getId(),
+                            USER_ID_2,
+                            message.getMessageSequence(),
                             firstReadAt
                         )
                     );
@@ -273,9 +274,10 @@ public class DirectMessageRepositoryTest {
                     start.await();
 
                     return transactionTemplate.execute(status ->
-                        directMessageRepository.markAsReadIfUnread(
-                            message.getId(),
+                        directMessageRepository.markAsReadThrough(
                             conversation.getId(),
+                            USER_ID_2,
+                            message.getMessageSequence(),
                             secondReadAt
                         )
                     );
