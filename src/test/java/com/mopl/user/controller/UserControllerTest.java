@@ -20,6 +20,7 @@ import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.common.CursorResponse;
 import com.mopl.global.common.UserSummary;
+import com.mopl.user.cookie.RefreshTokenCookieFactory;
 import com.mopl.user.dto.UserListRequest;
 import com.mopl.user.dto.UserSearchRequest;
 import com.mopl.user.dto.UserCreateRequest;
@@ -34,10 +35,12 @@ import com.mopl.user.dto.LocalCredentialRegistrationRequest;
 import com.mopl.user.entity.UserRole;
 import com.mopl.user.entity.OAuthProvider;
 import com.mopl.user.service.UserService;
+import com.mopl.user.service.UserWithdrawalService;
 import com.mopl.user.service.OAuthAccountManagementService;
 import com.mopl.user.service.OAuthLocalCredentialService;
 import com.mopl.user.security.oauth.link.OAuthLinkIntentSessionStore;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
 import java.util.List;
@@ -46,6 +49,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterEach;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -82,6 +87,12 @@ class UserControllerTest {
 
     @MockitoBean
     OAuthLocalCredentialService oauthLocalCredentialService;
+
+    @MockitoBean
+    UserWithdrawalService userWithdrawalService;
+
+    @MockitoBean
+    RefreshTokenCookieFactory refreshTokenCookieFactory;
 
     /**
      * 테스트 종료 후 인증 정보 제거
@@ -855,6 +866,135 @@ class UserControllerTest {
          * 비밀번호 암호화와 DB 조회를 담당하는 Service는 호출되면 안된다.
          */
         verifyNoInteractions(userService);
+    }
+
+    @Test
+    @DisplayName("본인 계정을 탈퇴하면 Refresh Token 삭제 Cookie와 204를 반환한다")
+    void withdrawUser_success() throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        ResponseCookie deletionCookie =
+            ResponseCookie
+                .from("REFRESH_TOKEN", "")
+                .httpOnly(true)
+                .path("/")
+                .sameSite("Lax")
+                .maxAge(Duration.ZERO)
+                .build();
+
+        when(
+            refreshTokenCookieFactory
+                .createDeletionCookie()
+        ).thenReturn(deletionCookie);
+
+        // when & then
+        mockMvc.perform(
+                delete(
+                    "/api/users/{userId}",
+                    userId
+                )
+            )
+            .andExpect(status().isNoContent())
+            .andExpect(content().string(""))
+            .andExpect(
+                org.springframework.test.web.servlet
+                    .result.MockMvcResultMatchers
+                    .header()
+                    .string(
+                        HttpHeaders.SET_COOKIE,
+                        org.hamcrest.Matchers.allOf(
+                            org.hamcrest.Matchers.containsString(
+                                "REFRESH_TOKEN="
+                            ),
+                            org.hamcrest.Matchers.containsString(
+                                "Path=/"
+                            ),
+                            org.hamcrest.Matchers.containsString(
+                                "Max-Age=0"
+                            ),
+                            org.hamcrest.Matchers.containsString(
+                                "HttpOnly"
+                            ),
+                            org.hamcrest.Matchers.containsString(
+                                "SameSite=Lax"
+                            )
+                        )
+                    )
+            );
+
+        verify(userWithdrawalService).withdraw(
+            userId,
+            userId
+        );
+
+        verify(oauthLinkIntentSessionStore).clear(
+            any(HttpServletRequest.class)
+        );
+
+        verify(refreshTokenCookieFactory)
+            .createDeletionCookie();
+    }
+
+    @Test
+    @DisplayName("회원 탈퇴 처리에 실패하면 세션 의도를 제거하지 않는다")
+    void withdrawUser_failure_doesNotClearOAuthIntent()
+        throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        setAuthenticatedUser(userId);
+
+        ResponseCookie deletionCookie =
+            ResponseCookie
+                .from("REFRESH_TOKEN", "")
+                .httpOnly(true)
+                .path("/")
+                .sameSite("Lax")
+                .maxAge(Duration.ZERO)
+                .build();
+
+        when(
+            refreshTokenCookieFactory
+                .createDeletionCookie()
+        ).thenReturn(deletionCookie);
+
+        doThrow(
+            new BusinessException(
+                ErrorCode.RESOURCE_NOT_FOUND
+            )
+        )
+            .when(userWithdrawalService)
+            .withdraw(userId, userId);
+
+        // when & then
+        mockMvc.perform(
+                delete(
+                    "/api/users/{userId}",
+                    userId
+                )
+            )
+            .andExpect(status().isNotFound())
+            .andExpect(
+                org.springframework.test.web.servlet
+                    .result.MockMvcResultMatchers
+                    .header()
+                    .doesNotExist(
+                        HttpHeaders.SET_COOKIE
+                    )
+            );
+
+        verifyNoInteractions(
+            oauthLinkIntentSessionStore
+        );
     }
 
     /**

@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.mopl.global.config.SecurityConfig;
 import com.mopl.global.security.JwtProvider;
+import com.mopl.user.service.AccessTokenUserStatusService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,6 +39,9 @@ class SecurityErrorHandlerTest {
 
     @MockitoBean
     JwtProvider jwtProvider;
+
+    @MockitoBean
+    AccessTokenUserStatusService accessTokenUserStatusService;
 
     @Test
     @DisplayName("인증 정보가 없는 보호 요청은 공통 ErrorResponse와 401을 반환한다")

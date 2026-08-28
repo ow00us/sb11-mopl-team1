@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 
 import com.mopl.global.config.SecurityConfig;
 import com.mopl.global.security.controller.CsrfTokenController;
+import com.mopl.user.service.AccessTokenUserStatusService;
 import jakarta.servlet.http.Cookie;
 import java.util.List;
 import java.util.UUID;
@@ -49,6 +50,9 @@ class CsrfTokenCookieLifecycleTest {
 
     @MockitoBean
     JwtProvider jwtProvider;
+
+    @MockitoBean
+    AccessTokenUserStatusService accessTokenUserStatusService;
 
     @Test
     @DisplayName("발급받은 CSRF 토큰으로 상태 변경 요청을 연속으로 보낼 수 있다")

@@ -55,6 +55,7 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final ProfileImageStorage profileImageStorage;
     private final RefreshTokenStore refreshTokenStore;
+    private final AccessTokenBlockLifecycleService accessTokenBlockLifecycleService;
 
     /**
      * 이메일·비밀번호 기반 회원가입을 처리
@@ -121,34 +122,6 @@ public class UserService {
 
         return UserDto.from(user);
     }
-
-    /*
-    // GET /api/users/me 부분. 추후 선택기능 개발 과정에서 살릴 부분임.
-
-    /**
-     * 인증된 사용자의 UUID로 자신의 프로필을 조회
-     *
-     * JWT 인증이 완료되면 Authentication principal에 사용자 UUID가 저장
-     * Controller는 해당 UUID를 이 메서드에 전달하고,
-     * Service는 데이터베이스에서 현재 사용자 정보를 조회한 뒤 UserDto로 변환
-     *
-     * JWT가 발급된 이후 사용자가 탈퇴하거나 삭제되었을 수도 있으므로,
-     * 토큰에 UUID가 존재하더라도 데이터베이스 조회 결과가 없으면
-     * RESOURCE_NOT_FOUND 예외를 발생
-     *
-     * @param userId JWT 인증 정보에서 가져온 사용자 UUID
-     * @return 비밀번호 해시를 제외한 자신의 프로필 정보
-     * @throws BusinessException 사용자 계정이 존재하지 않는 경우
-
-    public UserDto getMyProfile(UUID userId) {
-        User user = userRepository.findById(userId)
-            .orElseThrow(() ->
-                new BusinessException(ErrorCode.RESOURCE_NOT_FOUND)
-            );
-
-        return UserDto.from(user);
-    }
-*/
 
     /**
      * 관리자가 사용자 목록을 커서 페이지네이션으로 조회
@@ -336,7 +309,7 @@ public class UserService {
             throw new BusinessException(ErrorCode.FORBIDDEN);
         }
 
-        User user = userRepository.findById(userId)
+        User user = userRepository.findByIdForUpdate(userId)
             .orElseThrow(() ->
                 new BusinessException(ErrorCode.RESOURCE_NOT_FOUND)
             );
@@ -419,7 +392,7 @@ public class UserService {
          * JWT가 발급된 이후 계정이 삭제될 수 있으므로
          * 유효한 토큰이 있더라도 사용자가 항상 존재한다고 가정하지 않는다.
          */
-        User user = userRepository.findById(userId)
+        User user = userRepository.findByIdForUpdate(userId)
             .orElseThrow(() ->
                 new BusinessException(ErrorCode.RESOURCE_NOT_FOUND)
             );
@@ -501,7 +474,7 @@ public class UserService {
          * 존재하지 않는 사용자의 권한은 변경할 수 없으므로
          * 공통 RESOURCE_NOT_FOUND 예외를 발생
          */
-        User user = userRepository.findById(userId)
+        User user = userRepository.findByIdForUpdate(userId)
             .orElseThrow(() ->
                 new BusinessException(ErrorCode.RESOURCE_NOT_FOUND)
             );
@@ -572,30 +545,23 @@ public class UserService {
          * 존재하지 않는 사용자는 잠금 상태를 변경할 수 없으므로
          * RESOURCE_NOT_FOUND를 발생시킴
          */
-        User user = userRepository.findById(userId)
+        User user = userRepository.findByIdForUpdate(userId)
             .orElseThrow(() ->
                 new BusinessException(ErrorCode.RESOURCE_NOT_FOUND)
             );
 
-        /*
-         * 요청된 잠금 상태를 사용자 엔티티에 반영
-         */
-        user.updateLocked(request.locked());
+        boolean locked = request.locked();
 
-        /*
-         * 계정을 잠그는 요청이라면 현재 사용 중인 모든 기기의
-         * Refresh Token Family를 폐기
-         *
-         * 이미 잠긴 계정에 다시 locked=true가 전달된 경우에도
-         * 혹시 남아 있는 세션을 제거할 수 있도록 폐기를 수행
-         *
-         * 잠금을 해제하는 locked=false 요청에서는 세션을 복원하거나
-         * 폐기하지 않는다. 잠금 해제 후 사용자가 다시 로그인
-         */
-        if (request.locked()) {
-            refreshTokenStore.revokeAllByUserId(
-                userId
-            );
+        if (locked) {
+            accessTokenBlockLifecycleService.block(userId);
+        }
+
+        user.updateLocked(locked);
+
+        if (locked) {
+            refreshTokenStore.revokeAllByUserId(userId);
+        } else {
+            accessTokenBlockLifecycleService.unblockAfterCommit(userId);
         }
 
         /*

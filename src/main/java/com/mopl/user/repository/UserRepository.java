@@ -30,6 +30,66 @@ public interface UserRepository extends JpaRepository<User, UUID>, UserRepositor
     boolean existsByEmail(String email);
 
     /**
+     * 탈퇴하지 않은 사용자를 정규화된 이메일로 조회
+     *
+     * 로그인·비밀번호 초기화 등 인증 경로에서 사용
+     */
+    @Transactional(readOnly = true)
+    Optional<User> findByEmailAndDeletedAtIsNull(
+        String email
+    );
+
+    /**
+     * 탈퇴하지 않은 사용자를 UUID로 조회
+     *
+     * 토큰 발급·재발급 및 인증 상태 확인에 사용
+     */
+    @Transactional(readOnly = true)
+    Optional<User> findByIdAndDeletedAtIsNull(
+        UUID userId
+    );
+
+    /**
+     * Access Token 인증을 계속 허용할 수 있는 사용자 여부를 확인
+     *
+     * <p>탈퇴했거나 관리자가 잠근 사용자는 JWT의 서명과 만료 시각이
+     * 유효하더라도 기존 Access Token으로 인증할 수 없습니다.</p>
+     *
+     * @param userId Access Token의 subject에 저장된 사용자 UUID
+     * @return 탈퇴하지 않았고 잠기지 않은 사용자이면 true
+     */
+    @Transactional(readOnly = true)
+    boolean existsByIdAndLockedFalseAndDeletedAtIsNull(
+        UUID userId
+    );
+
+    /**
+     * 탈퇴하지 않은 사용자의 존재 여부를 확인
+     */
+    @Transactional(readOnly = true)
+    boolean existsByIdAndDeletedAtIsNull(
+        UUID userId
+    );
+
+    /**
+     * 비밀번호 초기화 대상 활성 사용자를 이메일로 쓰기 잠금 조회
+     *
+     * 같은 사용자의 회원 탈퇴와 비밀번호 초기화를 직렬화하여
+     * 탈퇴 익명화 결과가 뒤늦은 비밀번호 변경으로 덮이지 않도록 한다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query(
+        "SELECT u "
+            + "FROM User u "
+            + "WHERE u.email = :email "
+            + "AND u.deletedAt IS NULL"
+    )
+    Optional<User> findByEmailForUpdate(
+        @Param("email")
+        String email
+    );
+
+    /**
      * OAuth 연결 해제 정책을 검사할 사용자를 쓰기 잠금으로 조회
      *
      * <p>같은 사용자의 OAuth 연결을 동시에 해제하는 요청을 직렬화하여
@@ -42,7 +102,8 @@ public interface UserRepository extends JpaRepository<User, UUID>, UserRepositor
     @Query(
         "SELECT u "
             + "FROM User u "
-            + "WHERE u.id = :userId"
+            + "WHERE u.id = :userId "
+            + "AND u.deletedAt IS NULL"
     )
     Optional<User> findByIdForUpdate(
         @Param("userId")
