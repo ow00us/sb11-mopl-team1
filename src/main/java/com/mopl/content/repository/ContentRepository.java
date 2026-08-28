@@ -9,6 +9,8 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
@@ -27,6 +29,10 @@ public interface ContentRepository extends JpaRepository<Content, UUID> {
 
     // 외부 API 수집 upsert 시 (source, external_id) 기준으로 기존 콘텐츠를 조회한다.
     Optional<Content> findBySourceAndExternalId(ContentSource source, String externalId);
+
+    // 특정 소스의 콘텐츠를 페이지 단위로 순회한다(TMDB 현지화 백필 등).
+    // ContentSearchIndexInitializer.backfillExistingContents()와 동일한 Slice 페이지네이션 패턴을 쓴다.
+    Slice<Content> findBySource(ContentSource source, Pageable pageable);
 
     // (source, external_id) 기준으로 소프트 삭제 여부와 무관하게 콘텐츠를 조회한다.
     // 삭제된 외부 콘텐츠를 재수집할 때 unique index 충돌을 사전에 감지하기 위해 사용한다.

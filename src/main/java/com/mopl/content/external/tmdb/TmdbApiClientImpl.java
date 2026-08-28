@@ -41,4 +41,28 @@ public class TmdbApiClientImpl implements TmdbApiClient {
             throw new TmdbApiException("TMDB popular TV 조회 실패 (page=" + page + ")", e);
         }
     }
+
+    @Override
+    public TmdbMovieDetail getMovieDetail(String movieId) {
+        try {
+            return tmdbRestClient.get()
+                    .uri("/movie/{movieId}?language={language}", movieId, tmdbProperties.language())
+                    .retrieve()
+                    .body(TmdbMovieDetail.class);
+        } catch (RestClientException e) {
+            throw new TmdbApiException("TMDB movie detail 조회 실패 (movieId=" + movieId + ")", e);
+        }
+    }
+
+    @Override
+    public TmdbTvDetail getTvDetail(String tvId) {
+        try {
+            return tmdbRestClient.get()
+                    .uri("/tv/{tvId}?language={language}", tvId, tmdbProperties.language())
+                    .retrieve()
+                    .body(TmdbTvDetail.class);
+        } catch (RestClientException e) {
+            throw new TmdbApiException("TMDB TV detail 조회 실패 (tvId=" + tvId + ")", e);
+        }
+    }
 }
