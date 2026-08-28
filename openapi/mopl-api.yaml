@@ -18,6 +18,42 @@ tags:
     name: "알림"
     description: "알림 API"
 paths:
+  "/api/admin/contents/tmdb-localization/backfill":
+    post:
+      tags:
+        - "운영"
+      summary: "TMDB 콘텐츠 제목·설명 한국어 백필"
+      description: "이미 저장된 TMDB 소스 콘텐츠의 제목·설명을 상세 엔드포인트로 재조회해 한국어로 갱신합니다. 관리자 트리거로만 실행되는 일회성 작업입니다."
+      operationId: "backfillTmdbContentLocalization"
+      security:
+        -
+          BearerAuth: []
+          CsrfToken: []
+      responses:
+        "200":
+          description: "백필 처리/성공/실패 건수"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/BackfillResult"
+        "401":
+          description: "인증 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "403":
+          description: "관리자 권한 없음"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
+        "500":
+          description: "서버 오류"
+          content:
+            "*/*":
+              schema:
+                "$ref": "#/components/schemas/ErrorResponse"
   "/api/admin/outbox/failures":
     get:
       tags:
@@ -3576,6 +3612,26 @@ paths:
                 "$ref": "#/components/schemas/ErrorResponse"
 components:
   schemas:
+    BackfillResult:
+      type: "object"
+      description: "TMDB 콘텐츠 현지화 백필 처리 결과"
+      properties:
+        total:
+          type: "integer"
+          format: "int32"
+          description: "처리 대상 콘텐츠 총 건수"
+        updated:
+          type: "integer"
+          format: "int32"
+          description: "현지화에 성공한 건수"
+        failed:
+          type: "integer"
+          format: "int32"
+          description: "현지화에 실패한 건수"
+      required:
+        - "total"
+        - "updated"
+        - "failed"
     OutboxSkipRequest:
       type: "object"
       properties:
