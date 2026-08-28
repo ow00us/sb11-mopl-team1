@@ -103,8 +103,8 @@ class OAuthLocalCredentialRegistrationServiceTest {
     }
 
     @Test
-    @DisplayName("존재하지 않는 사용자는 404 오류를 반환한다")
-    void register_rejectsMissingUser() {
+    @DisplayName("존재하지 않거나 탈퇴한 사용자는 404 오류를 반환한다")
+    void register_rejectsMissingOrDeletedUser() {
         // given
         when(
             userRepository.findByIdForUpdate(

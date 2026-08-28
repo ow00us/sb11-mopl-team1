@@ -101,7 +101,7 @@ class RefreshTokenServiceTest {
                 rawToken
             );
 
-        when(userRepository.existsById(userId))
+        when(userRepository.existsByIdAndDeletedAtIsNull(userId))
             .thenReturn(true);
 
         /*
@@ -170,7 +170,7 @@ class RefreshTokenServiceTest {
             );
 
         verify(userRepository)
-            .existsById(userId);
+            .existsByIdAndDeletedAtIsNull(userId);
 
         verify(refreshTokenFamilyCodec)
             .generateNewFamily();
@@ -183,12 +183,12 @@ class RefreshTokenServiceTest {
     }
 
     @Test
-    @DisplayName("존재하지 않는 사용자에게는 Refresh Token을 발급하지 않는다")
-    void issue_failWhenUserDoesNotExist() {
+    @DisplayName("존재하지 않거나 탈퇴한 사용자에게는 Refresh Token을 발급하지 않는다")
+    void issue_failWhenActiveUserDoesNotExist() {
         // given
         UUID userId = UUID.randomUUID();
 
-        when(userRepository.existsById(userId))
+        when(userRepository.existsByIdAndDeletedAtIsNull(userId))
             .thenReturn(false);
 
         // when & then
@@ -199,7 +199,7 @@ class RefreshTokenServiceTest {
             .extracting("errorCode")
             .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
 
-        verify(userRepository).existsById(userId);
+        verify(userRepository).existsByIdAndDeletedAtIsNull(userId);
 
         /*
          * 사용자가 존재하지 않으면 원문 생성과 해시 처리,
@@ -328,7 +328,7 @@ class RefreshTokenServiceTest {
             Optional.of(userId)
         );
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdAndDeletedAtIsNull(userId))
             .thenReturn(Optional.of(user));
 
         FamilyRefreshToken rotatedToken =
@@ -425,7 +425,7 @@ class RefreshTokenServiceTest {
             );
 
         verify(userRepository)
-            .findById(userId);
+            .findByIdAndDeletedAtIsNull(userId);
 
         verify(refreshTokenFamilyCodec)
             .generateForFamily(familyId);
@@ -574,7 +574,7 @@ class RefreshTokenServiceTest {
             Optional.of(userId)
         );
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdAndDeletedAtIsNull(userId))
             .thenReturn(Optional.empty());
 
         // when & then
@@ -598,7 +598,7 @@ class RefreshTokenServiceTest {
             );
 
         verify(userRepository)
-            .findById(userId);
+            .findByIdAndDeletedAtIsNull(userId);
 
         verify(
             refreshTokenFamilyCodec,
@@ -670,7 +670,7 @@ class RefreshTokenServiceTest {
             Optional.of(userId)
         );
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdAndDeletedAtIsNull(userId))
             .thenReturn(
                 Optional.of(lockedUser)
             );
@@ -696,7 +696,7 @@ class RefreshTokenServiceTest {
             );
 
         verify(userRepository)
-            .findById(userId);
+            .findByIdAndDeletedAtIsNull(userId);
 
         verify(
             refreshTokenFamilyCodec,
@@ -779,7 +779,7 @@ class RefreshTokenServiceTest {
             Optional.of(userId)
         );
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdAndDeletedAtIsNull(userId))
             .thenReturn(Optional.of(user));
 
         when(
@@ -901,7 +901,7 @@ class RefreshTokenServiceTest {
             Optional.of(userId)
         );
 
-        when(userRepository.findById(userId))
+        when(userRepository.findByIdAndDeletedAtIsNull(userId))
             .thenReturn(Optional.of(user));
 
         when(

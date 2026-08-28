@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.mopl.global.config.SecurityConfig;
 import com.mopl.global.security.controller.CsrfTokenController;
+import com.mopl.user.service.AccessTokenUserStatusService;
 import com.mopl.user.security.oauth.handler.OAuth2AuthenticationFailureHandler;
 import com.mopl.user.security.oauth.handler.OAuth2AuthenticationSuccessHandler;
 import com.mopl.user.security.oauth.GoogleOidcUserService;
@@ -45,6 +46,9 @@ class OAuth2SecurityIntegrationTest {
 
     @MockitoBean
     JwtProvider jwtProvider;
+
+    @MockitoBean
+    AccessTokenUserStatusService accessTokenUserStatusService;
 
     @MockitoBean
     ClientRegistrationRepository clientRegistrationRepository;

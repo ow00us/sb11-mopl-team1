@@ -138,7 +138,19 @@ check "staging Secret 보존" "staging-secret" "$(sed -n 's/^JWT_SECRET=//p' "${
 check "환경 기록" "staging" "$(sed -n 's/^DEPLOY_ENVIRONMENT=//p' "${W}/state.env")"
 rm -rf "${W}"
 
-# ── 3. rollback ────────────────────────────────────────────────────────────
+# ── 3. 설정 디렉터리 권한 ─────────────────────────────────────────────────
+head_ "설정 디렉터리에 쓸 수 없어도 기존 env 파일은 갱신한다"
+W="$(new_workspace)"; make_docker always_up "${W}"
+chmod 0550 "${W}"
+OUT="$(run_deploy "${W}" --backend-image reg/be@sha256:NEW --commit abc1234)"
+STATUS=$?
+chmod 0750 "${W}"
+check "종료 코드 0" 0 "${STATUS}"
+check "env 에 새 이미지" "reg/be@sha256:NEW" "$(sed -n 's/^BACKEND_IMAGE=//p' "${W}/prod.env")"
+check "Secret 보존" "keep-me" "$(sed -n 's/^JWT_SECRET=//p' "${W}/prod.env")"
+rm -rf "${W}"
+
+# ── 4. rollback ────────────────────────────────────────────────────────────
 head_ "실패: A 가 health 를 통과하지 못하면 되돌리고 B 는 건드리지 않는다"
 W="$(new_workspace)"; make_docker down_when_new "${W}"
 OUT="$(run_deploy "${W}" --backend-image reg/be@sha256:NEW --commit abc1234)"
@@ -153,7 +165,7 @@ contains "복구 확인" "이전 이미지로 복구했습니다" "${OUT}"
 contains "스키마는 되돌리지 않았음을 알림" "마이그레이션은 되돌리지 않았습니다" "${OUT}"
 rm -rf "${W}"
 
-# ── 4. 교체 전 차단 ────────────────────────────────────────────────────────
+# ── 5. 교체 전 차단 ────────────────────────────────────────────────────────
 head_ "설정이 깨지면 아무것도 교체하지 않는다"
 W="$(new_workspace)"; make_docker config_fails "${W}"
 OUT="$(run_deploy "${W}" --backend-image reg/be@sha256:NEW)"

@@ -1,7 +1,14 @@
 package com.mopl.global.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import com.mopl.global.exception.ErrorCode;
+import com.mopl.global.security.handler.SecurityErrorResponseWriter;
+import com.mopl.user.service.AccessTokenAuthenticationStatus;
+import com.mopl.user.service.AccessTokenUserStatusService;
 import java.time.Duration;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -22,6 +29,8 @@ class JwtAuthenticationFilterTest {
 
     private JwtProvider jwtProvider;
     private JwtAuthenticationFilter jwtAuthenticationFilter;
+    private AccessTokenUserStatusService accessTokenUserStatusService;
+    private SecurityErrorResponseWriter responseWriter;
 
     @BeforeEach
     void setUp() {
@@ -33,7 +42,16 @@ class JwtAuthenticationFilterTest {
         jwtProperties.setAccessTokenExpiration(Duration.ofMinutes(30));
 
         jwtProvider = new JwtProviderImpl(jwtProperties);
-        jwtAuthenticationFilter = new JwtAuthenticationFilter(jwtProvider);
+
+        accessTokenUserStatusService = mock(AccessTokenUserStatusService.class);
+
+        responseWriter = mock(SecurityErrorResponseWriter.class);
+
+        jwtAuthenticationFilter = new JwtAuthenticationFilter(
+                jwtProvider,
+                accessTokenUserStatusService,
+                responseWriter
+            );
     }
 
     @AfterEach
@@ -48,6 +66,12 @@ class JwtAuthenticationFilterTest {
         // given
         UUID userId = UUID.fromString("11111111-1111-1111-1111-111111111111");
         String token = jwtProvider.createAccessToken(userId, "USER");
+
+        when(
+            accessTokenUserStatusService.resolve(userId)
+        ).thenReturn(
+            AccessTokenAuthenticationStatus.ALLOWED
+        );
 
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer " + token);
@@ -86,5 +110,122 @@ class JwtAuthenticationFilterTest {
 
         // then
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
+    @DisplayName("차단된 사용자의 유효한 Bearer 토큰은 인증을 거부한다")
+    void doFilterInternal_rejectsBlockedUser()
+        throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        String token =
+            jwtProvider.createAccessToken(
+                userId,
+                "USER"
+            );
+
+        when(
+            accessTokenUserStatusService.resolve(
+                userId
+            )
+        ).thenReturn(
+            AccessTokenAuthenticationStatus.BLOCKED
+        );
+
+        MockHttpServletRequest request =
+            new MockHttpServletRequest();
+
+        request.addHeader(
+            HttpHeaders.AUTHORIZATION,
+            "Bearer " + token
+        );
+
+        MockHttpServletResponse response =
+            new MockHttpServletResponse();
+
+        MockFilterChain filterChain =
+            new MockFilterChain();
+
+        // when
+        jwtAuthenticationFilter.doFilter(
+            request,
+            response,
+            filterChain
+        );
+
+        // then
+        assertThat(
+            SecurityContextHolder.getContext()
+                .getAuthentication()
+        ).isNull();
+
+        assertThat(filterChain.getRequest())
+            .isNull();
+
+        verify(responseWriter).write(
+            response,
+            "AccessTokenAuthenticationException",
+            ErrorCode.UNAUTHORIZED
+        );
+    }
+
+    @Test
+    @DisplayName("Redis와 DB에서 사용자 상태를 확인할 수 없으면 요청을 중단한다")
+    void doFilterInternal_rejectsUnavailableStatus()
+        throws Exception {
+        // given
+        UUID userId =
+            UUID.fromString(
+                "11111111-1111-1111-1111-111111111111"
+            );
+
+        String token =
+            jwtProvider.createAccessToken(
+                userId,
+                "USER"
+            );
+
+        when(
+            accessTokenUserStatusService.resolve(
+                userId
+            )
+        ).thenReturn(
+            AccessTokenAuthenticationStatus.UNAVAILABLE
+        );
+
+        MockHttpServletRequest request =
+            new MockHttpServletRequest();
+
+        request.addHeader(
+            HttpHeaders.AUTHORIZATION,
+            "Bearer " + token
+        );
+
+        MockHttpServletResponse response =
+            new MockHttpServletResponse();
+
+        MockFilterChain filterChain =
+            new MockFilterChain();
+
+        // when
+        jwtAuthenticationFilter.doFilter(
+            request,
+            response,
+            filterChain
+        );
+
+        // then
+        assertThat(filterChain.getRequest())
+            .isNull();
+
+        verify(responseWriter).write(
+            response,
+            "AuthenticationServiceUnavailableException",
+            ErrorCode.SERVICE_UNAVAILABLE
+        );
     }
 }

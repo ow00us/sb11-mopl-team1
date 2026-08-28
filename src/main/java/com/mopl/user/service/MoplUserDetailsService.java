@@ -30,10 +30,16 @@ public class MoplUserDetailsService implements UserDetailsService {
         // 회원가입 때와 같은 규칙으로 이메일을 정규화해 조회 기준을 통일
         String normalizedEmail = username.strip().toLowerCase(Locale.ROOT);
 
-        User user = userRepository.findByEmail(normalizedEmail)
-            .orElseThrow(() -> new UsernameNotFoundException(
-                "등록되지 않은 이메일입니다."
-            ));
+        User user =
+            userRepository
+                .findByEmailAndDeletedAtIsNull(
+                    normalizedEmail
+                )
+                .orElseThrow(() ->
+                    new UsernameNotFoundException(
+                        "등록되지 않은 이메일입니다."
+                    )
+                );
 
         /*
          * OAuth로만 가입한 사용자는 로컬 비밀번호가 없으므로

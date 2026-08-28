@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.mopl.global.config.SecurityConfig;
 import com.mopl.global.security.JwtProvider;
+import com.mopl.user.service.AccessTokenUserStatusService;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -41,6 +42,9 @@ class CsrfTokenControllerTest {
 
     @MockitoBean
     JwtProvider jwtProvider;
+
+    @MockitoBean
+    AccessTokenUserStatusService accessTokenUserStatusService;
 
     @Test
     @DisplayName("인증 없이 CSRF 토큰을 쿠키로 발급하고 204를 반환한다")

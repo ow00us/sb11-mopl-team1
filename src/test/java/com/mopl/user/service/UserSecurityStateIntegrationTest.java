@@ -111,6 +111,12 @@ class UserSecurityStateIntegrationTest {
     RefreshTokenStore refreshTokenStore;
 
     /**
+     * 계정 잠금 시 Access Token 차단 호출을 제어
+     */
+    @MockitoBean
+    AccessTokenBlockLifecycleService accessTokenBlockLifecycleService;
+
+    /**
      * 각 테스트 사이에 사용자 데이터가 섞이지 않도록 초기화
      */
     @BeforeEach
@@ -277,6 +283,9 @@ class UserSecurityStateIntegrationTest {
 
         verify(refreshTokenStore)
             .revokeAllByUserId(userId);
+
+        verify(accessTokenBlockLifecycleService)
+            .block(userId);
     }
 
     /**

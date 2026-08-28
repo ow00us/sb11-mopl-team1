@@ -269,7 +269,7 @@ class DirectMessageStompIntegrationTest {
         Authentication authentication =
             UsernamePasswordAuthenticationToken
                 .authenticated(
-                    userId.toString(),
+                    userId,
                     null,
                     List.of()
                 );
