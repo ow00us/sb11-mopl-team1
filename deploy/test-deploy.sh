@@ -53,6 +53,8 @@ make_docker() {
 mode=${mode}
 EOF
     cat >> "${dir}/bin/docker" <<'EOF'
+echo "docker-config=${DOCKER_CONFIG:-}" >> "$MOCK_LOG"
+
 if [[ "$1" == "login" ]]; then
   cat >/dev/null
   echo "docker $*" >> "$MOCK_LOG"
@@ -125,6 +127,7 @@ run_deploy() {
     local dir=$1; shift
     MOCK_LOG="${dir}/calls.log" \
     PATH="${dir}/bin:${PATH}" \
+    DOCKER_CONFIG="${DOCKER_CONFIG:-}" \
     COMPOSE_FILE="${dir}/compose.yml" \
     MOPL_CONFIG_DIR="${dir}" \
     STATE_FILE="${dir}/state.env" \
@@ -193,10 +196,14 @@ head_ "ECR 이미지: pull 전에 단기 로그인 토큰을 갱신한다"
 W="$(new_workspace)"; make_docker always_up "${W}"; make_aws succeeds "${W}"
 ECR_REGISTRY="123456789012.dkr.ecr.ap-northeast-2.amazonaws.com"
 ECR_IMAGE="${ECR_REGISTRY}/mopl/backend@sha256:NEW"
+HOST_DOCKER_CONFIG="${W}/host-docker-config"
+mkdir -p "${HOST_DOCKER_CONFIG}"
+printf '{"credsStore":"unsupported-helper"}\n' > "${HOST_DOCKER_CONFIG}/config.json"
 sed "s|^FRONTEND_IMAGE=.*|FRONTEND_IMAGE=${ECR_REGISTRY}/mopl/frontend@sha256:OLDFE|" \
     "${W}/prod.env" > "${W}/prod.updated"
 mv "${W}/prod.updated" "${W}/prod.env"
-OUT="$(run_deploy "${W}" --backend-image "${ECR_IMAGE}" --commit abc1234)"
+OUT="$(DOCKER_CONFIG="${HOST_DOCKER_CONFIG}" run_deploy "${W}" \
+    --backend-image "${ECR_IMAGE}" --commit abc1234)"
 check "종료 코드 0" 0 $?
 contains "리전으로 토큰 발급" "aws ecr get-login-password --region ap-northeast-2" \
     "$(cat "${W}/calls.log")"
@@ -205,6 +212,14 @@ contains "대상 registry 로그인" \
     "$(cat "${W}/calls.log")"
 check "같은 registry 로그인 한 번" 1 "$(grep -c '^docker login' "${W}/calls.log")"
 check "토큰을 로그에 남기지 않음" 0 "$(grep -c 'temporary-ecr-token' "${W}/calls.log")"
+check "호스트 credential helper 설정을 사용하지 않음" 0 \
+    "$(grep -c "^docker-config=${HOST_DOCKER_CONFIG}$" "${W}/calls.log")"
+USED_DOCKER_CONFIG="$(sed -n 's/^docker-config=//p' "${W}/calls.log" | head -n 1)"
+if [[ -n ${USED_DOCKER_CONFIG} && ! -e ${USED_DOCKER_CONFIG} ]]; then
+    pass "배포 전용 Docker 설정 삭제"
+else
+    bad "배포 전용 Docker 설정이 종료 후 남음"
+fi
 rm -rf "${W}"
 
 head_ "ECR 로그인 실패: env 를 복원하고 컨테이너를 교체하지 않는다"
