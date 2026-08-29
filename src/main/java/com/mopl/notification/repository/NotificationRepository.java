@@ -204,4 +204,53 @@ public interface NotificationRepository extends JpaRepository<Notification, UUID
 
         Pageable pageable
     );
+
+    long countByReceiverId(UUID receiverId);
+
+    List<Notification> findByReceiverId(
+        UUID receiverId,
+        Pageable pageable
+    );
+
+    @Query("""
+    SELECT notification
+    FROM Notification notification
+    WHERE notification.receiverId = :receiverId
+        AND (
+            notification.createdAt < :cursor
+            OR (
+                notification.createdAt = :cursor
+                AND notification.id < :idAfter
+            )
+        )
+    ORDER BY notification.createdAt DESC,
+             notification.id DESC
+    """)
+    List<Notification> findAllAfterDescending(
+        @Param("receiverId") UUID receiverId,
+        @Param("cursor") Instant cursor,
+        @Param("idAfter") UUID idAfter,
+        Pageable pageable
+    );
+
+    @Query("""
+    SELECT notification
+    FROM Notification notification
+    WHERE notification.receiverId = :receiverId
+        AND (
+            notification.createdAt > :cursor
+            OR (
+                notification.createdAt = :cursor
+                AND notification.id > :idAfter
+            )
+        )
+    ORDER BY notification.createdAt ASC,
+             notification.id ASC
+    """)
+    List<Notification> findAllAfterAscending(
+        @Param("receiverId") UUID receiverId,
+        @Param("cursor") Instant cursor,
+        @Param("idAfter") UUID idAfter,
+        Pageable pageable
+    );
 }

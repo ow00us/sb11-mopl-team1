@@ -4784,6 +4784,12 @@ components:
             - "null"
           format: "uuid"
           description: "알림 클릭 시 이동할 대상 리소스 ID"
+        readAt:
+          type:
+            - "string"
+            - "null"
+          format: "data-time"
+          description: "알림을 읽은 시각, 읽지 않은 알림이면 null입니다."
       required:
         - "content"
         - "createdAt"
@@ -4817,6 +4823,10 @@ components:
           type: "integer"
           format: "int64"
           description: "총 데이터 개수"
+        unreadCount:
+          type: "integer"
+          format: "int64"
+          description: "읽지 않은 알림의 총 개수"
         sortBy:
           type: "string"
           description: "정렬 기준"
@@ -4832,6 +4842,7 @@ components:
         - "sortBy"
         - "sortDirection"
         - "totalCount"
+        - "unreadCount"
     CursorResponseDirectMessageDto:
       type: "object"
       properties:

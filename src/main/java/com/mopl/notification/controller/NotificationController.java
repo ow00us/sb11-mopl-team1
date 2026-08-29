@@ -4,6 +4,7 @@ import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.notification.dto.NotificationDto;
+import com.mopl.notification.dto.NotificationCursorResponse;
 import com.mopl.notification.service.NotificationService;
 import java.security.Principal;
 import java.util.UUID;
@@ -28,7 +29,7 @@ public class NotificationController {
     private final NotificationService notificationService;
 
     @GetMapping
-    public CursorResponse<NotificationDto> getNotifications(
+    public NotificationCursorResponse getNotifications(
         @RequestParam(required = false) String cursor,
         @RequestParam(required = false) UUID idAfter,
         @RequestParam
@@ -39,9 +40,10 @@ public class NotificationController {
         @RequestParam String sortBy,
         Principal principal
     ) {
-        UUID receiverId = getReceiverId(principal);
+        UUID receiverId =
+            getReceiverId(principal);
 
-        return notificationService.getUnreadNotifications(
+        return notificationService.getNotifications(
             receiverId,
             cursor,
             idAfter,

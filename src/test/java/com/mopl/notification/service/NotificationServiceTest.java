@@ -9,9 +9,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
+import com.mopl.notification.dto.NotificationCursorResponse;
 import com.mopl.notification.dto.NotificationDto;
 import com.mopl.notification.event.NotificationCreatedEvent;
 import com.mopl.notification.entity.Notification;
@@ -241,8 +241,8 @@ class NotificationServiceTest {
     }
 
     @Test
-    @DisplayName("첫 페이지에서 미읽음 알림을 최신순으로 조회")
-    void getUnreadNotifications_firstPage_success() {
+    @DisplayName("첫 페이지에서 읽은 알림을 포함해 최신순으로 조회")
+    void getNotifications_firstPage_success() {
         // given
         Notification first = createNotification(
             UUID.fromString(
@@ -251,6 +251,11 @@ class NotificationServiceTest {
             Instant.parse("2026-07-28T03:00:00Z"),
             "최신 알림"
         );
+
+        Instant readAt =
+            Instant.parse("2026-07-28T04:00:00Z");
+
+        first.markAsRead(readAt);
 
         Notification second = createNotification(
             UUID.fromString(
@@ -270,7 +275,7 @@ class NotificationServiceTest {
 
         when(
             notificationRepository
-                .findByReceiverIdAndReadAtIsNull(
+                .findByReceiverId(
                     eq(RECEIVER_ID),
                     any(Pageable.class)
                 )
@@ -278,12 +283,17 @@ class NotificationServiceTest {
 
         when(
             notificationRepository
-                .countByReceiverIdAndReadAtIsNull(RECEIVER_ID)
+                .countByReceiverId(RECEIVER_ID)
         ).thenReturn(3L);
 
+        when(
+            notificationRepository
+                .countByReceiverIdAndReadAtIsNull(RECEIVER_ID)
+        ).thenReturn(2L);
+
         // when
-        CursorResponse<NotificationDto> result =
-            notificationService.getUnreadNotifications(
+        NotificationCursorResponse result =
+            notificationService.getNotifications(
                 RECEIVER_ID,
                 null,
                 null,
@@ -301,19 +311,24 @@ class NotificationServiceTest {
             );
 
         assertThat(result.hasNext()).isTrue();
+        assertThat(result.data().get(0).readAt())
+            .isEqualTo(readAt);
+        assertThat(result.data().get(1).readAt())
+            .isNull();
         assertThat(result.nextCursor())
             .isEqualTo(second.getCreatedAt().toString());
         assertThat(result.nextIdAfter())
             .isEqualTo(second.getId());
         assertThat(result.totalCount()).isEqualTo(3L);
+        assertThat(result.unreadCount()).isEqualTo(2L);
         assertThat(result.sortBy()).isEqualTo("createdAt");
         assertThat(result.sortDirection())
             .isEqualTo("DESCENDING");
     }
 
     @Test
-    @DisplayName("최신순 커서 이후의 미읽음 알림을 조회")
-    void getUnreadNotifications_afterCursor_descending() {
+    @DisplayName("최신순 커서 이후의 모든 알림을 조회")
+    void getNotifications_afterCursor_descending() {
         // given
         Instant cursor =
             Instant.parse("2026-07-28T03:00:00Z");
@@ -322,7 +337,7 @@ class NotificationServiceTest {
         );
 
         when(
-            notificationRepository.findUnreadAfterDescending(
+            notificationRepository.findAllAfterDescending(
                 eq(RECEIVER_ID),
                 eq(cursor),
                 eq(idAfter),
@@ -332,12 +347,17 @@ class NotificationServiceTest {
 
         when(
             notificationRepository
+                .countByReceiverId(RECEIVER_ID)
+        ).thenReturn(0L);
+
+        when(
+            notificationRepository
                 .countByReceiverIdAndReadAtIsNull(RECEIVER_ID)
         ).thenReturn(0L);
 
         // when
-        CursorResponse<NotificationDto> result =
-            notificationService.getUnreadNotifications(
+        NotificationCursorResponse result =
+            notificationService.getNotifications(
                 RECEIVER_ID,
                 cursor.toString(),
                 idAfter,
@@ -351,7 +371,7 @@ class NotificationServiceTest {
         assertThat(result.hasNext()).isFalse();
 
         verify(notificationRepository)
-            .findUnreadAfterDescending(
+            .findAllAfterDescending(
                 eq(RECEIVER_ID),
                 eq(cursor),
                 eq(idAfter),
@@ -360,8 +380,8 @@ class NotificationServiceTest {
     }
 
     @Test
-    @DisplayName("오래된순 커서 이후의 미읽음 알림을 조회")
-    void getUnreadNotifications_afterCursor_ascending() {
+    @DisplayName("오래된순 커서 이후의 모든 알림을 조회")
+    void getNotifications_afterCursor_ascending() {
         // given
         Instant cursor =
             Instant.parse("2026-07-28T03:00:00Z");
@@ -370,7 +390,7 @@ class NotificationServiceTest {
         );
 
         when(
-            notificationRepository.findUnreadAfterAscending(
+            notificationRepository.findAllAfterAscending(
                 eq(RECEIVER_ID),
                 eq(cursor),
                 eq(idAfter),
@@ -380,12 +400,17 @@ class NotificationServiceTest {
 
         when(
             notificationRepository
+                .countByReceiverId(RECEIVER_ID)
+        ).thenReturn(0L);
+
+        when(
+            notificationRepository
                 .countByReceiverIdAndReadAtIsNull(RECEIVER_ID)
         ).thenReturn(0L);
 
         // when
-        CursorResponse<NotificationDto> result =
-            notificationService.getUnreadNotifications(
+        NotificationCursorResponse result =
+            notificationService.getNotifications(
                 RECEIVER_ID,
                 cursor.toString(),
                 idAfter,
@@ -399,7 +424,7 @@ class NotificationServiceTest {
         assertThat(result.hasNext()).isFalse();
 
         verify(notificationRepository)
-            .findUnreadAfterAscending(
+            .findAllAfterAscending(
                 eq(RECEIVER_ID),
                 eq(cursor),
                 eq(idAfter),
@@ -518,10 +543,10 @@ class NotificationServiceTest {
 
     @Test
     @DisplayName("지원하지 않는 정렬 방향이면 알림 조회에 실패")
-    void getUnreadNotifications_invalidSortDirection_throwsException() {
+    void getNotifications_invalidSortDirection_throwsException() {
         // when & then
         assertThatThrownBy(() ->
-            notificationService.getUnreadNotifications(
+            notificationService.getNotifications(
                 RECEIVER_ID,
                 null,
                 null,
@@ -566,10 +591,10 @@ class NotificationServiceTest {
 
     @Test
     @DisplayName("limit이 100보다 크면 알림 조회에 실패")
-    void getUnreadNotifications_limitTooLarge_throwsException() {
+    void getNotifications_limitTooLarge_throwsException() {
         // when & then
         assertThatThrownBy(() ->
-            notificationService.getUnreadNotifications(
+            notificationService.getNotifications(
                 RECEIVER_ID,
                 null,
                 null,

@@ -274,6 +274,77 @@ class NotificationRepositoryTest {
     }
 
     @Test
+    @DisplayName("수신자의 읽은 알림을 포함해 최신순으로 조회")
+    void findAll_firstPage_descending() {
+        // given
+        insertNotification(
+            NOTIFICATION_ID_1,
+            RECEIVER_ID,
+            "오래된 미읽음 알림",
+            Instant.parse("2026-07-28T01:00:00Z"),
+            null
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_2,
+            RECEIVER_ID,
+            "최신 미읽음 알림",
+            Instant.parse("2026-07-28T03:00:00Z"),
+            null
+        );
+
+        Instant readAt =
+            Instant.parse("2026-07-28T05:00:00Z");
+
+        insertNotification(
+            NOTIFICATION_ID_3,
+            RECEIVER_ID,
+            "읽은 알림",
+            Instant.parse("2026-07-28T04:00:00Z"),
+            readAt
+        );
+
+        insertNotification(
+            NOTIFICATION_ID_4,
+            OTHER_RECEIVER_ID,
+            "다른 사용자의 알림",
+            Instant.parse("2026-07-28T06:00:00Z"),
+            null
+        );
+
+        // when
+        List<Notification> result =
+            notificationRepository.findByReceiverId(
+                RECEIVER_ID,
+                firstPage(Sort.Direction.DESC)
+            );
+
+        long totalCount =
+            notificationRepository.countByReceiverId(
+                RECEIVER_ID
+            );
+
+        long unreadCount =
+            notificationRepository.countByReceiverIdAndReadAtIsNull(
+                RECEIVER_ID
+            );
+
+        // then
+        assertThat(result)
+            .extracting(Notification::getId)
+            .containsExactly(
+                NOTIFICATION_ID_3,
+                NOTIFICATION_ID_2,
+                NOTIFICATION_ID_1
+            );
+
+        assertThat(result.get(0).getReadAt())
+            .isEqualTo(readAt);
+        assertThat(totalCount).isEqualTo(3L);
+        assertThat(unreadCount).isEqualTo(2L);
+    }
+
+    @Test
     @DisplayName("수신자의 읽지 않은 알림만 최신순으로 조회")
     void findUnread_firstPage_descending() {
         // given
@@ -379,7 +450,7 @@ class NotificationRepositoryTest {
 
     @Test
     @DisplayName("최신순 조회 시 생성 시간과 ID 커서 이후의 알림만 조회")
-    void findUnread_afterCursor_descending() {
+    void findAll_afterCursor_descending() {
         // given
         Instant sameCreatedAt =
             Instant.parse("2026-07-28T03:00:00Z");
@@ -413,7 +484,7 @@ class NotificationRepositoryTest {
             RECEIVER_ID,
             "더 오래된 알림",
             Instant.parse("2026-07-28T02:00:00Z"),
-            null
+            Instant.parse("2026-07-28T05:00:00Z")
         );
 
         insertNotification(
@@ -426,7 +497,7 @@ class NotificationRepositoryTest {
 
         // when
         List<Notification> result =
-            notificationRepository.findUnreadAfterDescending(
+            notificationRepository.findAllAfterDescending(
                 RECEIVER_ID,
                 sameCreatedAt,
                 NOTIFICATION_ID_2,
@@ -444,7 +515,7 @@ class NotificationRepositoryTest {
 
     @Test
     @DisplayName("오래된순 조회 시 생성 시간과 ID 커서 이후의 알림만 조회")
-    void findUnread_afterCursor_ascending() {
+    void findAll_afterCursor_ascending() {
         // given
         Instant sameCreatedAt =
             Instant.parse("2026-07-28T03:00:00Z");
@@ -486,12 +557,12 @@ class NotificationRepositoryTest {
             RECEIVER_ID,
             "더 최신 알림",
             Instant.parse("2026-07-28T04:00:00Z"),
-            null
+            Instant.parse("2026-07-28T05:00:00Z")
         );
 
         // when
         List<Notification> result =
-            notificationRepository.findUnreadAfterAscending(
+            notificationRepository.findAllAfterAscending(
                 RECEIVER_ID,
                 sameCreatedAt,
                 NOTIFICATION_ID_2,
