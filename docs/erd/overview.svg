@@ -1,53 +1,306 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="500" viewBox="0 0 1400 500" role="img" aria-labelledby="title desc">
-  <title id="title">MOPL 데이터베이스 관계 개요</title>
-  <desc id="desc">사용자, 콘텐츠, 플레이리스트, 대화, 알림, 시청 세션과 인프라를 포함한 17개 테이블의 관계</desc>
-  <style>
-    .edge { fill: none; stroke: #565666; stroke-width: 1.5; opacity: .75; }
-    .edge-strong { fill: none; stroke: #ff4a64; stroke-width: 1.8; opacity: .82; }
-    .card { fill: #212126; stroke: #565666; stroke-width: 1; }
-    .name { fill: #f2f2f3; font: 600 12px Consolas, monospace; }
-    .meta { fill: #828291; font: 500 9px Arial, sans-serif; }
-  </style>
-  <rect width="1400" height="500" rx="20" fill="#131316"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="980" viewBox="0 0 1600 980" role="img" aria-labelledby="title desc">
+  <title id="title">MOPL 애플리케이션 데이터베이스 관계 개요</title>
+  <desc id="desc">Flyway V22 기준 17개 애플리케이션 테이블. users와 contents를 중심으로 외래 키 관계를 표시하고, reviews, follows, playlist subscriptions, playlist contents, conversation participants가 만드는 N:M 관계를 별도 배지로 강조한다.</desc>
+
+  <defs>
+    <linearGradient id="canvas" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#131316"/>
+      <stop offset=".58" stop-color="#09090b"/>
+      <stop offset="1" stop-color="#010102"/>
+    </linearGradient>
+    <radialGradient id="pink-glow" cx="45%" cy="42%" r="58%">
+      <stop offset="0" stop-color="#ff4a64" stop-opacity=".12"/>
+      <stop offset=".58" stop-color="#ff4a64" stop-opacity=".025"/>
+      <stop offset="1" stop-color="#ff4a64" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity=".38"/>
+    </filter>
+    <filter id="hub-glow" x="-30%" y="-40%" width="160%" height="190%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000" flood-opacity=".46"/>
+      <feDropShadow dx="0" dy="0" stdDeviation="5" flood-color="#ff4a64" flood-opacity=".16"/>
+    </filter>
+
+    <marker id="one" viewBox="0 0 16 18" refX="8" refY="9" markerWidth="16" markerHeight="18" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M8 2V16" fill="none" stroke="#aaaab1" stroke-width="2.2"/>
+    </marker>
+    <marker id="many" viewBox="0 0 18 18" refX="16" refY="9" markerWidth="18" markerHeight="18" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M2 9 16 2M2 9h14M2 9l14 7" fill="none" stroke="#aaaab1" stroke-width="2"/>
+    </marker>
+    <marker id="one-pink" viewBox="0 0 16 18" refX="8" refY="9" markerWidth="16" markerHeight="18" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M8 2V16" fill="none" stroke="#ff687e" stroke-width="2.4"/>
+    </marker>
+    <marker id="many-pink" viewBox="0 0 18 18" refX="16" refY="9" markerWidth="18" markerHeight="18" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M2 9 16 2M2 9h14M2 9l14 7" fill="none" stroke="#ff687e" stroke-width="2.1"/>
+    </marker>
+
+    <style>
+      .frame { fill: url(#canvas); stroke: #34343d; stroke-width: 2; }
+      .eyebrow { fill: #ff687e; font: 700 13px Pretendard, -apple-system, "Segoe UI", sans-serif; letter-spacing: .15em; }
+      .heading { fill: #fafafa; font: 750 29px Pretendard, -apple-system, "Segoe UI", sans-serif; letter-spacing: -.035em; }
+      .subheading { fill: #828291; font: 500 14px Pretendard, -apple-system, "Segoe UI", sans-serif; }
+      .metric-bg { fill: #212126; stroke: #34343d; }
+      .metric-main { fill: #f2f2f3; font: 700 14px Pretendard, -apple-system, "Segoe UI", sans-serif; }
+      .metric-sub { fill: #828291; font: 500 11px Pretendard, -apple-system, "Segoe UI", sans-serif; }
+      .section-pill { fill: #212126; stroke: #34343d; }
+      .section-label { fill: #ccccd6; font: 700 12px Pretendard, -apple-system, "Segoe UI", sans-serif; letter-spacing: .08em; }
+      .section-dot.social { fill: #ff4a64; }
+      .section-dot.content { fill: #ff687e; }
+      .section-dot.playlist { fill: #aaaab1; }
+      .section-dot.message { fill: #ccccd6; }
+      .section-dot.presence { fill: #ce0045; }
+      .section-dot.infra { fill: #676777; }
+
+      .edge { fill: none; stroke: #676777; stroke-width: 2; opacity: .74; }
+      .edge.cascade { stroke: #ff4a64; stroke-width: 2.4; opacity: .88; }
+      .edge.application { stroke: #828291; stroke-dasharray: 8 7; opacity: .66; }
+      .role-label { fill: #aaaab1; font: 600 11px Pretendard, -apple-system, "Segoe UI", sans-serif; }
+      .role-bg { fill: #131316; stroke: #34343d; }
+
+      .node rect.card { fill: #212126; stroke: #565666; stroke-width: 1.5; }
+      .node.root rect.card { fill: #2a2a30; stroke: #ff4a64; stroke-width: 2; filter: url(#hub-glow); }
+      .node.bridge rect.card { fill: #1b1b1f; stroke: #ff687e; stroke-width: 1.8; stroke-dasharray: 6 4; filter: url(#shadow); }
+      .node.operational rect.card { fill: #17171a; stroke: #565666; }
+      .node-name { fill: #f2f2f3; font: 650 17px ui-monospace, SFMono-Regular, Consolas, monospace; }
+      .node-meta { fill: #aaaab1; font: 500 12px Pretendard, -apple-system, "Segoe UI", sans-serif; }
+      .node:hover rect.card, .node:focus rect.card { stroke: #ff8c9d; stroke-width: 2.4; }
+      .node:focus { outline: none; }
+      .badge-bg { fill: #ff4a64; }
+      .badge-text { fill: #fff; font: 800 10px Pretendard, -apple-system, "Segoe UI", sans-serif; letter-spacing: .05em; }
+      .badge-bg.muted { fill: #34343d; stroke: #565666; }
+      .badge-text.muted { fill: #ccccd6; }
+      .legend { fill: #aaaab1; font: 500 12px Pretendard, -apple-system, "Segoe UI", sans-serif; }
+      .legend-strong { fill: #f2f2f3; font-weight: 700; }
+    </style>
+  </defs>
+
+  <rect class="frame" x="1" y="1" width="1598" height="978" rx="28"/>
+  <rect x="1" y="1" width="1598" height="978" rx="28" fill="url(#pink-glow)"/>
 
   <g aria-hidden="true">
-    <path class="edge-strong" d="M220 221 C260 221 260 211 300 211"/>
-    <path class="edge-strong" d="M500 111 C540 111 540 211 580 211"/>
-    <path class="edge" d="M400 80 L400 58"/>
-    <path class="edge" d="M220 211 C390 211 410 111 580 111"/>
-    <path class="edge" d="M780 111 L900 111"/>
-    <path class="edge" d="M500 111 C540 111 540 221 580 221"/>
-    <path class="edge" d="M680 140 L680 190"/>
-    <path class="edge" d="M220 231 C390 231 410 331 580 331"/>
-    <path class="edge" d="M130 252 L130 300"/>
-    <path class="edge-strong" d="M220 201 C570 201 550 221 900 221"/>
-    <path class="edge" d="M1000 140 L1000 190"/>
-    <path class="edge-strong" d="M1100 221 L1180 221"/>
-    <path class="edge" d="M1100 111 C1210 111 1210 190 1270 190"/>
-    <path class="edge" d="M220 241 C560 241 560 351 900 351"/>
-    <path class="edge" d="M220 251 C260 251 260 351 300 351"/>
-    <path class="edge-strong" d="M500 121 C550 121 550 351 500 351"/>
-    <path class="edge" d="M220 221 C250 221 250 441 220 441"/>
+    <path d="M54 70c0-13.3 10.7-24 24-24h18c13.3 0 24 10.7 24 24v3c0 12.2-9.8 22-22 22h-3.7c-3.4 0-6.6 1.7-8.5 4.5l-5.5 8.2" fill="none" stroke="#ff4a64" stroke-width="6" stroke-linecap="round"/>
+    <path d="m81 64 19 11-19 11Z" fill="#ff4a64"/>
+  </g>
+  <text class="eyebrow" x="144" y="55">MOPL DATABASE</text>
+  <text class="heading" x="144" y="87">Application relationship map</text>
+  <text class="subheading" x="144" y="111">PostgreSQL · Flyway V22 · framework metadata excluded</text>
+
+  <g transform="translate(1190 38)">
+    <rect class="metric-bg" width="112" height="58" rx="16"/>
+    <text class="metric-main" x="16" y="25">17</text>
+    <text class="metric-sub" x="16" y="44">app tables</text>
+  </g>
+  <g transform="translate(1314 38)">
+    <rect class="metric-bg" width="112" height="58" rx="16"/>
+    <text class="metric-main" x="16" y="25">5</text>
+    <text class="metric-sub" x="16" y="44">N:M bridges</text>
+  </g>
+  <g transform="translate(1438 38)">
+    <rect class="metric-bg" width="112" height="58" rx="16"/>
+    <text class="metric-main" x="16" y="25">V22</text>
+    <text class="metric-sub" x="16" y="44">schema</text>
   </g>
 
-  <g transform="translate(40 190)"><rect class="card" width="180" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff4a64"/><text class="name" x="30" y="23">users</text><text class="meta" x="17" y="45">사용자·인증 중심</text></g>
-  <g transform="translate(40 300)"><rect class="card" width="180" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff4a64"/><text class="name" x="30" y="23">follows</text><text class="meta" x="17" y="45">사용자 관계</text></g>
-  <g transform="translate(40 410)"><rect class="card" width="180" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff4a64"/><text class="name" x="30" y="23">oauth_accounts</text><text class="meta" x="17" y="45">OAuth 연동 계정</text></g>
+  <g transform="translate(56 154)">
+    <rect class="section-pill" width="148" height="30" rx="15"/>
+    <circle class="section-dot social" cx="17" cy="15" r="4"/>
+    <text class="section-label" x="30" y="19">USER · SOCIAL</text>
+  </g>
+  <g transform="translate(322 154)">
+    <rect class="section-pill" width="128" height="30" rx="15"/>
+    <circle class="section-dot message" cx="17" cy="15" r="4"/>
+    <text class="section-label" x="30" y="19">MESSAGING</text>
+  </g>
+  <g transform="translate(852 154)">
+    <rect class="section-pill" width="116" height="30" rx="15"/>
+    <circle class="section-dot content" cx="17" cy="15" r="4"/>
+    <text class="section-label" x="30" y="19">CONTENT</text>
+  </g>
+  <g transform="translate(588 752)">
+    <rect class="section-pill" width="118" height="30" rx="15"/>
+    <circle class="section-dot playlist" cx="17" cy="15" r="4"/>
+    <text class="section-label" x="30" y="19">PLAYLIST</text>
+  </g>
+  <g transform="translate(860 562)">
+    <rect class="section-pill" width="126" height="30" rx="15"/>
+    <circle class="section-dot presence" cx="17" cy="15" r="4"/>
+    <text class="section-label" x="30" y="19">PRESENCE</text>
+  </g>
+  <g transform="translate(1370 704)">
+    <rect class="section-pill" width="112" height="30" rx="15"/>
+    <circle class="section-dot infra" cx="17" cy="15" r="4"/>
+    <text class="section-label" x="30" y="19">INFRA</text>
+  </g>
 
-  <g transform="translate(300 0)"><rect class="card" width="200" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff687e"/><text class="name" x="30" y="23">content_tags</text><text class="meta" x="17" y="43">콘텐츠 태그</text></g>
-  <g transform="translate(300 80)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff687e"/><text class="name" x="30" y="23">contents</text><text class="meta" x="17" y="45">콘텐츠·집계 중심</text></g>
-  <g transform="translate(300 180)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff687e"/><text class="name" x="30" y="23">reviews</text><text class="meta" x="17" y="45">사용자 콘텐츠 평가</text></g>
-  <g transform="translate(300 320)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ce0045"/><text class="name" x="30" y="23">watching_sessions</text><text class="meta" x="17" y="45">활성 시청 스냅샷</text></g>
-  <g transform="translate(300 410)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff687e"/><text class="name" x="30" y="23">content_search_retries</text><text class="meta" x="17" y="45">검색 동기화 재시도</text></g>
+  <!-- FK edges: parent(1) -> child(N). N:M is made explicit on bridge tables. -->
+  <g aria-hidden="true">
+    <path class="edge cascade" d="M600 443C470 443 420 282 320 282" marker-start="url(#one-pink)" marker-end="url(#many-pink)"/>
+    <path class="edge" d="M600 468C480 468 424 456 320 456" marker-start="url(#one)" marker-end="url(#many)"/>
+    <path class="edge" d="M600 494C480 494 424 492 320 492" marker-start="url(#one)" marker-end="url(#many)"/>
+    <path class="edge" d="M650 420C620 350 590 301 570 301" marker-start="url(#one)" marker-end="url(#many)"/>
+    <path class="edge" d="M600 487C510 530 500 650 570 692" marker-start="url(#one)" marker-end="url(#many)"/>
 
-  <g transform="translate(580 80)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#aaaab1"/><text class="name" x="30" y="23">playlists</text><text class="meta" x="17" y="45">사용자 컬렉션</text></g>
-  <g transform="translate(580 190)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#aaaab1"/><text class="name" x="30" y="23">playlist_contents</text><text class="meta" x="17" y="45">플레이리스트 콘텐츠</text></g>
-  <g transform="translate(580 300)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#aaaab1"/><text class="name" x="30" y="23">playlist_subscriptions</text><text class="meta" x="17" y="45">플레이리스트 구독</text></g>
+    <path class="edge" d="M840 438C856 382 880 338 912 324" marker-start="url(#one)" marker-end="url(#many)"/>
+    <path class="edge" d="M1120 438C1100 382 1080 338 1048 324" marker-start="url(#one)" marker-end="url(#many)"/>
+    <path class="edge" d="M840 491C858 542 882 585 912 600" marker-start="url(#one)" marker-end="url(#one)"/>
+    <path class="edge" d="M1120 491C1100 542 1078 585 1048 600" marker-start="url(#one)" marker-end="url(#many)"/>
 
-  <g transform="translate(900 80)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ccccd6"/><text class="name" x="30" y="23">conversations</text><text class="meta" x="17" y="45">1:1 대화</text></g>
-  <g transform="translate(900 190)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ccccd6"/><text class="name" x="30" y="23">conversation_participants</text><text class="meta" x="17" y="45">대화 참여자</text></g>
-  <g transform="translate(900 320)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ccccd6"/><text class="name" x="30" y="23">notifications</text><text class="meta" x="17" y="45">사용자 알림</text></g>
-  <g transform="translate(1180 190)"><rect class="card" width="180" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ccccd6"/><text class="name" x="30" y="23">direct_messages</text><text class="meta" x="17" y="45">대화 메시지</text></g>
-  <g transform="translate(1180 320)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#4fb0a5"/><text class="name" x="30" y="23">outbox_events</text><text class="meta" x="17" y="45">Kafka 발행 대기열</text></g>
-  <g transform="translate(1180 410)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#4fb0a5"/><text class="name" x="30" y="23">processed_events</text><text class="meta" x="17" y="45">Consumer 멱등 기록</text></g>
+    <path class="edge" d="M690 512C690 565 706 615 720 650" marker-start="url(#one)" marker-end="url(#many)"/>
+    <path class="edge" d="M900 800C884 774 856 746 826 734" marker-start="url(#one)" marker-end="url(#many)"/>
+    <path class="edge cascade" d="M1060 820C1082 782 1110 748 1152 734" marker-start="url(#one-pink)" marker-end="url(#many-pink)"/>
+    <path class="edge" d="M1240 512V650" marker-start="url(#one)" marker-end="url(#many)"/>
+    <path class="edge" d="M785 512C812 620 850 730 920 800" marker-start="url(#one)" marker-end="url(#many)"/>
+
+    <path class="edge cascade" d="M320 692H330" marker-start="url(#one-pink)" marker-end="url(#many-pink)"/>
+    <path class="edge cascade" d="M200 734C200 764 246 792 276 800" marker-start="url(#one-pink)" marker-end="url(#many-pink)"/>
+    <path class="edge" d="M450 734C444 764 420 790 394 800" marker-start="url(#one)" marker-end="url(#many)"/>
+
+    <path class="edge cascade" d="M1360 438C1390 410 1410 340 1410 324" marker-start="url(#one-pink)" marker-end="url(#many-pink)"/>
+    <path class="edge application" d="M1360 486C1398 520 1418 572 1418 610" marker-start="url(#one)" marker-end="url(#many)"/>
+  </g>
+
+  <g aria-hidden="true">
+    <g transform="translate(394 424)"><rect class="role-bg" width="62" height="23" rx="11"/><text class="role-label" x="31" y="15" text-anchor="middle">follower</text></g>
+    <g transform="translate(394 486)"><rect class="role-bg" width="62" height="23" rx="11"/><text class="role-label" x="31" y="15" text-anchor="middle">followee</text></g>
+    <g transform="translate(846 716)"><rect class="role-bg" width="54" height="23" rx="11"/><text class="role-label" x="27" y="15" text-anchor="middle">owner</text></g>
+    <g transform="translate(1370 510)"><rect class="role-bg" width="84" height="23" rx="11"/><text class="role-label" x="42" y="15" text-anchor="middle">app-level</text></g>
+    <g transform="translate(1028 565)"><rect class="role-bg" width="54" height="23" rx="11"/><text class="role-label" x="27" y="15" text-anchor="middle">0..1</text></g>
+  </g>
+
+  <!-- User and social -->
+  <a class="node operational" href="./index.html#oauth_accounts" target="_top" aria-label="oauth_accounts 상세로 이동">
+    <rect class="card" x="80" y="240" width="240" height="84" rx="16"/>
+    <circle cx="101" cy="266" r="5" fill="#ff4a64"/>
+    <text class="node-name" x="116" y="272">oauth_accounts</text>
+    <text class="node-meta" x="101" y="300">provider identity · CASCADE</text>
+  </a>
+  <a class="node bridge" href="./index.html#follows" target="_top" aria-label="follows 상세로 이동, 사용자 자기참조 N:M">
+    <rect class="card" x="80" y="420" width="240" height="108" rx="16"/>
+    <circle cx="101" cy="448" r="5" fill="#ff4a64"/>
+    <text class="node-name" x="116" y="454">follows</text>
+    <text class="node-meta" x="101" y="482">follower ↔ followee</text>
+    <rect class="badge-bg" x="101" y="495" width="76" height="22" rx="11"/>
+    <text class="badge-text" x="139" y="510" text-anchor="middle">SELF N:M</text>
+  </a>
+  <a class="node operational" href="./index.html#notifications" target="_top" aria-label="notifications 상세로 이동">
+    <rect class="card" x="330" y="260" width="240" height="84" rx="16"/>
+    <circle cx="351" cy="286" r="5" fill="#ccccd6"/>
+    <text class="node-name" x="366" y="292">notifications</text>
+    <text class="node-meta" x="351" y="320">persistent inbox · read_at</text>
+  </a>
+  <a class="node root" href="./index.html#users" target="_top" aria-label="users 상세로 이동">
+    <rect class="card" x="600" y="420" width="240" height="92" rx="18"/>
+    <circle cx="623" cy="449" r="6" fill="#ff4a64"/>
+    <text class="node-name" x="640" y="455">users</text>
+    <text class="node-meta" x="623" y="483">identity · authorization hub</text>
+  </a>
+
+  <!-- Content and relation bridges -->
+  <a class="node bridge" href="./index.html#reviews" target="_top" aria-label="reviews 상세로 이동, 사용자와 콘텐츠 N:M">
+    <rect class="card" x="860" y="240" width="240" height="84" rx="16"/>
+    <circle cx="881" cy="266" r="5" fill="#ff687e"/>
+    <text class="node-name" x="896" y="272">reviews</text>
+    <text class="node-meta" x="881" y="300">users ↔ contents</text>
+    <rect class="badge-bg" x="1024" y="252" width="58" height="22" rx="11"/>
+    <text class="badge-text" x="1053" y="267" text-anchor="middle">N:M</text>
+  </a>
+  <a class="node root" href="./index.html#contents" target="_top" aria-label="contents 상세로 이동">
+    <rect class="card" x="1120" y="420" width="240" height="92" rx="18"/>
+    <circle cx="1143" cy="449" r="6" fill="#ff687e"/>
+    <text class="node-name" x="1160" y="455">contents</text>
+    <text class="node-meta" x="1143" y="483">search · rating · watcher hub</text>
+  </a>
+  <a class="node operational" href="./index.html#content_tags" target="_top" aria-label="content_tags 상세로 이동">
+    <rect class="card" x="1370" y="240" width="190" height="84" rx="16"/>
+    <circle cx="1391" cy="266" r="5" fill="#ff687e"/>
+    <text class="node-name" x="1406" y="272">content_tags</text>
+    <text class="node-meta" x="1391" y="300">normalized + display</text>
+  </a>
+  <a class="node operational" href="./index.html#content_search_retries" target="_top" aria-label="content_search_retries 상세로 이동">
+    <rect class="card" x="1370" y="610" width="190" height="96" rx="16"/>
+    <circle cx="1391" cy="637" r="5" fill="#ff687e"/>
+    <text class="node-name" x="1406" y="643" font-size="14">search_retries</text>
+    <text class="node-meta" x="1391" y="670">Elasticsearch recovery</text>
+    <rect class="badge-bg muted" x="1391" y="678" width="86" height="20" rx="10"/>
+    <text class="badge-text muted" x="1434" y="692" text-anchor="middle">NO DB FK</text>
+  </a>
+  <a class="node operational" href="./index.html#watching_session_snapshots" target="_top" aria-label="watching_session_snapshots 상세로 이동">
+    <rect class="card" x="860" y="600" width="260" height="84" rx="16"/>
+    <circle cx="881" cy="626" r="5" fill="#ce0045"/>
+    <text class="node-name" x="893" y="632" style="font-size:13px">watching_session_snapshots</text>
+    <text class="node-meta" x="881" y="660">user 0..1 · content 0..N</text>
+  </a>
+
+  <!-- Messaging -->
+  <a class="node root" href="./index.html#conversations" target="_top" aria-label="conversations 상세로 이동">
+    <rect class="card" x="80" y="650" width="240" height="84" rx="16"/>
+    <circle cx="101" cy="676" r="5" fill="#ccccd6"/>
+    <text class="node-name" x="116" y="682">conversations</text>
+    <text class="node-meta" x="101" y="710">one-to-one conversation root</text>
+  </a>
+  <a class="node bridge" href="./index.html#conversation_participants" target="_top" aria-label="conversation_participants 상세로 이동, 사용자와 대화 N:M, 대화당 최대 두 명">
+    <rect class="card" x="330" y="650" width="240" height="84" rx="16"/>
+    <circle cx="351" cy="676" r="5" fill="#ccccd6"/>
+    <text class="node-name" x="366" y="682" style="font-size:13px">conversation_participants</text>
+    <text class="node-meta" x="351" y="710">users ↔ conversations</text>
+    <rect class="badge-bg" x="486" y="695" width="66" height="22" rx="11"/>
+    <text class="badge-text" x="519" y="710" text-anchor="middle">N:M · 2</text>
+  </a>
+  <a class="node operational" href="./index.html#direct_messages" target="_top" aria-label="direct_messages 상세로 이동">
+    <rect class="card" x="205" y="800" width="240" height="84" rx="16"/>
+    <circle cx="226" cy="826" r="5" fill="#ccccd6"/>
+    <text class="node-name" x="241" y="832">direct_messages</text>
+    <text class="node-meta" x="226" y="860">sequence · sender composite FK</text>
+  </a>
+
+  <!-- Playlist -->
+  <a class="node bridge" href="./index.html#playlist_subscriptions" target="_top" aria-label="playlist_subscriptions 상세로 이동, 사용자와 플레이리스트 N:M">
+    <rect class="card" x="600" y="650" width="240" height="84" rx="16"/>
+    <circle cx="621" cy="676" r="5" fill="#aaaab1"/>
+    <text class="node-name" x="636" y="682" style="font-size:13px">playlist_subscriptions</text>
+    <text class="node-meta" x="621" y="710">users ↔ playlists</text>
+    <rect class="badge-bg" x="764" y="695" width="58" height="22" rx="11"/>
+    <text class="badge-text" x="793" y="710" text-anchor="middle">N:M</text>
+  </a>
+  <a class="node root" href="./index.html#playlists" target="_top" aria-label="playlists 상세로 이동">
+    <rect class="card" x="860" y="800" width="240" height="92" rx="18"/>
+    <circle cx="883" cy="829" r="6" fill="#aaaab1"/>
+    <text class="node-name" x="900" y="835">playlists</text>
+    <text class="node-meta" x="883" y="863">owner · subscriber count</text>
+  </a>
+  <a class="node bridge" href="./index.html#playlist_contents" target="_top" aria-label="playlist_contents 상세로 이동, 플레이리스트와 콘텐츠 N:M">
+    <rect class="card" x="1120" y="650" width="240" height="84" rx="16"/>
+    <circle cx="1141" cy="676" r="5" fill="#aaaab1"/>
+    <text class="node-name" x="1156" y="682">playlist_contents</text>
+    <text class="node-meta" x="1141" y="710">playlists ↔ contents</text>
+    <rect class="badge-bg" x="1284" y="695" width="58" height="22" rx="11"/>
+    <text class="badge-text" x="1313" y="710" text-anchor="middle">N:M</text>
+  </a>
+
+  <!-- Operational tables without application-table FK -->
+  <a class="node operational" href="./index.html#outbox_events" target="_top" aria-label="outbox_events 상세로 이동">
+    <rect class="card" x="1370" y="760" width="190" height="76" rx="16"/>
+    <circle cx="1391" cy="786" r="5" fill="#676777"/>
+    <text class="node-name" x="1406" y="792">outbox_events</text>
+    <text class="node-meta" x="1391" y="816">producer delivery log</text>
+  </a>
+  <a class="node operational" href="./index.html#processed_events" target="_top" aria-label="processed_events 상세로 이동">
+    <rect class="card" x="1370" y="852" width="190" height="76" rx="16"/>
+    <circle cx="1391" cy="878" r="5" fill="#676777"/>
+    <text class="node-name" x="1406" y="884">processed_events</text>
+    <text class="node-meta" x="1391" y="908">consumer inbox log</text>
+  </a>
+
+  <g transform="translate(52 934)" aria-label="관계 범례">
+    <path d="M0 12H48" class="edge" marker-start="url(#one)" marker-end="url(#many)"/>
+    <text class="legend" x="62" y="16"><tspan class="legend-strong">1:N</tspan> database FK</text>
+    <path d="M244 12H292" class="edge cascade" marker-start="url(#one-pink)" marker-end="url(#many-pink)"/>
+    <text class="legend" x="306" y="16"><tspan class="legend-strong">CASCADE</tspan> delete path</text>
+    <path d="M508 12H556" class="edge application"/>
+    <text class="legend" x="570" y="16"><tspan class="legend-strong">DASHED</tspan> application reference</text>
+    <rect class="badge-bg" x="846" y="1" width="58" height="22" rx="11"/>
+    <text class="badge-text" x="875" y="16" text-anchor="middle">N:M</text>
+    <text class="legend" x="916" y="16">relationship table</text>
+    <text class="legend" x="1212" y="16">Click a table for key fields and constraints</text>
+  </g>
 </svg>
