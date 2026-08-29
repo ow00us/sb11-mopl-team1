@@ -601,7 +601,8 @@ curl --fail http://localhost:8080/actuator/health
 | 산출물 | 하는 일 |
 | --- | --- |
 | `deploy/aws/network.sh` | 보안 그룹과 고정 공인 IP |
-| `deploy/bootstrap.sh` | Docker, 배포 사용자, 디렉터리, 호스트 방화벽 |
+| `deploy/bootstrap.sh` | AWS CLI v2, Docker, 배포 사용자, 디렉터리, 호스트 방화벽 |
+| `deploy/ensure-aws-cli.sh` | ECR 인증에 필요한 AWS CLI v2를 멱등 설치 |
 | `.env.example` | 환경 파일 서식 |
 
 둘 다 여러 번 실행해도 결과가 같습니다. 중간에 실패해도 고친 뒤 그대로 다시 돌리면 됩니다.
@@ -672,6 +673,7 @@ sudo SSH_ALLOWED_CIDR=203.0.113.10/32 bash deploy/bootstrap.sh
 하는 일은 이렇습니다.
 
 - 배포 전용 사용자 `deploy` 생성. 비밀번호 로그인은 막고 SSH 키로만 접속합니다
+- AWS 공식 시스템 설치기로 AWS CLI v2 준비. 이미 있으면 건너뜁니다
 - Docker Engine과 Compose 플러그인 설치. 배포판의 `docker.io`가 아니라 Docker 공식 저장소를 씁니다. Compose v2 플러그인이 배포판 패키지에 없습니다
 - 컨테이너 로그를 서비스당 250MB로 제한
 - 설정과 데이터 디렉터리 생성
@@ -729,7 +731,7 @@ sudo -u deploy cp deploy/Caddyfile /srv/mopl/app/deploy/
 # 5. 데이터 디렉터리 소유자를 실제 이미지 기준으로 다시 맞춤
 sudo bash deploy/bootstrap.sh
 
-# 6. ECR 로그인 후 기동
+# 6. ECR 로그인 후 기동. bootstrap이 AWS CLI v2를 시스템 경로에 준비합니다
 aws ecr get-login-password --region ap-northeast-2 \
   | sudo -u deploy docker login --username AWS --password-stdin \
       "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.ap-northeast-2.amazonaws.com"
