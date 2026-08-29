@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -17,6 +18,9 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -239,14 +243,42 @@ class OutboxFailureServiceIntegrationTest {
             .isEqualTo(OutboxSkipOutcome.NOT_FOUND);
     }
 
-    @Test
-    @DisplayName("사유가 비어 있으면 건너뛰기를 거부한다")
-    void skip_rejectsBlankReason() {
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"   ", "\t\n"})
+    @DisplayName("사유가 없거나 공백뿐이면 건너뛰기를 거부하고 DB 행을 바꾸지 않는다")
+    void skip_invalidReason_keepsPersistedState(String reason) {
         OutboxEvent saved = saveFailed(NOW);
+        jdbcTemplate.update("""
+            UPDATE outbox_events SET claim_owner = 'relay-before', claim_expires_at = ?
+            WHERE id = ?
+            """, Timestamp.from(NOW.plusSeconds(30)), saved.getId());
+        Map<String, Object> before = databaseRow(saved);
 
         assertThatThrownBy(() ->
-            outboxFailureService.skip(saved.getEventId(), ACTOR_ID, "   ", NOW))
-            .isInstanceOf(IllegalArgumentException.class);
+            outboxFailureService.skip(saved.getEventId(), ACTOR_ID, reason, NOW))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("사유");
+
+        assertThat(databaseRow(saved)).isEqualTo(before);
+    }
+
+    @Test
+    @DisplayName("처리자가 없으면 잠근 실패 이벤트의 상태·선점·감사 정보를 바꾸지 않는다")
+    void skip_nullActor_keepsPersistedState() {
+        OutboxEvent saved = saveFailed(NOW);
+        jdbcTemplate.update("""
+            UPDATE outbox_events SET claim_owner = 'relay-before', claim_expires_at = ?
+            WHERE id = ?
+            """, Timestamp.from(NOW.plusSeconds(30)), saved.getId());
+        Map<String, Object> before = databaseRow(saved);
+
+        assertThatThrownBy(() ->
+            outboxFailureService.skip(saved.getEventId(), null, "업무 영향 확인함", NOW))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("처리자");
+
+        assertThat(databaseRow(saved)).isEqualTo(before);
     }
 
     /**
@@ -356,5 +388,28 @@ class OutboxFailureServiceIntegrationTest {
 
         assertThat(outboxEventRepository.countByStatus(OutboxStatus.FAILED)).isEqualTo(1);
         assertThat(outboxEventRepository.countByStatus(OutboxStatus.PENDING)).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("최종 실패 대상이 없으면 requeueAll은 0을 반환하고 다른 상태의 행을 보존한다")
+    void requeueAll_withoutFailedEvents_keepsAllPersistedState() {
+        save(NOW.minusSeconds(3));
+        OutboxEvent published = save(NOW.minusSeconds(2));
+        jdbcTemplate.update("""
+            UPDATE outbox_events SET status = 'PUBLISHED', published_at = ? WHERE id = ?
+            """, Timestamp.from(NOW.minusSeconds(1)), published.getId());
+        OutboxEvent skipped = saveFailed(NOW.minusSeconds(1));
+        outboxFailureService.skip(skipped.getEventId(), ACTOR_ID, "업무 영향 없음", NOW);
+        List<Map<String, Object>> before = jdbcTemplate.queryForList(
+            "SELECT * FROM outbox_events ORDER BY id");
+
+        assertThat(outboxFailureService.requeueAll(10, NOW.plusSeconds(60))).isZero();
+
+        assertThat(jdbcTemplate.queryForList("SELECT * FROM outbox_events ORDER BY id"))
+            .isEqualTo(before);
+    }
+
+    private Map<String, Object> databaseRow(OutboxEvent event) {
+        return jdbcTemplate.queryForMap("SELECT * FROM outbox_events WHERE id = ?", event.getId());
     }
 }
