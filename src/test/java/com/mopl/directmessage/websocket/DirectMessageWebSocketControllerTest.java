@@ -41,6 +41,11 @@ class DirectMessageWebSocketControllerTest {
             "22222222-2222-2222-2222-222222222222"
         );
 
+    private static final UUID CLIENT_MESSAGE_ID =
+        UUID.fromString(
+            "cccccccc-cccc-cccc-cccc-cccccccccccc"
+        );
+
     @Mock
     private DirectMessageService directMessageService;
 
@@ -59,6 +64,7 @@ class DirectMessageWebSocketControllerTest {
         // given
         DirectMessageSendRequest request =
             new DirectMessageSendRequest(
+                CLIENT_MESSAGE_ID,
                 "실시간 메시지"
             );
 
@@ -72,6 +78,7 @@ class DirectMessageWebSocketControllerTest {
             directMessageService.create(
                 SENDER_ID,
                 CONVERSATION_ID,
+                request.clientMessageId(),
                 request.content()
             )
         ).thenReturn(savedMessage);
@@ -97,6 +104,7 @@ class DirectMessageWebSocketControllerTest {
             .create(
                 SENDER_ID,
                 CONVERSATION_ID,
+                request.clientMessageId(),
                 request.content()
             );
 
@@ -162,6 +170,7 @@ class DirectMessageWebSocketControllerTest {
             directMessageService.create(
                 SENDER_ID,
                 CONVERSATION_ID,
+                request.clientMessageId(),
                 request.content()
             )
         ).thenThrow(
@@ -212,7 +221,9 @@ class DirectMessageWebSocketControllerTest {
             1L,
             sender,
             receiver,
-            "실시간 메시지"
+            "실시간 메시지",
+            null,
+            CLIENT_MESSAGE_ID
         );
     }
 

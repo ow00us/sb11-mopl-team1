@@ -1,0 +1,4 @@
+backend: c43265484a151d120fa29ba27764c183a9eb9d31 (main)
+frontend: 260b09f450de40596ecead19d01b866881273484 (main)
+빌드: ECR 접근 권한이 없어 해당 커밋을 Windows Docker Desktop에서 로컬 재빌드 (linux/amd64)
+측정일: 2026-08-28

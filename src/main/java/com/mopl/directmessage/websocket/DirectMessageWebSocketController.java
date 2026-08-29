@@ -34,6 +34,7 @@ public class DirectMessageWebSocketController {
             directMessageService.create(
                 senderId,
                 conversationId,
+                request.clientMessageId(),
                 request.content()
             );
 

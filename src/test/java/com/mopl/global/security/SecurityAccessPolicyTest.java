@@ -237,6 +237,23 @@ class SecurityAccessPolicyTest {
             .andExpect(status().isNoContent());
     }
 
+    @Test
+    @DisplayName("인기 플레이리스트 조회 API는 JWT 없이 접근할 수 있다")
+    void popularPlaylists_doesNotRequireJwt() throws Exception {
+        mockMvc.perform(
+                get("/api/playlists/popular")
+                    .param("limit", "20")
+            )
+            .andExpect(status().isNoContent());
+
+        verify(
+            jwtProvider,
+            never()
+        ).validate(
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
         "/oauth2/authorization/google",

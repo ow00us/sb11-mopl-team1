@@ -4,6 +4,7 @@ import com.mopl.global.common.CursorResponse;
 import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.notification.dto.NotificationDto;
+import com.mopl.notification.dto.NotificationCursorResponse;
 import com.mopl.notification.entity.Notification;
 import com.mopl.notification.entity.NotificationLevel;
 import com.mopl.notification.entity.NotificationType;
@@ -129,7 +130,7 @@ public class NotificationService {
         return true;
     }
 
-    public CursorResponse<NotificationDto> getUnreadNotifications(
+    public NotificationCursorResponse getNotifications(
         UUID receiverId,
         String cursor,
         UUID idAfter,
@@ -146,7 +147,11 @@ public class NotificationService {
         );
 
         Instant cursorInstant = parseCursor(cursor);
-        PageRequest pageRequest = PageRequest.of(0, limit + 1);
+        PageRequest pageRequest =
+            PageRequest.of(
+                0,
+                limit + 1
+            );
 
         List<Notification> notifications;
 
@@ -156,20 +161,33 @@ public class NotificationService {
                     ? Sort.Direction.ASC
                     : Sort.Direction.DESC;
 
-            Sort sort = Sort.by(direction, "createdAt")
-                .and(Sort.by(direction, "id"));
+            Sort sort =
+                Sort.by(
+                        direction,
+                        "createdAt"
+                    )
+                    .and(
+                        Sort.by(
+                            direction,
+                            "id"
+                        )
+                    );
 
-            pageRequest = PageRequest.of(0, limit + 1, sort);
+            pageRequest =
+                PageRequest.of(
+                    0,
+                    limit + 1,
+                    sort
+                );
 
             notifications =
-                notificationRepository
-                    .findByReceiverIdAndReadAtIsNull(
-                        receiverId,
-                        pageRequest
-                    );
+                notificationRepository.findByReceiverId(
+                    receiverId,
+                    pageRequest
+                );
         } else if (ASCENDING.equals(sortDirection)) {
             notifications =
-                notificationRepository.findUnreadAfterAscending(
+                notificationRepository.findAllAfterAscending(
                     receiverId,
                     cursorInstant,
                     idAfter,
@@ -177,7 +195,7 @@ public class NotificationService {
                 );
         } else {
             notifications =
-                notificationRepository.findUnreadAfterDescending(
+                notificationRepository.findAllAfterDescending(
                     receiverId,
                     cursorInstant,
                     idAfter,
@@ -185,40 +203,58 @@ public class NotificationService {
                 );
         }
 
-        boolean hasNext = notifications.size() > limit;
+        boolean hasNext =
+            notifications.size() > limit;
 
         List<Notification> page =
             hasNext
-                ? notifications.subList(0, limit)
+                ? notifications.subList(
+                0,
+                limit
+            )
                 : notifications;
 
-        List<NotificationDto> data = page.stream()
-            .map(NotificationDto::from)
-            .toList();
+        List<NotificationDto> data =
+            page.stream()
+                .map(NotificationDto::from)
+                .toList();
 
         String nextCursor = null;
         UUID nextIdAfter = null;
 
         if (hasNext && !page.isEmpty()) {
             Notification lastNotification =
-                page.get(page.size() - 1);
+                page.get(
+                    page.size() - 1
+                );
 
             nextCursor =
-                lastNotification.getCreatedAt().toString();
+                lastNotification
+                    .getCreatedAt()
+                    .toString();
+
             nextIdAfter =
                 lastNotification.getId();
         }
 
         long totalCount =
-            notificationRepository
-                .countByReceiverIdAndReadAtIsNull(receiverId);
+            notificationRepository.countByReceiverId(
+                receiverId
+            );
 
-        return CursorResponse.of(
+        long unreadCount =
+            notificationRepository
+                .countByReceiverIdAndReadAtIsNull(
+                    receiverId
+                );
+
+        return NotificationCursorResponse.of(
             data,
             nextCursor,
             nextIdAfter,
             hasNext,
             totalCount,
+            unreadCount,
             sortBy,
             sortDirection
         );

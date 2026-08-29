@@ -454,8 +454,14 @@ class DirectMessageStompIntegrationTest {
                 receiverSession
             );
 
+        UUID clientMessageId =
+            UUID.fromString(
+                "cccccccc-cccc-cccc-cccc-cccccccccccc"
+            );
+
         DirectMessageSendRequest request =
             new DirectMessageSendRequest(
+                clientMessageId,
                 "통합 테스트 메시지"
             );
 
@@ -505,6 +511,9 @@ class DirectMessageStompIntegrationTest {
             .isEqualTo(
                 "통합 테스트 메시지"
             );
+
+        assertThat(response.clientMessageId())
+            .isEqualTo(clientMessageId);
 
         var savedMessages =
             directMessageRepository.findAll();

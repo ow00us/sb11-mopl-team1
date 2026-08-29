@@ -10,6 +10,7 @@ import com.mopl.directmessage.entity.ConversationParticipant;
 import com.mopl.directmessage.dto.DirectMessageDto;
 import com.mopl.directmessage.entity.DirectMessage;
 import com.mopl.directmessage.event.DirectMessageOutboxEventFactory;
+import com.mopl.notification.repository.NotificationRepository;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.user.entity.User;
 import com.mopl.global.common.CursorResponse;
@@ -50,6 +51,7 @@ public class DirectMessageService {
     private final ApplicationEventPublisher eventPublisher;
     private final DirectMessageOutboxEventFactory outboxEventFactory;
     private final OutboxRecorder outboxRecorder;
+    private final NotificationRepository notificationRepository;
 
     public CursorResponse<DirectMessageDto> getDirectMessages(
         UUID requesterId,
@@ -190,6 +192,20 @@ public class DirectMessageService {
         Map<UUID, UUID> receiverIdBySenderId,
         Map<UUID, UserSummary> userSummaries
     ) {
+        return toDto(
+            message,
+            receiverIdBySenderId,
+            userSummaries,
+            null
+        );
+    }
+
+    private DirectMessageDto toDto(
+        DirectMessage message,
+        Map<UUID, UUID> receiverIdBySenderId,
+        Map<UUID, UserSummary> userSummaries,
+        UUID clientMessageId
+    ) {
         UserSummary sender =
             userSummaries
                 .get(message.getSenderId());
@@ -218,7 +234,8 @@ public class DirectMessageService {
         return DirectMessageDto.from(
             message,
             sender,
-            receiver
+            receiver,
+            clientMessageId
         );
     }
 
@@ -352,6 +369,21 @@ public class DirectMessageService {
         UUID conversationId,
         String content
     ) {
+        return create(
+            senderId,
+            conversationId,
+            null,
+            content
+        );
+    }
+
+    @Transactional
+    public DirectMessageDto create(
+        UUID senderId,
+        UUID conversationId,
+        UUID clientMessageId,
+        String content
+    ) {
         validateContent(content);
 
         List<ConversationParticipant> participants =
@@ -392,7 +424,8 @@ public class DirectMessageService {
             toDto(
                 savedMessage,
                 receiverIdBySenderId,
-                userSummaries
+                userSummaries,
+                clientMessageId
             );
 
         EventEnvelope envelope =
@@ -401,7 +434,9 @@ public class DirectMessageService {
                 response.receiver().userId()
             );
 
-        KafkaEventContract contract = KafkaEventContract.DIRECT_MESSAGE_CREATED;
+        KafkaEventContract contract =
+            KafkaEventContract.DIRECT_MESSAGE_CREATED;
+
         outboxRecorder.record(
             envelope,
             contract.partitionKey(envelope),
@@ -473,12 +508,22 @@ public class DirectMessageService {
         // 이벤트와 DB 값이 1마이크로초 어긋날 수 있습니다.
         Instant readAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
 
+        long lastReadMessageSequence = message.getMessageSequence();
+
         int updatedCount =
-            directMessageRepository.markAsReadIfUnread(
-                directMessageId,
+            directMessageRepository.markAsReadThrough(
                 conversationId,
+                requesterId,
+                lastReadMessageSequence,
                 readAt
             );
+
+        notificationRepository.markDirectMessageNotificationsAsReadThrough(
+            requesterId,
+            conversationId,
+            lastReadMessageSequence,
+            readAt
+        );
 
         if (updatedCount == 0) {
             return;
@@ -489,6 +534,7 @@ public class DirectMessageService {
                 conversationId,
                 requesterId,
                 directMessageId,
+                lastReadMessageSequence,
                 readAt
             )
         );
