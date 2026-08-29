@@ -7,6 +7,7 @@ public record DirectMessageReadEvent(
     UUID conversationId,
     UUID readerId,
     UUID lastReadMessageId,
+    long lastReadMessageSequence,
     Instant readAt
 ) {
 }
