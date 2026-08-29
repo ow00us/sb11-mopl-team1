@@ -68,6 +68,30 @@ esac
 
 compose() { docker compose --file "${COMPOSE_FILE}" --env-file "${ENV_FILE}" "$@"; }
 
+# ECR 로그인 토큰은 12시간 뒤 만료됩니다. 서버 준비 때 한 번 로그인한 상태에 기대면,
+# 애플리케이션과 무관하게 다음 배포의 pull 이 실패합니다. EC2 인스턴스 역할로 매 배포
+# 직전에 단기 토큰을 다시 받아 deploy 사용자의 Docker 자격 증명을 갱신합니다.
+refresh_ecr_login() {
+    local image=$1 registry region
+
+    [[ -n ${image} ]] || return 0
+    registry="${image%%/*}"
+    if [[ ! ${registry} =~ ^[0-9]{12}\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com(\.cn)?$ ]]; then
+        return 0
+    fi
+    region="${BASH_REMATCH[1]}"
+
+    if ! command -v aws >/dev/null 2>&1; then
+        note "ECR 인증에 필요한 aws CLI가 없습니다."
+        return 1
+    fi
+    if ! aws ecr get-login-password --region "${region}" \
+        | docker login --username AWS --password-stdin "${registry}" >/dev/null; then
+        return 1
+    fi
+    note "ECR 로그인 갱신 ${registry}"
+}
+
 # ── 되돌릴 지점 기록 ────────────────────────────────────────────────────────
 # 새 값을 쓰기 전에 지금 값을 남깁니다. 실패한 뒤에 무엇으로 돌아가야 하는지 찾기
 # 시작하면 늦습니다.
@@ -104,6 +128,17 @@ restore_env() {
 
 # ── 새 이미지 준비 ─────────────────────────────────────────────────────────
 log "이미지 준비"
+TARGET_FRONTEND_IMAGE="${FRONTEND_IMAGE:-${PREVIOUS_FRONTEND_IMAGE}}"
+if ! refresh_ecr_login "${BACKEND_IMAGE}"; then
+    fail "백엔드 이미지 ECR 로그인 갱신에 실패했습니다. 아무것도 교체하지 않았습니다."
+fi
+
+if [[ -n ${TARGET_FRONTEND_IMAGE} ]] \
+    && [[ ${TARGET_FRONTEND_IMAGE%%/*} != "${BACKEND_IMAGE%%/*}" ]] \
+    && ! refresh_ecr_login "${TARGET_FRONTEND_IMAGE}"; then
+    fail "프론트엔드 이미지 ECR 로그인 갱신에 실패했습니다. 아무것도 교체하지 않았습니다."
+fi
+
 set_env_value BACKEND_IMAGE "${BACKEND_IMAGE}"
 if [[ -n ${FRONTEND_IMAGE} ]]; then
     set_env_value FRONTEND_IMAGE "${FRONTEND_IMAGE}"
