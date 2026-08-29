@@ -1,5 +1,7 @@
 # MOPL
 
+![MOPL](docs/assets/mopl-readme-banner.svg)
+
 [![CI](https://github.com/ow00us/sb11-mopl-team1/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ow00us/sb11-mopl-team1/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/ow00us/sb11-mopl-team1/branch/main/graph/badge.svg)](https://codecov.io/gh/ow00us/sb11-mopl-team1)
 
@@ -194,11 +196,6 @@ Redis는 세 가지 용도로 나뉩니다.
 ### 외부 API 배치
 
 TMDB·TheSportsDB 데이터 수집은 Spring Batch로 매일 새벽 4시(KST)에 실행되며, 이미 실행 중이면 중복 실행하지 않습니다.
-
-알려진 제한사항은 다음과 같습니다.
-
-- 배치 Step의 skip 대상이 `RuntimeException` 전체로 열려 있어, 매핑 오류와 일시적 장애를 구분하지 않고 동일하게 건너뜁니다.
-- 외부 API 호출에 rate limit·백오프가 아직 없어, 대량 실패 시 재시도 없이 유실될 수 있습니다.
 
 ## 로컬 개발 환경
 
