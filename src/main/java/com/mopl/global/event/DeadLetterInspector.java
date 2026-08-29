@@ -3,6 +3,7 @@ package com.mopl.global.event;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -11,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -22,6 +24,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.kafka.KafkaConnectionDetails;
 import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
 import org.springframework.kafka.support.KafkaHeaders;
@@ -48,18 +51,27 @@ public class DeadLetterInspector {
     /** 진행이 없을 때 조회를 멈추는 한도입니다. 없으면 빈 DLT 조회가 끝나지 않습니다. */
     private static final Duration READ_DEADLINE = Duration.ofSeconds(15);
 
-    private final KafkaProperties kafkaProperties;
-    private final KafkaConnectionDetails connectionDetails;
     private final ObjectMapper objectMapper;
+    private final Supplier<Consumer<String, byte[]>> consumerFactory;
+    private final Clock clock;
 
+    @Autowired
     public DeadLetterInspector(
         KafkaProperties kafkaProperties,
         KafkaConnectionDetails connectionDetails,
         ObjectMapper objectMapper
     ) {
-        this.kafkaProperties = kafkaProperties;
-        this.connectionDetails = connectionDetails;
+        this(objectMapper, () -> createConsumer(kafkaProperties, connectionDetails), Clock.systemUTC());
+    }
+
+    DeadLetterInspector(
+        ObjectMapper objectMapper,
+        Supplier<Consumer<String, byte[]>> consumerFactory,
+        Clock clock
+    ) {
         this.objectMapper = objectMapper;
+        this.consumerFactory = consumerFactory;
+        this.clock = clock;
     }
 
     /**
@@ -75,7 +87,7 @@ public class DeadLetterInspector {
         }
 
         List<DeadLetterRecord> found = new ArrayList<>();
-        try (Consumer<String, byte[]> consumer = createConsumer()) {
+        try (Consumer<String, byte[]> consumer = consumerFactory.get()) {
             List<TopicPartition> partitions = partitionsOf(consumer, deadLetterTopic);
             if (partitions.isEmpty()) {
                 return List.of();
@@ -84,11 +96,11 @@ public class DeadLetterInspector {
             consumer.assign(partitions);
             consumer.seekToBeginning(partitions);
 
-            Instant deadline = Instant.now().plus(READ_DEADLINE);
+            Instant deadline = clock.instant().plus(READ_DEADLINE);
             Map<TopicPartition, Long> endOffsets = consumer.endOffsets(partitions);
 
             while (found.size() < limit
-                && Instant.now().isBefore(deadline)
+                && clock.instant().isBefore(deadline)
                 && hasRemaining(consumer, endOffsets)) {
 
                 ConsumerRecords<String, byte[]> records = consumer.poll(POLL_TIMEOUT);
@@ -122,7 +134,7 @@ public class DeadLetterInspector {
         }
 
         TopicPartition target = new TopicPartition(deadLetterTopic, partition);
-        try (Consumer<String, byte[]> consumer = createConsumer()) {
+        try (Consumer<String, byte[]> consumer = consumerFactory.get()) {
             consumer.assign(List.of(target));
 
             long endOffset = consumer.endOffsets(List.of(target)).getOrDefault(target, 0L);
@@ -134,8 +146,8 @@ public class DeadLetterInspector {
 
             consumer.seek(target, offset);
 
-            Instant deadline = Instant.now().plus(READ_DEADLINE);
-            while (Instant.now().isBefore(deadline)) {
+            Instant deadline = clock.instant().plus(READ_DEADLINE);
+            while (clock.instant().isBefore(deadline)) {
                 ConsumerRecords<String, byte[]> records = consumer.poll(POLL_TIMEOUT);
                 for (ConsumerRecord<String, byte[]> record : records.records(target)) {
                     if (record.offset() == offset) {
@@ -223,7 +235,9 @@ public class DeadLetterInspector {
      * <p>그룹을 매번 새로 만들고 자동 커밋을 끕니다. 도메인 리스너와 그룹을 공유하면 조회가
      * 그 그룹의 offset 을 건드려 정상 소비에 영향을 줍니다.
      */
-    private Consumer<String, byte[]> createConsumer() {
+    private static Consumer<String, byte[]> createConsumer(
+        KafkaProperties kafkaProperties, KafkaConnectionDetails connectionDetails
+    ) {
         Map<String, Object> props = new HashMap<>(kafkaProperties.buildConsumerProperties(null));
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, connectionDetails.getBootstrapServers());
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "mopl.dlt.inspect-" + UUID.randomUUID());
