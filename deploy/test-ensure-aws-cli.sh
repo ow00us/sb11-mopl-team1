@@ -27,6 +27,12 @@ new_case() {
     # GitHub 러너에 이미 설치된 시스템 aws를 우연히 발견하지 않고, 각 케이스가
     # 만든 실행 파일만 확인합니다.
     export AWS_CLI_COMMAND="${BIN_DIR}/aws"
+    export AWS_CLI_UNZIP_COMMAND="${BIN_DIR}/unzip"
+    cat > "${AWS_CLI_UNZIP_COMMAND}" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "${AWS_CLI_UNZIP_COMMAND}"
 }
 
 fake_root_id() {
@@ -75,6 +81,22 @@ EOF
     chmod +x "${BIN_DIR}/curl"
 }
 
+fake_installing_apt_get() {
+    cat > "${BIN_DIR}/apt-get" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${TEST_CASE_DIR}/apt-get.args"
+if [[ ${1:-} == install ]]; then
+    cat > "${AWS_CLI_UNZIP_COMMAND}" <<'UNZIP'
+#!/usr/bin/env bash
+exit 0
+UNZIP
+    chmod +x "${AWS_CLI_UNZIP_COMMAND}"
+fi
+EOF
+    chmod +x "${BIN_DIR}/apt-get"
+}
+
 new_case existing
 fake_root_id
 cat > "${BIN_DIR}/aws" <<'EOF'
@@ -92,6 +114,15 @@ fake_installing_curl
 output="$(PATH="${BIN_DIR}:${ORIGINAL_PATH}" bash "${ENSURE_SCRIPT}")"
 assert_contains "공식 설치기를 system 모드로 실행" "--system" "$(<"${CASE_DIR}/install.args")"
 assert_contains "설치 후 v2 확인" "AWS CLI v2 설치 완료" "${output}"
+
+new_case missing-unzip
+fake_root_id
+fake_installing_curl
+fake_installing_apt_get
+rm -f "${AWS_CLI_UNZIP_COMMAND}"
+output="$(PATH="${BIN_DIR}:${ORIGINAL_PATH}" bash "${ENSURE_SCRIPT}")"
+assert_contains "unzip 의존성 설치" "install -y -qq unzip" "$(<"${CASE_DIR}/apt-get.args")"
+assert_contains "unzip 설치 후 v2 확인" "AWS CLI v2 설치 완료" "${output}"
 
 new_case non-root
 fake_non_root_id

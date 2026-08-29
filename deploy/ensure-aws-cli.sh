@@ -7,6 +7,7 @@ set -euo pipefail
 
 AWS_CLI_INSTALL_URL="${AWS_CLI_INSTALL_URL:-https://awscli.amazonaws.com/v2/install.sh}"
 AWS_CLI_COMMAND="${AWS_CLI_COMMAND:-aws}"
+AWS_CLI_UNZIP_COMMAND="${AWS_CLI_UNZIP_COMMAND:-unzip}"
 
 note() { printf '   %s\n' "$*"; }
 fail() { printf '\n\033[31m!! %s\033[0m\n' "$*" >&2; exit 1; }
@@ -23,9 +24,17 @@ fi
 
 [[ $(id -u) -eq 0 ]] || fail "AWS CLI v2 설치는 root로 실행해야 합니다."
 
+missing_packages=()
 if ! command -v curl >/dev/null 2>&1; then
+    missing_packages+=(ca-certificates curl)
+fi
+if ! command -v "${AWS_CLI_UNZIP_COMMAND}" >/dev/null 2>&1; then
+    missing_packages+=(unzip)
+fi
+
+if ((${#missing_packages[@]})); then
     apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ca-certificates curl
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing_packages[@]}"
 fi
 
 aws_cli_installer="$(mktemp)"
