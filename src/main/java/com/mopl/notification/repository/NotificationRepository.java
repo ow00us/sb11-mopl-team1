@@ -106,6 +106,29 @@ public interface NotificationRepository extends JpaRepository<Notification, UUID
         String level
     );
 
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(
+        value = """
+            UPDATE notifications notification
+            SET read_at = :readAt,
+                updated_at = :readAt
+            FROM direct_messages message
+            WHERE notification.receiver_id = :receiverId
+                AND notification.type = 'DIRECT_MESSAGE'
+                AND notification.resource_id = :conversationId
+                AND notification.source_entity_id = message.id
+                AND message.message_sequence <= :lastReadMessageSequence
+                AND notification.read_at IS NULL
+        """,
+        nativeQuery = true
+    )
+    int markDirectMessageNotificationsAsReadThrough(
+        @Param("receiverId") UUID receiverId,
+        @Param("conversationId") UUID conversationId,
+        @Param("lastReadMessageSequence") long lastReadMessageSequence,
+        @Param("readAt") Instant readAt
+    );
+
     long countByReceiverIdAndReadAtIsNull(UUID receiverId);
 
     List<Notification> findByReceiverIdAndReadAtIsNull(
