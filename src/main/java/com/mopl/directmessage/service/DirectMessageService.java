@@ -10,6 +10,7 @@ import com.mopl.directmessage.entity.ConversationParticipant;
 import com.mopl.directmessage.dto.DirectMessageDto;
 import com.mopl.directmessage.entity.DirectMessage;
 import com.mopl.directmessage.event.DirectMessageOutboxEventFactory;
+import com.mopl.notification.repository.NotificationRepository;
 import com.mopl.user.repository.UserRepository;
 import com.mopl.user.entity.User;
 import com.mopl.global.common.CursorResponse;
@@ -50,6 +51,7 @@ public class DirectMessageService {
     private final ApplicationEventPublisher eventPublisher;
     private final DirectMessageOutboxEventFactory outboxEventFactory;
     private final OutboxRecorder outboxRecorder;
+    private final NotificationRepository notificationRepository;
 
     public CursorResponse<DirectMessageDto> getDirectMessages(
         UUID requesterId,
@@ -506,12 +508,22 @@ public class DirectMessageService {
         // 이벤트와 DB 값이 1마이크로초 어긋날 수 있습니다.
         Instant readAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
 
+        long lastReadMessageSequence = message.getMessageSequence();
+
         int updatedCount =
-            directMessageRepository.markAsReadIfUnread(
-                directMessageId,
+            directMessageRepository.markAsReadThrough(
                 conversationId,
+                requesterId,
+                lastReadMessageSequence,
                 readAt
             );
+
+        notificationRepository.markDirectMessageNotificationsAsReadThrough(
+            requesterId,
+            conversationId,
+            lastReadMessageSequence,
+            readAt
+        );
 
         if (updatedCount == 0) {
             return;
@@ -522,6 +534,7 @@ public class DirectMessageService {
                 conversationId,
                 requesterId,
                 directMessageId,
+                lastReadMessageSequence,
                 readAt
             )
         );

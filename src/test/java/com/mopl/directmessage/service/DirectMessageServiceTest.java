@@ -31,10 +31,11 @@ import com.mopl.global.exception.BusinessException;
 import com.mopl.global.exception.ErrorCode;
 import com.mopl.global.event.EventEnvelope;
 import com.mopl.global.event.KafkaEventContract;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.mopl.global.outbox.OutboxRecorder;
+import com.mopl.notification.repository.NotificationRepository;
 import com.mopl.user.entity.User;
 import com.mopl.user.repository.UserRepository;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -98,6 +99,9 @@ class DirectMessageServiceTest {
 
     @Mock
     OutboxRecorder outboxRecorder;
+
+    @Mock
+    NotificationRepository notificationRepository;
 
     @InjectMocks
     DirectMessageService directMessageService;
@@ -536,9 +540,10 @@ class DirectMessageServiceTest {
         ).thenReturn(Optional.of(message));
 
         when(
-            directMessageRepository.markAsReadIfUnread(
-                eq(message.getId()),
+            directMessageRepository.markAsReadThrough(
                 eq(CONVERSATION_ID),
+                eq(USER_ID_2),
+                eq(message.getMessageSequence()),
                 any(Instant.class)
             )
         ).thenReturn(1);
@@ -554,10 +559,19 @@ class DirectMessageServiceTest {
         ArgumentCaptor<Instant> readAtCaptor =
             ArgumentCaptor.forClass(Instant.class);
         verify(directMessageRepository)
-            .markAsReadIfUnread(
-                eq(message.getId()),
+            .markAsReadThrough(
                 eq(CONVERSATION_ID),
+                eq(USER_ID_2),
+                eq(message.getMessageSequence()),
                 readAtCaptor.capture()
+            );
+
+        verify(notificationRepository)
+            .markDirectMessageNotificationsAsReadThrough(
+                eq(USER_ID_2),
+                eq(CONVERSATION_ID),
+                eq(message.getMessageSequence()),
+                eq(readAtCaptor.getValue())
             );
 
         ArgumentCaptor<DirectMessageReadEvent> eventCaptor =
@@ -571,6 +585,8 @@ class DirectMessageServiceTest {
         assertThat(storedReadAt.getNano() % 1_000).isZero();
         assertThat(eventCaptor.getValue().readAt())
             .isEqualTo(storedReadAt);
+        assertThat(eventCaptor.getValue().lastReadMessageSequence())
+            .isEqualTo(message.getMessageSequence());
     }
 
     @Test
@@ -600,9 +616,10 @@ class DirectMessageServiceTest {
         ).thenReturn(Optional.of(message));
 
         when(
-            directMessageRepository.markAsReadIfUnread(
-                eq(message.getId()),
+            directMessageRepository.markAsReadThrough(
                 eq(CONVERSATION_ID),
+                eq(USER_ID_2),
+                eq(message.getMessageSequence()),
                 any(Instant.class)
             )
         ).thenReturn(1, 0);
@@ -624,9 +641,10 @@ class DirectMessageServiceTest {
         verify(
             directMessageRepository,
             times(2)
-        ).markAsReadIfUnread(
-            eq(message.getId()),
+        ).markAsReadThrough(
             eq(CONVERSATION_ID),
+            eq(USER_ID_2),
+            eq(message.getMessageSequence()),
             any(Instant.class)
         );
 
@@ -634,6 +652,16 @@ class DirectMessageServiceTest {
             .publishEvent(
                 any(DirectMessageReadEvent.class)
             );
+
+        verify(
+            notificationRepository,
+            times(2)
+        ).markDirectMessageNotificationsAsReadThrough(
+            eq(USER_ID_2),
+            eq(CONVERSATION_ID),
+            eq(message.getMessageSequence()),
+            any(Instant.class)
+        );
     }
 
     @Test
