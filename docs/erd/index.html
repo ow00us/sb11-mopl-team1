@@ -22,7 +22,7 @@
       --playlist: #aaaab1;
       --message: #ccccd6;
       --presence: #ce0045;
-      --infra: #4fb0a5;
+      --infra: #676777;
       --radius: 16px;
       --shadow: 0 16px 36px rgb(0 0 0 / 32%);
     }
@@ -43,7 +43,16 @@
     a { color: inherit; }
 
     .shell { width: min(1600px, calc(100% - 84px)); margin: 0 auto; }
-    .topbar { height: 80px; border-bottom: 1px solid var(--line); }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      height: 80px;
+      border-bottom: 1px solid var(--line);
+      background: rgb(19 19 22 / 90%);
+      box-shadow: 0 10px 30px rgb(0 0 0 / 24%);
+      backdrop-filter: blur(24px);
+    }
     .topbar-inner { display: flex; align-items: center; height: 100%; }
     .brand { display: flex; align-items: center; gap: 12px; color: var(--text); text-decoration: none; }
     .brand-logo { width: 30px; height: 29px; }
@@ -74,25 +83,28 @@
     .section-head { display: flex; justify-content: space-between; align-items: end; gap: 20px; margin-bottom: 14px; }
     .section-head h2 { margin: 0; font-size: 20px; letter-spacing: -.025em; }
     .section-head p { margin: 0; color: var(--muted); font-size: 12px; }
-    .overview-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 20px; background: var(--surface); }
-    .overview svg { display: block; width: 100%; min-width: 1180px; height: auto; }
-    .edge { fill: none; stroke: #6b6b7d; stroke-width: 1.5; opacity: .72; }
-    .edge.cascade { stroke: #ff4a64; stroke-width: 1.9; opacity: .85; }
-    .edge.app { stroke: #6b6b7d; stroke-width: 1.5; stroke-dasharray: 5 5; opacity: .55; }
-    .edge-label { fill: #9a9aa8; font: 600 10px "Pretendard Variable", Pretendard, sans-serif; }
-    .cluster-label { font: 700 12px "Pretendard Variable", Pretendard, sans-serif; letter-spacing: .08em; opacity: .62; }
-    .zone { pointer-events: none; }
-    .node rect { fill: #212126; stroke: #565666; stroke-width: 1; rx: 10; transition: fill .15s ease, stroke .15s ease; }
-    .node.hub rect { fill: #2b2b31; stroke: #ff6c81; stroke-width: 1.6; }
-    .node.subhub rect { fill: #232329; stroke: #ff687e; stroke-width: 1.2; }
-    .node:hover rect { fill: #34343d; stroke: #ff4a64; }
-    .node text { fill: #f2f2f3; font: 600 12px ui-monospace, SFMono-Regular, Consolas, monospace; pointer-events: none; }
-    .node .node-meta { fill: #828291; font: 500 9px "Pretendard Variable", Pretendard, sans-serif; }
-    .node .node-dot { stroke: none; }
+    .overview-scroll {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--surface);
+      scrollbar-color: var(--line) var(--surface);
+      overscroll-behavior-inline: contain;
+      -webkit-overflow-scrolling: touch;
+    }
+    .overview-object {
+      display: block;
+      width: 100%;
+      min-width: 1180px;
+      aspect-ratio: 1600 / 980;
+      border: 0;
+    }
+    .overview-fallback { display: grid; min-height: 420px; place-items: center; color: var(--accent-2); }
+    .scroll-hint { display: none; margin: 10px 2px 0; color: var(--muted); font-size: 12px; }
 
     .toolbar {
       position: sticky;
-      top: 12px;
+      top: 92px;
       z-index: 20;
       display: flex;
       flex-wrap: wrap;
@@ -102,16 +114,16 @@
       padding: 12px;
       border: 1px solid var(--line);
       border-radius: 16px;
-      background: rgb(19 19 22 / 92%);
+      background: rgb(19 19 22 / 90%);
       box-shadow: var(--shadow);
-      backdrop-filter: blur(18px);
+      backdrop-filter: blur(24px);
     }
     .search {
       flex: 1 1 260px;
       min-width: 180px;
       padding: 11px 14px;
       border: 1px solid var(--line);
-      border-radius: 12px;
+      border-radius: 999px;
       outline: none;
       background: var(--surface);
       color: var(--text);
@@ -127,9 +139,43 @@
       cursor: pointer;
     }
     .filter:hover { background: var(--surface-2); color: var(--text); }
-    .filter.active { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .filter.active { border-color: var(--text); background: var(--text); color: var(--surface); }
 
-    .legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 0 0 24px; color: var(--muted); font-size: 12px; }
+    .toolbar-meta { display: flex; align-items: center; justify-content: flex-end; gap: 10px; width: 100%; }
+    .result-status { margin-right: auto; color: var(--muted); font-size: 12px; }
+    .clear-filter {
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .clear-filter:hover { border-color: var(--accent); color: var(--text); }
+
+    .schema-scope {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      overflow: hidden;
+      margin: 0 0 24px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--line);
+    }
+    .scope-item { padding: 13px 15px; background: var(--surface); color: var(--muted); font-size: 12px; }
+    .scope-item strong { display: block; margin-bottom: 3px; color: var(--text); font-size: 13px; }
+
+    .legend { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 0 0 24px; color: var(--muted); font-size: 12px; }
+    .legend-group { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; width: 100%; }
+    .legend-title { min-width: 78px; color: var(--text); font-weight: 700; }
+    .line-legend { display: inline-flex; align-items: center; gap: 7px; }
+    .line-swatch { position: relative; width: 38px; height: 12px; }
+    .line-swatch::before { position: absolute; top: 5px; right: 0; left: 0; height: 2px; background: #676777; content: ""; }
+    .line-swatch::after { position: absolute; top: 1px; right: 0; width: 7px; height: 7px; border-top: 2px solid #aaaab1; border-right: 2px solid #aaaab1; transform: rotate(45deg); content: ""; }
+    .line-swatch.cascade::before { height: 3px; background: var(--accent); }
+    .line-swatch.application::before { height: 0; border-top: 2px dashed var(--muted); background: transparent; }
+    .bridge-swatch { padding: 2px 7px; border: 1px dashed var(--accent-2); border-radius: 999px; color: var(--accent-2); font-size: 10px; font-weight: 800; }
     .key { display: inline-grid; place-items: center; min-width: 27px; height: 19px; padding: 0 5px; border-radius: 5px; font-size: 9px; font-weight: 900; letter-spacing: .04em; }
     .pk { background: rgb(255 74 100 / 16%); color: #ff8c9d; }
     .fk { background: rgb(170 170 177 / 14%); color: #ccccd6; }
@@ -181,8 +227,12 @@
     .table-card.hidden, .domain.hidden { display: none; }
 
     .table-head { width: 100%; padding: 14px 15px 12px; border: 0; border-bottom: 1px solid var(--line); background: var(--surface-2); text-align: left; cursor: pointer; }
+    .table-head-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .table-name { display: block; overflow: hidden; font: 700 13px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace; text-overflow: ellipsis; }
     .table-note { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+    .relation-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+    .relation-badge { padding: 2px 6px; border: 1px solid #565666; border-radius: 999px; color: #ccccd6; font-size: 9px; font-weight: 750; }
+    .relation-badge.bridge { border-color: var(--accent-2); color: var(--accent-2); }
     .fields { margin: 0; padding: 7px 0; list-style: none; }
     .field { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; min-height: 29px; padding: 5px 12px; }
     .field + .field { border-top: 1px solid rgb(41 50 69 / 48%); }
@@ -193,6 +243,11 @@
     .relation { color: #ff8c9d; text-decoration: none; }
     .relation:hover { text-decoration: underline; }
 
+    :where(a, button, input, object):focus-visible {
+      outline: 2px solid var(--accent-2);
+      outline-offset: 3px;
+    }
+
     .empty { display: none; padding: 70px 20px; color: var(--muted); text-align: center; }
     .empty.visible { display: block; }
     footer { padding: 0 0 48px; color: var(--muted); font-size: 12px; }
@@ -201,6 +256,7 @@
     body.embed .topbar,
     body.embed .hero,
     body.embed .toolbar,
+    body.embed .schema-scope,
     body.embed .legend,
     body.embed .domain-grid,
     body.embed .empty,
@@ -217,13 +273,20 @@
       .topbar { height: 64px; }
       .hero { padding-top: 36px; }
       .domain, .domain[data-domain="message"], .domain[data-domain="presence"], .domain[data-domain="content"], .domain[data-domain="playlist"], .domain[data-domain="social"], .domain[data-domain="infra"] { grid-column: 1 / -1; }
-      .toolbar { top: 6px; }
+      .toolbar { position: static; }
+      .schema-scope { grid-template-columns: 1fr; }
+      .scroll-hint { display: block; }
     }
     @media (max-width: 520px) {
       .cards { grid-template-columns: 1fr; }
       .domain { padding: 12px; }
       .filters { width: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 3px; }
       .filter { white-space: nowrap; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+      .table-card:hover { transform: none; }
     }
   </style>
 </head>
@@ -245,12 +308,13 @@
   <header class="hero shell">
     <div class="eyebrow">Database schema</div>
     <h1>데이터베이스 구조</h1>
-    <p>Flyway 마이그레이션을 기준으로 정리한 MOPL의 관계형 데이터 모델입니다. 테이블을 선택하면 연결된 관계를 확인할 수 있고, FK 필드를 누르면 참조 대상 테이블로 이동합니다.</p>
+    <p>Flyway V22를 기준으로 애플리케이션 테이블과 주요 관계를 정리합니다. 개요에서 테이블을 선택하거나 아래에서 이름·핵심 필드를 검색할 수 있습니다.</p>
     <div class="summary" aria-label="스키마 요약">
-      <span class="metric"><strong>17</strong> tables</span>
+      <span class="metric"><strong>17</strong> application tables</span>
       <span class="metric"><strong>6</strong> domains</span>
+      <span class="metric"><strong>5</strong> N:M bridges</span>
       <span class="metric"><strong>PostgreSQL</strong> schema</span>
-      <span class="metric"><strong>Flyway V20</strong> baseline</span>
+      <span class="metric"><strong>Flyway V22</strong> baseline</span>
     </div>
   </header>
 
@@ -258,103 +322,24 @@
     <section class="overview" aria-labelledby="overview-title">
       <div class="section-head">
         <h2 id="overview-title">관계 개요</h2>
-        <p>테이블을 누르면 상세 필드로 이동합니다.</p>
+        <p>테이블을 선택하면 이 페이지의 상세 카드로 이동합니다.</p>
       </div>
       <div class="overview-scroll">
-        <svg viewBox="0 0 1400 810" role="img" aria-label="MOPL 핵심 테이블 관계 개요 — users를 캔버스 중앙 허브로 두고, 6개 도메인을 각각 배경 구역으로 묶어 배치. 관계선은 참조 방향과 카디널리티(까마귀발=N, 막대=1)를 표시">
-          <defs>
-            <!-- markerUnits=userSpaceOnUse: stroke-width에 따라 마커가 커지지 않게 고정 크기.
-                 many: 갈래 끝 x=12 = refX 12 → 갈래 끝(N쪽 표시)이 노드 테두리에 정확히 닿음(파고들지도, 못 미치지도 않음).
-                       꼭짓점 (1,7)은 테두리에서 11유닛 뒤 = 경로 위 → 선이 꼭짓점을 지나 테두리까지 이어짐.
-                       관계선 <g>가 노드보다 위에 그려지므로(SVG 맨 아래 참고) 테두리에 닿는 갈래 끝이 안 가려짐.
-                 orient=auto-start-reverse: marker-start로 쓰일 때(users→follows) 방향이 뒤집히지 않도록 -->
-            <marker id="one" viewBox="0 0 12 16" refX="6" refY="8" markerWidth="12" markerHeight="16" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
-              <path d="M6 2 V14" fill="none" stroke="#9a9aa8" stroke-width="1.7"/>
-            </marker>
-            <marker id="many" viewBox="0 0 14 14" refX="12" refY="7" markerWidth="14" markerHeight="14" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
-              <path d="M1 7 L12 1 M1 7 L12 7 M1 7 L12 13" fill="none" stroke="#9a9aa8" stroke-width="1.5"/>
-            </marker>
-            <marker id="one-c" viewBox="0 0 12 16" refX="6" refY="8" markerWidth="12" markerHeight="16" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
-              <path d="M6 2 V14" fill="none" stroke="#ff6c81" stroke-width="1.8"/>
-            </marker>
-            <marker id="many-c" viewBox="0 0 14 14" refX="12" refY="7" markerWidth="14" markerHeight="14" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
-              <path d="M1 7 L12 1 M1 7 L12 7 M1 7 L12 13" fill="none" stroke="#ff6c81" stroke-width="1.6"/>
-            </marker>
-          </defs>
-
-          <g class="zone" aria-hidden="true">
-            <rect x="175" y="230" width="660" height="227" rx="22" fill="var(--social)" fill-opacity="0.05" stroke="var(--social)" stroke-opacity="0.18"/>
-            <rect x="445" y="24" width="755" height="194" rx="22" fill="var(--message)" fill-opacity="0.05" stroke="var(--message)" stroke-opacity="0.18"/>
-            <rect x="855" y="232" width="455" height="332" rx="22" fill="var(--content)" fill-opacity="0.05" stroke="var(--content)" stroke-opacity="0.18"/>
-            <rect x="130" y="636" width="755" height="98" rx="22" fill="var(--playlist)" fill-opacity="0.05" stroke="var(--playlist)" stroke-opacity="0.18"/>
-            <rect x="590" y="522" width="240" height="100" rx="22" fill="var(--presence)" fill-opacity="0.05" stroke="var(--presence)" stroke-opacity="0.18"/>
-            <rect x="1070" y="616" width="240" height="176" rx="22" fill="var(--infra)" fill-opacity="0.05" stroke="var(--infra)" stroke-opacity="0.18"/>
-          </g>
-
-          <g aria-hidden="true">
-            <text class="cluster-label" x="430" y="262" fill="#ff4a64">사용자 · 소셜</text>
-            <text class="cluster-label" x="700" y="40" fill="#ccccd6">메시징 · 알림</text>
-            <text class="cluster-label" x="900" y="350" fill="#ff687e">콘텐츠 · 리뷰</text>
-            <text class="cluster-label" x="400" y="730" fill="#aaaab1">플레이리스트</text>
-            <text class="cluster-label" x="632" y="535" fill="#f06a89">시청 세션</text>
-            <text class="cluster-label" x="1095" y="631" fill="#4fb0a5">인프라 · 독립</text>
-          </g>
-
-          <a class="node hub" href="#users"><rect x="595" y="355" width="220" height="82"/><circle class="node-dot" cx="612" cy="384" r="4" fill="#ff4a64"/><text x="625" y="389">users</text><text class="node-meta" x="612" y="409">사용자·인증 허브</text></a>
-          <a class="node" href="#follows"><rect x="195" y="368" width="185" height="58"/><circle class="node-dot" cx="212" cy="386" r="4" fill="#ff4a64"/><text x="225" y="391">follows</text><text class="node-meta" x="212" y="411">사용자 팔로우</text></a>
-          <a class="node" href="#oauth_accounts"><rect x="205" y="250" width="185" height="58"/><circle class="node-dot" cx="222" cy="268" r="4" fill="#ff4a64"/><text x="235" y="273">oauth_accounts</text><text class="node-meta" x="222" y="293">OAuth 연동 계정</text></a>
-
-          <a class="node subhub" href="#contents"><rect x="1085" y="356" width="205" height="82"/><circle class="node-dot" cx="1102" cy="385" r="4" fill="#ff687e"/><text x="1115" y="390">contents</text><text class="node-meta" x="1102" y="410">콘텐츠·집계 허브</text></a>
-          <a class="node" href="#content_tags"><rect x="1090" y="252" width="195" height="58"/><circle class="node-dot" cx="1107" cy="270" r="4" fill="#ff687e"/><text x="1120" y="275">content_tags</text><text class="node-meta" x="1107" y="295">콘텐츠 태그</text></a>
-          <a class="node" href="#reviews"><rect x="875" y="366" width="180" height="58"/><circle class="node-dot" cx="892" cy="384" r="4" fill="#ff687e"/><text x="905" y="389">reviews</text><text class="node-meta" x="892" y="409">사용자 콘텐츠 평가</text></a>
-          <a class="node" href="#content_search_retries"><rect x="1080" y="486" width="210" height="58"/><circle class="node-dot" cx="1097" cy="504" r="4" fill="#ff687e"/><text x="1110" y="509">content_search_retries</text><text class="node-meta" x="1097" y="529">검색 동기화 재시도</text></a>
-
-          <a class="node" href="#watching_session_snapshots"><rect x="610" y="542" width="200" height="60"/><circle class="node-dot" cx="627" cy="560" r="4" fill="#ce0045"/><text x="640" y="565">watching_sessions</text><text class="node-meta" x="627" y="585">활성 시청 스냅샷</text></a>
-
-          <a class="node" href="#notifications"><rect x="465" y="44" width="185" height="58"/><circle class="node-dot" cx="482" cy="62" r="4" fill="#ccccd6"/><text x="495" y="67">notifications</text><text class="node-meta" x="482" y="87">사용자 알림</text></a>
-          <a class="node" href="#conversations"><rect x="985" y="44" width="195" height="58"/><circle class="node-dot" cx="1002" cy="62" r="4" fill="#ccccd6"/><text x="1015" y="67">conversations</text><text class="node-meta" x="1002" y="87">1:1 대화</text></a>
-          <a class="node" href="#conversation_participants"><rect x="700" y="118" width="220" height="58"/><circle class="node-dot" cx="717" cy="136" r="4" fill="#ccccd6"/><text x="730" y="141">conversation_participants</text><text class="node-meta" x="717" y="161">대화 참여자</text></a>
-          <a class="node" href="#direct_messages"><rect x="985" y="140" width="195" height="58"/><circle class="node-dot" cx="1002" cy="158" r="4" fill="#ccccd6"/><text x="1015" y="163">direct_messages</text><text class="node-meta" x="1002" y="183">대화 메시지</text></a>
-
-          <a class="node" href="#playlists"><rect x="410" y="656" width="185" height="58"/><circle class="node-dot" cx="427" cy="674" r="4" fill="#aaaab1"/><text x="440" y="679">playlists</text><text class="node-meta" x="427" y="699">사용자 컬렉션</text></a>
-          <a class="node" href="#playlist_contents"><rect x="660" y="656" width="205" height="58"/><circle class="node-dot" cx="677" cy="674" r="4" fill="#aaaab1"/><text x="690" y="679">playlist_contents</text><text class="node-meta" x="677" y="699">플레이리스트 콘텐츠</text></a>
-          <a class="node" href="#playlist_subscriptions"><rect x="150" y="656" width="200" height="58"/><circle class="node-dot" cx="167" cy="674" r="4" fill="#aaaab1"/><text x="180" y="679">playlist_subscriptions</text><text class="node-meta" x="167" y="699">플레이리스트 구독</text></a>
-
-          <a class="node" href="#outbox_events"><rect x="1090" y="636" width="200" height="58"/><circle class="node-dot" cx="1107" cy="654" r="4" fill="#4fb0a5"/><text x="1120" y="659">outbox_events</text><text class="node-meta" x="1107" y="679">Kafka 발행 대기열</text></a>
-          <a class="node" href="#processed_events"><rect x="1090" y="714" width="200" height="58"/><circle class="node-dot" cx="1107" cy="732" r="4" fill="#4fb0a5"/><text x="1120" y="737">processed_events</text><text class="node-meta" x="1107" y="757">Consumer 멱등 기록</text></a>
-
-          <!-- 관계선은 노드 위에 그려야 함: 까마귀발 마커(refX=1)의 갈래가 노드 테두리 안쪽으로 들어가도
-               노드 박스에 가려지지 않고 선과 끊김 없이 이어져 보임. pointer-events=none 으로 노드 클릭 방해 안 함. -->
-          <g aria-hidden="true" pointer-events="none">
-            <!-- users 허브 (FK 8개; follows는 follower/followee 2개) -->
-            <path class="edge cascade" d="M595 375 C480 375 415 288 390 288" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
-            <path class="edge" d="M595 397 C500 397 460 398 380 398" marker-start="url(#many)" marker-end="url(#many)"/>
-            <path class="edge" d="M815 393 C838 393 852 395 875 395" marker-start="url(#one)" marker-end="url(#many)"/>
-            <path class="edge" d="M660 437 C660 500 505 600 505 656" marker-start="url(#one)" marker-end="url(#many)"/>
-            <path class="edge" d="M605 437 C605 500 320 600 320 656" marker-start="url(#one)" marker-end="url(#many)"/>
-            <path class="edge" d="M725 355 C725 300 795 200 795 176" marker-start="url(#one)" marker-end="url(#many)"/>
-            <path class="edge" d="M650 355 C650 300 558 160 558 102" marker-start="url(#one)" marker-end="url(#many)"/>
-            <path class="edge" d="M700 437 C700 466 706 505 706 542" marker-start="url(#one)" marker-end="url(#one)"/>
-            <!-- contents 보조 허브 -->
-            <path class="edge" d="M1085 395 C1072 395 1068 395 1055 395" marker-start="url(#one)" marker-end="url(#many)"/>
-            <path class="edge cascade" d="M1187 356 C1187 342 1187 326 1187 310" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
-            <path class="edge" d="M1120 438 C1120 470 763 600 763 656" marker-start="url(#one)" marker-end="url(#many)"/>
-            <path class="edge" d="M1085 432 C990 432 870 568 810 568" marker-start="url(#one)" marker-end="url(#many)"/>
-            <path class="edge app" d="M1200 438 C1200 458 1188 470 1188 486" marker-end="url(#many)"/>
-            <!-- 플레이리스트 내부 -->
-            <path class="edge cascade" d="M595 685 C620 685 638 685 660 685" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
-            <path class="edge cascade" d="M410 679 C390 679 375 679 350 679" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
-            <!-- 메시징 내부 -->
-            <path class="edge cascade" d="M985 70 C935 70 895 90 895 104 L895 118" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
-            <path class="edge cascade" d="M1082 102 C1082 116 1082 128 1082 140" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
-            <path class="edge" d="M920 150 C950 150 960 168 985 168" marker-start="url(#one)" marker-end="url(#many)"/>
-          </g>
-        </svg>
+        <object class="overview-object" data="./overview.svg" type="image/svg+xml" aria-label="MOPL 애플리케이션 테이블 관계 개요">
+          <span class="overview-fallback"><a href="./overview.svg">관계 개요 SVG 열기</a></span>
+        </object>
       </div>
+      <p class="scroll-hint">관계 지도는 좌우로 스크롤할 수 있습니다.</p>
+    </section>
+
+    <section class="schema-scope" aria-label="ERD 표시 범위">
+      <div class="scope-item"><strong>애플리케이션 테이블 17개</strong>도메인 기능과 공통 이벤트 처리에 직접 사용하는 테이블입니다.</div>
+      <div class="scope-item"><strong>핵심 필드 중심</strong>카드는 관계·제약을 이해하는 데 필요한 필드를 우선 표시합니다.</div>
+      <div class="scope-item"><strong>표시 제외 7개</strong>Spring Batch 메타데이터 6개와 초기 sample 테이블은 개요에서 제외합니다.</div>
     </section>
 
     <section class="toolbar" aria-label="ERD 탐색 도구">
-      <input id="search" class="search" type="search" placeholder="테이블 또는 필드 검색" aria-label="테이블 또는 필드 검색">
+      <input id="search" class="search" type="search" placeholder="테이블 또는 핵심 필드 검색 · Ctrl/⌘ K" aria-label="테이블 또는 핵심 필드 검색">
       <div class="filters" role="group" aria-label="도메인 필터">
         <button class="filter active" data-filter="all" type="button" aria-pressed="true">전체</button>
         <button class="filter" data-filter="social" type="button" aria-pressed="false">사용자</button>
@@ -364,14 +349,28 @@
         <button class="filter" data-filter="presence" type="button" aria-pressed="false">시청 세션</button>
         <button class="filter" data-filter="infra" type="button" aria-pressed="false">인프라</button>
       </div>
+      <div class="toolbar-meta">
+        <span id="result-status" class="result-status" role="status" aria-live="polite" aria-atomic="true">17개 테이블 표시</span>
+        <button id="clear-filter" class="clear-filter" type="button" hidden>검색·필터 초기화</button>
+      </div>
     </section>
 
-    <div class="legend" aria-label="관계 개요 범례">
-      <span><span class="key pk">PK</span> 기본 키</span>
-      <span><span class="key fk">FK</span> 외래 키 · 클릭하여 이동</span>
-      <span><span class="key fk">FK*</span> 같은 표시끼리 복합 외래 키</span>
-      <span><span class="key uk">UK</span> 단독 또는 복합 유니크 제약</span>
-      <span>테이블 제목을 다시 누르면 관계 강조가 해제됩니다.</span>
+    <div class="legend" aria-label="ERD 범례">
+      <div class="legend-group">
+        <span class="legend-title">관계 개요</span>
+        <span class="line-legend"><span class="line-swatch"></span>1:N 외래 키</span>
+        <span class="line-legend"><span class="line-swatch cascade"></span>ON DELETE CASCADE</span>
+        <span class="line-legend"><span class="line-swatch application"></span>애플리케이션 수준 참조</span>
+        <span class="line-legend"><span class="bridge-swatch">N:M</span>연결 테이블</span>
+      </div>
+      <div class="legend-group">
+        <span class="legend-title">상세 카드</span>
+        <span><span class="key pk">PK</span> 기본 키</span>
+        <span><span class="key fk">FK</span> 외래 키 · 클릭하여 이동</span>
+        <span><span class="key fk">FK*</span> 같은 표시끼리 복합 외래 키</span>
+        <span><span class="key uk">UK</span> 단독 또는 복합 유니크 제약</span>
+        <span>테이블 제목을 다시 누르면 관계 강조가 해제됩니다.</span>
+      </div>
     </div>
 
     <div id="domains" class="domain-grid">
@@ -383,16 +382,21 @@
             <ul class="fields">
               <li class="field"><span class="field-main"><span class="field-name">id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span></span></li>
               <li class="field"><span class="field-main"><span class="field-name">email</span><span class="field-type">varchar</span></span><span class="keys"><span class="key uk">UK</span></span></li>
-              <li class="field"><span class="field-main"><span class="field-name">password_hash</span><span class="field-type">varchar</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">password_hash</span><span class="field-type">varchar?</span></span></li>
               <li class="field"><span class="field-main"><span class="field-name">name</span><span class="field-type">varchar</span></span></li>
               <li class="field"><span class="field-main"><span class="field-name">profile_image_url</span><span class="field-type">varchar?</span></span></li>
               <li class="field"><span class="field-main"><span class="field-name">role</span><span class="field-type">user | admin</span></span></li>
               <li class="field"><span class="field-main"><span class="field-name">locked</span><span class="field-type">boolean</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">deleted_at</span><span class="field-type">timestamptz?</span></span></li>
             </ul>
           </article>
 
           <article class="table-card" id="follows" data-table="follows" data-relations="users">
-            <button class="table-head" type="button"><span class="table-name">follows</span><span class="table-note">방향이 있는 사용자 관계</span></button>
+            <button class="table-head" type="button">
+              <span class="table-head-top"><span class="table-name">follows</span><span class="relation-badge bridge">SELF N:M</span></span>
+              <span class="table-note">사용자 자기참조 연결 테이블</span>
+              <span class="relation-badges"><span class="relation-badge">follower: 팔로우한 사용자</span><span class="relation-badge">followee: 팔로우된 사용자</span></span>
+            </button>
             <ul class="fields">
               <li class="field"><span class="field-main"><span class="field-name">id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span></span></li>
               <li class="field"><span class="field-main"><a class="field-name relation" href="#users">follower_id</a><span class="field-type">uuid</span></span><span class="keys"><span class="key fk">FK</span><span class="key uk">UK</span></span></li>
@@ -415,11 +419,11 @@
       <section class="domain" data-domain="content" style="--domain-color: var(--content)">
         <div class="domain-head"><h2 class="domain-title"><span class="domain-dot"></span>콘텐츠·리뷰</h2><span class="domain-count">4 tables</span></div>
         <div class="cards">
-          <article class="table-card" id="contents" data-table="contents" data-relations="content_tags reviews playlist_contents watching_session_snapshots">
+          <article class="table-card" id="contents" data-table="contents" data-relations="content_tags reviews playlist_contents watching_session_snapshots content_search_retries">
             <button class="table-head" type="button"><span class="table-name">contents</span><span class="table-note">탐색과 집계의 중심</span></button>
             <ul class="fields">
               <li class="field"><span class="field-main"><span class="field-name">id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span></span></li>
-              <li class="field"><span class="field-main"><span class="field-name">type</span><span class="field-type">movie | tv | sport</span></span></li>
+              <li class="field"><span class="field-main"><span class="field-name">type</span><span class="field-type">MOVIE | TV_SERIES | SPORT</span></span></li>
               <li class="field"><span class="field-main"><span class="field-name">source</span><span class="field-type">varchar?</span></span><span class="keys"><span class="key uk">UK</span></span></li>
               <li class="field"><span class="field-main"><span class="field-name">external_id</span><span class="field-type">varchar?</span></span><span class="keys"><span class="key uk">UK</span></span></li>
               <li class="field"><span class="field-main"><span class="field-name">title</span><span class="field-type">varchar</span></span></li>
@@ -440,7 +444,10 @@
           </article>
 
           <article class="table-card" id="reviews" data-table="reviews" data-relations="users contents">
-            <button class="table-head" type="button"><span class="table-name">reviews</span><span class="table-note">사용자당 콘텐츠 1건</span></button>
+            <button class="table-head" type="button">
+              <span class="table-head-top"><span class="table-name">reviews</span><span class="relation-badge bridge">N:M</span></span>
+              <span class="table-note">users ↔ contents · 사용자당 콘텐츠 1건</span>
+            </button>
             <ul class="fields">
               <li class="field"><span class="field-main"><span class="field-name">id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span></span></li>
               <li class="field"><span class="field-main"><a class="field-name relation" href="#users">author_id</a><span class="field-type">uuid</span></span><span class="keys"><span class="key fk">FK</span><span class="key uk">UK</span></span></li>
@@ -450,7 +457,7 @@
             </ul>
           </article>
 
-          <article class="table-card" id="content_search_retries" data-table="content_search_retries">
+          <article class="table-card" id="content_search_retries" data-table="content_search_retries" data-relations="contents">
             <button class="table-head" type="button"><span class="table-name">content_search_retries</span><span class="table-note">검색 동기화 재시도 대기열 · content_id는 애플리케이션 레벨 참조(DB FK 아님) · claim 구조는 outbox_events와 동일 패턴</span></button>
             <ul class="fields">
               <li class="field"><span class="field-main"><span class="field-name">id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span></span></li>
@@ -477,7 +484,10 @@
           </article>
 
           <article class="table-card" id="playlist_contents" data-table="playlist_contents" data-relations="playlists contents">
-            <button class="table-head" type="button"><span class="table-name">playlist_contents</span><span class="table-note">콘텐츠 중복 방지</span></button>
+            <button class="table-head" type="button">
+              <span class="table-head-top"><span class="table-name">playlist_contents</span><span class="relation-badge bridge">N:M</span></span>
+              <span class="table-note">playlists ↔ contents · 콘텐츠 중복 방지</span>
+            </button>
             <ul class="fields">
               <li class="field"><span class="field-main"><span class="field-name">id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span></span></li>
               <li class="field"><span class="field-main"><a class="field-name relation" href="#playlists">playlist_id</a><span class="field-type">uuid</span></span><span class="keys"><span class="key fk">FK</span><span class="key uk">UK</span></span></li>
@@ -486,7 +496,10 @@
           </article>
 
           <article class="table-card" id="playlist_subscriptions" data-table="playlist_subscriptions" data-relations="playlists users">
-            <button class="table-head" type="button"><span class="table-name">playlist_subscriptions</span><span class="table-note">구독 관계와 커서 인덱스</span></button>
+            <button class="table-head" type="button">
+              <span class="table-head-top"><span class="table-name">playlist_subscriptions</span><span class="relation-badge bridge">N:M</span></span>
+              <span class="table-note">users ↔ playlists · 구독 관계와 커서 인덱스</span>
+            </button>
             <ul class="fields">
               <li class="field"><span class="field-main"><span class="field-name">id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span></span></li>
               <li class="field"><span class="field-main"><a class="field-name relation" href="#playlists">playlist_id</a><span class="field-type">uuid</span></span><span class="keys"><span class="key fk">FK</span><span class="key uk">UK</span></span></li>
@@ -510,7 +523,10 @@
           </article>
 
           <article class="table-card" id="conversation_participants" data-table="conversation_participants" data-relations="conversations users direct_messages">
-            <button class="table-head" type="button"><span class="table-name">conversation_participants</span><span class="table-note">FIRST · SECOND 슬롯</span></button>
+            <button class="table-head" type="button">
+              <span class="table-head-top"><span class="table-name">conversation_participants</span><span class="relation-badge bridge">N:M · 최대 2명</span></span>
+              <span class="table-note">users ↔ conversations · FIRST / SECOND 슬롯</span>
+            </button>
             <ul class="fields">
               <li class="field"><span class="field-main"><span class="field-name">id</span><span class="field-type">uuid</span></span><span class="keys"><span class="key pk">PK</span></span></li>
               <li class="field"><span class="field-main"><a class="field-name relation" href="#conversations">conversation_id</a><span class="field-type">uuid</span></span><span class="keys"><span class="key fk">FK</span><span class="key uk">UK</span></span></li>
@@ -605,30 +621,25 @@
     const filters = [...document.querySelectorAll('.filter')];
     const search = document.querySelector('#search');
     const empty = document.querySelector('#empty');
+    const resultStatus = document.querySelector('#result-status');
+    const clearFilter = document.querySelector('#clear-filter');
     let activeDomain = 'all';
     let selected = null;
 
-    document.querySelectorAll('.overview .node').forEach(node => {
-      node.addEventListener('click', () => {
-        const id = node.getAttribute('href')?.slice(1);
-        const target = id && document.getElementById(id);
-        if (!target) return;
-
-        target.classList.remove('flash');
-        void target.offsetWidth; // 같은 노드를 연달아 클릭해도 애니메이션이 다시 시작되게 강제 reflow
-        target.classList.add('flash');
-        target.addEventListener('animationend', () => target.classList.remove('flash'), { once: true });
-      });
-    });
-
     function clearRelations() {
       selected = null;
-      cards.forEach(card => card.classList.remove('selected', 'related', 'dimmed'));
+      cards.forEach(card => {
+        card.classList.remove('selected', 'related', 'dimmed');
+        card.querySelector('.table-head').setAttribute('aria-pressed', 'false');
+      });
     }
 
-    function selectTable(card) {
-      if (selected === card.dataset.table) {
+    function selectTable(card, toggle = true) {
+      if (toggle && selected === card.dataset.table) {
         clearRelations();
+        const url = new URL(window.location.href);
+        url.hash = '';
+        history.replaceState(null, '', url);
         return;
       }
 
@@ -639,6 +650,15 @@
         candidate.classList.toggle('selected', name === selected);
         candidate.classList.toggle('related', related.has(name));
         candidate.classList.toggle('dimmed', name !== selected && !related.has(name));
+        candidate.querySelector('.table-head').setAttribute('aria-pressed', String(name === selected));
+      });
+    }
+
+    function updateFilterButtons() {
+      filters.forEach(item => {
+        const isActive = item.dataset.filter === activeDomain;
+        item.classList.toggle('active', isActive);
+        item.setAttribute('aria-pressed', String(isActive));
       });
     }
 
@@ -661,31 +681,93 @@
       });
 
       empty.classList.toggle('visible', visibleCount === 0);
+      resultStatus.textContent = `${visibleCount}개 테이블 표시`;
+      clearFilter.hidden = search.value.trim() === '' && activeDomain === 'all';
     }
 
-    cards.forEach(card => card.querySelector('.table-head').addEventListener('click', () => selectTable(card)));
+    function resetFilters() {
+      search.value = '';
+      activeDomain = 'all';
+      updateFilterButtons();
+      applyFilters();
+    }
+
+    function removeHash() {
+      if (!window.location.hash) return;
+      const url = new URL(window.location.href);
+      url.hash = '';
+      history.replaceState(null, '', url);
+    }
+
+    function flashCard(card) {
+      card.classList.remove('flash');
+      void card.offsetWidth;
+      card.classList.add('flash');
+      card.addEventListener('animationend', () => card.classList.remove('flash'), { once: true });
+    }
+
+    function navigateToHash() {
+      const id = decodeURIComponent(window.location.hash.slice(1));
+      const card = id && document.getElementById(id);
+      if (!card?.classList.contains('table-card')) return;
+
+      resetFilters();
+      selectTable(card, false);
+      requestAnimationFrame(() => {
+        card.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+        card.querySelector('.table-head').focus({ preventScroll: true });
+        flashCard(card);
+      });
+    }
+
+    cards.forEach(card => {
+      const button = card.querySelector('.table-head');
+      button.setAttribute('aria-pressed', 'false');
+      button.addEventListener('click', () => {
+        selectTable(card);
+        if (selected === card.dataset.table) history.replaceState(null, '', `#${card.id}`);
+      });
+    });
     filters.forEach(filter => filter.addEventListener('click', () => {
       activeDomain = filter.dataset.filter;
-      filters.forEach(item => {
-        const isActive = item === filter;
-        item.classList.toggle('active', isActive);
-        item.setAttribute('aria-pressed', String(isActive));
-      });
+      updateFilterButtons();
       applyFilters();
+      removeHash();
     }));
-    search.addEventListener('input', applyFilters);
+    search.addEventListener('input', () => {
+      applyFilters();
+      removeHash();
+    });
+    clearFilter.addEventListener('click', () => {
+      resetFilters();
+      removeHash();
+      search.focus();
+    });
+    document.querySelectorAll('.relation').forEach(link => link.addEventListener('click', event => {
+      if (window.location.hash === link.getAttribute('href')) {
+        event.preventDefault();
+        navigateToHash();
+      }
+    }));
+    window.addEventListener('hashchange', navigateToHash);
     document.addEventListener('keydown', event => {
-      if (event.key === 'Escape') {
-        search.value = '';
-        activeDomain = 'all';
-        filters.forEach(item => {
-          const isActive = item.dataset.filter === 'all';
-          item.classList.toggle('active', isActive);
-          item.setAttribute('aria-pressed', String(isActive));
-        });
-        applyFilters();
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        search.focus();
+        search.select();
+        return;
+      }
+      if (event.key === 'Escape' && (search.value || activeDomain !== 'all' || selected)) {
+        resetFilters();
+        const url = new URL(window.location.href);
+        url.hash = '';
+        history.replaceState(null, '', url);
+        search.focus();
       }
     });
+
+    applyFilters();
+    if (window.location.hash) navigateToHash();
   </script>
 </body>
 </html>
