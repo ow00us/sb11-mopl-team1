@@ -74,18 +74,22 @@ compose() { docker compose --file "${COMPOSE_FILE}" --env-file "${ENV_FILE}" "$@
 refresh_ecr_login() {
     local image=$1 registry region
 
+    [[ -n ${image} ]] || return 0
     registry="${image%%/*}"
-    case ${registry} in
-        *.dkr.ecr.*.amazonaws.com|*.dkr.ecr.*.amazonaws.com.cn)
-            region="${registry#*.dkr.ecr.}"
-            region="${region%%.*}"
-            if ! aws ecr get-login-password --region "${region}" \
-                | docker login --username AWS --password-stdin "${registry}" >/dev/null; then
-                return 1
-            fi
-            note "ECR 로그인 갱신 ${registry}"
-            ;;
-    esac
+    if [[ ! ${registry} =~ ^[0-9]{12}\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com(\.cn)?$ ]]; then
+        return 0
+    fi
+    region="${BASH_REMATCH[1]}"
+
+    if ! command -v aws >/dev/null 2>&1; then
+        note "ECR 인증에 필요한 aws CLI가 없습니다."
+        return 1
+    fi
+    if ! aws ecr get-login-password --region "${region}" \
+        | docker login --username AWS --password-stdin "${registry}" >/dev/null; then
+        return 1
+    fi
+    note "ECR 로그인 갱신 ${registry}"
 }
 
 # ── 되돌릴 지점 기록 ────────────────────────────────────────────────────────
@@ -124,6 +128,17 @@ restore_env() {
 
 # ── 새 이미지 준비 ─────────────────────────────────────────────────────────
 log "이미지 준비"
+TARGET_FRONTEND_IMAGE="${FRONTEND_IMAGE:-${PREVIOUS_FRONTEND_IMAGE}}"
+if ! refresh_ecr_login "${BACKEND_IMAGE}"; then
+    fail "백엔드 이미지 ECR 로그인 갱신에 실패했습니다. 아무것도 교체하지 않았습니다."
+fi
+
+if [[ -n ${TARGET_FRONTEND_IMAGE} ]] \
+    && [[ ${TARGET_FRONTEND_IMAGE%%/*} != "${BACKEND_IMAGE%%/*}" ]] \
+    && ! refresh_ecr_login "${TARGET_FRONTEND_IMAGE}"; then
+    fail "프론트엔드 이미지 ECR 로그인 갱신에 실패했습니다. 아무것도 교체하지 않았습니다."
+fi
+
 set_env_value BACKEND_IMAGE "${BACKEND_IMAGE}"
 if [[ -n ${FRONTEND_IMAGE} ]]; then
     set_env_value FRONTEND_IMAGE "${FRONTEND_IMAGE}"
@@ -136,19 +151,6 @@ if ! compose config --quiet; then
     fail "docker compose config 가 실패했습니다. 아무것도 교체하지 않았습니다."
 fi
 note "compose config 통과"
-
-if ! refresh_ecr_login "${BACKEND_IMAGE}"; then
-    restore_env
-    fail "백엔드 이미지 ECR 로그인 갱신에 실패했습니다. 아무것도 교체하지 않았습니다."
-fi
-
-TARGET_FRONTEND_IMAGE="${FRONTEND_IMAGE:-${PREVIOUS_FRONTEND_IMAGE}}"
-if [[ -n ${TARGET_FRONTEND_IMAGE} ]] \
-    && [[ ${TARGET_FRONTEND_IMAGE%%/*} != "${BACKEND_IMAGE%%/*}" ]] \
-    && ! refresh_ecr_login "${TARGET_FRONTEND_IMAGE}"; then
-    restore_env
-    fail "프론트엔드 이미지 ECR 로그인 갱신에 실패했습니다. 아무것도 교체하지 않았습니다."
-fi
 
 if ! compose pull --quiet backend-a backend-b gateway; then
     restore_env

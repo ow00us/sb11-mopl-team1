@@ -56,6 +56,7 @@ EOF
 if [[ "$1" == "login" ]]; then
   cat >/dev/null
   echo "docker $*" >> "$MOCK_LOG"
+  [[ $mode == login_fails ]] && exit 1
   exit 0
 fi
 
@@ -190,7 +191,11 @@ rm -rf "${W}"
 # ── 5. 교체 전 차단 ────────────────────────────────────────────────────────
 head_ "ECR 이미지: pull 전에 단기 로그인 토큰을 갱신한다"
 W="$(new_workspace)"; make_docker always_up "${W}"; make_aws succeeds "${W}"
-ECR_IMAGE="123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/mopl/backend@sha256:NEW"
+ECR_REGISTRY="123456789012.dkr.ecr.ap-northeast-2.amazonaws.com"
+ECR_IMAGE="${ECR_REGISTRY}/mopl/backend@sha256:NEW"
+sed "s|^FRONTEND_IMAGE=.*|FRONTEND_IMAGE=${ECR_REGISTRY}/mopl/frontend@sha256:OLDFE|" \
+    "${W}/prod.env" > "${W}/prod.updated"
+mv "${W}/prod.updated" "${W}/prod.env"
 OUT="$(run_deploy "${W}" --backend-image "${ECR_IMAGE}" --commit abc1234)"
 check "종료 코드 0" 0 $?
 contains "리전으로 토큰 발급" "aws ecr get-login-password --region ap-northeast-2" \
@@ -198,10 +203,22 @@ contains "리전으로 토큰 발급" "aws ecr get-login-password --region ap-no
 contains "대상 registry 로그인" \
     "docker login --username AWS --password-stdin 123456789012.dkr.ecr.ap-northeast-2.amazonaws.com" \
     "$(cat "${W}/calls.log")"
+check "같은 registry 로그인 한 번" 1 "$(grep -c '^docker login' "${W}/calls.log")"
+check "토큰을 로그에 남기지 않음" 0 "$(grep -c 'temporary-ecr-token' "${W}/calls.log")"
 rm -rf "${W}"
 
 head_ "ECR 로그인 실패: env 를 복원하고 컨테이너를 교체하지 않는다"
 W="$(new_workspace)"; make_docker always_up "${W}"; make_aws fails "${W}"
+OUT="$(run_deploy "${W}" --backend-image "${ECR_IMAGE}" --commit abc1234)"
+check "종료 코드 1" 1 $?
+check "env 그대로" "reg/be@sha256:OLD" "$(sed -n 's/^BACKEND_IMAGE=//p' "${W}/prod.env")"
+contains "실패 이유 안내" "ECR 로그인 갱신에 실패" "${OUT}"
+check "이미지 pull 전 차단" 0 "$(grep -c 'pull --quiet' "${W}/calls.log")"
+check "컨테이너를 건드리지 않음" 0 "$(grep -c 'no-deps' "${W}/calls.log")"
+rm -rf "${W}"
+
+head_ "Docker 로그인 실패: 이미지 pull 전에 중단한다"
+W="$(new_workspace)"; make_docker login_fails "${W}"; make_aws succeeds "${W}"
 OUT="$(run_deploy "${W}" --backend-image "${ECR_IMAGE}" --commit abc1234)"
 check "종료 코드 1" 1 $?
 check "env 그대로" "reg/be@sha256:OLD" "$(sed -n 's/^BACKEND_IMAGE=//p' "${W}/prod.env")"
