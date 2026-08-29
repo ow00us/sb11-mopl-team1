@@ -53,6 +53,12 @@ make_docker() {
 mode=${mode}
 EOF
     cat >> "${dir}/bin/docker" <<'EOF'
+if [[ "$1" == "login" ]]; then
+  cat >/dev/null
+  echo "docker $*" >> "$MOCK_LOG"
+  exit 0
+fi
+
 [[ "$1" == "compose" ]] || exit 0
 shift
 args=("$@")
@@ -83,6 +89,22 @@ echo "${args[*]}" >> "$MOCK_LOG"
 exit 0
 EOF
     chmod +x "${dir}/bin/docker"
+}
+
+# ECR 인증 성공·실패를 독립적으로 재현합니다. 토큰 값은 로그에 남기지 않고, 호출한
+# 리전만 기록합니다.
+make_aws() {
+    local mode=$1 dir=$2
+    cat > "${dir}/bin/aws" <<EOF
+#!/usr/bin/env bash
+mode=${mode}
+EOF
+    cat >> "${dir}/bin/aws" <<'EOF'
+echo "aws $*" >> "$MOCK_LOG"
+[[ $mode == fails ]] && exit 1
+printf 'temporary-ecr-token'
+EOF
+    chmod +x "${dir}/bin/aws"
 }
 
 new_workspace() {
@@ -166,6 +188,28 @@ contains "스키마는 되돌리지 않았음을 알림" "마이그레이션은 
 rm -rf "${W}"
 
 # ── 5. 교체 전 차단 ────────────────────────────────────────────────────────
+head_ "ECR 이미지: pull 전에 단기 로그인 토큰을 갱신한다"
+W="$(new_workspace)"; make_docker always_up "${W}"; make_aws succeeds "${W}"
+ECR_IMAGE="123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/mopl/backend@sha256:NEW"
+OUT="$(run_deploy "${W}" --backend-image "${ECR_IMAGE}" --commit abc1234)"
+check "종료 코드 0" 0 $?
+contains "리전으로 토큰 발급" "aws ecr get-login-password --region ap-northeast-2" \
+    "$(cat "${W}/calls.log")"
+contains "대상 registry 로그인" \
+    "docker login --username AWS --password-stdin 123456789012.dkr.ecr.ap-northeast-2.amazonaws.com" \
+    "$(cat "${W}/calls.log")"
+rm -rf "${W}"
+
+head_ "ECR 로그인 실패: env 를 복원하고 컨테이너를 교체하지 않는다"
+W="$(new_workspace)"; make_docker always_up "${W}"; make_aws fails "${W}"
+OUT="$(run_deploy "${W}" --backend-image "${ECR_IMAGE}" --commit abc1234)"
+check "종료 코드 1" 1 $?
+check "env 그대로" "reg/be@sha256:OLD" "$(sed -n 's/^BACKEND_IMAGE=//p' "${W}/prod.env")"
+contains "실패 이유 안내" "ECR 로그인 갱신에 실패" "${OUT}"
+check "이미지 pull 전 차단" 0 "$(grep -c 'pull --quiet' "${W}/calls.log")"
+check "컨테이너를 건드리지 않음" 0 "$(grep -c 'no-deps' "${W}/calls.log")"
+rm -rf "${W}"
+
 head_ "설정이 깨지면 아무것도 교체하지 않는다"
 W="$(new_workspace)"; make_docker config_fails "${W}"
 OUT="$(run_deploy "${W}" --backend-image reg/be@sha256:NEW)"
