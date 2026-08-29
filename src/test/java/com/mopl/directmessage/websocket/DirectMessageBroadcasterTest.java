@@ -105,6 +105,7 @@ class DirectMessageBroadcasterTest {
             UUID.fromString(
                 "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
             ),
+            1L,
             Instant.parse(
                 "2026-08-27T01:00:00Z"
             )

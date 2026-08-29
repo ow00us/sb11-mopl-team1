@@ -53,15 +53,18 @@ public interface DirectMessageRepository
         clearAutomatically = true
     )
     @Query("""
-    UPDATE DirectMessage dm
-    SET dm.readAt = :readAt
-    WHERE dm.id = :directMessageId
-      AND dm.conversationId = :conversationId
-      AND dm.readAt IS NULL
+    UPDATE DirectMessage message
+    SET message.readAt = :readAt,
+        message.updatedAt = :readAt
+    WHERE message.conversationId = :conversationId
+      AND message.senderId <> :readerId
+      AND message.messageSequence <= :lastReadMessageSequence
+      AND message.readAt IS NULL
     """)
-    int markAsReadIfUnread(
-        @Param("directMessageId") UUID directMessageId,
+    int markAsReadThrough(
         @Param("conversationId") UUID conversationId,
+        @Param("readerId") UUID readerId,
+        @Param("lastReadMessageSequence") long lastReadMessageSequence,
         @Param("readAt") Instant readAt
     );
 

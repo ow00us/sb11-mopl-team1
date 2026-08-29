@@ -120,6 +120,11 @@ class SecurityPolicyProbeController {
     void searchUsers() {
     }
 
+    @GetMapping("/api/playlists/popular")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void findPopularPlaylists() {
+    }
+
     @GetMapping("/api/security-policy/protected")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void protectedApi() {

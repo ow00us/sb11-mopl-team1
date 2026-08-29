@@ -219,6 +219,7 @@ class DirectMessageRelayHandlerTest {
             UUID.fromString(
                 "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
             ),
+            1L,
             Instant.parse(
                 "2026-08-27T01:00:00Z"
             )
@@ -255,7 +256,11 @@ class DirectMessageRelayHandlerTest {
                 "수신자",
                 null
             ),
-            "실시간 메시지"
+            "실시간 메시지",
+            null,
+            UUID.fromString(
+                "dddddddd-dddd-dddd-dddd-dddddddddddd"
+            )
         );
     }
 }

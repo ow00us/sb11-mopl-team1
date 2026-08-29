@@ -9,10 +9,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.mopl.global.common.CursorResponse;
+import com.mopl.notification.dto.NotificationCursorResponse;
 import com.mopl.notification.dto.NotificationDto;
-import com.mopl.notification.entity.NotificationType;
 import com.mopl.notification.entity.NotificationLevel;
+import com.mopl.notification.entity.NotificationType;
 import com.mopl.notification.service.NotificationService;
 import java.time.Instant;
 import java.util.List;
@@ -51,9 +51,12 @@ class NotificationControllerTest {
     NotificationService notificationService;
 
     @Test
-    @DisplayName("읽지 않은 알림 목록 조회 성공 시 200을 반환")
+    @DisplayName("읽은 알림을 포함한 알림 목록 조회 성공 시 200을 반환")
     void getNotifications_success() throws Exception {
         // given
+        Instant readAt =
+            Instant.parse("2026-07-28T04:00:00Z");
+
         NotificationDto notification = new NotificationDto(
             NOTIFICATION_ID,
             CREATED_AT,
@@ -62,22 +65,24 @@ class NotificationControllerTest {
             "알림 내용",
             NotificationLevel.INFO,
             NotificationType.DIRECT_MESSAGE,
-            RESOURCE_ID
+            RESOURCE_ID,
+            readAt
         );
 
-        CursorResponse<NotificationDto> response =
-            CursorResponse.of(
+        NotificationCursorResponse response =
+            NotificationCursorResponse.of(
                 List.of(notification),
                 null,
                 null,
                 false,
+                2L,
                 1L,
                 "createdAt",
                 "DESCENDING"
             );
 
         when(
-            notificationService.getUnreadNotifications(
+            notificationService.getNotifications(
                 RECEIVER_ID,
                 null,
                 null,
@@ -128,6 +133,10 @@ class NotificationControllerTest {
             )
             .andExpect(
                 jsonPath("$.totalCount")
+                    .value(2)
+            )
+            .andExpect(
+                jsonPath("$.unreadCount")
                     .value(1)
             )
             .andExpect(
@@ -145,10 +154,14 @@ class NotificationControllerTest {
             .andExpect(
                 jsonPath("$.data[0].resourceId")
                     .value(RESOURCE_ID.toString())
+            )
+            .andExpect(
+                jsonPath("$.data[0].readAt")
+                    .value(readAt.toString())
             );
 
         verify(notificationService)
-            .getUnreadNotifications(
+            .getNotifications(
                 RECEIVER_ID,
                 null,
                 null,
