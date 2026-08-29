@@ -562,7 +562,7 @@ curl --fail http://localhost:8080/actuator/health
 
 ### 자격 증명
 
-레지스트리 비밀번호를 저장소에 두지 않습니다. GitHub Actions가 OIDC로 IAM 역할을 맡아 ECR에 push하고, 배포 서버는 EC2 인스턴스 역할로 pull합니다. 양쪽 모두 장기 자격 증명이 없습니다.
+레지스트리 비밀번호를 저장소에 두지 않습니다. GitHub Actions가 OIDC로 IAM 역할을 맡아 ECR에 push하고, 배포 서버는 EC2 인스턴스 역할로 매 배포 직전에 ECR 단기 로그인 토큰을 갱신한 뒤 pull합니다. 양쪽 모두 장기 자격 증명이 없습니다.
 
 필요한 저장소 변수는 다음과 같습니다. Secret이 아니라 변수로 둡니다. 셋 다 식별자이고 노출되어도 그 자체로 권한이 생기지 않습니다.
 
