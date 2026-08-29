@@ -34,6 +34,8 @@ fail() { printf '\n\033[31m!! %s\033[0m\n' "$*" >&2; exit 1; }
 
 [[ ${EUID} -eq 0 ]] || fail "root 로 실행해야 합니다. sudo 를 붙이세요."
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # SSH 규칙을 먼저 확인합니다. 기본 정책이 deny 인 방화벽을 SSH 허용 없이 켜면 지금 붙어
 # 있는 접속까지 끊기고, 다시 들어갈 방법이 콘솔밖에 남지 않습니다. 디렉터리를 만든 뒤에
 # 알게 되면 이미 늦습니다.
@@ -43,6 +45,11 @@ if [[ ${REQUIRE_SSH} == "true" ]] \
     fail "SSH_ALLOWED_CIDR 이 필요합니다. 없이 방화벽을 켜면 SSH 접속을 잃습니다.
    예: sudo SSH_ALLOWED_CIDR=\$(curl -s https://checkip.amazonaws.com)/32 bash \$0"
 fi
+
+# 배포 때마다 ECR 단기 토큰을 갱신합니다. 새 서버에도 같은 전제 조건이 생기도록,
+# CD가 self-heal에 쓰는 스크립트를 bootstrap에서도 그대로 호출합니다.
+log "AWS CLI v2"
+bash "${SCRIPT_DIR}/ensure-aws-cli.sh"
 
 # ── 배포 전용 사용자 ────────────────────────────────────────────────────────
 # 애플리케이션을 root 로 돌리지 않기 위해서입니다. 컨테이너가 뚫렸을 때 호스트에서 할 수

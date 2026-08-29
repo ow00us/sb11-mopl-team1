@@ -6,9 +6,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.mopl.global.exception.ErrorCode;
+import java.io.IOException;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -148,9 +150,71 @@ class S3ImageObjectStorageTest {
     void upload_rejectsEmptyFile() {
         assertThatThrownBy(() ->
             storage.upload(image("photo.png", "image/png", 0), "profile-images"))
-            .isInstanceOf(ImageUploadException.class);
+            .isInstanceOf(ImageUploadException.class)
+            .hasFieldOrPropertyWithValue("errorCode", ErrorCode.IMAGE_UPLOAD_REJECTED);
 
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    }
+
+    @Test
+    @DisplayName("null 파일은 외부 저장소를 호출하기 전에 거부한다")
+    void upload_rejectsNullFile() {
+        assertThatThrownBy(() -> storage.upload(null, "profile-images"))
+            .isInstanceOf(ImageUploadException.class)
+            .hasFieldOrPropertyWithValue("errorCode", ErrorCode.IMAGE_UPLOAD_REJECTED);
+
+        verifyNoInteractions(s3Client);
+    }
+
+    @Test
+    @DisplayName("Content-Type이 없으면 외부 저장소를 호출하지 않는다")
+    void upload_rejectsMissingContentType() {
+        assertThatThrownBy(() ->
+            storage.upload(image("photo.png", null, 10), "profile-images"))
+            .isInstanceOf(ImageUploadException.class)
+            .hasFieldOrPropertyWithValue("errorCode", ErrorCode.IMAGE_UPLOAD_REJECTED);
+
+        verifyNoInteractions(s3Client);
+    }
+
+    @Test
+    @DisplayName("크기가 상한과 정확히 같으면 업로드를 허용한다")
+    void upload_acceptsFileAtSizeLimit() {
+        String url = storage.upload(
+            image("photo.png", "image/png", (int) PROPERTIES.maxFileSize()), "profile-images");
+
+        assertThat(url).startsWith(PROPERTIES.publicBaseUrl() + "/profile-images/");
+        assertThat(capturedRequest().contentLength()).isEqualTo(PROPERTIES.maxFileSize());
+    }
+
+    @Test
+    @DisplayName("허용 목록에 있어도 확장자 매핑이 없는 MIME이면 업로드하지 않는다")
+    void upload_rejectsAllowedMimeWithoutKeyMapping() {
+        ImageStorageProperties unmapped = new ImageStorageProperties(
+            true, "mopl-images", "ap-northeast-2", PROPERTIES.publicBaseUrl(),
+            "profile-images", "thumbnails", PROPERTIES.maxFileSize(), Set.of("image/svg+xml"));
+
+        assertThatThrownBy(() -> new S3ImageObjectStorage(s3Client, unmapped)
+            .upload(image("photo.svg", "image/svg+xml", 10), "profile-images"))
+            .isInstanceOf(ImageUploadException.class)
+            .hasFieldOrPropertyWithValue("errorCode", ErrorCode.IMAGE_UPLOAD_REJECTED);
+
+        verifyNoInteractions(s3Client);
+    }
+
+    @Test
+    @DisplayName("파일 스트림을 읽지 못하면 저장 실패로 변환하고 S3를 호출하지 않는다")
+    void upload_convertsInputStreamFailure() throws IOException {
+        MultipartFile file = mock(MultipartFile.class);
+        when(file.getSize()).thenReturn(10L);
+        when(file.getContentType()).thenReturn("image/png");
+        when(file.getInputStream()).thenThrow(new IOException("test stream unavailable"));
+
+        assertThatThrownBy(() -> storage.upload(file, "profile-images"))
+            .isInstanceOf(ImageUploadException.class)
+            .hasFieldOrPropertyWithValue("errorCode", ErrorCode.IMAGE_UPLOAD_FAILED);
+
+        verifyNoInteractions(s3Client);
     }
 
     /**

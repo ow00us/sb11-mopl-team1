@@ -1,5 +1,6 @@
 package com.mopl.global.config;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -19,6 +20,11 @@ import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.TopicPartitionInfo;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.kafka.KafkaException;
 import org.springframework.kafka.core.KafkaAdmin;
 
@@ -42,9 +48,13 @@ class KafkaTopicVerifierTest {
     }
 
     private TopicDescription description(String name) {
+        return description(name, EXPECTED_PARTITIONS);
+    }
+
+    private TopicDescription description(String name, int partitionCount) {
         Node node = new Node(1, "broker", 9092);
         List<TopicPartitionInfo> partitions = new ArrayList<>();
-        for (int partition = 0; partition < EXPECTED_PARTITIONS; partition++) {
+        for (int partition = 0; partition < partitionCount; partition++) {
             partitions.add(new TopicPartitionInfo(partition, node, List.of(node), List.of(node)));
         }
         return new TopicDescription(name, false, partitions);
@@ -60,6 +70,27 @@ class KafkaTopicVerifierTest {
 
         assertThatCode(() -> new KafkaTopicVerifier(kafkaAdmin).afterPropertiesSet())
             .doesNotThrowAnyException();
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {1, 6})
+    @ExtendWith(OutputCaptureExtension.class)
+    @DisplayName("모든 토픽이 있으면 파티션 수 차이는 경고만 남기고 기동을 허용한다")
+    void partitionMismatchWarnsWithoutBlockingStartup(int partitionCount, CapturedOutput output) {
+        KafkaAdmin kafkaAdmin = mock(KafkaAdmin.class);
+        Map<String, TopicDescription> all = new LinkedHashMap<>();
+        requiredTopics().forEach(topic -> all.put(topic, description(topic)));
+        all.put(MoplTopics.FOLLOW_EVENTS, description(MoplTopics.FOLLOW_EVENTS, partitionCount));
+        when(kafkaAdmin.describeTopics(any(String[].class))).thenReturn(all);
+
+        assertThatCode(() -> new KafkaTopicVerifier(kafkaAdmin).afterPropertiesSet())
+            .doesNotThrowAnyException();
+
+        assertThat(output.getOut())
+            .contains("Kafka 토픽 파티션 수가 기대와 다릅니다")
+            .contains("topic=" + MoplTopics.FOLLOW_EVENTS)
+            .contains("기대=3, 실제=" + partitionCount);
+        verify(kafkaAdmin, times(1)).describeTopics(any(String[].class));
     }
 
     /**
