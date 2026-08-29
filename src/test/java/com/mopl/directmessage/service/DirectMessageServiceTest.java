@@ -868,6 +868,11 @@ class DirectMessageServiceTest {
         Instant createdAt =
             Instant.parse("2026-08-04T01:00:00Z");
 
+        UUID clientMessageId =
+            UUID.fromString(
+                "cccccccc-cccc-cccc-cccc-cccccccccccc"
+            );
+
         when(
             directMessageRepository.save(
                 any(DirectMessage.class)
@@ -905,6 +910,7 @@ class DirectMessageServiceTest {
             directMessageService.create(
                 USER_ID_1,
                 CONVERSATION_ID,
+                clientMessageId,
                 "반가워요!"
             );
 
@@ -949,6 +955,9 @@ class DirectMessageServiceTest {
 
         assertThat(result.messageSequence())
             .isEqualTo(1L);
+
+        assertThat(result.clientMessageId())
+            .isEqualTo(clientMessageId);
 
         verify(outboxEventFactory)
             .create(

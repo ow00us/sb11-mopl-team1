@@ -192,6 +192,20 @@ public class DirectMessageService {
         Map<UUID, UUID> receiverIdBySenderId,
         Map<UUID, UserSummary> userSummaries
     ) {
+        return toDto(
+            message,
+            receiverIdBySenderId,
+            userSummaries,
+            null
+        );
+    }
+
+    private DirectMessageDto toDto(
+        DirectMessage message,
+        Map<UUID, UUID> receiverIdBySenderId,
+        Map<UUID, UserSummary> userSummaries,
+        UUID clientMessageId
+    ) {
         UserSummary sender =
             userSummaries
                 .get(message.getSenderId());
@@ -220,7 +234,8 @@ public class DirectMessageService {
         return DirectMessageDto.from(
             message,
             sender,
-            receiver
+            receiver,
+            clientMessageId
         );
     }
 
@@ -354,6 +369,21 @@ public class DirectMessageService {
         UUID conversationId,
         String content
     ) {
+        return create(
+            senderId,
+            conversationId,
+            null,
+            content
+        );
+    }
+
+    @Transactional
+    public DirectMessageDto create(
+        UUID senderId,
+        UUID conversationId,
+        UUID clientMessageId,
+        String content
+    ) {
         validateContent(content);
 
         List<ConversationParticipant> participants =
@@ -394,7 +424,8 @@ public class DirectMessageService {
             toDto(
                 savedMessage,
                 receiverIdBySenderId,
-                userSummaries
+                userSummaries,
+                clientMessageId
             );
 
         EventEnvelope envelope =
@@ -403,7 +434,9 @@ public class DirectMessageService {
                 response.receiver().userId()
             );
 
-        KafkaEventContract contract = KafkaEventContract.DIRECT_MESSAGE_CREATED;
+        KafkaEventContract contract =
+            KafkaEventContract.DIRECT_MESSAGE_CREATED;
+
         outboxRecorder.record(
             envelope,
             contract.partitionKey(envelope),

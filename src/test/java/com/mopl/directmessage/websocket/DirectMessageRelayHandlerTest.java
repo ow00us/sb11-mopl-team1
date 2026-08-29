@@ -256,7 +256,11 @@ class DirectMessageRelayHandlerTest {
                 "수신자",
                 null
             ),
-            "실시간 메시지"
+            "실시간 메시지",
+            null,
+            UUID.fromString(
+                "dddddddd-dddd-dddd-dddd-dddddddddddd"
+            )
         );
     }
 }
