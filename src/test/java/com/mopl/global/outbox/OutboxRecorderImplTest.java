@@ -13,6 +13,8 @@ import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 class OutboxRecorderImplTest {
@@ -63,6 +65,43 @@ class OutboxRecorderImplTest {
             "NONE",
             envelope.type() + ":" + envelope.aggregateId()
         )).isInstanceOf(EventContractViolationException.class);
+
+        verifyNoInteractions(repository);
+    }
+
+    @Test
+    @DisplayName("envelope이 null이면 저장소에 접근하기 전에 거부한다")
+    void record_nullEnvelope_doesNotWrite() {
+        assertThatThrownBy(() -> recorder.record(null, "key", "NONE", "follow.created:key"))
+            .isInstanceOf(EventContractViolationException.class)
+            .hasMessageContaining("envelope");
+
+        verifyNoInteractions(repository);
+    }
+
+    @ParameterizedTest(name = "{0}이 null이면 저장하지 않는다")
+    @ValueSource(strings = {"eventId", "aggregateId", "occurredAt", "payload"})
+    @DisplayName("필수 값 하나가 빠진 envelope는 저장소에 접근하기 전에 거부한다")
+    void record_oneRequiredValueMissing_doesNotWrite(String field) {
+        EventEnvelope valid = followEnvelope("follow.created", 1);
+        EventEnvelope incomplete = new EventEnvelope(
+            field.equals("eventId") ? null : valid.eventId(),
+            valid.type(),
+            valid.version(),
+            field.equals("occurredAt") ? null : valid.occurredAt(),
+            field.equals("aggregateId") ? null : valid.aggregateId(),
+            field.equals("payload") ? null : valid.payload()
+        );
+
+        // 잘못된 envelope로 라우팅을 먼저 계산하면 Recorder의 guard가 아닌
+        // 카탈로그에서 실패하므로, 정상 대조군의 라우팅을 그대로 전달합니다.
+        assertThatThrownBy(() -> recorder.record(
+            incomplete,
+            valid.aggregateId().toString(),
+            KafkaEventContract.FOLLOW_CREATED.orderingScope(),
+            KafkaEventContract.FOLLOW_CREATED.deduplicationKey(valid)
+        )).isInstanceOf(EventContractViolationException.class)
+            .hasMessageContaining(field);
 
         verifyNoInteractions(repository);
     }
