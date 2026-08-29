@@ -163,7 +163,8 @@ CI smoke가 쓰는 값은 격리된 실행에서만 쓰는 테스트 값입니�
 
 액세스 키를 환경 변수나 코드에 두지 않습니다. 기본 자격 증명 체인이 EC2 인스턴스 역할을 먼저 찾으므로, 서버에 장기 자격 증명이 남지 않습니다.
 
-인스턴스 역할에 필요한 권한은 업로드 하나뿐입니다.
+애플리케이션의 S3 이미지 업로드를 위해 추가할 권한은 아래 하나뿐입니다. 같은 인스턴스
+역할의 SSM·ECR 권한은 배포 절의 요구사항을 따릅니다.
 
 ```json
 {
@@ -562,7 +563,12 @@ curl --fail http://localhost:8080/actuator/health
 
 ### 자격 증명
 
-레지스트리 비밀번호를 저장소에 두지 않습니다. GitHub Actions가 OIDC로 IAM 역할을 맡아 ECR에 push하고, 배포 서버는 EC2 인스턴스 역할로 pull합니다. 양쪽 모두 장기 자격 증명이 없습니다.
+레지스트리 비밀번호를 저장소에 두지 않습니다. GitHub Actions가 OIDC로 IAM 역할을 맡아 ECR에 push하고, 배포 서버는 EC2 인스턴스 역할로 매 배포 직전에 ECR 단기 로그인 토큰을 갱신한 뒤 pull합니다. 양쪽 모두 장기 자격 증명이 없습니다.
+
+배포 서버에는 AWS CLI가 있어야 합니다. 인스턴스 역할은 `ecr:GetAuthorizationToken`을
+전체 리소스에 허용하고, `ecr:BatchCheckLayerAvailability`, `ecr:GetDownloadUrlForLayer`,
+`ecr:BatchGetImage`는 실제 backend·frontend·Elasticsearch repository ARN으로 제한합니다.
+이 권한이 없으면 배포 스크립트는 환경 파일이나 컨테이너를 바꾸기 전에 종료합니다.
 
 필요한 저장소 변수는 다음과 같습니다. Secret이 아니라 변수로 둡니다. 셋 다 식별자이고 노출되어도 그 자체로 권한이 생기지 않습니다.
 
