@@ -75,10 +75,16 @@
     .section-head h2 { margin: 0; font-size: 20px; letter-spacing: -.025em; }
     .section-head p { margin: 0; color: var(--muted); font-size: 12px; }
     .overview-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 20px; background: var(--surface); }
-    .overview svg { display: block; width: 100%; min-width: 1080px; height: auto; }
-    .edge { fill: none; stroke: #565666; stroke-width: 1.4; opacity: .7; }
-    .edge.strong { stroke: #ff4a64; opacity: .78; }
+    .overview svg { display: block; width: 100%; min-width: 1180px; height: auto; }
+    .edge { fill: none; stroke: #6b6b7d; stroke-width: 1.5; opacity: .72; }
+    .edge.cascade { stroke: #ff4a64; stroke-width: 1.9; opacity: .85; }
+    .edge.app { stroke: #6b6b7d; stroke-width: 1.5; stroke-dasharray: 5 5; opacity: .55; }
+    .edge-label { fill: #9a9aa8; font: 600 10px "Pretendard Variable", Pretendard, sans-serif; }
+    .cluster-label { font: 700 12px "Pretendard Variable", Pretendard, sans-serif; letter-spacing: .08em; opacity: .62; }
+    .zone { pointer-events: none; }
     .node rect { fill: #212126; stroke: #565666; stroke-width: 1; rx: 10; transition: fill .15s ease, stroke .15s ease; }
+    .node.hub rect { fill: #2b2b31; stroke: #ff6c81; stroke-width: 1.6; }
+    .node.subhub rect { fill: #232329; stroke: #ff687e; stroke-width: 1.2; }
     .node:hover rect { fill: #34343d; stroke: #ff4a64; }
     .node text { fill: #f2f2f3; font: 600 12px ui-monospace, SFMono-Regular, Consolas, monospace; pointer-events: none; }
     .node .node-meta { fill: #828291; font: 500 9px "Pretendard Variable", Pretendard, sans-serif; }
@@ -255,47 +261,94 @@
         <p>테이블을 누르면 상세 필드로 이동합니다.</p>
       </div>
       <div class="overview-scroll">
-        <svg viewBox="0 0 1400 500" role="img" aria-label="MOPL 핵심 테이블 관계 개요">
-          <g aria-hidden="true">
-            <path class="edge strong" d="M220 221 C260 221 260 211 300 211"/>
-            <path class="edge strong" d="M500 111 C540 111 540 211 580 211"/>
-            <path class="edge" d="M400 80 L400 58"/>
-            <path class="edge" d="M220 211 C390 211 410 111 580 111"/>
-            <path class="edge" d="M780 111 L900 111"/>
-            <path class="edge" d="M500 111 C540 111 540 221 580 221"/>
-            <path class="edge" d="M680 140 L680 190"/>
-            <path class="edge" d="M220 231 C390 231 410 331 580 331"/>
-            <path class="edge" d="M130 252 L130 300"/>
-            <path class="edge strong" d="M220 201 C570 201 550 221 900 221"/>
-            <path class="edge" d="M1000 140 L1000 190"/>
-            <path class="edge strong" d="M1100 221 L1180 221"/>
-            <path class="edge" d="M1100 111 C1210 111 1210 190 1270 190"/>
-            <path class="edge" d="M220 241 C560 241 560 351 900 351"/>
-            <path class="edge" d="M220 251 C260 251 260 351 300 351"/>
-            <path class="edge strong" d="M500 121 C550 121 550 351 500 351"/>
-            <path class="edge" d="M220 221 C250 221 250 441 220 441"/>
+        <svg viewBox="0 0 1400 810" role="img" aria-label="MOPL 핵심 테이블 관계 개요 — users를 캔버스 중앙 허브로 두고, 6개 도메인을 각각 배경 구역으로 묶어 배치. 관계선은 참조 방향과 카디널리티(까마귀발=N, 막대=1)를 표시">
+          <defs>
+            <!-- markerUnits=userSpaceOnUse: stroke-width에 따라 마커가 커지지 않게 고정 크기.
+                 many: 갈래 끝 x=12 = refX 12 → 갈래 끝(N쪽 표시)이 노드 테두리에 정확히 닿음(파고들지도, 못 미치지도 않음).
+                       꼭짓점 (1,7)은 테두리에서 11유닛 뒤 = 경로 위 → 선이 꼭짓점을 지나 테두리까지 이어짐.
+                       관계선 <g>가 노드보다 위에 그려지므로(SVG 맨 아래 참고) 테두리에 닿는 갈래 끝이 안 가려짐.
+                 orient=auto-start-reverse: marker-start로 쓰일 때(users→follows) 방향이 뒤집히지 않도록 -->
+            <marker id="one" viewBox="0 0 12 16" refX="6" refY="8" markerWidth="12" markerHeight="16" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+              <path d="M6 2 V14" fill="none" stroke="#9a9aa8" stroke-width="1.7"/>
+            </marker>
+            <marker id="many" viewBox="0 0 14 14" refX="12" refY="7" markerWidth="14" markerHeight="14" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+              <path d="M1 7 L12 1 M1 7 L12 7 M1 7 L12 13" fill="none" stroke="#9a9aa8" stroke-width="1.5"/>
+            </marker>
+            <marker id="one-c" viewBox="0 0 12 16" refX="6" refY="8" markerWidth="12" markerHeight="16" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+              <path d="M6 2 V14" fill="none" stroke="#ff6c81" stroke-width="1.8"/>
+            </marker>
+            <marker id="many-c" viewBox="0 0 14 14" refX="12" refY="7" markerWidth="14" markerHeight="14" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+              <path d="M1 7 L12 1 M1 7 L12 7 M1 7 L12 13" fill="none" stroke="#ff6c81" stroke-width="1.6"/>
+            </marker>
+          </defs>
+
+          <g class="zone" aria-hidden="true">
+            <rect x="175" y="230" width="660" height="227" rx="22" fill="var(--social)" fill-opacity="0.05" stroke="var(--social)" stroke-opacity="0.18"/>
+            <rect x="445" y="24" width="755" height="194" rx="22" fill="var(--message)" fill-opacity="0.05" stroke="var(--message)" stroke-opacity="0.18"/>
+            <rect x="855" y="232" width="455" height="332" rx="22" fill="var(--content)" fill-opacity="0.05" stroke="var(--content)" stroke-opacity="0.18"/>
+            <rect x="130" y="636" width="755" height="98" rx="22" fill="var(--playlist)" fill-opacity="0.05" stroke="var(--playlist)" stroke-opacity="0.18"/>
+            <rect x="590" y="522" width="240" height="100" rx="22" fill="var(--presence)" fill-opacity="0.05" stroke="var(--presence)" stroke-opacity="0.18"/>
+            <rect x="1070" y="616" width="240" height="176" rx="22" fill="var(--infra)" fill-opacity="0.05" stroke="var(--infra)" stroke-opacity="0.18"/>
           </g>
 
-          <a class="node" href="#users"><rect x="40" y="190" width="180" height="62"/><circle class="node-dot" cx="57" cy="208" r="4" fill="#ff4a64"/><text x="70" y="213">users</text><text class="node-meta" x="57" y="235">사용자·인증 중심</text></a>
-          <a class="node" href="#follows"><rect x="40" y="300" width="180" height="62"/><circle class="node-dot" cx="57" cy="318" r="4" fill="#ff4a64"/><text x="70" y="323">follows</text><text class="node-meta" x="57" y="345">사용자 관계</text></a>
-          <a class="node" href="#oauth_accounts"><rect x="40" y="410" width="180" height="62"/><circle class="node-dot" cx="57" cy="428" r="4" fill="#ff4a64"/><text x="70" y="433">oauth_accounts</text><text class="node-meta" x="57" y="455">OAuth 연동 계정</text></a>
+          <g aria-hidden="true">
+            <text class="cluster-label" x="430" y="262" fill="#ff4a64">사용자 · 소셜</text>
+            <text class="cluster-label" x="700" y="40" fill="#ccccd6">메시징 · 알림</text>
+            <text class="cluster-label" x="900" y="350" fill="#ff687e">콘텐츠 · 리뷰</text>
+            <text class="cluster-label" x="400" y="730" fill="#aaaab1">플레이리스트</text>
+            <text class="cluster-label" x="632" y="535" fill="#f06a89">시청 세션</text>
+            <text class="cluster-label" x="1095" y="631" fill="#4fb0a5">인프라 · 독립</text>
+          </g>
 
-          <a class="node" href="#content_tags"><rect x="300" y="0" width="200" height="58"/><circle class="node-dot" cx="317" cy="18" r="4" fill="#ff687e"/><text x="330" y="23">content_tags</text><text class="node-meta" x="317" y="43">콘텐츠 태그</text></a>
-          <a class="node" href="#contents"><rect x="300" y="80" width="200" height="62"/><circle class="node-dot" cx="317" cy="98" r="4" fill="#ff687e"/><text x="330" y="103">contents</text><text class="node-meta" x="317" y="125">콘텐츠·집계 중심</text></a>
-          <a class="node" href="#reviews"><rect x="300" y="180" width="200" height="62"/><circle class="node-dot" cx="317" cy="198" r="4" fill="#ff687e"/><text x="330" y="203">reviews</text><text class="node-meta" x="317" y="225">사용자 콘텐츠 평가</text></a>
-          <a class="node" href="#watching_session_snapshots"><rect x="300" y="320" width="200" height="62"/><circle class="node-dot" cx="317" cy="338" r="4" fill="#ce0045"/><text x="330" y="343">watching_sessions</text><text class="node-meta" x="317" y="365">활성 시청 스냅샷</text></a>
-          <a class="node" href="#content_search_retries"><rect x="300" y="410" width="200" height="62"/><circle class="node-dot" cx="317" cy="428" r="4" fill="#ff687e"/><text x="330" y="433">content_search_retries</text><text class="node-meta" x="317" y="455">검색 동기화 재시도</text></a>
+          <a class="node hub" href="#users"><rect x="595" y="355" width="220" height="82"/><circle class="node-dot" cx="612" cy="384" r="4" fill="#ff4a64"/><text x="625" y="389">users</text><text class="node-meta" x="612" y="409">사용자·인증 허브</text></a>
+          <a class="node" href="#follows"><rect x="195" y="368" width="185" height="58"/><circle class="node-dot" cx="212" cy="386" r="4" fill="#ff4a64"/><text x="225" y="391">follows</text><text class="node-meta" x="212" y="411">사용자 팔로우</text></a>
+          <a class="node" href="#oauth_accounts"><rect x="205" y="250" width="185" height="58"/><circle class="node-dot" cx="222" cy="268" r="4" fill="#ff4a64"/><text x="235" y="273">oauth_accounts</text><text class="node-meta" x="222" y="293">OAuth 연동 계정</text></a>
 
-          <a class="node" href="#playlists"><rect x="580" y="80" width="200" height="62"/><circle class="node-dot" cx="597" cy="98" r="4" fill="#aaaab1"/><text x="610" y="103">playlists</text><text class="node-meta" x="597" y="125">사용자 컬렉션</text></a>
-          <a class="node" href="#playlist_contents"><rect x="580" y="190" width="200" height="62"/><circle class="node-dot" cx="597" cy="208" r="4" fill="#aaaab1"/><text x="610" y="213">playlist_contents</text><text class="node-meta" x="597" y="235">플레이리스트 콘텐츠</text></a>
-          <a class="node" href="#playlist_subscriptions"><rect x="580" y="300" width="200" height="62"/><circle class="node-dot" cx="597" cy="318" r="4" fill="#aaaab1"/><text x="610" y="323">playlist_subscriptions</text><text class="node-meta" x="597" y="345">플레이리스트 구독</text></a>
+          <a class="node subhub" href="#contents"><rect x="1085" y="356" width="205" height="82"/><circle class="node-dot" cx="1102" cy="385" r="4" fill="#ff687e"/><text x="1115" y="390">contents</text><text class="node-meta" x="1102" y="410">콘텐츠·집계 허브</text></a>
+          <a class="node" href="#content_tags"><rect x="1090" y="252" width="195" height="58"/><circle class="node-dot" cx="1107" cy="270" r="4" fill="#ff687e"/><text x="1120" y="275">content_tags</text><text class="node-meta" x="1107" y="295">콘텐츠 태그</text></a>
+          <a class="node" href="#reviews"><rect x="875" y="366" width="180" height="58"/><circle class="node-dot" cx="892" cy="384" r="4" fill="#ff687e"/><text x="905" y="389">reviews</text><text class="node-meta" x="892" y="409">사용자 콘텐츠 평가</text></a>
+          <a class="node" href="#content_search_retries"><rect x="1080" y="486" width="210" height="58"/><circle class="node-dot" cx="1097" cy="504" r="4" fill="#ff687e"/><text x="1110" y="509">content_search_retries</text><text class="node-meta" x="1097" y="529">검색 동기화 재시도</text></a>
 
-          <a class="node" href="#conversations"><rect x="900" y="80" width="200" height="62"/><circle class="node-dot" cx="917" cy="98" r="4" fill="#ccccd6"/><text x="930" y="103">conversations</text><text class="node-meta" x="917" y="125">1:1 대화</text></a>
-          <a class="node" href="#conversation_participants"><rect x="900" y="190" width="200" height="62"/><circle class="node-dot" cx="917" cy="208" r="4" fill="#ccccd6"/><text x="930" y="213">conversation_participants</text><text class="node-meta" x="917" y="235">대화 참여자</text></a>
-          <a class="node" href="#notifications"><rect x="900" y="320" width="200" height="62"/><circle class="node-dot" cx="917" cy="338" r="4" fill="#ccccd6"/><text x="930" y="343">notifications</text><text class="node-meta" x="917" y="365">사용자 알림</text></a>
-          <a class="node" href="#direct_messages"><rect x="1180" y="190" width="180" height="62"/><circle class="node-dot" cx="1197" cy="208" r="4" fill="#ccccd6"/><text x="1210" y="213">direct_messages</text><text class="node-meta" x="1197" y="235">대화 메시지</text></a>
-          <a class="node" href="#outbox_events"><rect x="1180" y="320" width="200" height="62"/><circle class="node-dot" cx="1197" cy="338" r="4" fill="#4fb0a5"/><text x="1210" y="343">outbox_events</text><text class="node-meta" x="1197" y="365">Kafka 발행 대기열</text></a>
-          <a class="node" href="#processed_events"><rect x="1180" y="410" width="200" height="62"/><circle class="node-dot" cx="1197" cy="428" r="4" fill="#4fb0a5"/><text x="1210" y="433">processed_events</text><text class="node-meta" x="1197" y="455">Consumer 멱등 기록</text></a>
+          <a class="node" href="#watching_session_snapshots"><rect x="610" y="542" width="200" height="60"/><circle class="node-dot" cx="627" cy="560" r="4" fill="#ce0045"/><text x="640" y="565">watching_sessions</text><text class="node-meta" x="627" y="585">활성 시청 스냅샷</text></a>
+
+          <a class="node" href="#notifications"><rect x="465" y="44" width="185" height="58"/><circle class="node-dot" cx="482" cy="62" r="4" fill="#ccccd6"/><text x="495" y="67">notifications</text><text class="node-meta" x="482" y="87">사용자 알림</text></a>
+          <a class="node" href="#conversations"><rect x="985" y="44" width="195" height="58"/><circle class="node-dot" cx="1002" cy="62" r="4" fill="#ccccd6"/><text x="1015" y="67">conversations</text><text class="node-meta" x="1002" y="87">1:1 대화</text></a>
+          <a class="node" href="#conversation_participants"><rect x="700" y="118" width="220" height="58"/><circle class="node-dot" cx="717" cy="136" r="4" fill="#ccccd6"/><text x="730" y="141">conversation_participants</text><text class="node-meta" x="717" y="161">대화 참여자</text></a>
+          <a class="node" href="#direct_messages"><rect x="985" y="140" width="195" height="58"/><circle class="node-dot" cx="1002" cy="158" r="4" fill="#ccccd6"/><text x="1015" y="163">direct_messages</text><text class="node-meta" x="1002" y="183">대화 메시지</text></a>
+
+          <a class="node" href="#playlists"><rect x="410" y="656" width="185" height="58"/><circle class="node-dot" cx="427" cy="674" r="4" fill="#aaaab1"/><text x="440" y="679">playlists</text><text class="node-meta" x="427" y="699">사용자 컬렉션</text></a>
+          <a class="node" href="#playlist_contents"><rect x="660" y="656" width="205" height="58"/><circle class="node-dot" cx="677" cy="674" r="4" fill="#aaaab1"/><text x="690" y="679">playlist_contents</text><text class="node-meta" x="677" y="699">플레이리스트 콘텐츠</text></a>
+          <a class="node" href="#playlist_subscriptions"><rect x="150" y="656" width="200" height="58"/><circle class="node-dot" cx="167" cy="674" r="4" fill="#aaaab1"/><text x="180" y="679">playlist_subscriptions</text><text class="node-meta" x="167" y="699">플레이리스트 구독</text></a>
+
+          <a class="node" href="#outbox_events"><rect x="1090" y="636" width="200" height="58"/><circle class="node-dot" cx="1107" cy="654" r="4" fill="#4fb0a5"/><text x="1120" y="659">outbox_events</text><text class="node-meta" x="1107" y="679">Kafka 발행 대기열</text></a>
+          <a class="node" href="#processed_events"><rect x="1090" y="714" width="200" height="58"/><circle class="node-dot" cx="1107" cy="732" r="4" fill="#4fb0a5"/><text x="1120" y="737">processed_events</text><text class="node-meta" x="1107" y="757">Consumer 멱등 기록</text></a>
+
+          <!-- 관계선은 노드 위에 그려야 함: 까마귀발 마커(refX=1)의 갈래가 노드 테두리 안쪽으로 들어가도
+               노드 박스에 가려지지 않고 선과 끊김 없이 이어져 보임. pointer-events=none 으로 노드 클릭 방해 안 함. -->
+          <g aria-hidden="true" pointer-events="none">
+            <!-- users 허브 (FK 8개; follows는 follower/followee 2개) -->
+            <path class="edge cascade" d="M595 375 C480 375 415 288 390 288" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
+            <path class="edge" d="M595 397 C500 397 460 398 380 398" marker-start="url(#many)" marker-end="url(#many)"/>
+            <path class="edge" d="M815 393 C838 393 852 395 875 395" marker-start="url(#one)" marker-end="url(#many)"/>
+            <path class="edge" d="M660 437 C660 500 505 600 505 656" marker-start="url(#one)" marker-end="url(#many)"/>
+            <path class="edge" d="M605 437 C605 500 320 600 320 656" marker-start="url(#one)" marker-end="url(#many)"/>
+            <path class="edge" d="M725 355 C725 300 795 200 795 176" marker-start="url(#one)" marker-end="url(#many)"/>
+            <path class="edge" d="M650 355 C650 300 558 160 558 102" marker-start="url(#one)" marker-end="url(#many)"/>
+            <path class="edge" d="M700 437 C700 466 706 505 706 542" marker-start="url(#one)" marker-end="url(#one)"/>
+            <!-- contents 보조 허브 -->
+            <path class="edge" d="M1085 395 C1072 395 1068 395 1055 395" marker-start="url(#one)" marker-end="url(#many)"/>
+            <path class="edge cascade" d="M1187 356 C1187 342 1187 326 1187 310" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
+            <path class="edge" d="M1120 438 C1120 470 763 600 763 656" marker-start="url(#one)" marker-end="url(#many)"/>
+            <path class="edge" d="M1085 432 C990 432 870 568 810 568" marker-start="url(#one)" marker-end="url(#many)"/>
+            <path class="edge app" d="M1200 438 C1200 458 1188 470 1188 486" marker-end="url(#many)"/>
+            <!-- 플레이리스트 내부 -->
+            <path class="edge cascade" d="M595 685 C620 685 638 685 660 685" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
+            <path class="edge cascade" d="M410 679 C390 679 375 679 350 679" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
+            <!-- 메시징 내부 -->
+            <path class="edge cascade" d="M985 70 C935 70 895 90 895 104 L895 118" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
+            <path class="edge cascade" d="M1082 102 C1082 116 1082 128 1082 140" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
+            <path class="edge" d="M920 150 C950 150 960 168 985 168" marker-start="url(#one)" marker-end="url(#many)"/>
+          </g>
         </svg>
       </div>
     </section>
@@ -313,7 +366,7 @@
       </div>
     </section>
 
-    <div class="legend" aria-label="키 범례">
+    <div class="legend" aria-label="관계 개요 범례">
       <span><span class="key pk">PK</span> 기본 키</span>
       <span><span class="key fk">FK</span> 외래 키 · 클릭하여 이동</span>
       <span><span class="key fk">FK*</span> 같은 표시끼리 복합 외래 키</span>

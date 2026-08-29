@@ -1,53 +1,109 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="500" viewBox="0 0 1400 500" role="img" aria-labelledby="title desc">
-  <title id="title">MOPL 데이터베이스 관계 개요</title>
-  <desc id="desc">사용자, 콘텐츠, 플레이리스트, 대화, 알림, 시청 세션과 인프라를 포함한 17개 테이블의 관계</desc>
+<!--
+  README 썸네일용 미리보기입니다. 관계 정의의 기준은 docs/erd/index.html 이며,
+  이 파일은 대략적인 배치만 보여줍니다. index.html 의 좌표와 1:1로 동기화하지 않습니다.
+  레이아웃을 크게 바꿀 때만 이 파일을 함께 갱신하세요.
+  (users 중앙 허브 재배치 + 도메인 zone 노드 완전 포함: 2026-08)
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="810" viewBox="0 0 1400 810" role="img" aria-labelledby="title desc">
+  <title id="title">MOPL 데이터베이스 관계 개요 (미리보기)</title>
+  <desc id="desc">users를 중앙 허브로 두고 사용자·소셜 / 메시징·알림 / 콘텐츠·리뷰 / 플레이리스트 / 시청 세션 / 인프라 6개 도메인 17개 테이블을 각각 배경 구역으로 묶어 배치한 관계 미리보기. 정확한 정의는 상세 ERD 참고.</desc>
   <style>
-    .edge { fill: none; stroke: #565666; stroke-width: 1.5; opacity: .75; }
-    .edge-strong { fill: none; stroke: #ff4a64; stroke-width: 1.8; opacity: .82; }
+    .edge { fill: none; stroke: #6b6b7d; stroke-width: 1.5; opacity: .72; }
+    .edge-cascade { fill: none; stroke: #ff4a64; stroke-width: 1.9; opacity: .85; }
+    .edge-app { fill: none; stroke: #6b6b7d; stroke-width: 1.5; stroke-dasharray: 5 5; opacity: .55; }
     .card { fill: #212126; stroke: #565666; stroke-width: 1; }
+    .card-hub { fill: #2b2b31; stroke: #ff6c81; stroke-width: 1.6; }
+    .card-sub { fill: #232329; stroke: #ff687e; stroke-width: 1.2; }
     .name { fill: #f2f2f3; font: 600 12px Consolas, monospace; }
     .meta { fill: #828291; font: 500 9px Arial, sans-serif; }
+    .cluster { font: 700 12px Arial, sans-serif; letter-spacing: .08em; opacity: .62; }
+    .lbl { fill: #9a9aa8; font: 600 10px Arial, sans-serif; }
+    .caption { fill: #828291; font: 500 11px Arial, sans-serif; }
   </style>
-  <rect width="1400" height="500" rx="20" fill="#131316"/>
+  <rect width="1400" height="810" rx="20" fill="#131316"/>
+
+  <defs>
+    <!-- markerUnits=userSpaceOnUse: stroke-width 에 따라 마커가 커지지 않게 고정 크기.
+         many: 갈래 끝 x=12 = refX 12 → 갈래 끝이 노드 테두리에 정확히 닿음(파고들지도, 못 미치지도 않음).
+               꼭짓점 (1,7)은 테두리에서 11유닛 뒤 = 경로 위 → 선이 꼭짓점을 지나 테두리까지 이어짐.
+               관계선 <g>가 노드보다 위에 그려져 테두리에 닿는 갈래 끝이 안 가려짐. (index.html 과 동일)
+         orient=auto-start-reverse: marker-start 로 쓰일 때(users→follows) 방향이 뒤집히지 않도록 -->
+    <marker id="one" viewBox="0 0 12 16" refX="6" refY="8" markerWidth="12" markerHeight="16" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M6 2 V14" fill="none" stroke="#9a9aa8" stroke-width="1.7"/>
+    </marker>
+    <marker id="many" viewBox="0 0 14 14" refX="12" refY="7" markerWidth="14" markerHeight="14" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M1 7 L12 1 M1 7 L12 7 M1 7 L12 13" fill="none" stroke="#9a9aa8" stroke-width="1.5"/>
+    </marker>
+    <marker id="one-c" viewBox="0 0 12 16" refX="6" refY="8" markerWidth="12" markerHeight="16" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M6 2 V14" fill="none" stroke="#ff6c81" stroke-width="1.8"/>
+    </marker>
+    <marker id="many-c" viewBox="0 0 14 14" refX="12" refY="7" markerWidth="14" markerHeight="14" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <path d="M1 7 L12 1 M1 7 L12 7 M1 7 L12 13" fill="none" stroke="#ff6c81" stroke-width="1.6"/>
+    </marker>
+  </defs>
 
   <g aria-hidden="true">
-    <path class="edge-strong" d="M220 221 C260 221 260 211 300 211"/>
-    <path class="edge-strong" d="M500 111 C540 111 540 211 580 211"/>
-    <path class="edge" d="M400 80 L400 58"/>
-    <path class="edge" d="M220 211 C390 211 410 111 580 111"/>
-    <path class="edge" d="M780 111 L900 111"/>
-    <path class="edge" d="M500 111 C540 111 540 221 580 221"/>
-    <path class="edge" d="M680 140 L680 190"/>
-    <path class="edge" d="M220 231 C390 231 410 331 580 331"/>
-    <path class="edge" d="M130 252 L130 300"/>
-    <path class="edge-strong" d="M220 201 C570 201 550 221 900 221"/>
-    <path class="edge" d="M1000 140 L1000 190"/>
-    <path class="edge-strong" d="M1100 221 L1180 221"/>
-    <path class="edge" d="M1100 111 C1210 111 1210 190 1270 190"/>
-    <path class="edge" d="M220 241 C560 241 560 351 900 351"/>
-    <path class="edge" d="M220 251 C260 251 260 351 300 351"/>
-    <path class="edge-strong" d="M500 121 C550 121 550 351 500 351"/>
-    <path class="edge" d="M220 221 C250 221 250 441 220 441"/>
+    <rect x="175" y="230" width="660" height="227" rx="22" fill="#ff4a64" fill-opacity="0.05" stroke="#ff4a64" stroke-opacity="0.18"/>
+    <rect x="445" y="24" width="755" height="194" rx="22" fill="#ccccd6" fill-opacity="0.05" stroke="#ccccd6" stroke-opacity="0.18"/>
+    <rect x="855" y="232" width="455" height="332" rx="22" fill="#ff687e" fill-opacity="0.05" stroke="#ff687e" stroke-opacity="0.18"/>
+    <rect x="130" y="636" width="755" height="98" rx="22" fill="#aaaab1" fill-opacity="0.05" stroke="#aaaab1" stroke-opacity="0.18"/>
+    <rect x="590" y="522" width="240" height="100" rx="22" fill="#ce0045" fill-opacity="0.05" stroke="#ce0045" stroke-opacity="0.18"/>
+    <rect x="1070" y="616" width="240" height="176" rx="22" fill="#4fb0a5" fill-opacity="0.05" stroke="#4fb0a5" stroke-opacity="0.18"/>
   </g>
 
-  <g transform="translate(40 190)"><rect class="card" width="180" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff4a64"/><text class="name" x="30" y="23">users</text><text class="meta" x="17" y="45">사용자·인증 중심</text></g>
-  <g transform="translate(40 300)"><rect class="card" width="180" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff4a64"/><text class="name" x="30" y="23">follows</text><text class="meta" x="17" y="45">사용자 관계</text></g>
-  <g transform="translate(40 410)"><rect class="card" width="180" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff4a64"/><text class="name" x="30" y="23">oauth_accounts</text><text class="meta" x="17" y="45">OAuth 연동 계정</text></g>
+  <g aria-hidden="true">
+    <text class="cluster" x="430" y="262" fill="#ff4a64">사용자 · 소셜</text>
+    <text class="cluster" x="700" y="40" fill="#ccccd6">메시징 · 알림</text>
+    <text class="cluster" x="900" y="350" fill="#ff687e">콘텐츠 · 리뷰</text>
+    <text class="cluster" x="400" y="730" fill="#aaaab1">플레이리스트</text>
+    <text class="cluster" x="632" y="535" fill="#f06a89">시청 세션</text>
+    <text class="cluster" x="1095" y="631" fill="#4fb0a5">인프라 · 독립</text>
+  </g>
 
-  <g transform="translate(300 0)"><rect class="card" width="200" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff687e"/><text class="name" x="30" y="23">content_tags</text><text class="meta" x="17" y="43">콘텐츠 태그</text></g>
-  <g transform="translate(300 80)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff687e"/><text class="name" x="30" y="23">contents</text><text class="meta" x="17" y="45">콘텐츠·집계 중심</text></g>
-  <g transform="translate(300 180)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff687e"/><text class="name" x="30" y="23">reviews</text><text class="meta" x="17" y="45">사용자 콘텐츠 평가</text></g>
-  <g transform="translate(300 320)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ce0045"/><text class="name" x="30" y="23">watching_sessions</text><text class="meta" x="17" y="45">활성 시청 스냅샷</text></g>
-  <g transform="translate(300 410)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff687e"/><text class="name" x="30" y="23">content_search_retries</text><text class="meta" x="17" y="45">검색 동기화 재시도</text></g>
+  <g transform="translate(595 355)"><rect class="card-hub" width="220" height="82" rx="10"/><circle cx="17" cy="29" r="4" fill="#ff4a64"/><text class="name" x="30" y="34">users</text><text class="meta" x="17" y="54">사용자·인증 허브</text></g>
+  <g transform="translate(195 368)"><rect class="card" width="185" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff4a64"/><text class="name" x="30" y="23">follows</text><text class="meta" x="17" y="43">사용자 팔로우</text></g>
+  <g transform="translate(205 250)"><rect class="card" width="185" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff4a64"/><text class="name" x="30" y="23">oauth_accounts</text><text class="meta" x="17" y="43">OAuth 연동 계정</text></g>
 
-  <g transform="translate(580 80)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#aaaab1"/><text class="name" x="30" y="23">playlists</text><text class="meta" x="17" y="45">사용자 컬렉션</text></g>
-  <g transform="translate(580 190)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#aaaab1"/><text class="name" x="30" y="23">playlist_contents</text><text class="meta" x="17" y="45">플레이리스트 콘텐츠</text></g>
-  <g transform="translate(580 300)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#aaaab1"/><text class="name" x="30" y="23">playlist_subscriptions</text><text class="meta" x="17" y="45">플레이리스트 구독</text></g>
+  <g transform="translate(1085 356)"><rect class="card-sub" width="205" height="82" rx="10"/><circle cx="17" cy="29" r="4" fill="#ff687e"/><text class="name" x="30" y="34">contents</text><text class="meta" x="17" y="54">콘텐츠·집계 허브</text></g>
+  <g transform="translate(1090 252)"><rect class="card" width="195" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff687e"/><text class="name" x="30" y="23">content_tags</text><text class="meta" x="17" y="43">콘텐츠 태그</text></g>
+  <g transform="translate(875 366)"><rect class="card" width="180" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff687e"/><text class="name" x="30" y="23">reviews</text><text class="meta" x="17" y="43">사용자 콘텐츠 평가</text></g>
+  <g transform="translate(1080 486)"><rect class="card" width="210" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#ff687e"/><text class="name" x="30" y="23">content_search_retries</text><text class="meta" x="17" y="43">검색 동기화 재시도</text></g>
 
-  <g transform="translate(900 80)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ccccd6"/><text class="name" x="30" y="23">conversations</text><text class="meta" x="17" y="45">1:1 대화</text></g>
-  <g transform="translate(900 190)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ccccd6"/><text class="name" x="30" y="23">conversation_participants</text><text class="meta" x="17" y="45">대화 참여자</text></g>
-  <g transform="translate(900 320)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ccccd6"/><text class="name" x="30" y="23">notifications</text><text class="meta" x="17" y="45">사용자 알림</text></g>
-  <g transform="translate(1180 190)"><rect class="card" width="180" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#ccccd6"/><text class="name" x="30" y="23">direct_messages</text><text class="meta" x="17" y="45">대화 메시지</text></g>
-  <g transform="translate(1180 320)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#4fb0a5"/><text class="name" x="30" y="23">outbox_events</text><text class="meta" x="17" y="45">Kafka 발행 대기열</text></g>
-  <g transform="translate(1180 410)"><rect class="card" width="200" height="62" rx="10"/><circle cx="17" cy="18" r="4" fill="#4fb0a5"/><text class="name" x="30" y="23">processed_events</text><text class="meta" x="17" y="45">Consumer 멱등 기록</text></g>
+  <g transform="translate(610 542)"><rect class="card" width="200" height="60" rx="10"/><circle cx="17" cy="18" r="4" fill="#ce0045"/><text class="name" x="30" y="23">watching_sessions</text><text class="meta" x="17" y="43">활성 시청 스냅샷</text></g>
+
+  <g transform="translate(465 44)"><rect class="card" width="185" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#ccccd6"/><text class="name" x="30" y="23">notifications</text><text class="meta" x="17" y="43">사용자 알림</text></g>
+  <g transform="translate(985 44)"><rect class="card" width="195" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#ccccd6"/><text class="name" x="30" y="23">conversations</text><text class="meta" x="17" y="43">1:1 대화</text></g>
+  <g transform="translate(700 118)"><rect class="card" width="220" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#ccccd6"/><text class="name" x="30" y="23">conversation_participants</text><text class="meta" x="17" y="43">대화 참여자</text></g>
+  <g transform="translate(985 140)"><rect class="card" width="195" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#ccccd6"/><text class="name" x="30" y="23">direct_messages</text><text class="meta" x="17" y="43">대화 메시지</text></g>
+
+  <g transform="translate(410 656)"><rect class="card" width="185" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#aaaab1"/><text class="name" x="30" y="23">playlists</text><text class="meta" x="17" y="43">사용자 컬렉션</text></g>
+  <g transform="translate(660 656)"><rect class="card" width="205" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#aaaab1"/><text class="name" x="30" y="23">playlist_contents</text><text class="meta" x="17" y="43">플레이리스트 콘텐츠</text></g>
+  <g transform="translate(150 656)"><rect class="card" width="200" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#aaaab1"/><text class="name" x="30" y="23">playlist_subscriptions</text><text class="meta" x="17" y="43">플레이리스트 구독</text></g>
+
+  <g transform="translate(1090 636)"><rect class="card" width="200" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#4fb0a5"/><text class="name" x="30" y="23">outbox_events</text><text class="meta" x="17" y="43">Kafka 발행 대기열</text></g>
+  <g transform="translate(1090 714)"><rect class="card" width="200" height="58" rx="10"/><circle cx="17" cy="18" r="4" fill="#4fb0a5"/><text class="name" x="30" y="23">processed_events</text><text class="meta" x="17" y="43">Consumer 멱등 기록</text></g>
+
+  <!-- 관계선은 노드 위에 그려서 까마귀발 마커가 노드 박스에 가려지지 않도록 함 (index.html 과 동일) -->
+  <g aria-hidden="true">
+    <path class="edge-cascade" d="M595 375 C480 375 415 288 390 288" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
+    <path class="edge" d="M595 397 C500 397 460 398 380 398" marker-start="url(#many)" marker-end="url(#many)"/>
+    <path class="edge" d="M815 393 C838 393 852 395 875 395" marker-start="url(#one)" marker-end="url(#many)"/>
+    <path class="edge" d="M660 437 C660 500 505 600 505 656" marker-start="url(#one)" marker-end="url(#many)"/>
+    <path class="edge" d="M605 437 C605 500 320 600 320 656" marker-start="url(#one)" marker-end="url(#many)"/>
+    <path class="edge" d="M725 355 C725 300 795 200 795 176" marker-start="url(#one)" marker-end="url(#many)"/>
+    <path class="edge" d="M650 355 C650 300 558 160 558 102" marker-start="url(#one)" marker-end="url(#many)"/>
+    <path class="edge" d="M700 437 C700 466 706 505 706 542" marker-start="url(#one)" marker-end="url(#one)"/>
+    <path class="edge" d="M1085 395 C1072 395 1068 395 1055 395" marker-start="url(#one)" marker-end="url(#many)"/>
+    <path class="edge-cascade" d="M1187 356 C1187 342 1187 326 1187 310" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
+    <path class="edge" d="M1120 438 C1120 470 763 600 763 656" marker-start="url(#one)" marker-end="url(#many)"/>
+    <path class="edge" d="M1085 432 C990 432 870 568 810 568" marker-start="url(#one)" marker-end="url(#many)"/>
+    <path class="edge-app" d="M1200 438 C1200 458 1188 470 1188 486" marker-end="url(#many)"/>
+    <path class="edge-cascade" d="M595 685 C620 685 638 685 660 685" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
+    <path class="edge-cascade" d="M410 679 C390 679 375 679 350 679" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
+    <path class="edge-cascade" d="M985 70 C935 70 895 90 895 104 L895 118" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
+    <path class="edge-cascade" d="M1082 102 C1082 116 1082 128 1082 140" marker-start="url(#one-c)" marker-end="url(#many-c)"/>
+    <path class="edge" d="M920 150 C950 150 960 168 985 168" marker-start="url(#one)" marker-end="url(#many)"/>
+  </g>
+
+  <text class="caption" x="40" y="798">미리보기 · 검색·필터·관계 강조가 있는 상세 ERD가 정확한 기준입니다</text>
 </svg>
