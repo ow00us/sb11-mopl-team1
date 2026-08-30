@@ -201,6 +201,30 @@ class DirectMessageControllerTest {
     }
 
     @Test
+    @DisplayName("인증 사용자 이름 없이 DM 목록 조회 시 401을 반환")
+    void getDirectMessages_principalNameMissing_returnsUnauthorized()
+        throws Exception {
+
+        // when & then
+        mockMvc.perform(
+                get(
+                    "/api/conversations/{conversationId}/direct-messages",
+                    CONVERSATION_ID
+                )
+                    .param("limit", "10")
+                    .param(
+                        "sortDirection",
+                        "DESCENDING"
+                    )
+                    .param("sortBy", "createdAt")
+                    .principal(() -> null)
+            )
+            .andExpect(status().isUnauthorized());
+
+        verifyNoInteractions(directMessageService);
+    }
+
+    @Test
     @DisplayName("limit이 1보다 작으면 400을 반환")
     void getDirectMessages_invalidLimit_returnsBadRequest()
         throws Exception {

@@ -1,9 +1,12 @@
 package com.mopl.directmessage.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.mopl.directmessage.entity.Conversation;
 import com.mopl.global.config.JpaConfig;
+import com.mopl.global.exception.BusinessException;
+import com.mopl.global.exception.ErrorCode;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -157,5 +160,24 @@ class DirectMessageSequenceGeneratorTest {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 대화에는 메시지 순번을 할당할 수 없음")
+    void next_conversationNotFound_fails() {
+        // given
+        UUID conversationId = UUID.randomUUID();
+
+        // when & then
+        assertThatThrownBy(() ->
+            sequenceGenerator.next(conversationId)
+        ).isInstanceOfSatisfying(
+            BusinessException.class,
+            exception ->
+                assertThat(exception.getErrorCode())
+                    .isEqualTo(
+                        ErrorCode.DIRECT_MESSAGE_INVALID_STATE
+                    )
+        );
     }
 }
