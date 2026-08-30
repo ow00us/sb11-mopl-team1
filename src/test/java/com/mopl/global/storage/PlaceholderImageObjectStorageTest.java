@@ -3,6 +3,7 @@ package com.mopl.global.storage;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.mopl.global.exception.ErrorCode;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -58,7 +59,8 @@ class PlaceholderImageObjectStorageTest {
     void upload_rejectsDisallowedContentType() {
         assertThatThrownBy(() ->
             storage.upload(image("script.svg", "image/svg+xml", 10), "profile-images"))
-            .isInstanceOf(ImageUploadException.class);
+            .isInstanceOf(ImageUploadException.class)
+            .hasFieldOrPropertyWithValue("errorCode", ErrorCode.IMAGE_UPLOAD_REJECTED);
     }
 
     @Test
@@ -66,6 +68,42 @@ class PlaceholderImageObjectStorageTest {
     void upload_rejectsEmptyFile() {
         assertThatThrownBy(() ->
             storage.upload(image("photo.png", "image/png", 0), "profile-images"))
-            .isInstanceOf(ImageUploadException.class);
+            .isInstanceOf(ImageUploadException.class)
+            .hasFieldOrPropertyWithValue("errorCode", ErrorCode.IMAGE_UPLOAD_REJECTED);
+    }
+
+    @Test
+    @DisplayName("null 파일은 대체 URL을 만들지 않고 거부한다")
+    void upload_rejectsNullFile() {
+        assertThatThrownBy(() -> storage.upload(null, "profile-images"))
+            .isInstanceOf(ImageUploadException.class)
+            .hasFieldOrPropertyWithValue("errorCode", ErrorCode.IMAGE_UPLOAD_REJECTED);
+    }
+
+    @Test
+    @DisplayName("Content-Type이 없으면 S3 구현과 같은 오류 코드로 거부한다")
+    void upload_rejectsMissingContentType() {
+        assertThatThrownBy(() ->
+            storage.upload(image("photo.png", null, 10), "profile-images"))
+            .isInstanceOf(ImageUploadException.class)
+            .hasFieldOrPropertyWithValue("errorCode", ErrorCode.IMAGE_UPLOAD_REJECTED);
+    }
+
+    @Test
+    @DisplayName("크기가 상한과 정확히 같으면 대체 URL을 반환한다")
+    void upload_acceptsFileAtSizeLimit() {
+        String url = storage.upload(
+            image("photo.png", "image/png", (int) PROPERTIES.maxFileSize()), "profile-images");
+
+        assertThat(url).startsWith("https://placeholder.mopl.local/profile-images/");
+    }
+
+    @Test
+    @DisplayName("크기가 상한보다 1바이트 크면 대체 구현에서도 거부한다")
+    void upload_rejectsFileOneByteOverSizeLimit() {
+        assertThatThrownBy(() -> storage.upload(
+            image("photo.png", "image/png", (int) PROPERTIES.maxFileSize() + 1), "profile-images"))
+            .isInstanceOf(ImageUploadException.class)
+            .hasFieldOrPropertyWithValue("errorCode", ErrorCode.IMAGE_UPLOAD_REJECTED);
     }
 }

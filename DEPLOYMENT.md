@@ -163,7 +163,8 @@ CI smoke가 쓰는 값은 격리된 실행에서만 쓰는 테스트 값입니�
 
 액세스 키를 환경 변수나 코드에 두지 않습니다. 기본 자격 증명 체인이 EC2 인스턴스 역할을 먼저 찾으므로, 서버에 장기 자격 증명이 남지 않습니다.
 
-인스턴스 역할에 필요한 권한은 업로드 하나뿐입니다.
+애플리케이션의 S3 이미지 업로드를 위해 추가할 권한은 아래 하나뿐입니다. 같은 인스턴스
+역할의 SSM·ECR 권한은 배포 절의 요구사항을 따릅니다.
 
 ```json
 {
@@ -562,7 +563,12 @@ curl --fail http://localhost:8080/actuator/health
 
 ### 자격 증명
 
-레지스트리 비밀번호를 저장소에 두지 않습니다. GitHub Actions가 OIDC로 IAM 역할을 맡아 ECR에 push하고, 배포 서버는 EC2 인스턴스 역할로 pull합니다. 양쪽 모두 장기 자격 증명이 없습니다.
+레지스트리 비밀번호를 저장소에 두지 않습니다. GitHub Actions가 OIDC로 IAM 역할을 맡아 ECR에 push하고, 배포 서버는 EC2 인스턴스 역할로 매 배포 직전에 ECR 단기 로그인 토큰을 갱신한 뒤 pull합니다. 양쪽 모두 장기 자격 증명이 없습니다.
+
+배포 서버에는 AWS CLI가 있어야 합니다. 인스턴스 역할은 `ecr:GetAuthorizationToken`을
+전체 리소스에 허용하고, `ecr:BatchCheckLayerAvailability`, `ecr:GetDownloadUrlForLayer`,
+`ecr:BatchGetImage`는 실제 backend·frontend·Elasticsearch repository ARN으로 제한합니다.
+이 권한이 없으면 배포 스크립트는 환경 파일이나 컨테이너를 바꾸기 전에 종료합니다.
 
 필요한 저장소 변수는 다음과 같습니다. Secret이 아니라 변수로 둡니다. 셋 다 식별자이고 노출되어도 그 자체로 권한이 생기지 않습니다.
 
@@ -595,7 +601,8 @@ curl --fail http://localhost:8080/actuator/health
 | 산출물 | 하는 일 |
 | --- | --- |
 | `deploy/aws/network.sh` | 보안 그룹과 고정 공인 IP |
-| `deploy/bootstrap.sh` | Docker, 배포 사용자, 디렉터리, 호스트 방화벽 |
+| `deploy/bootstrap.sh` | AWS CLI v2, Docker, 배포 사용자, 디렉터리, 호스트 방화벽 |
+| `deploy/ensure-aws-cli.sh` | ECR 인증에 필요한 AWS CLI v2를 멱등 설치 |
 | `.env.example` | 환경 파일 서식 |
 
 둘 다 여러 번 실행해도 결과가 같습니다. 중간에 실패해도 고친 뒤 그대로 다시 돌리면 됩니다.
@@ -666,6 +673,7 @@ sudo SSH_ALLOWED_CIDR=203.0.113.10/32 bash deploy/bootstrap.sh
 하는 일은 이렇습니다.
 
 - 배포 전용 사용자 `deploy` 생성. 비밀번호 로그인은 막고 SSH 키로만 접속합니다
+- AWS 공식 시스템 설치기로 AWS CLI v2 준비. 이미 있으면 건너뜁니다
 - Docker Engine과 Compose 플러그인 설치. 배포판의 `docker.io`가 아니라 Docker 공식 저장소를 씁니다. Compose v2 플러그인이 배포판 패키지에 없습니다
 - 컨테이너 로그를 서비스당 250MB로 제한
 - 설정과 데이터 디렉터리 생성
@@ -723,7 +731,7 @@ sudo -u deploy cp deploy/Caddyfile /srv/mopl/app/deploy/
 # 5. 데이터 디렉터리 소유자를 실제 이미지 기준으로 다시 맞춤
 sudo bash deploy/bootstrap.sh
 
-# 6. ECR 로그인 후 기동
+# 6. ECR 로그인 후 기동. bootstrap이 AWS CLI v2를 시스템 경로에 준비합니다
 aws ecr get-login-password --region ap-northeast-2 \
   | sudo -u deploy docker login --username AWS --password-stdin \
       "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.ap-northeast-2.amazonaws.com"

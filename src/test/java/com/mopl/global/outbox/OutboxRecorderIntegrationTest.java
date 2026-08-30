@@ -16,6 +16,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -157,6 +159,26 @@ class OutboxRecorderIntegrationTest {
 
         assertThat(outboxEventRepository.count()).isZero();
         // 검증 실패도 도메인 변경을 되돌립니다.
+        assertThat(processedEventRepository.count()).isZero();
+    }
+
+    @ParameterizedTest(name = "{0} 누락 시 앞선 도메인 쓰기도 롤백한다")
+    @ValueSource(strings = {"envelope", "eventId", "aggregateId", "occurredAt", "payload"})
+    @DisplayName("Recorder의 null guard가 실패하면 이미 flush한 도메인 변경도 남지 않는다")
+    void nullRequiredValue_rollsBackFlushedDomainChange(String field) {
+        EventEnvelope valid = envelope();
+        EventEnvelope incomplete = field.equals("envelope") ? null : new EventEnvelope(
+            field.equals("eventId") ? null : valid.eventId(),
+            valid.type(), valid.version(),
+            field.equals("occurredAt") ? null : valid.occurredAt(),
+            field.equals("aggregateId") ? null : valid.aggregateId(),
+            field.equals("payload") ? null : valid.payload());
+
+        assertThatThrownBy(() -> domainCaller.changeDomainAndRecordUncheckedRouting(incomplete))
+            .isInstanceOf(EventContractViolationException.class)
+            .hasMessageContaining(field);
+
+        assertThat(outboxEventRepository.count()).isZero();
         assertThat(processedEventRepository.count()).isZero();
     }
 
@@ -394,6 +416,15 @@ class OutboxRecorderIntegrationTest {
             String orderingScope) {
             outboxRecorder.record(envelope, partitionKey, orderingScope,
                 envelope.type() + ":" + envelope.aggregateId());
+        }
+
+        @Transactional
+        public void changeDomainAndRecordUncheckedRouting(EventEnvelope envelope) {
+            processedEventRepository.saveAndFlush(
+                new ProcessedEvent("domain-change", UUID.randomUUID(), "domain"));
+            // 필수 값이 없는 envelope로 카탈로그를 먼저 호출하지 않습니다.
+            // Recorder 자체의 검증 예외가 같은 트랜잭션을 되돌리는지 확인합니다.
+            outboxRecorder.record(envelope, "key", "NONE", "follow.created:key");
         }
 
         /** 중복 판정 키를 테스트가 직접 정하는 경로입니다. */

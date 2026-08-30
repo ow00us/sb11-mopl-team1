@@ -1,6 +1,10 @@
 package com.mopl.global.outbox;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mopl.global.event.EventEnvelope;
@@ -14,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -86,6 +91,9 @@ class OutboxRelayIntegrationTest {
 
     @Autowired
     OutboxClaimer outboxClaimer;
+
+    @Autowired
+    OutboxStatusWriter outboxStatusWriter;
 
     @Autowired
     OutboxRetryPolicy outboxRetryPolicy;
@@ -426,6 +434,45 @@ class OutboxRelayIntegrationTest {
         // 선점이 남아 있어야 lease 만료 전까지 다른 인스턴스가 다시 가져가지 않습니다.
         assertThat(after.getClaimOwner()).isNotNull();
         assertThat(after.getClaimExpiresAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("발행 확인 중 interrupt가 발생하면 DB 선점은 유지하고 성공·실패 상태는 쓰지 않는다")
+    void publishClaimed_interruption_keepsPersistedClaim() {
+        OutboxEvent saved = outboxEventRepository.saveAndFlush(
+            pending("follow.created", UUID.randomUUID(), "{\"followerId\":\"a\"}"));
+        @SuppressWarnings("unchecked")
+        KafkaTemplate<String, EventEnvelope> interruptingTemplate = mock(KafkaTemplate.class);
+        CompletableFuture<SendResult<String, EventEnvelope>> interruptedAck = new CompletableFuture<>() {
+            @Override
+            public SendResult<String, EventEnvelope> get(long timeout, TimeUnit unit)
+                throws InterruptedException {
+                throw new InterruptedException("relay stopping");
+            }
+        };
+        when(interruptingTemplate.send(anyString(), anyString(), any(EventEnvelope.class)))
+            .thenReturn(interruptedAck);
+        OutboxRelay relay = new OutboxRelay(
+            outboxClaimer, outboxStatusWriter, interruptingTemplate, objectMapper, outboxMetrics,
+            100, Duration.ofSeconds(10), relayClock);
+
+        assertThat(Thread.currentThread().isInterrupted()).isFalse();
+        try {
+            assertThat(relay.publishClaimed()).isZero();
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            // DB 검증과 다음 테스트를 수행하기 전에 종료 신호를 정리합니다.
+            Thread.interrupted();
+        }
+
+        OutboxEvent after = reload(saved);
+        assertThat(after.getStatus()).isEqualTo(OutboxStatus.PENDING);
+        assertThat(after.getAttempts()).isZero();
+        assertThat(after.getLastError()).isNull();
+        assertThat(after.getPublishedAt()).isNull();
+        assertThat(after.getNextAttemptAt()).isEqualTo(saved.getNextAttemptAt());
+        assertThat(after.getClaimOwner()).isNotBlank();
+        assertThat(after.getClaimExpiresAt()).isEqualTo(NOW.plusSeconds(2));
     }
 
     @Test

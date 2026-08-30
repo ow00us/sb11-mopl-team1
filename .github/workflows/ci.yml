@@ -25,6 +25,11 @@ jobs:
       - name: Check migration versions
         run: bash scripts/check-migration-versions.sh
 
+      - name: Test deployment script
+        run: |
+          bash deploy/test-ensure-aws-cli.sh
+          bash deploy/test-deploy.sh
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:

@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.actuate.health.Health;
@@ -170,5 +171,49 @@ class KafkaListenerHealthIndicatorTest {
 
         assertThat(health.getStatus()).isEqualTo(Status.UP);
         assertThat(health.getDetails()).containsEntry("containers", 0);
+    }
+
+    @Test
+    @DisplayName("listenerId가 없으면 Consumer Group을 health 상세의 키로 사용한다")
+    void health_usesGroupIdWhenListenerIdIsAbsent() {
+        register(container(null, true, true));
+
+        Health health = indicator.health();
+
+        assertThat(health.getStatus()).isEqualTo(Status.UP);
+        assertThat(listenerDetail(health, GROUP))
+            .containsEntry("groupId", GROUP)
+            .containsEntry("running", true);
+    }
+
+    @Test
+    @DisplayName("패턴 구독으로 topic 배열이 null이어도 빈 목록으로 health를 생성한다")
+    void health_handlesNullTopicArray() {
+        MessageListenerContainer container = container("pattern-listener", true, true);
+        when(container.getContainerProperties())
+            .thenReturn(new ContainerProperties(Pattern.compile("mopl\\..*\\.events")));
+        register(container);
+
+        Health health = indicator.health();
+
+        assertThat(health.getStatus()).isEqualTo(Status.UP);
+        assertThat(listenerDetail(health, "pattern-listener"))
+            .containsEntry("topics", List.of());
+    }
+
+    @Test
+    @DisplayName("groupId가 없는 비정상 컨테이너도 원인 조회 예외 없이 DOWN을 보고한다")
+    void health_handlesNullGroupIdWithoutStopRecord() {
+        MessageListenerContainer container = container("ungrouped-listener", false, false);
+        when(container.getGroupId()).thenReturn(null);
+        register(container);
+
+        Health health = indicator.health();
+
+        assertThat(health.getStatus()).isEqualTo(Status.DOWN);
+        assertThat(listenerDetail(health, "ungrouped-listener"))
+            .containsEntry("groupId", null)
+            .containsEntry("stoppedAbnormally", true)
+            .doesNotContainKeys("reason", "stoppedAt", "stoppedTopic");
     }
 }
