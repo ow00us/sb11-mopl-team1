@@ -479,6 +479,306 @@ class NotificationEventMapperTest {
             .isEqualTo("가".repeat(100));
     }
 
+    @Test
+    @DisplayName("팔로우 알림 수신자가 없으면 알림 생성을 생략")
+    void map_followReceiverMissing_skips() {
+        // given
+        UUID followerId = UUID.randomUUID();
+        UUID followeeId = UUID.randomUUID();
+
+        when(
+            notificationUserReader.exists(followeeId)
+        ).thenReturn(false);
+
+        EventEnvelope envelope = envelope(
+            "follow.created",
+            AGGREGATE_ID,
+            Map.of(
+                "followerId",
+                followerId,
+                "followeeId",
+                followeeId
+            )
+        );
+
+        // when
+        Optional<NotificationCreateCommand> result =
+            notificationEventMapper.map(envelope);
+
+        // then
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("플레이리스트 구독 알림 수신자가 없으면 알림 생성을 생략")
+    void map_playlistReceiverMissing_skips() {
+        // given
+        UUID playlistOwnerId = UUID.randomUUID();
+
+        when(
+            notificationUserReader.exists(playlistOwnerId)
+        ).thenReturn(false);
+
+        EventEnvelope envelope = envelope(
+            "playlist.subscription.created",
+            AGGREGATE_ID,
+            Map.of(
+                "playlistId",
+                UUID.randomUUID(),
+                "playlistOwnerId",
+                playlistOwnerId,
+                "subscriberId",
+                UUID.randomUUID()
+            )
+        );
+
+        // when
+        Optional<NotificationCreateCommand> result =
+            notificationEventMapper.map(envelope);
+
+        // then
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("플레이리스트 구독 행위자가 없으면 알림 생성을 생략")
+    void map_playlistActorMissing_skips() {
+        // given
+        UUID playlistOwnerId = UUID.randomUUID();
+        UUID subscriberId = UUID.randomUUID();
+
+        when(
+            notificationUserReader.exists(playlistOwnerId)
+        ).thenReturn(true);
+
+        when(
+            notificationUserReader.findName(subscriberId)
+        ).thenReturn(Optional.empty());
+
+        EventEnvelope envelope = envelope(
+            "playlist.subscription.created",
+            AGGREGATE_ID,
+            Map.of(
+                "playlistId",
+                UUID.randomUUID(),
+                "playlistOwnerId",
+                playlistOwnerId,
+                "subscriberId",
+                subscriberId
+            )
+        );
+
+        // when
+        Optional<NotificationCreateCommand> result =
+            notificationEventMapper.map(envelope);
+
+        // then
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("DM 식별자와 aggregateId가 다르면 변환에 실패")
+    void map_directMessageAggregateMismatch_fails() {
+        // given
+        EventEnvelope envelope = envelope(
+            "direct-message.created",
+            AGGREGATE_ID,
+            Map.of(
+                "directMessageId",
+                UUID.randomUUID(),
+                "conversationId",
+                UUID.randomUUID(),
+                "senderId",
+                UUID.randomUUID(),
+                "receiverId",
+                UUID.randomUUID(),
+                "contentPreview",
+                "안녕하세요"
+            )
+        );
+
+        // when & then
+        assertThatThrownBy(() ->
+            notificationEventMapper.map(envelope)
+        ).isInstanceOf(
+            EventContractViolationException.class
+        );
+    }
+
+    @Test
+    @DisplayName("DM 발신자가 없으면 알림 생성을 생략")
+    void map_directMessageActorMissing_skips() {
+        // given
+        UUID senderId = UUID.randomUUID();
+        UUID receiverId = UUID.randomUUID();
+
+        when(
+            notificationUserReader.exists(receiverId)
+        ).thenReturn(true);
+
+        when(
+            notificationUserReader.findName(senderId)
+        ).thenReturn(Optional.empty());
+
+        EventEnvelope envelope = envelope(
+            "direct-message.created",
+            AGGREGATE_ID,
+            Map.of(
+                "directMessageId",
+                AGGREGATE_ID,
+                "conversationId",
+                UUID.randomUUID(),
+                "senderId",
+                senderId,
+                "receiverId",
+                receiverId,
+                "contentPreview",
+                "안녕하세요"
+            )
+        );
+
+        // when
+        Optional<NotificationCreateCommand> result =
+            notificationEventMapper.map(envelope);
+
+        // then
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Kafka 이벤트 envelope이 없으면 변환에 실패")
+    void map_nullEnvelope_fails() {
+        assertThatThrownBy(() ->
+            notificationEventMapper.map(null)
+        ).isInstanceOf(
+            EventContractViolationException.class
+        );
+    }
+
+    @Test
+    @DisplayName("Kafka 이벤트 payload가 null이면 변환에 실패")
+    void map_nullPayload_fails() {
+        EventEnvelope envelope = new EventEnvelope(
+            EVENT_ID,
+            "follow.created",
+            1,
+            OCCURRED_AT,
+            AGGREGATE_ID,
+            null
+        );
+
+        assertThatThrownBy(() ->
+            notificationEventMapper.map(envelope)
+        ).isInstanceOf(
+            EventContractViolationException.class
+        );
+    }
+
+    @Test
+    @DisplayName("Kafka 이벤트 payload가 JSON null이면 변환에 실패")
+    void map_jsonNullPayload_fails() {
+        EventEnvelope envelope = new EventEnvelope(
+            EVENT_ID,
+            "follow.created",
+            1,
+            OCCURRED_AT,
+            AGGREGATE_ID,
+            objectMapper.nullNode()
+        );
+
+        assertThatThrownBy(() ->
+            notificationEventMapper.map(envelope)
+        ).isInstanceOf(
+            EventContractViolationException.class
+        );
+    }
+
+    @Test
+    @DisplayName("Kafka 이벤트 payload가 누락 노드이면 변환에 실패")
+    void map_missingNodePayload_fails() {
+        EventEnvelope envelope = new EventEnvelope(
+            EVENT_ID,
+            "follow.created",
+            1,
+            OCCURRED_AT,
+            AGGREGATE_ID,
+            objectMapper.getNodeFactory().missingNode()
+        );
+
+        assertThatThrownBy(() ->
+            notificationEventMapper.map(envelope)
+        ).isInstanceOf(
+            EventContractViolationException.class
+        );
+    }
+
+    @Test
+    @DisplayName("Kafka 이벤트 payload가 객체가 아니면 변환에 실패")
+    void map_nonObjectPayload_fails() {
+        EventEnvelope envelope = new EventEnvelope(
+            EVENT_ID,
+            "follow.created",
+            1,
+            OCCURRED_AT,
+            AGGREGATE_ID,
+            objectMapper.createArrayNode()
+        );
+
+        assertThatThrownBy(() ->
+            notificationEventMapper.map(envelope)
+        ).isInstanceOf(
+            EventContractViolationException.class
+        );
+    }
+
+    @Test
+    @DisplayName("Kafka 이벤트 payload의 UUID 형식이 잘못되면 변환에 실패")
+    void map_invalidUuidPayload_fails() {
+        EventEnvelope envelope = envelope(
+            "follow.created",
+            AGGREGATE_ID,
+            Map.of(
+                "followerId",
+                "invalid-uuid",
+                "followeeId",
+                UUID.randomUUID()
+            )
+        );
+
+        assertThatThrownBy(() ->
+            notificationEventMapper.map(envelope)
+        ).isInstanceOf(
+            EventContractViolationException.class
+        );
+    }
+
+    @Test
+    @DisplayName("DM 미리보기가 공백이면 변환에 실패")
+    void map_blankContentPreview_fails() {
+        EventEnvelope envelope = envelope(
+            "direct-message.created",
+            AGGREGATE_ID,
+            Map.of(
+                "directMessageId",
+                AGGREGATE_ID,
+                "conversationId",
+                UUID.randomUUID(),
+                "senderId",
+                UUID.randomUUID(),
+                "receiverId",
+                UUID.randomUUID(),
+                "contentPreview",
+                " "
+            )
+        );
+
+        assertThatThrownBy(() ->
+            notificationEventMapper.map(envelope)
+        ).isInstanceOf(
+            EventContractViolationException.class
+        );
+    }
+
     private EventEnvelope envelope(
         String type,
         UUID aggregateId,
